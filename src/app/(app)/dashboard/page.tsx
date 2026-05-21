@@ -1,0 +1,133 @@
+import { createClient } from '@/lib/supabase/server'
+import { format, subDays } from 'date-fns'
+import Link from 'next/link'
+import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
+import RecentDaysList from '@/components/dashboard/RecentDaysList'
+import type { TradingDay } from '@/lib/supabase/types'
+
+// Disable static generation so the date is recomputed on every request
+// (otherwise this page caches and shows stale "today" across midnight).
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+export default async function DashboardPage() {
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const supabase = await createClient()
+
+  const { data: todayRecordRaw } = await supabase
+    .from('trading_days')
+    .select('*')
+    .eq('date', today)
+    .single()
+  const todayRecord = todayRecordRaw as TradingDay | null
+
+  const past30Start = format(subDays(new Date(), 30), 'yyyy-MM-dd')
+  type DayRow = Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type'>
+  const { data: recentDaysRaw } = await supabase
+    .from('trading_days')
+    .select('id, date, eod_pnl, day_type')
+    .gte('date', past30Start)
+    .order('date', { ascending: false })
+    .limit(30)
+  const recentDays = (recentDaysRaw ?? []) as DayRow[]
+
+  const totalPnl = recentDays.reduce((sum, d) => sum + (d.eod_pnl ?? 0), 0)
+  const winDays = recentDays.filter(d => (d.eod_pnl ?? 0) > 0).length
+  const lossDays = recentDays.filter(d => (d.eod_pnl ?? 0) < 0).length
+  const tradedDays = recentDays.filter(d => d.eod_pnl !== null).length
+  const winRate = tradedDays > 0 ? winDays / tradedDays : 0
+
+  return (
+    <div className="max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-gray-400 text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
+        </div>
+      </div>
+
+      {/* Today's quick actions */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-white">Today</h2>
+          <span className="text-xs text-gray-500">{format(new Date(), 'MM/dd/yyyy')}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <TodayAction
+            href={`/prep/${today}`}
+            icon={<ClipboardList className="w-5 h-5" />}
+            label="Daily Prep"
+            status={todayRecord?.prep_notes_json && Object.keys(todayRecord.prep_notes_json).length > 0 ? 'done' : 'pending'}
+          />
+          <TodayAction
+            href={`/intraday/${today}`}
+            icon={<Activity className="w-5 h-5" />}
+            label="Intraday"
+            status={todayRecord?.id ? 'available' : 'locked'}
+          />
+          <TodayAction
+            href={`/eod/${today}`}
+            icon={<BarChart2 className="w-5 h-5" />}
+            label="EOD Recap"
+            status={todayRecord?.eod_notes ? 'done' : todayRecord?.id ? 'available' : 'locked'}
+          />
+        </div>
+      </div>
+
+      {/* 30-day stats */}
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        <StatCard label="30d P&L" value={`$${totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString()}`} positive={totalPnl >= 0} />
+        <StatCard label="Win Rate" value={`${(winRate * 100).toFixed(0)}%`} positive={winRate >= 0.5} />
+        <StatCard label="Win Days" value={winDays.toString()} positive={true} />
+        <StatCard label="Loss Days" value={lossDays.toString()} positive={false} />
+      </div>
+
+      {/* Recent days */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 className="font-semibold text-white mb-4">Recent Days</h2>
+        <RecentDaysList initialDays={recentDays} />
+      </div>
+    </div>
+  )
+}
+
+function TodayAction({ href, icon, label, status }: {
+  href: string
+  icon: React.ReactNode
+  label: string
+  status: 'done' | 'pending' | 'available' | 'locked'
+}) {
+  const styles = {
+    done: 'border-green-800 bg-green-950/30 text-green-400',
+    pending: 'border-blue-700 bg-blue-950/30 text-blue-400 hover:bg-blue-950/50',
+    available: 'border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700',
+    locked: 'border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed opacity-50',
+  }
+
+  if (status === 'locked') {
+    return (
+      <div className={`flex flex-col items-center gap-2 p-4 rounded-lg border ${styles[status]}`}>
+        {icon}
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-xs opacity-60">Complete prep first</span>
+      </div>
+    )
+  }
+
+  return (
+    <Link href={href} className={`flex flex-col items-center gap-2 p-4 rounded-lg border transition-colors ${styles[status]}`}>
+      {icon}
+      <span className="text-sm font-medium">{label}</span>
+      <span className="text-xs opacity-60">{status === 'done' ? 'Completed' : 'Start'}</span>
+    </Link>
+  )
+}
+
+function StatCard({ label, value, positive }: { label: string; value: string; positive: boolean }) {
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <p className="text-xs text-gray-500 mb-1">{label}</p>
+      <p className={`text-xl font-bold ${positive ? 'text-green-400' : 'text-red-400'}`}>{value}</p>
+    </div>
+  )
+}
