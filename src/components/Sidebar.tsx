@@ -10,7 +10,7 @@ import {
   ClipboardList,
   Activity,
   BarChart2,
-  BookOpen,
+  CalendarDays,
   Settings,
   Tag,
   Archive,
@@ -43,7 +43,7 @@ export default function Sidebar() {
     { href: `/prep/${today}`, label: 'Daily Prep', icon: ClipboardList },
     { href: `/intraday/${today}`, label: 'Intraday', icon: Activity },
     { href: `/eod/${today}`, label: 'EOD Recap', icon: BarChart2 },
-    { href: '/journal', label: 'Journal', icon: BookOpen },
+    { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp },
   ]
 

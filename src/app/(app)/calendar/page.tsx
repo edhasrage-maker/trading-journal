@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import JournalClient from '@/components/journal/JournalClient'
+import CalendarClient from '@/components/calendar/CalendarClient'
 import { buildDaySummaries } from '@/lib/analytics'
 import type { TradingDay, Trade } from '@/lib/supabase/types'
 
@@ -9,7 +9,7 @@ type AnyClient = any
 type DayRow = Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type'>
 type TradeRow = Pick<Trade, 'id' | 'pnl' | 'trading_day_id'>
 
-export default async function JournalPage() {
+export default async function CalendarPage() {
   const supabase: AnyClient = await createClient()
 
   const [{ data: daysRaw }, { data: tradesRaw }] = await Promise.all([
@@ -37,7 +37,7 @@ export default async function JournalPage() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <JournalClient
+      <CalendarClient
         summaries={summaries}
         defaultStartDate={defaultStartDate}
         defaultEndDate={defaultEndDate}

@@ -20,7 +20,7 @@ const RANGE_OPTIONS: { label: string; months: number }[] = [
   { label: 'All', months: 0 },
 ]
 
-export default function JournalClient({ summaries, defaultStartDate, defaultEndDate, dayTypes }: Props) {
+export default function CalendarClient({ summaries, defaultStartDate, defaultEndDate, dayTypes }: Props) {
   const [rangeMonths, setRangeMonths] = useState(6)
   const [dayType, setDayType] = useState<string>('all')
 
@@ -52,7 +52,7 @@ export default function JournalClient({ summaries, defaultStartDate, defaultEndD
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold text-white">Journal History</h1>
+        <h1 className="text-2xl font-bold text-white">Calendar</h1>
 
         <div className="flex items-center gap-3">
           {/* Range selector */}
