@@ -79,13 +79,13 @@ create table if not exists trades (
   quantity integer,
   pnl numeric(10,2),
   screenshot_url text,
-  entry_pin_x numeric(5,4), -- relative x as 0-1 fraction of image width
-  entry_pin_y numeric(5,4),
-  stop_pin_x numeric(5,4),
-  stop_pin_y numeric(5,4),
-  tp1_pin_x numeric(5,4),
-  tp1_pin_y numeric(5,4),
-  sierra_trade_id text, -- reference from SC import for de-duplication
+  entry_pin_x numeric(7,4), -- x as 0-100 percentage of image width (sub-pixel precision via 4 decimal places)
+  entry_pin_y numeric(7,4),
+  stop_pin_x numeric(7,4),
+  stop_pin_y numeric(7,4),
+  tp1_pin_x numeric(7,4),
+  tp1_pin_y numeric(7,4),
+  sierra_trade_id text unique, -- reference from SC import for de-duplication; UNIQUE constraint (not just an index) so Supabase JS upsert can use ON CONFLICT (sierra_trade_id)
   tags_json jsonb default '{}',
   -- tags_json shape:
   -- {
@@ -103,7 +103,9 @@ create table if not exists trades (
 );
 
 create index if not exists trades_day_idx on trades(trading_day_id);
-create unique index if not exists trades_sierra_idx on trades(sierra_trade_id) where sierra_trade_id is not null;
+-- Unique constraint on sierra_trade_id is declared inline on the column above
+-- (as `text unique`). Multiple NULLs are allowed by default — trades entered
+-- manually without a Sierra Chart fill ID don't collide with each other.
 
 -- ============================================================
 -- trade_tags: the available tag library

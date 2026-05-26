@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { PrepNotes } from '@/lib/supabase/types'
 
@@ -12,7 +12,11 @@ interface Props {
   ibSize?: number | null
 }
 
-const ibBreakTimingOptions = ['Early (within first 15min)', 'Normal (15-60min)', 'Late (60min+)', 'Still developing']
+// "Still developing" is the default — it represents the pre-break state before
+// the IB has resolved one way or the other. Listed first so it renders as the
+// initial dropdown value when ib_behaviour has no saved value yet.
+const IB_BREAK_TIMING_DEFAULT = 'Still developing'
+const ibBreakTimingOptions = [IB_BREAK_TIMING_DEFAULT, 'Early (within first 15min)', 'Normal (15-60min)', 'Late (60min+)']
 const volumeShapeOptions = ['Balanced (D-shape)', 'Skewed up (P-shape)', 'Skewed down (b-shape)', 'Trending (elongated)', 'Bimodal (double distribution)']
 const biasOptions = ['bullish', 'bearish', 'neutral'] as const
 
@@ -42,7 +46,17 @@ function calcExts(ibh: number, ibl: number, ibSize: number) {
 
 export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Props) {
   const [mgiOpen, setMgiOpen] = useState(false)
+  const [extsOpen, setExtsOpen] = useState(false)
   const set = (key: keyof PrepNotes, val: unknown) => onChange({ ...value, [key]: val })
+
+  // Auto-expand the IB extensions table when Break Timing flips to an active
+  // value (Early / Normal / Late), and auto-collapse when it goes back to
+  // "Still developing" (or unset). User can manually toggle in between via the
+  // header — that override holds until the next Break Timing change.
+  const breakTimingActive = !!value.ib_behaviour && value.ib_behaviour !== IB_BREAK_TIMING_DEFAULT
+  useEffect(() => {
+    setExtsOpen(breakTimingActive)
+  }, [breakTimingActive])
 
   const computedIbSize = ibSize ?? (ibh != null && ibl != null ? ibh - ibl : null)
   const exts = ibh != null && ibl != null && computedIbSize != null
@@ -77,52 +91,71 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
         <div className="space-y-4">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Break Timing</label>
-            <select value={value.ib_behaviour ?? ''} onChange={e => set('ib_behaviour', e.target.value)}
+            <select value={value.ib_behaviour || IB_BREAK_TIMING_DEFAULT} onChange={e => set('ib_behaviour', e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
-              <option value="">Select...</option>
               {ibBreakTimingOptions.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>
 
-          {/* IB Extensions Table */}
-          {exts ? (
-            <div className="space-y-3">
-              {(['above', 'below'] as const).map(dir => (
-                <div key={dir}>
-                  <div className="text-xs text-gray-500 mb-1 font-medium">
-                    {dir === 'above' ? `↑ Above IBH (${ibh})` : `↓ Below IBL (${ibl})`}
+          {/* IB Extensions Table — collapsible. Auto-expands when Break Timing
+              is Early/Normal/Late; collapsed by default when "Still developing". */}
+          <div className="border border-gray-800 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setExtsOpen(o => !o)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-gray-800/50 hover:bg-gray-800 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Above / Below IB Extensions</h3>
+                {!extsOpen && (value.ib_extensions_reached?.length ?? 0) > 0 && (
+                  <span className="text-xs text-blue-400">{value.ib_extensions_reached!.length} reached</span>
+                )}
+              </div>
+              {extsOpen ? <ChevronUp className="w-3.5 h-3.5 text-gray-500" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-500" />}
+            </button>
+            {extsOpen && (
+              <div className="p-4">
+                {exts ? (
+                  <div className="space-y-3">
+                    {(['above', 'below'] as const).map(dir => (
+                      <div key={dir}>
+                        <div className="text-xs text-gray-500 mb-1 font-medium">
+                          {dir === 'above' ? `↑ Above IBH (${ibh})` : `↓ Below IBL (${ibl})`}
+                        </div>
+                        <div className="grid gap-1">
+                          <div className="grid grid-cols-4 gap-1 text-xs text-gray-500 px-1">
+                            <span>Ext</span><span>Price</span><span>Retrace (30%)</span><span className="text-center">Hit?</span>
+                          </div>
+                          {EXT_LEVELS.map(lvl => {
+                            const key: ExtKey = `${dir}_${lvl}`
+                            const data = exts[key]
+                            const hit = value.ib_extensions_reached?.includes(key)
+                            return (
+                              <button key={key} type="button" onClick={() => toggleExt(key)}
+                                className={`grid grid-cols-4 gap-1 text-sm px-2 py-1.5 rounded-lg border text-left transition-colors ${
+                                  hit
+                                    ? 'bg-blue-900/40 border-blue-600/50 text-white'
+                                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
+                                }`}
+                              >
+                                <span className={`font-medium ${hit ? 'text-blue-400' : 'text-gray-400'}`}>{lvl}%</span>
+                                <span>{data.ext.toFixed(2)}</span>
+                                <span className="text-gray-400">{data.retrace.toFixed(2)}</span>
+                                <span className={`text-center ${hit ? 'text-blue-400' : 'text-gray-600'}`}>{hit ? '✓' : '○'}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="grid gap-1">
-                    <div className="grid grid-cols-4 gap-1 text-xs text-gray-500 px-1">
-                      <span>Ext</span><span>Price</span><span>Retrace (30%)</span><span className="text-center">Hit?</span>
-                    </div>
-                    {EXT_LEVELS.map(lvl => {
-                      const key: ExtKey = `${dir}_${lvl}`
-                      const data = exts[key]
-                      const hit = value.ib_extensions_reached?.includes(key)
-                      return (
-                        <button key={key} type="button" onClick={() => toggleExt(key)}
-                          className={`grid grid-cols-4 gap-1 text-sm px-2 py-1.5 rounded-lg border text-left transition-colors ${
-                            hit
-                              ? 'bg-blue-900/40 border-blue-600/50 text-white'
-                              : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
-                          }`}
-                        >
-                          <span className={`font-medium ${hit ? 'text-blue-400' : 'text-gray-400'}`}>{lvl}%</span>
-                          <span>{data.ext.toFixed(2)}</span>
-                          <span className="text-gray-400">{data.retrace.toFixed(2)}</span>
-                          <span className={`text-center ${hit ? 'text-blue-400' : 'text-gray-600'}`}>{hit ? '✓' : '○'}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-gray-600 italic">Enter IBH, IBL (and IB Size) in Market Context to see auto-calculated extension levels.</p>
-          )}
+                ) : (
+                  <p className="text-xs text-gray-600 italic">Enter IBH, IBL (and IB Size) in Market Context to see auto-calculated extension levels.</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
