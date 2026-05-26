@@ -225,21 +225,16 @@ function DayCell({
     return `${sign}$${abs.toFixed(0)}`
   }
 
-  const gradeStyle = (g: number) =>
-    g >= 9 ? 'border-green-700/60 text-green-300 bg-green-950/60'
-    : g >= 7 ? 'border-blue-700/60 text-blue-300 bg-blue-950/60'
-    : g >= 5 ? 'border-yellow-700/60 text-yellow-300 bg-yellow-950/60'
-    : 'border-red-700/60 text-red-300 bg-red-950/60'
+  const gradeText = (g: number) =>
+    g >= 9 ? 'text-green-300'
+    : g >= 7 ? 'text-blue-300'
+    : g >= 5 ? 'text-yellow-300'
+    : 'text-red-300'
+
+  const grade = inMonth ? data?.overall_grade ?? null : null
 
   const content = (
     <div className={`relative aspect-square p-1.5 rounded-md border transition-colors ${cellStyle} ${todayRing}`}>
-      {/* Grade pill — top-left */}
-      {inMonth && data?.overall_grade != null && (
-        <div className={`absolute top-1 left-1 text-[9px] font-mono font-bold border rounded px-1 leading-tight ${gradeStyle(data.overall_grade)}`}>
-          Gr {data.overall_grade}
-        </div>
-      )}
-
       {/* Day number — top-right */}
       <div className={`absolute top-1 right-1.5 text-[11px] font-medium ${
         !inMonth ? 'text-gray-700'
@@ -249,20 +244,33 @@ function DayCell({
         {dom}
       </div>
 
-      {/* Center stack: PnL + trades + winrate */}
-      {inMonth && hasTrades && pnl != null && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pt-3 px-1">
-          <div className={`text-sm font-bold font-mono leading-tight ${
-            pnl > 0 ? 'text-green-300' : pnl < 0 ? 'text-red-300' : 'text-gray-300'
-          }`}>
-            {fmtPnlShort(pnl)}
+      {/* Center stack — grade as the focal point, supporting stats below */}
+      {inMonth && hasTrades && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center pt-3 pb-1 px-1 gap-0.5">
+          {/* Grade — large, middle */}
+          <div className={`text-2xl font-bold font-mono leading-none ${grade != null ? gradeText(grade) : 'text-gray-700'}`}>
+            {grade != null ? grade : '—'}
           </div>
-          <div className="text-[10px] text-gray-400 mt-0.5">
+          <div className="text-[8px] text-gray-500 uppercase tracking-wider -mt-0.5 mb-0.5">Grade</div>
+
+          {/* Trades */}
+          <div className="text-[10px] text-gray-400 leading-tight">
             {data.trade_count} trade{data.trade_count === 1 ? '' : 's'}
           </div>
+
+          {/* Win rate */}
           {data.win_rate != null && (
-            <div className="text-[10px] text-gray-500">
-              {data.win_rate.toFixed(1)}%
+            <div className="text-[10px] text-gray-500 leading-tight">
+              {data.win_rate.toFixed(0)}%
+            </div>
+          )}
+
+          {/* PnL — anchored to bottom of the stack */}
+          {pnl != null && (
+            <div className={`text-xs font-mono font-bold leading-tight mt-0.5 ${
+              pnl > 0 ? 'text-green-300' : pnl < 0 ? 'text-red-300' : 'text-gray-300'
+            }`}>
+              {fmtPnlShort(pnl)}
             </div>
           )}
         </div>
