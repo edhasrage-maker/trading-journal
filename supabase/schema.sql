@@ -215,6 +215,49 @@ create table if not exists performance_stats (
 create index if not exists perf_stats_category_idx on performance_stats(category);
 
 -- ============================================================
+-- Chart migration Phase 1: OHLCV bars data layer
+-- ============================================================
+-- Foundation for replacing the screenshot+calibration chart flow with native
+-- chart rendering (lightweight-charts). 1-minute bars are the canonical
+-- granularity stored; coarser views (5m/15m/1h) are aggregated at render
+-- time from the 1m source. Phase 0 decisions documented in memory:
+-- project_chart_migration_direction.md.
+
+create table if not exists ohlcv_bars (
+  symbol text not null,                  -- e.g. "MNQM6.CME" (matches trades.symbol)
+  ts timestamptz not null,               -- bar's open timestamp
+  open numeric(12,2) not null,
+  high numeric(12,2) not null,
+  low  numeric(12,2) not null,
+  close numeric(12,2) not null,
+  volume bigint,                         -- nullable: some sources only export OHLC
+  primary key (symbol, ts)
+);
+
+-- Bar lookups for the chart renderer query by symbol within a time range and
+-- order by timestamp desc/asc. Covering index on (symbol, ts) lets PG seek
+-- straight into the position and stream out.
+create index if not exists ohlcv_bars_symbol_ts_idx
+  on ohlcv_bars(symbol, ts desc);
+
+-- Import history. Per-import row tracking what was uploaded, used by the
+-- import UI to show "last import: NQ 2026-04-01 → 2026-05-21, 8,400 rows".
+create table if not exists bar_imports (
+  id uuid primary key default uuid_generate_v4(),
+  symbol text not null,
+  granularity text not null check (granularity in ('1m', '5m', '15m', '1h', '1d')),
+  date_range_start date not null,
+  date_range_end date not null,
+  rows_inserted integer,
+  rows_updated integer,                  -- ON CONFLICT path: existing bars re-uploaded
+  source_filename text,                  -- CSV filename for traceability
+  imported_at timestamptz default now()
+);
+
+create index if not exists bar_imports_symbol_idx
+  on bar_imports(symbol, imported_at desc);
+
+-- ============================================================
 -- Phase 5: EOD Recap additions
 -- ============================================================
 alter table trading_days
@@ -334,6 +377,8 @@ alter table condition_thresholds enable row level security;
 alter table condition_lookup enable row level security;
 alter table daily_prep enable row level security;
 alter table lookup_metadata enable row level security;
+alter table ohlcv_bars enable row level security;
+alter table bar_imports enable row level security;
 
 -- Policy: authenticated users can read/write their own data
 -- (single-user journal — all authenticated users own all rows)
@@ -373,6 +418,15 @@ create policy "Authenticated full access" on daily_prep
   for all using (auth.role() = 'authenticated');
 
 create policy "Authenticated full access" on lookup_metadata
+  for all using (auth.role() = 'authenticated');
+
+drop policy if exists "Authenticated full access" on ohlcv_bars;
+drop policy if exists "Authenticated full access" on bar_imports;
+
+create policy "Authenticated full access" on ohlcv_bars
+  for all using (auth.role() = 'authenticated');
+
+create policy "Authenticated full access" on bar_imports
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================
