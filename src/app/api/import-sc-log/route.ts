@@ -24,6 +24,7 @@ export async function POST(req: Request) {
     .from('sc-logs')
     .upload(archivePath, buffer, { contentType: file.type || 'text/plain', upsert: true })
   if (uploadError) {
+    console.error('[import-sc-log] storage upload failed:', uploadError)
     return NextResponse.json(
       { error: `Failed to archive log: ${uploadError.message}` },
       { status: 500 },
@@ -45,6 +46,7 @@ export async function POST(req: Request) {
   )
   if (dayDropped.length > 0) allDroppedColumns['trading_days (day upsert)'] = dayDropped
   if (dayError || !day) {
+    console.error('[import-sc-log] trading_days upsert failed:', dayError)
     return NextResponse.json(
       { error: `Failed to upsert trading day: ${dayError?.message ?? 'unknown'}` },
       { status: 500 },
@@ -65,6 +67,7 @@ export async function POST(req: Request) {
       )
     if (tradesDropped.length > 0) allDroppedColumns['trades'] = tradesDropped
     if (tradesError) {
+      console.error('[import-sc-log] trades bulk upsert failed:', tradesError, 'droppedColumns:', allDroppedColumns)
       return NextResponse.json(
         { error: `Failed to insert trades: ${tradesError.message}`, droppedColumns: allDroppedColumns },
         { status: 500 },
