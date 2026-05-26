@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown, HelpCircle } from 'lucide-react'
 
 export interface DayRowData {
   id: string
@@ -21,6 +21,9 @@ interface Props {
   initialDays: DayRowData[]
 }
 
+type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'pnl'
+type SortDirection = 'asc' | 'desc'
+
 export default function RecentDaysList({ initialDays }: Props) {
   const router = useRouter()
   const [days, setDays] = useState<DayRowData[]>(initialDays)
@@ -28,6 +31,8 @@ export default function RecentDaysList({ initialDays }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const [sortColumn, setSortColumn] = useState<SortColumn>('date')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type })
@@ -44,6 +49,44 @@ export default function RecentDaysList({ initialDays }: Props) {
   }
 
   const clearSelection = () => setSelectedIds(new Set())
+
+  const setSort = (column: SortColumn) => {
+    if (column === sortColumn) {
+      setSortDirection(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortColumn(column)
+      // Sensible defaults: dates default to descending (newest first);
+      // numeric metrics default to descending (best/highest first).
+      setSortDirection('desc')
+    }
+  }
+
+  // Nulls always sort last regardless of direction — keep them visually at
+  // the bottom of the list since they typically mean "data missing."
+  const sortedDays = useMemo(() => {
+    const get = (d: DayRowData): number | string | null => {
+      switch (sortColumn) {
+        case 'date': return d.date
+        case 'grade': return d.overall_grade
+        case 'process': return d.process_score
+        case 'trades': return d.trade_count
+        case 'pnl': return d.eod_pnl
+      }
+    }
+    return [...days].sort((a, b) => {
+      const va = get(a)
+      const vb = get(b)
+      const aNull = va === null || va === undefined
+      const bNull = vb === null || vb === undefined
+      if (aNull && bNull) return 0
+      if (aNull) return 1
+      if (bNull) return -1
+      let cmp: number
+      if (typeof va === 'string' && typeof vb === 'string') cmp = va < vb ? -1 : va > vb ? 1 : 0
+      else cmp = (va as number) - (vb as number)
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+  }, [days, sortColumn, sortDirection])
 
   const deleteOne = async (date: string): Promise<boolean> => {
     const res = await fetch(`/api/trading-days/${date}`, {
@@ -157,19 +200,77 @@ export default function RecentDaysList({ initialDays }: Props) {
         </div>
       )}
 
-      <div className="space-y-1">
-        {days.map(day => (
-          <DayRowItem
-            key={day.id}
-            day={day}
-            selected={selectedIds.has(day.id)}
-            deleting={deletingDate === day.date || (bulkDeleting && selectedIds.has(day.id))}
-            onToggleSelect={() => toggleSelect(day.id)}
-            onDelete={() => handleSingleDelete(day.date, day.eod_pnl != null)}
-          />
-        ))}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-gray-500 border-b border-gray-800">
+              <th className="font-normal py-2 pl-2 pr-1 w-8" />
+              <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3" />
+              <SortableTh label="Grade" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
+              <SortableTh label="Process" column="process" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
+              <SortableTh label="Trades" column="trades" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
+              <th className="font-normal py-2 pr-3 text-center w-32">
+                <span className="inline-flex items-center gap-1 text-gray-600" title="Average Maximum Favorable Excursion / Maximum Adverse Excursion across the day's trades. Awaiting data layer — SC importer needs to capture HighDuringPosition / LowDuringPosition per trade, and ATR-units require the OHLCV bars coming with the chart migration. Points + Dollars will land first; ATR option enabled after Phase 1 of the chart migration.">
+                  Avg MFE/MAE
+                  <HelpCircle className="w-3 h-3" />
+                </span>
+              </th>
+              <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
+              <th className="w-10" />
+            </tr>
+          </thead>
+          <tbody>
+            {sortedDays.map(day => (
+              <DayRowItem
+                key={day.id}
+                day={day}
+                selected={selectedIds.has(day.id)}
+                deleting={deletingDate === day.date || (bulkDeleting && selectedIds.has(day.id))}
+                onToggleSelect={() => toggleSelect(day.id)}
+                onDelete={() => handleSingleDelete(day.date, day.eod_pnl != null)}
+              />
+            ))}
+          </tbody>
+        </table>
       </div>
     </>
+  )
+}
+
+function SortableTh({
+  label,
+  column,
+  current,
+  direction,
+  onSort,
+  align,
+  className,
+}: {
+  label: string
+  column: SortColumn
+  current: SortColumn
+  direction: SortDirection
+  onSort: (c: SortColumn) => void
+  align: 'left' | 'center' | 'right'
+  className?: string
+}) {
+  const isActive = current === column
+  const alignClass = align === 'left' ? 'text-left' : align === 'right' ? 'text-right' : 'text-center'
+  return (
+    <th className={`font-normal py-2 ${alignClass} ${className ?? ''}`}>
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={`inline-flex items-center gap-1 hover:text-white transition-colors ${isActive ? 'text-blue-300' : 'text-gray-500'}`}
+      >
+        {label}
+        {isActive ? (
+          direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+        ) : (
+          <span className="w-3 h-3 opacity-30">▾</span>
+        )}
+      </button>
+    </th>
   )
 }
 
@@ -190,89 +291,77 @@ function DayRowItem({
   const pnlColor = pnl === null ? 'text-gray-500' : pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'
   const Icon = pnl === null ? Minus : pnl > 0 ? TrendingUp : pnl < 0 ? TrendingDown : Minus
 
-  return (
-    <div className={`group relative flex items-center rounded-lg transition-colors ${
-      selected ? 'bg-blue-950/40 border border-blue-800/60' : 'border border-transparent hover:bg-gray-800'
-    }`}>
-      {/* Select checkbox — outside the Link so clicks don't navigate */}
-      <button
-        type="button"
-        onClick={e => { e.stopPropagation(); onToggleSelect() }}
-        className={`ml-2 mr-1 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors flex-shrink-0 ${
-          selected
-            ? 'bg-blue-600 border-blue-500 text-white'
-            : 'border-gray-600 hover:border-gray-400 bg-gray-900'
-        }`}
-        title={selected ? 'Deselect' : 'Select for bulk action'}
-      >
-        {selected ? <Check className="w-3 h-3" /> : null}
-      </button>
+  const cellBg = selected ? 'bg-blue-950/40' : 'group-hover:bg-gray-800/40'
+  // Wrapping each cell in a Link would inflate markup; instead use a single
+  // overlay link via the row's last cell with an onClick stopPropagation guard
+  // on the checkbox + delete button.
+  const navigate = () => { window.location.href = `/eod/${day.date}` }
 
-      <Link
-        href={`/eod/${day.date}`}
-        className="flex-1 flex items-center justify-between px-2 py-2 gap-3 min-w-0"
-      >
-        {/* Left cluster: trend icon, date, day type */}
-        <div className="flex items-center gap-3 flex-shrink-0">
+  return (
+    <tr className={`group border-b border-gray-800/60 transition-colors ${selected ? 'bg-blue-950/40' : ''}`}>
+      <td className={`py-2 pl-2 pr-1 ${cellBg}`}>
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); onToggleSelect() }}
+          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+            selected
+              ? 'bg-blue-600 border-blue-500 text-white'
+              : 'border-gray-600 hover:border-gray-400 bg-gray-900'
+          }`}
+          title={selected ? 'Deselect' : 'Select for bulk action'}
+        >
+          {selected ? <Check className="w-3 h-3" /> : null}
+        </button>
+      </td>
+      <td className={`py-2 pr-3 cursor-pointer ${cellBg}`} onClick={navigate}>
+        <div className="flex items-center gap-2">
           <Icon className={`w-4 h-4 ${pnlColor}`} />
-          <span className="text-sm text-white font-medium w-[6.5rem]">{format(new Date(day.date + 'T12:00:00'), 'EEE, MMM d')}</span>
-          {day.day_type ? (
+          <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium">
+            {format(new Date(day.date + 'T12:00:00'), 'EEE, MMM d')}
+          </Link>
+          {day.day_type && (
             <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{day.day_type}</span>
-          ) : (
-            <span className="text-[10px] text-gray-700 w-16" />
           )}
         </div>
-
-        {/* Middle cluster: trade count, setups */}
-        <div className="flex items-center gap-3 text-xs flex-1 min-w-0">
-          <span className="text-gray-400 font-mono flex-shrink-0 w-12 text-right">
-            {day.trade_count > 0 ? `${day.trade_count} tr` : <span className="text-gray-700">—</span>}
-          </span>
-          <span className="text-gray-400 truncate min-w-0 flex-1">
-            {day.main_setups.length > 0
-              ? day.main_setups.join(' · ')
-              : <span className="text-gray-700">—</span>}
-          </span>
-        </div>
-
-        {/* Right cluster: scores + pnl */}
-        <div className="flex items-center gap-3 text-xs flex-shrink-0">
-          <ScorePill label="Pr" value={day.process_score} />
-          <ScorePill label="Gr" value={day.overall_grade} />
-          <span className={`text-sm font-medium font-mono w-20 text-right ${pnlColor}`}>
-            {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${pnl.toLocaleString()}`}
-          </span>
-        </div>
-      </Link>
-
-      {/* Delete button — outside the Link */}
-      <button
-        onClick={onDelete}
-        disabled={deleting}
-        className="px-3 py-2.5 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30 disabled:cursor-wait flex-shrink-0"
-        title={`Delete ${day.date}`}
-      >
-        {deleting
-          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          : <Trash2 className="w-3.5 h-3.5" />}
-      </button>
-    </div>
+      </td>
+      <td className={`py-2 pr-3 text-center ${cellBg}`}><ScorePill value={day.overall_grade} /></td>
+      <td className={`py-2 pr-3 text-center ${cellBg}`}><ScorePill value={day.process_score} /></td>
+      <td className={`py-2 pr-3 text-center text-gray-300 font-mono ${cellBg}`}>
+        {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
+      </td>
+      <td className={`py-2 pr-3 text-center text-gray-700 font-mono ${cellBg}`}>—</td>
+      <td className={`py-2 pr-3 text-right font-mono font-medium ${pnlColor} ${cellBg}`}>
+        {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${pnl.toLocaleString()}`}
+      </td>
+      <td className={`py-2 pr-2 text-right ${cellBg}`}>
+        <button
+          onClick={onDelete}
+          disabled={deleting}
+          className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30 disabled:cursor-wait"
+          title={`Delete ${day.date}`}
+        >
+          {deleting
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <Trash2 className="w-3.5 h-3.5" />}
+        </button>
+      </td>
+    </tr>
   )
 }
 
-function ScorePill({ label, value }: { label: string; value: number | null }) {
+function ScorePill({ value }: { value: number | null }) {
   if (value === null) {
-    return <span className="text-gray-700 font-mono w-12 text-center">{label} —</span>
+    return <span className="text-gray-700 font-mono">—</span>
   }
-  // 0-100 scale; color by band
+  // 1-10 scale per the AI analyze prompts (analyze-eod, analyze-prep routes).
   const color =
-    value >= 80 ? 'text-green-400 border-green-800/50 bg-green-950/40'
-    : value >= 60 ? 'text-blue-300 border-blue-800/50 bg-blue-950/40'
-    : value >= 40 ? 'text-yellow-300 border-yellow-800/50 bg-yellow-950/40'
+    value >= 9 ? 'text-green-400 border-green-800/50 bg-green-950/40'
+    : value >= 7 ? 'text-blue-300 border-blue-800/50 bg-blue-950/40'
+    : value >= 5 ? 'text-yellow-300 border-yellow-800/50 bg-yellow-950/40'
     : 'text-red-300 border-red-800/50 bg-red-950/40'
   return (
-    <span className={`font-mono border rounded px-1.5 py-0.5 w-12 text-center ${color}`}>
-      {label} {value}
+    <span className={`font-mono border rounded px-1.5 py-0.5 inline-block w-8 text-center text-xs ${color}`}>
+      {value}
     </span>
   )
 }
