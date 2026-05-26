@@ -22,13 +22,17 @@ export default async function DashboardPage() {
     .single()
   const todayRecord = todayRecordRaw as TradingDay | null
 
+  // Wider fetch (180 days) so the new monthly-calendar view in Recent Days
+  // can navigate ~6 months back. The 30d stat cards below filter down to
+  // last-30 explicitly so their semantics are unchanged.
   const past30Start = format(subDays(new Date(), 30), 'yyyy-MM-dd')
+  const past180Start = format(subDays(new Date(), 180), 'yyyy-MM-dd')
   const { data: recentDaysRaw } = await supabase
     .from('trading_days')
     .select('id, date, eod_pnl, day_type, ai_analysis_json, eod_ai_analysis_json')
-    .gte('date', past30Start)
+    .gte('date', past180Start)
     .order('date', { ascending: false })
-    .limit(30)
+    .limit(200)
   const recentDaysBase = (recentDaysRaw ?? []) as Array<Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>>
 
   // Trade stats per day (count + setup tags + summed pnl + MFE/MAE inputs) —
@@ -150,13 +154,17 @@ export default async function DashboardPage() {
   const allDayTypes = Array.from(
     new Set(recentDays.map(d => (d.day_type ?? '').trim()).filter(Boolean)),
   ).sort()
-  const windowStart = past30Start
+  const windowStart = past180Start
   const windowEnd = today
+  const defaultFilterStart = past30Start // list view defaults to "last 30 days"; calendar view defaults to current month
 
-  const totalPnl = recentDays.reduce((sum, d) => sum + (d.eod_pnl ?? 0), 0)
-  const winDays = recentDays.filter(d => (d.eod_pnl ?? 0) > 0).length
-  const lossDays = recentDays.filter(d => (d.eod_pnl ?? 0) < 0).length
-  const tradedDays = recentDays.filter(d => d.eod_pnl !== null).length
+  // 30d stat cards: explicitly compute from the last-30-day subset of the
+  // 180-day fetched data, so labels stay accurate as we widened the fetch.
+  const last30Days = recentDays.filter(d => d.date >= past30Start)
+  const totalPnl = last30Days.reduce((sum, d) => sum + (d.eod_pnl ?? 0), 0)
+  const winDays = last30Days.filter(d => (d.eod_pnl ?? 0) > 0).length
+  const lossDays = last30Days.filter(d => (d.eod_pnl ?? 0) < 0).length
+  const tradedDays = last30Days.filter(d => d.eod_pnl !== null).length
   const winRate = tradedDays > 0 ? winDays / tradedDays : 0
 
   return (
@@ -212,6 +220,7 @@ export default async function DashboardPage() {
           allDayTypes={allDayTypes}
           windowStart={windowStart}
           windowEnd={windowEnd}
+          defaultFilterStart={defaultFilterStart}
         />
       </div>
     </div>
