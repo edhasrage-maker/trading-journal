@@ -43,7 +43,7 @@ export default function DeleteDayDangerZone({ date, hasData, tradesCount, onErro
       }
       const result = (await res.json()) as DeleteResult
       // Hard reload to clear all state and refetch from a clean slate
-      router.replace('/journal')
+      router.replace('/calendar')
       router.refresh()
       // Tiny optimistic feedback before nav completes
       console.log(

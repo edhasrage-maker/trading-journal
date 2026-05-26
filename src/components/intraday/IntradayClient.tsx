@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { format } from 'date-fns'
 import { Plus, Edit2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import TradeForm from './TradeForm'
 import { deleteBlob } from '@/lib/storage'
@@ -26,6 +28,7 @@ function rMultiple(t: Trade): string | null {
 }
 
 export default function IntradayClient({ date, initialTrades, allTags }: Props) {
+  const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   const [mode, setMode] = useState<Mode>({ type: 'list' })
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -75,6 +78,24 @@ export default function IntradayClient({ date, initialTrades, allTags }: Props) 
 
   return (
     <div className="space-y-4">
+
+      {/* Header — title + day switcher (mirrors the EOD / Prep page pattern) */}
+      <div>
+        <h1 className="text-2xl font-bold text-white">Intraday</h1>
+        <div className="flex items-center gap-3 mt-1">
+          <input
+            type="date"
+            value={date}
+            onChange={e => {
+              const next = e.target.value
+              if (next && next !== date) router.push(`/intraday/${next}`)
+            }}
+            className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
+            title="Switch to a different day"
+          />
+          <span className="text-gray-400 text-sm">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</span>
+        </div>
+      </div>
 
       {/* Summary bar */}
       {trades.length > 0 && (

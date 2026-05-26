@@ -63,7 +63,12 @@ export async function POST(req: Request) {
         supabase,
         'trades',
         payload,
-        { onConflict: 'sierra_trade_id', ignoreDuplicates: true },
+        // Update SC-owned fields on existing rows (so new columns backfill
+        // on re-import and fill corrections take effect). Safe because the
+        // payload from mapRowToTrade deliberately excludes user-owned fields
+        // (tags, screenshot, plan levels), so DO UPDATE only touches the SC
+        // columns and leaves manual edits intact.
+        { onConflict: 'sierra_trade_id', ignoreDuplicates: false },
       )
     if (tradesDropped.length > 0) allDroppedColumns['trades'] = tradesDropped
     if (tradesError) {

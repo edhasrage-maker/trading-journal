@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Upload, Loader2 } from 'lucide-react'
 
 export interface ImportResult {
@@ -21,8 +21,9 @@ interface Props {
 export default function ImportTradesButton({ date, onImported, onError }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
+  const [dragging, setDragging] = useState(false)
 
-  const submit = async (file: File) => {
+  const submit = useCallback(async (file: File) => {
     setImporting(true)
     try {
       const fd = new FormData()
@@ -41,21 +42,42 @@ export default function ImportTradesButton({ date, onImported, onError }: Props)
       setImporting(false)
       if (inputRef.current) inputRef.current.value = ''
     }
+  }, [date, onImported, onError])
+
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (!importing) setDragging(true)
+  }
+  const onDragLeave = () => setDragging(false)
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    if (importing) return
+    const file = e.dataTransfer.files[0]
+    if (file) submit(file)
   }
 
   return (
     <>
       <button
         onClick={() => inputRef.current?.click()}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
         disabled={importing}
-        className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+        title="Click to pick a file, or drag-and-drop a TradeActivityLog .txt"
+        className={`flex items-center gap-2 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-60 ${
+          dragging
+            ? 'bg-purple-400 ring-2 ring-purple-300'
+            : 'bg-purple-600 hover:bg-purple-500'
+        }`}
       >
         {importing ? (
           <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
           <Upload className="w-4 h-4" />
         )}
-        {importing ? 'Importing...' : 'Import SC log'}
+        {importing ? 'Importing...' : dragging ? 'Drop to import' : 'Import SC log'}
       </button>
       <input
         ref={inputRef}

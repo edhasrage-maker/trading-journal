@@ -86,6 +86,9 @@ create table if not exists trades (
   tp1_pin_x numeric(7,4),
   tp1_pin_y numeric(7,4),
   sierra_trade_id text unique, -- reference from SC import for de-duplication; UNIQUE constraint (not just an index) so Supabase JS upsert can use ON CONFLICT (sierra_trade_id)
+  symbol text, -- e.g. "MNQM6.CME"; used for per-contract multiplier lookup when displaying MFE/MAE in dollars
+  high_during_position numeric(10,2), -- tick-precise high price reached while position was open (Sierra's HighDuringPosition)
+  low_during_position numeric(10,2),  -- tick-precise low price reached while position was open (Sierra's LowDuringPosition)
   tags_json jsonb default '{}',
   -- tags_json shape:
   -- {
