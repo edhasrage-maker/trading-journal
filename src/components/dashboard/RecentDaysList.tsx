@@ -1,10 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown, HelpCircle } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown, HelpCircle, X } from 'lucide-react'
 
 export interface DayRowData {
   id: string
@@ -33,6 +33,27 @@ export default function RecentDaysList({ initialDays }: Props) {
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   const [sortColumn, setSortColumn] = useState<SortColumn>('date')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
+  const mfeInfoRef = useRef<HTMLDivElement>(null)
+
+  // Click-outside + Escape dismiss for the MFE/MAE info popover.
+  useEffect(() => {
+    if (!mfeInfoOpen) return
+    const handleMouse = (e: MouseEvent) => {
+      if (mfeInfoRef.current && !mfeInfoRef.current.contains(e.target as Node)) {
+        setMfeInfoOpen(false)
+      }
+    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMfeInfoOpen(false)
+    }
+    document.addEventListener('mousedown', handleMouse)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleMouse)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [mfeInfoOpen])
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type })
@@ -209,11 +230,45 @@ export default function RecentDaysList({ initialDays }: Props) {
               <SortableTh label="Grade" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
               <SortableTh label="Process" column="process" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
               <SortableTh label="Trades" column="trades" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
-              <th className="font-normal py-2 pr-3 text-center w-32">
-                <span className="inline-flex items-center gap-1 text-gray-600" title="Average Maximum Favorable Excursion / Maximum Adverse Excursion across the day's trades. Awaiting data layer — SC importer needs to capture HighDuringPosition / LowDuringPosition per trade, and ATR-units require the OHLCV bars coming with the chart migration. Points + Dollars will land first; ATR option enabled after Phase 1 of the chart migration.">
+              <th className="font-normal py-2 pr-3 text-center w-32 relative">
+                <button
+                  type="button"
+                  onClick={() => setMfeInfoOpen(o => !o)}
+                  className={`inline-flex items-center gap-1 transition-colors ${
+                    mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'
+                  }`}
+                >
                   Avg MFE/MAE
                   <HelpCircle className="w-3 h-3" />
-                </span>
+                </button>
+                {mfeInfoOpen && (
+                  <div
+                    ref={mfeInfoRef}
+                    className="absolute z-50 top-full mt-2 left-1/2 -translate-x-1/2 w-80 bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="font-semibold text-white">Why is this column empty?</p>
+                      <button
+                        type="button"
+                        onClick={() => setMfeInfoOpen(false)}
+                        className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5"
+                        aria-label="Close"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <p className="mb-2">
+                      Average Maximum Favorable Excursion / Maximum Adverse Excursion across the day&apos;s trades.
+                      Awaiting data layer:
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1">
+                      <li>SC importer needs to capture <span className="font-mono">HighDuringPosition</span> / <span className="font-mono">LowDuringPosition</span> per trade</li>
+                      <li>Points + Dollars units will land first</li>
+                      <li>ATR-10 Wilders option enabled after chart migration Phase 1 (OHLCV bars)</li>
+                    </ul>
+                    <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
+                  </div>
+                )}
               </th>
               <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
               <th className="w-10" />
