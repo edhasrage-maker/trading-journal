@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { Crosshair } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
@@ -53,6 +54,7 @@ export default function EodClient({
     return a && Object.keys(a).length > 0 ? (a as EodAiAnalysis) : null
   })
   const imageContainerRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
 
   const handleHoverEnter = (tradeId: string, e: React.MouseEvent) => {
     setHoveredTradeId(tradeId)
@@ -348,7 +350,19 @@ export default function EodClient({
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">EOD Recap</h1>
-          <p className="text-gray-400 text-sm mt-1">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</p>
+          <div className="flex items-center gap-3 mt-1">
+            <input
+              type="date"
+              value={date}
+              onChange={e => {
+                const next = e.target.value
+                if (next && next !== date) router.push(`/eod/${next}`)
+              }}
+              className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
+              title="Switch to a different day's recap"
+            />
+            <span className="text-gray-400 text-sm">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</span>
+          </div>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <SCFolderWatcher
