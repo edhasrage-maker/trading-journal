@@ -1,6 +1,7 @@
 'use client'
 
 import { format } from 'date-fns'
+import { Check } from 'lucide-react'
 import type { Trade } from '@/lib/supabase/types'
 
 interface Props {
@@ -8,6 +9,9 @@ interface Props {
   hoveredTradeId: string | null
   onHoverEnter: (tradeId: string, e: React.MouseEvent) => void
   onHoverLeave: () => void
+  selectedIds: Set<string>
+  onToggleSelect: (tradeId: string) => void
+  nearDuplicateIds: Set<string>
 }
 
 export default function TradeList({
@@ -15,6 +19,9 @@ export default function TradeList({
   hoveredTradeId,
   onHoverEnter,
   onHoverLeave,
+  selectedIds,
+  onToggleSelect,
+  nearDuplicateIds,
 }: Props) {
   if (trades.length === 0) {
     return (
@@ -31,6 +38,7 @@ export default function TradeList({
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="text-gray-500 border-b border-gray-800">
+              <th className="font-normal pb-2 pr-2 w-8" />
               <th className="text-left font-normal pb-2 pr-3">Time</th>
               <th className="text-left font-normal pb-2 pr-3">Dir</th>
               <th className="text-right font-normal pb-2 pr-3">Entry</th>
@@ -46,6 +54,8 @@ export default function TradeList({
             {trades.map(t => {
               const pnl = t.pnl ?? 0
               const isHovered = hoveredTradeId === t.id
+              const isSelected = selectedIds.has(t.id)
+              const isNearDup = nearDuplicateIds.has(t.id)
               const setups = t.tags_json?.setups ?? []
               const mistakes = t.tags_json?.mistakes ?? []
               return (
@@ -54,9 +64,31 @@ export default function TradeList({
                   onMouseEnter={e => onHoverEnter(t.id, e)}
                   onMouseLeave={onHoverLeave}
                   className={`border-b border-gray-800 transition-colors cursor-default ${
-                    isHovered ? 'bg-blue-950/30' : 'hover:bg-gray-800/50'
+                    isSelected
+                      ? 'bg-blue-900/30'
+                      : isHovered
+                      ? 'bg-blue-950/30'
+                      : isNearDup
+                      ? 'bg-yellow-950/20 hover:bg-yellow-950/30'
+                      : 'hover:bg-gray-800/50'
                   }`}
                 >
+                  <td className="py-1.5 pr-2 align-middle">
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); onToggleSelect(t.id) }}
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                        isSelected
+                          ? 'bg-blue-600 border-blue-500 text-white'
+                          : isNearDup
+                          ? 'border-yellow-600 hover:border-yellow-400 bg-gray-900'
+                          : 'border-gray-600 hover:border-gray-400 bg-gray-900'
+                      }`}
+                      title={isNearDup ? 'Possible duplicate — select to merge' : 'Select for merge'}
+                    >
+                      {isSelected ? <Check className="w-3 h-3" /> : null}
+                    </button>
+                  </td>
                   <td className="py-1.5 pr-3 text-gray-300">
                     {t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'}
                   </td>

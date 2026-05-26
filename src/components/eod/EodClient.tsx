@@ -337,6 +337,86 @@ export default function EodClient({
   const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
 
+  // --- Trade-merge selection state ---
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [merging, setMerging] = useState(false)
+
+  // Trades sharing the same direction within ±60s are flagged as potential
+  // duplicates (e.g., a manual intraday-tagged trade vs an SC-imported fill).
+  // Pure visual hint — does not restrict selection.
+  const nearDuplicateIds = useMemo(() => {
+    const flagged = new Set<string>()
+    const NEAR_WINDOW_MS = 60_000
+    for (let i = 0; i < trades.length; i++) {
+      const a = trades[i]
+      if (!a.entry_time) continue
+      const aMs = new Date(a.entry_time).getTime()
+      for (let j = i + 1; j < trades.length; j++) {
+        const b = trades[j]
+        if (!b.entry_time || b.direction !== a.direction) continue
+        if (Math.abs(new Date(b.entry_time).getTime() - aMs) <= NEAR_WINDOW_MS) {
+          flagged.add(a.id)
+          flagged.add(b.id)
+        }
+      }
+    }
+    return flagged
+  }, [trades])
+
+  const toggleTradeSelection = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const handleMergeSelected = async () => {
+    if (selectedIds.size !== 2) return
+    const [idA, idB] = Array.from(selectedIds)
+    const a = trades.find(t => t.id === idA)
+    const b = trades.find(t => t.id === idB)
+    if (!a || !b) return
+
+    const fmtT = (t: Trade) =>
+      `${t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'} ${t.direction?.toUpperCase() ?? '--'} @ ${t.entry_price ?? '--'} qty ${t.quantity ?? '--'}${t.sierra_trade_id ? ' [SC]' : ' [manual]'}`
+
+    const proceed = confirm(
+      `Merge these two trades into one?\n\n` +
+        `  ${fmtT(a)}\n` +
+        `  ${fmtT(b)}\n\n` +
+        `The SC-imported trade keeps its fill data (time, price, qty, pnl). ` +
+        `The manual trade's tags, notes, screenshot, and stop/TP levels are ` +
+        `carried over. The other row is deleted.\n\n` +
+        `This cannot be undone.`,
+    )
+    if (!proceed) return
+
+    setMerging(true)
+    try {
+      const res = await fetch('/api/trades/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tradeIds: [idA, idB] }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        showToast(`Merge failed: ${data.error ?? 'unknown error'}`, 'error')
+        return
+      }
+      clearSelection()
+      await refreshTrades()
+      showToast('Trades merged', 'success')
+    } catch (e) {
+      showToast(`Merge failed: ${e instanceof Error ? e.message : 'unknown'}`, 'error')
+    } finally {
+      setMerging(false)
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {toast && (
@@ -463,11 +543,41 @@ export default function EodClient({
         </p>
       )}
 
+      {selectedIds.size > 0 && (
+        <div className="bg-blue-950/60 border border-blue-800 rounded-xl px-4 py-2.5 flex items-center justify-between text-sm">
+          <span className="text-blue-200">
+            {selectedIds.size} trade{selectedIds.size === 1 ? '' : 's'} selected
+            {selectedIds.size === 1 && <span className="text-blue-400/70"> — select one more to merge</span>}
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={clearSelection}
+              disabled={merging}
+              className="text-xs text-blue-300 hover:text-white disabled:opacity-50"
+            >
+              Clear selection
+            </button>
+            <button
+              type="button"
+              onClick={handleMergeSelected}
+              disabled={selectedIds.size !== 2 || merging}
+              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+            >
+              {merging ? 'Merging…' : 'Merge selected'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <TradeList
         trades={trades}
         hoveredTradeId={hoveredTradeId}
         onHoverEnter={handleHoverEnter}
         onHoverLeave={handleHoverLeave}
+        selectedIds={selectedIds}
+        onToggleSelect={toggleTradeSelection}
+        nearDuplicateIds={nearDuplicateIds}
       />
 
       {/* EOD Notes */}
