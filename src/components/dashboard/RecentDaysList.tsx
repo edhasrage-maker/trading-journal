@@ -12,7 +12,7 @@ export interface DayRowData {
   eod_pnl: number | null
   day_type: string | null
   trade_count: number
-  main_setups: string[]
+  setups: string[] // all setups used that day, sorted by frequency desc
   process_score: number | null
   overall_grade: number | null
   win_rate: number | null

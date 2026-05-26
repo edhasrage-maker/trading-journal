@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { format, subDays } from 'date-fns'
 import Link from 'next/link'
 import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
-import RecentDaysList from '@/components/dashboard/RecentDaysList'
+import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import { symbolToMultiplier } from '@/lib/sc-importer'
 import type { TradingDay } from '@/lib/supabase/types'
 
@@ -71,9 +71,10 @@ export default async function DashboardPage() {
       const setups = (t.tags_json?.setups ?? []) as string[]
       for (const s of setups) setupCounts.set(s, (setupCounts.get(s) ?? 0) + 1)
     }
-    const mainSetups = Array.from(setupCounts.entries())
+    // Full sorted-by-frequency setups list — drives the filter dropdown and
+    // any future "main setups" display column (just slice the first N).
+    const setupsAll = Array.from(setupCounts.entries())
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
       .map(([s]) => s)
     // Displayed PnL: explicit eod_pnl override wins; else sum of trades; else null
     // (so the row shows "—" for days with no trades and no manual override).
@@ -132,7 +133,7 @@ export default async function DashboardPage() {
       eod_pnl: displayedPnl,
       day_type: d.day_type,
       trade_count: trades.length,
-      main_setups: mainSetups,
+      setups: setupsAll,
       process_score: d.ai_analysis_json?.score ?? null,
       overall_grade: d.eod_ai_analysis_json?.score ?? null,
       win_rate: winRate,
@@ -142,6 +143,15 @@ export default async function DashboardPage() {
       avg_mae_dollars: avgMaeDollars,
     }
   })
+
+  // Global filter dropdown values — distinct setups and day types across the
+  // 30-day window. Empty strings filtered out.
+  const allSetups = Array.from(new Set(recentDays.flatMap(d => d.setups))).sort()
+  const allDayTypes = Array.from(
+    new Set(recentDays.map(d => (d.day_type ?? '').trim()).filter(Boolean)),
+  ).sort()
+  const windowStart = past30Start
+  const windowEnd = today
 
   const totalPnl = recentDays.reduce((sum, d) => sum + (d.eod_pnl ?? 0), 0)
   const winDays = recentDays.filter(d => (d.eod_pnl ?? 0) > 0).length
@@ -196,8 +206,13 @@ export default async function DashboardPage() {
 
       {/* Recent days */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h2 className="font-semibold text-white mb-4">Recent Days</h2>
-        <RecentDaysList initialDays={recentDays} />
+        <RecentDaysSection
+          initialDays={recentDays}
+          allSetups={allSetups}
+          allDayTypes={allDayTypes}
+          windowStart={windowStart}
+          windowEnd={windowEnd}
+        />
       </div>
     </div>
   )
