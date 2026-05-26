@@ -329,14 +329,21 @@ export function parseSierraChartLog(text: string): ParseOutcome {
 }
 
 /**
- * Map a parsed row into a `trades` table insert payload.
- * Returns the payload — the caller attaches `trading_day_id` and runs the upsert
- * with `onConflict: 'sierra_trade_id'`.
+ * Map a parsed row into a `trades` table upsert payload.
  *
- * Note: stop_price and tp1_price are NOT populated by import. Those are the
- * trader's PLANNED levels, set during intraday tagging or via the screenshot
- * reader. The import only fills in EXECUTED fields (entry/exit prices, times,
- * quantity, pnl).
+ * The caller attaches `trading_day_id` (already attached by this function) and
+ * runs the upsert with `onConflict: 'sierra_trade_id'` and `ignoreDuplicates:
+ * false` so existing rows get their SC-owned fields refreshed on re-import
+ * (e.g., when a new column is added and old trades need backfill, or when a
+ * fill correction is written to the log after the fact).
+ *
+ * The payload deliberately includes ONLY fields that the SC log is the
+ * authoritative source for. User-owned fields (tags_json, notes,
+ * screenshot_url, stop_price, tp1_price, *_pin_*) are NEVER included — that
+ * way an UPDATE-on-conflict touches only the SC-owned columns and leaves
+ * everything the user has manually edited (tags, screenshots, plan levels)
+ * intact. `tags_json` has a `default '{}'` at the column level so new INSERTs
+ * still get the empty-object default.
  */
 export function mapRowToTrade(r: ParsedSCRow, tradingDayId: string) {
   return {
@@ -352,6 +359,5 @@ export function mapRowToTrade(r: ParsedSCRow, tradingDayId: string) {
     pnl: r.pnl,
     high_during_position: r.high_during_position,
     low_during_position: r.low_during_position,
-    tags_json: {},
   }
 }
