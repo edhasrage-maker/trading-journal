@@ -22,14 +22,54 @@ export default async function DashboardPage() {
   const todayRecord = todayRecordRaw as TradingDay | null
 
   const past30Start = format(subDays(new Date(), 30), 'yyyy-MM-dd')
-  type DayRow = Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type'>
   const { data: recentDaysRaw } = await supabase
     .from('trading_days')
-    .select('id, date, eod_pnl, day_type')
+    .select('id, date, eod_pnl, day_type, ai_analysis_json, eod_ai_analysis_json')
     .gte('date', past30Start)
     .order('date', { ascending: false })
     .limit(30)
-  const recentDays = (recentDaysRaw ?? []) as DayRow[]
+  const recentDaysBase = (recentDaysRaw ?? []) as Array<Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>>
+
+  // Trade stats per day (count + setup tags) — one batched query, grouped in code.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type TradeSlim = { trading_day_id: string; tags_json: any }
+  const dayIds = recentDaysBase.map(d => d.id)
+  const { data: tradesRaw } = dayIds.length > 0
+    ? await supabase
+        .from('trades')
+        .select('trading_day_id, tags_json')
+        .in('trading_day_id', dayIds)
+    : { data: [] as TradeSlim[] }
+  const tradesByDay = new Map<string, TradeSlim[]>()
+  for (const t of (tradesRaw ?? []) as TradeSlim[]) {
+    const arr = tradesByDay.get(t.trading_day_id) ?? []
+    arr.push(t)
+    tradesByDay.set(t.trading_day_id, arr)
+  }
+
+  const recentDays = recentDaysBase.map(d => {
+    const trades = tradesByDay.get(d.id) ?? []
+    // Top 2 most-frequent setups across the day's trades.
+    const setupCounts = new Map<string, number>()
+    for (const t of trades) {
+      const setups = (t.tags_json?.setups ?? []) as string[]
+      for (const s of setups) setupCounts.set(s, (setupCounts.get(s) ?? 0) + 1)
+    }
+    const mainSetups = Array.from(setupCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([s]) => s)
+    return {
+      id: d.id,
+      date: d.date,
+      eod_pnl: d.eod_pnl,
+      day_type: d.day_type,
+      trade_count: trades.length,
+      main_setups: mainSetups,
+      process_score: d.ai_analysis_json?.score ?? null,
+      overall_grade: d.eod_ai_analysis_json?.score ?? null,
+    }
+  })
 
   const totalPnl = recentDays.reduce((sum, d) => sum + (d.eod_pnl ?? 0), 0)
   const winDays = recentDays.filter(d => (d.eod_pnl ?? 0) > 0).length
