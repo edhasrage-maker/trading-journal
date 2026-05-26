@@ -16,14 +16,19 @@ export interface DayRowData {
   process_score: number | null
   overall_grade: number | null
   win_rate: number | null
+  avg_mfe_pts: number | null
+  avg_mae_pts: number | null
+  avg_mfe_dollars: number | null
+  avg_mae_dollars: number | null
 }
 
 interface Props {
   initialDays: DayRowData[]
 }
 
-type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'win_rate' | 'pnl'
+type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'mfe_mae' | 'win_rate' | 'pnl'
 type SortDirection = 'asc' | 'desc'
+type MfeUnit = 'pts' | 'dollars' | 'atr'
 
 export default function RecentDaysList({ initialDays }: Props) {
   const router = useRouter()
@@ -35,6 +40,7 @@ export default function RecentDaysList({ initialDays }: Props) {
   const [sortColumn, setSortColumn] = useState<SortColumn>('date')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
+  const [mfeUnit, setMfeUnit] = useState<MfeUnit>('pts')
   const mfeInfoRef = useRef<HTMLDivElement>(null)
 
   // Click-outside + Escape dismiss for the MFE/MAE info popover.
@@ -92,6 +98,7 @@ export default function RecentDaysList({ initialDays }: Props) {
         case 'grade': return d.overall_grade
         case 'process': return d.process_score
         case 'trades': return d.trade_count
+        case 'mfe_mae': return d.avg_mfe_pts // unit-agnostic; ordering identical across pts/dollars
         case 'win_rate': return d.win_rate
         case 'pnl': return d.eod_pnl
       }
@@ -232,24 +239,49 @@ export default function RecentDaysList({ initialDays }: Props) {
               <SortableTh label="Grade" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
               <SortableTh label="Process" column="process" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
               <SortableTh label="Trades" column="trades" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
-              <th className="font-normal py-2 pr-3 text-center w-32 relative">
-                <button
-                  type="button"
-                  onClick={() => setMfeInfoOpen(o => !o)}
-                  className={`inline-flex items-center gap-1 transition-colors ${
-                    mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'
-                  }`}
-                >
-                  Avg MFE/MAE
-                  <HelpCircle className="w-3 h-3" />
-                </button>
+              <th className="font-normal py-2 pr-3 text-center w-40 relative">
+                <div className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSort('mfe_mae')}
+                    className={`inline-flex items-center gap-1 hover:text-white transition-colors ${
+                      sortColumn === 'mfe_mae' ? 'text-blue-300' : 'text-gray-500'
+                    }`}
+                  >
+                    Avg MFE/MAE
+                    {sortColumn === 'mfe_mae' ? (
+                      sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <span className="w-3 h-3 opacity-30">▾</span>
+                    )}
+                  </button>
+                  <select
+                    value={mfeUnit}
+                    onChange={e => setMfeUnit(e.target.value as MfeUnit)}
+                    onClick={e => e.stopPropagation()}
+                    className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] rounded px-1 py-0.5 focus:outline-none focus:border-blue-500"
+                    title="Display unit for MFE/MAE"
+                  >
+                    <option value="pts">pts</option>
+                    <option value="dollars">$</option>
+                    <option value="atr" disabled>ATR (after chart migration)</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setMfeInfoOpen(o => !o)}
+                    className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                    title="What is MFE/MAE?"
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                  </button>
+                </div>
                 {mfeInfoOpen && (
                   <div
                     ref={mfeInfoRef}
                     className="absolute z-50 top-full mt-2 right-0 w-80 bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
                   >
                     <div className="flex items-start justify-between mb-2">
-                      <p className="font-semibold text-white">Why is this column empty?</p>
+                      <p className="font-semibold text-white">Avg MFE / MAE</p>
                       <button
                         type="button"
                         onClick={() => setMfeInfoOpen(false)}
@@ -260,13 +292,18 @@ export default function RecentDaysList({ initialDays }: Props) {
                       </button>
                     </div>
                     <p className="mb-2">
-                      Average Maximum Favorable Excursion / Maximum Adverse Excursion across the day&apos;s trades.
-                      Awaiting data layer:
+                      Average per-trade <strong className="text-green-300">M</strong>aximum <strong className="text-green-300">F</strong>avorable / <strong className="text-red-300">M</strong>aximum <strong className="text-red-300">A</strong>dverse <strong>E</strong>xcursion across the day&apos;s trades. Sourced tick-precise from Sierra Chart&apos;s <span className="font-mono">HighDuringPosition</span> / <span className="font-mono">LowDuringPosition</span> on closing fills.
                     </p>
+                    <p className="mb-2">Per-trade calc, depending on direction:</p>
+                    <ul className="list-disc pl-4 space-y-1 mb-2">
+                      <li><strong>Long</strong>: MFE = high − entry, MAE = entry − low</li>
+                      <li><strong>Short</strong>: MFE = entry − low, MAE = high − entry</li>
+                    </ul>
+                    <p className="mb-2">Unit options:</p>
                     <ul className="list-disc pl-4 space-y-1">
-                      <li>SC importer needs to capture <span className="font-mono">HighDuringPosition</span> / <span className="font-mono">LowDuringPosition</span> per trade</li>
-                      <li>Points + Dollars units will land first</li>
-                      <li>ATR-10 Wilders option enabled after chart migration Phase 1 (OHLCV bars)</li>
+                      <li><strong>pts</strong>: raw price points</li>
+                      <li><strong>$</strong>: points × per-symbol contract multiplier × trade quantity</li>
+                      <li><strong>ATR</strong>: 1× ATR-10 Wilders units. Disabled — requires OHLCV bars from the chart migration.</li>
                     </ul>
                     <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
                   </div>
@@ -284,6 +321,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                 day={day}
                 selected={selectedIds.has(day.id)}
                 deleting={deletingDate === day.date || (bulkDeleting && selectedIds.has(day.id))}
+                mfeUnit={mfeUnit}
                 onToggleSelect={() => toggleSelect(day.id)}
                 onDelete={() => handleSingleDelete(day.date, day.eod_pnl != null)}
               />
@@ -336,12 +374,14 @@ function DayRowItem({
   day,
   selected,
   deleting,
+  mfeUnit,
   onToggleSelect,
   onDelete,
 }: {
   day: DayRowData
   selected: boolean
   deleting: boolean
+  mfeUnit: MfeUnit
   onToggleSelect: () => void
   onDelete: () => void
 }) {
@@ -387,7 +427,9 @@ function DayRowItem({
       <td className={`py-2 pr-3 text-center text-gray-300 font-mono ${cellBg}`}>
         {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
       </td>
-      <td className={`py-2 pr-3 text-center text-gray-700 font-mono ${cellBg}`}>—</td>
+      <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
+        <MfeMaeCell day={day} unit={mfeUnit} />
+      </td>
       <td className={`py-2 pr-3 text-center font-mono ${cellBg}`}>
         {day.win_rate === null
           ? <span className="text-gray-700">—</span>
@@ -409,6 +451,32 @@ function DayRowItem({
         </button>
       </td>
     </tr>
+  )
+}
+
+function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
+  // ATR option is disabled at the dropdown level but guard here too in case
+  // it ever sneaks through.
+  if (unit === 'atr') {
+    return <span className="text-gray-700">—</span>
+  }
+  const mfe = unit === 'dollars' ? day.avg_mfe_dollars : day.avg_mfe_pts
+  const mae = unit === 'dollars' ? day.avg_mae_dollars : day.avg_mae_pts
+  if (mfe == null || mae == null) {
+    return <span className="text-gray-700">—</span>
+  }
+  // Display: MFE in green (favorable), MAE as a negative magnitude in red.
+  // Dollars get whole-number rounding; points get one decimal for tick-level
+  // precision.
+  const fmt = (v: number) => unit === 'dollars'
+    ? `$${Math.round(v).toLocaleString()}`
+    : v.toFixed(1)
+  return (
+    <span>
+      <span className="text-green-400">+{fmt(mfe)}</span>
+      <span className="text-gray-600"> / </span>
+      <span className="text-red-400">-{fmt(mae)}</span>
+    </span>
   )
 }
 

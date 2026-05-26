@@ -3,6 +3,7 @@ import { format, subDays } from 'date-fns'
 import Link from 'next/link'
 import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
 import RecentDaysList from '@/components/dashboard/RecentDaysList'
+import { symbolToMultiplier } from '@/lib/sc-importer'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // Disable static generation so the date is recomputed on every request
@@ -30,17 +31,29 @@ export default async function DashboardPage() {
     .limit(30)
   const recentDaysBase = (recentDaysRaw ?? []) as Array<Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>>
 
-  // Trade stats per day (count + setup tags + summed pnl) — one batched query,
-  // grouped in code. PnL is needed so the dashboard can fall back to
-  // sum(trades.pnl) when the user hasn't saved an explicit eod_pnl override yet
-  // (matches the EOD page's "Computed PnL (sum of trades)" semantics).
+  // Trade stats per day (count + setup tags + summed pnl + MFE/MAE inputs) —
+  // one batched query, grouped in code. PnL is needed so the dashboard can
+  // fall back to sum(trades.pnl) when the user hasn't saved an explicit
+  // eod_pnl override yet. high_during_position / low_during_position +
+  // direction + entry_price + symbol + quantity feed the per-day avg
+  // MFE / MAE computed below.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type TradeSlim = { trading_day_id: string; tags_json: any; pnl: number | null }
+  type TradeSlim = {
+    trading_day_id: string
+    tags_json: any
+    pnl: number | null
+    direction: 'long' | 'short' | null
+    entry_price: number | null
+    high_during_position: number | null
+    low_during_position: number | null
+    quantity: number | null
+    symbol: string | null
+  }
   const dayIds = recentDaysBase.map(d => d.id)
   const { data: tradesRaw } = dayIds.length > 0
     ? await supabase
         .from('trades')
-        .select('trading_day_id, tags_json, pnl')
+        .select('trading_day_id, tags_json, pnl, direction, entry_price, high_during_position, low_during_position, quantity, symbol')
         .in('trading_day_id', dayIds)
     : { data: [] as TradeSlim[] }
   const tradesByDay = new Map<string, TradeSlim[]>()
@@ -75,6 +88,44 @@ export default async function DashboardPage() {
     const winRate = tradesWithPnl.length > 0
       ? (winsOnDay / tradesWithPnl.length) * 100
       : null
+
+    // Avg MFE / MAE per trade for the day. Per-trade definitions:
+    //   long:  MFE = high - entry,   MAE = entry - low
+    //   short: MFE = entry - low,    MAE = high - entry
+    // Both stored as positive magnitudes — display layer applies sign.
+    const mfeMaeTrades = trades.filter(t =>
+      t.entry_price != null &&
+      t.high_during_position != null &&
+      t.low_during_position != null &&
+      t.direction != null
+    )
+    let avgMfePts: number | null = null
+    let avgMaePts: number | null = null
+    let avgMfeDollars: number | null = null
+    let avgMaeDollars: number | null = null
+    if (mfeMaeTrades.length > 0) {
+      let mfeSum = 0, maeSum = 0, mfeDollarSum = 0, maeDollarSum = 0
+      for (const t of mfeMaeTrades) {
+        const isLong = t.direction === 'long'
+        const mfe = isLong
+          ? (t.high_during_position! - t.entry_price!)
+          : (t.entry_price! - t.low_during_position!)
+        const mae = isLong
+          ? (t.entry_price! - t.low_during_position!)
+          : (t.high_during_position! - t.entry_price!)
+        mfeSum += mfe
+        maeSum += mae
+        const mult = symbolToMultiplier(t.symbol ?? '')
+        const qty = t.quantity ?? 1
+        mfeDollarSum += mfe * mult * qty
+        maeDollarSum += mae * mult * qty
+      }
+      avgMfePts = mfeSum / mfeMaeTrades.length
+      avgMaePts = maeSum / mfeMaeTrades.length
+      avgMfeDollars = mfeDollarSum / mfeMaeTrades.length
+      avgMaeDollars = maeDollarSum / mfeMaeTrades.length
+    }
+
     return {
       id: d.id,
       date: d.date,
@@ -85,6 +136,10 @@ export default async function DashboardPage() {
       process_score: d.ai_analysis_json?.score ?? null,
       overall_grade: d.eod_ai_analysis_json?.score ?? null,
       win_rate: winRate,
+      avg_mfe_pts: avgMfePts,
+      avg_mae_pts: avgMaePts,
+      avg_mfe_dollars: avgMfeDollars,
+      avg_mae_dollars: avgMaeDollars,
     }
   })
 

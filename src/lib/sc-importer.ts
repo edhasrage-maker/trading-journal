@@ -26,6 +26,13 @@ export interface ParsedSCRow {
   direction: 'long' | 'short'
   quantity: number                // peak position size during the trade
   pnl: number | null              // dollar P&L using contract multiplier
+  // Tick-level extremes during the position. Sierra writes these on closing
+  // fills (HighDuringPosition / LowDuringPosition columns). For MFE/MAE, the
+  // display layer interprets these against the direction:
+  //   long:  MFE = high - entry,    MAE = entry - low
+  //   short: MFE = entry - low,     MAE = high - entry
+  high_during_position: number | null
+  low_during_position: number | null
 }
 
 export interface ParseOutcome {
@@ -79,7 +86,7 @@ function symbolRoot(symbol: string): string {
   return noExchange.replace(/[A-Z]\d{1,2}$/, '')
 }
 
-function symbolToMultiplier(symbol: string): number {
+export function symbolToMultiplier(symbol: string): number {
   return MULTIPLIERS[symbolRoot(symbol)] ?? 1
 }
 
@@ -113,6 +120,8 @@ interface RawRow {
   PositionQuantity?: string
   OrderStatus?: string
   OrderType?: string
+  HighDuringPosition?: string
+  LowDuringPosition?: string
 }
 
 interface Fill {
@@ -124,6 +133,12 @@ interface Fill {
   fillPrice: number
   internalOrderID: string
   rowIndex: number
+  // Tick-level extremes Sierra recorded while the position was open. These
+  // appear only on CLOSING fills (the open period precedes the close).
+  // Null on opening fills and on closing fills where Sierra didn't write a
+  // value (e.g., empty-string columns on some row variants).
+  highDuringPosition: number | null
+  lowDuringPosition: number | null
 }
 
 interface OpenGroup {
@@ -190,6 +205,16 @@ export function parseSierraChartLog(text: string): ParseOutcome {
       continue
     }
 
+    // High/Low During Position — Sierra writes these on closing fills with
+    // tick-level precision over the open period. Treat blanks and zero as
+    // "not written" (opening fills typically have blank columns here).
+    const hdpRaw = row.HighDuringPosition?.trim() ?? ''
+    const ldpRaw = row.LowDuringPosition?.trim() ?? ''
+    const hdpNum = Number(hdpRaw)
+    const ldpNum = Number(ldpRaw)
+    const highDuringPosition = hdpRaw !== '' && Number.isFinite(hdpNum) && hdpNum > 0 ? hdpNum : null
+    const lowDuringPosition = ldpRaw !== '' && Number.isFinite(ldpNum) && ldpNum > 0 ? ldpNum : null
+
     fills.push({
       ts,
       symbol: row.Symbol ?? '',
@@ -199,6 +224,8 @@ export function parseSierraChartLog(text: string): ParseOutcome {
       fillPrice,
       internalOrderID: row.InternalOrderID ?? '',
       rowIndex: rowNumber,
+      highDuringPosition,
+      lowDuringPosition,
     })
   }
 
@@ -270,6 +297,15 @@ export function parseSierraChartLog(text: string): ParseOutcome {
     const multiplier = symbolToMultiplier(g.symbol)
     const pnl = points * matchedQty * multiplier
 
+    // Aggregate High/Low across the position's lifetime. Sierra writes these
+    // on closing fills; for a multi-leg exit, each close records the extreme
+    // up to that fill. Max of highs / min of lows gives the most extreme
+    // values seen, which is what MFE/MAE should reflect.
+    const allHighs = g.fills.map(f => f.highDuringPosition).filter((v): v is number => v != null)
+    const allLows = g.fills.map(f => f.lowDuringPosition).filter((v): v is number => v != null)
+    const high_during_position = allHighs.length > 0 ? Math.max(...allHighs) : null
+    const low_during_position = allLows.length > 0 ? Math.min(...allLows) : null
+
     rows.push({
       sierra_trade_id: `${g.account}:${g.firstOpenIOID}`,
       account: g.account,
@@ -281,6 +317,8 @@ export function parseSierraChartLog(text: string): ParseOutcome {
       direction: g.direction,
       quantity: g.peak,
       pnl: round2(pnl),
+      high_during_position: high_during_position != null ? round2(high_during_position) : null,
+      low_during_position: low_during_position != null ? round2(low_during_position) : null,
     })
   }
 
@@ -304,6 +342,7 @@ export function mapRowToTrade(r: ParsedSCRow, tradingDayId: string) {
   return {
     trading_day_id: tradingDayId,
     sierra_trade_id: r.sierra_trade_id,
+    symbol: r.symbol,
     entry_time: r.entry_time_iso,
     entry_price: r.entry_price,
     exit_time: r.exit_time_iso ?? null,
@@ -311,6 +350,8 @@ export function mapRowToTrade(r: ParsedSCRow, tradingDayId: string) {
     direction: r.direction,
     quantity: r.quantity,
     pnl: r.pnl,
+    high_during_position: r.high_during_position,
+    low_during_position: r.low_during_position,
     tags_json: {},
   }
 }
