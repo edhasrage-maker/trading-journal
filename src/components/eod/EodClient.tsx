@@ -3,12 +3,13 @@
 import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Crosshair } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
 import CalibrationOverlay, { type CalibStep, type CalibDraft } from './CalibrationOverlay'
 import TradeArrowOverlay from './TradeArrowOverlay'
+import LiveChart from './LiveChart'
 import TradeList from './TradeList'
 import HoverPopup from './HoverPopup'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
@@ -55,6 +56,27 @@ export default function EodClient({
   })
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  // Chart view mode: 'screenshot' = legacy ChartScreenshotPanel +
+  // calibration + TradeArrowOverlay; 'live' = native lightweight-charts
+  // rendering from imported OHLCV bars. Default to screenshot for backward
+  // compat; user opts into Live by clicking the toggle. State is per-mount
+  // (resets on navigation between days) — fine for now.
+  const [chartView, setChartView] = useState<'screenshot' | 'live'>('screenshot')
+
+  // Most-common trade symbol on this day — feeds LiveChart's bars query.
+  // Days with no trades return null; LiveChart shows a "no symbol" message.
+  const chartSymbol = useMemo<string | null>(() => {
+    const counts = new Map<string, number>()
+    for (const t of initialTrades) {
+      if (t.symbol) counts.set(t.symbol, (counts.get(t.symbol) ?? 0) + 1)
+    }
+    let best: string | null = null
+    let bestCount = 0
+    for (const [sym, c] of counts) {
+      if (c > bestCount) { best = sym; bestCount = c }
+    }
+    return best
+  }, [initialTrades])
 
   const handleHoverEnter = (tradeId: string, e: React.MouseEvent) => {
     setHoveredTradeId(tradeId)
@@ -482,7 +504,40 @@ export default function EodClient({
         </div>
       </div>
 
-      {/* Chart screenshot + calibration overlay (arrows in next checkpoint) */}
+      {/* Chart area — toggle between legacy screenshot+calibration and the
+          new live-bars rendering. Screenshot path will be removed in Phase 5
+          of the chart migration once Live has proven itself across the
+          intraday + dashboard surfaces too. */}
+      <div className="flex justify-end -mb-2">
+        <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
+          <button
+            type="button"
+            onClick={() => setChartView('screenshot')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+              chartView === 'screenshot' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+            }`}
+          >
+            <ImageIcon className="w-3.5 h-3.5" /> Screenshot
+          </button>
+          <button
+            type="button"
+            onClick={() => setChartView('live')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+              chartView === 'live' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+            }`}
+          >
+            <CandlestickChart className="w-3.5 h-3.5" /> Live chart
+          </button>
+        </div>
+      </div>
+
+      {chartView === 'live' ? (
+        <LiveChart
+          date={date}
+          symbol={chartSymbol}
+          trades={trades}
+        />
+      ) : (
       <ChartScreenshotPanel
         ref={imageContainerRef}
         chartUrl={chartUrl}
@@ -537,7 +592,8 @@ export default function EodClient({
           />
         )}
       </ChartScreenshotPanel>
-      {day?.last_sc_import_at && (
+      )}
+      {chartView === 'screenshot' && day?.last_sc_import_at && (
         <p className="text-xs text-gray-500 -mt-3 ml-1">
           Last import: {format(new Date(day.last_sc_import_at), 'MMM d, HH:mm')}
         </p>

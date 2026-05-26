@@ -74,6 +74,9 @@ export interface Database {
           tp1_pin_x: number | null
           tp1_pin_y: number | null
           sierra_trade_id: string | null
+          symbol: string | null
+          high_during_position: number | null
+          low_during_position: number | null
           tags_json: TradeTags
           notes: string | null
           exit_time: string | null
