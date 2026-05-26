@@ -15,13 +15,14 @@ export interface DayRowData {
   main_setups: string[]
   process_score: number | null
   overall_grade: number | null
+  win_rate: number | null
 }
 
 interface Props {
   initialDays: DayRowData[]
 }
 
-type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'pnl'
+type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'win_rate' | 'pnl'
 type SortDirection = 'asc' | 'desc'
 
 export default function RecentDaysList({ initialDays }: Props) {
@@ -91,6 +92,7 @@ export default function RecentDaysList({ initialDays }: Props) {
         case 'grade': return d.overall_grade
         case 'process': return d.process_score
         case 'trades': return d.trade_count
+        case 'win_rate': return d.win_rate
         case 'pnl': return d.eod_pnl
       }
     }
@@ -244,7 +246,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                 {mfeInfoOpen && (
                   <div
                     ref={mfeInfoRef}
-                    className="absolute z-50 top-full mt-2 left-1/2 -translate-x-1/2 w-80 bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                    className="absolute z-50 top-full mt-2 right-0 w-80 bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
                   >
                     <div className="flex items-start justify-between mb-2">
                       <p className="font-semibold text-white">Why is this column empty?</p>
@@ -270,6 +272,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                   </div>
                 )}
               </th>
+              <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
               <th className="w-10" />
             </tr>
@@ -385,6 +388,11 @@ function DayRowItem({
         {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
       </td>
       <td className={`py-2 pr-3 text-center text-gray-700 font-mono ${cellBg}`}>—</td>
+      <td className={`py-2 pr-3 text-center font-mono ${cellBg}`}>
+        {day.win_rate === null
+          ? <span className="text-gray-700">—</span>
+          : <span className={day.win_rate >= 50 ? 'text-green-400' : 'text-gray-400'}>{day.win_rate.toFixed(0)}%</span>}
+      </td>
       <td className={`py-2 pr-3 text-right font-mono font-medium ${pnlColor} ${cellBg}`}>
         {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${pnl.toLocaleString()}`}
       </td>

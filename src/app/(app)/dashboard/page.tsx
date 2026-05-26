@@ -68,6 +68,13 @@ export default async function DashboardPage() {
     const displayedPnl = d.eod_pnl != null
       ? d.eod_pnl
       : trades.length > 0 ? summedPnl : null
+    // Win rate: wins / total trades. Null when the day has no trades —
+    // dividing by zero would be misleading, and "0%" reads as "all losses".
+    const tradesWithPnl = trades.filter(t => t.pnl != null)
+    const winsOnDay = tradesWithPnl.filter(t => (t.pnl ?? 0) > 0).length
+    const winRate = tradesWithPnl.length > 0
+      ? (winsOnDay / tradesWithPnl.length) * 100
+      : null
     return {
       id: d.id,
       date: d.date,
@@ -77,6 +84,7 @@ export default async function DashboardPage() {
       main_setups: mainSetups,
       process_score: d.ai_analysis_json?.score ?? null,
       overall_grade: d.eod_ai_analysis_json?.score ?? null,
+      win_rate: winRate,
     }
   })
 
