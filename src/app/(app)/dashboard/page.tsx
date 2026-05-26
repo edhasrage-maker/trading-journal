@@ -30,14 +30,17 @@ export default async function DashboardPage() {
     .limit(30)
   const recentDaysBase = (recentDaysRaw ?? []) as Array<Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>>
 
-  // Trade stats per day (count + setup tags) — one batched query, grouped in code.
+  // Trade stats per day (count + setup tags + summed pnl) — one batched query,
+  // grouped in code. PnL is needed so the dashboard can fall back to
+  // sum(trades.pnl) when the user hasn't saved an explicit eod_pnl override yet
+  // (matches the EOD page's "Computed PnL (sum of trades)" semantics).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type TradeSlim = { trading_day_id: string; tags_json: any }
+  type TradeSlim = { trading_day_id: string; tags_json: any; pnl: number | null }
   const dayIds = recentDaysBase.map(d => d.id)
   const { data: tradesRaw } = dayIds.length > 0
     ? await supabase
         .from('trades')
-        .select('trading_day_id, tags_json')
+        .select('trading_day_id, tags_json, pnl')
         .in('trading_day_id', dayIds)
     : { data: [] as TradeSlim[] }
   const tradesByDay = new Map<string, TradeSlim[]>()
@@ -59,10 +62,16 @@ export default async function DashboardPage() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 2)
       .map(([s]) => s)
+    // Displayed PnL: explicit eod_pnl override wins; else sum of trades; else null
+    // (so the row shows "—" for days with no trades and no manual override).
+    const summedPnl = trades.reduce((acc, t) => acc + (t.pnl ?? 0), 0)
+    const displayedPnl = d.eod_pnl != null
+      ? d.eod_pnl
+      : trades.length > 0 ? summedPnl : null
     return {
       id: d.id,
       date: d.date,
-      eod_pnl: d.eod_pnl,
+      eod_pnl: displayedPnl,
       day_type: d.day_type,
       trade_count: trades.length,
       main_setups: mainSetups,
