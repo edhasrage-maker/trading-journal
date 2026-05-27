@@ -359,9 +359,11 @@ export default function EodClient({
   const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
 
-  // --- Trade-merge selection state ---
+  // --- Trade-selection state (shared by merge + bulk-delete actions) ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [merging, setMerging] = useState(false)
+  const [deletingTradeId, setDeletingTradeId] = useState<string | null>(null)
+  const [bulkDeletingTrades, setBulkDeletingTrades] = useState(false)
 
   // Trades sharing the same direction within ±60s are flagged as potential
   // duplicates (e.g., a manual intraday-tagged trade vs an SC-imported fill).
@@ -436,6 +438,82 @@ export default function EodClient({
       showToast(`Merge failed: ${e instanceof Error ? e.message : 'unknown'}`, 'error')
     } finally {
       setMerging(false)
+    }
+  }
+
+  const handleDeleteTrade = async (id: string) => {
+    const t = trades.find(tr => tr.id === id)
+    if (!t) return
+    const desc = `${t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'} ${t.direction?.toUpperCase() ?? '--'} @ ${t.entry_price ?? '--'}`
+    if (!confirm(`Delete trade ${desc}?\n\nThis permanently removes the row${t.sierra_trade_id ? ' (will re-appear on next SC log re-import if the fill is still in the log)' : ''}. Cannot be undone.`)) return
+
+    setDeletingTradeId(id)
+    try {
+      const res = await fetch(`/api/trades/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showToast(`Delete failed: ${data.error ?? res.statusText}`, 'error')
+        return
+      }
+      // Also clean up the screenshot blob if this trade has one
+      if (t.screenshot_url) {
+        await deleteBlob(t.screenshot_url).catch(() => { /* non-fatal */ })
+      }
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      await refreshTrades()
+      showToast('Trade deleted', 'success')
+    } catch (e) {
+      showToast(`Delete failed: ${e instanceof Error ? e.message : 'unknown'}`, 'error')
+    } finally {
+      setDeletingTradeId(null)
+    }
+  }
+
+  const handleBulkDeleteTrades = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    const selected = trades.filter(t => selectedIds.has(t.id))
+    const proceed = confirm(
+      `Delete ${ids.length} trade${ids.length === 1 ? '' : 's'}?\n\n` +
+        selected.map(t => `  • ${t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'} ${t.direction?.toUpperCase() ?? '--'} @ ${t.entry_price ?? '--'}${t.sierra_trade_id ? ' [SC]' : ' [manual]'}`).join('\n') +
+        `\n\nThis permanently removes the rows${selected.some(t => t.sierra_trade_id) ? ' (SC-imported ones will re-appear on next log re-import)' : ''}. Cannot be undone.`,
+    )
+    if (!proceed) return
+
+    setBulkDeletingTrades(true)
+    const succeeded: string[] = []
+    const failed: string[] = []
+    const blobsToCleanup: string[] = []
+    for (const t of selected) {
+      try {
+        const res = await fetch(`/api/trades/${t.id}`, { method: 'DELETE' })
+        if (res.ok) {
+          succeeded.push(t.id)
+          if (t.screenshot_url) blobsToCleanup.push(t.screenshot_url)
+        } else {
+          failed.push(t.id)
+        }
+      } catch {
+        failed.push(t.id)
+      }
+    }
+    // Best-effort blob cleanup for deleted trades' screenshots
+    for (const url of blobsToCleanup) {
+      void deleteBlob(url).catch(() => { /* non-fatal */ })
+    }
+    clearSelection()
+    setBulkDeletingTrades(false)
+    await refreshTrades()
+    if (failed.length === 0) {
+      showToast(`Deleted ${succeeded.length} trade${succeeded.length === 1 ? '' : 's'}`, 'success')
+    } else if (succeeded.length === 0) {
+      showToast(`All ${failed.length} deletes failed`, 'error')
+    } else {
+      showToast(`Deleted ${succeeded.length}, ${failed.length} failed`, 'error')
     }
   }
 
@@ -616,8 +694,16 @@ export default function EodClient({
             </button>
             <button
               type="button"
+              onClick={handleBulkDeleteTrades}
+              disabled={bulkDeletingTrades || merging}
+              className="bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+            >
+              {bulkDeletingTrades ? 'Deleting…' : `Delete selected`}
+            </button>
+            <button
+              type="button"
               onClick={handleMergeSelected}
-              disabled={selectedIds.size !== 2 || merging}
+              disabled={selectedIds.size !== 2 || merging || bulkDeletingTrades}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
             >
               {merging ? 'Merging…' : 'Merge selected'}
@@ -634,6 +720,8 @@ export default function EodClient({
         selectedIds={selectedIds}
         onToggleSelect={toggleTradeSelection}
         nearDuplicateIds={nearDuplicateIds}
+        onDelete={handleDeleteTrade}
+        deletingId={deletingTradeId}
       />
 
       {/* EOD Notes */}

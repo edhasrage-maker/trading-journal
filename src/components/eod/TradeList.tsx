@@ -1,7 +1,7 @@
 'use client'
 
 import { format } from 'date-fns'
-import { Check } from 'lucide-react'
+import { Check, Trash2, Loader2 } from 'lucide-react'
 import type { Trade } from '@/lib/supabase/types'
 
 interface Props {
@@ -12,6 +12,8 @@ interface Props {
   selectedIds: Set<string>
   onToggleSelect: (tradeId: string) => void
   nearDuplicateIds: Set<string>
+  onDelete: (tradeId: string) => void
+  deletingId: string | null
 }
 
 export default function TradeList({
@@ -22,6 +24,8 @@ export default function TradeList({
   selectedIds,
   onToggleSelect,
   nearDuplicateIds,
+  onDelete,
+  deletingId,
 }: Props) {
   if (trades.length === 0) {
     return (
@@ -48,6 +52,7 @@ export default function TradeList({
               <th className="text-left font-normal pb-2 pr-3">Setup</th>
               <th className="text-left font-normal pb-2 pr-3">Mistakes</th>
               <th className="text-right font-normal pb-2">PnL</th>
+              <th className="w-8" />
             </tr>
           </thead>
           <tbody>
@@ -63,7 +68,7 @@ export default function TradeList({
                   key={t.id}
                   onMouseEnter={e => onHoverEnter(t.id, e)}
                   onMouseLeave={onHoverLeave}
-                  className={`border-b border-gray-800 transition-colors cursor-default ${
+                  className={`group border-b border-gray-800 transition-colors cursor-default ${
                     isSelected
                       ? 'bg-blue-900/30'
                       : isHovered
@@ -148,6 +153,19 @@ export default function TradeList({
                   >
                     {pnl >= 0 ? '+' : ''}
                     {pnl.toFixed(2)}
+                  </td>
+                  <td className="py-1.5 pl-2 text-right">
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); onDelete(t.id) }}
+                      disabled={deletingId === t.id}
+                      className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30 disabled:cursor-wait"
+                      title="Delete this trade"
+                    >
+                      {deletingId === t.id
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
                   </td>
                 </tr>
               )
