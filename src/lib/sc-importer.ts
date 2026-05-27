@@ -33,6 +33,11 @@ export interface ParsedSCRow {
   //   short: MFE = entry - low,     MAE = high - entry
   high_during_position: number | null
   low_during_position: number | null
+  // Each individual closing fill, in chronological order. Multi-leg exits
+  // (scale-outs) show up as multiple entries; single-exit trades have one
+  // entry here too. The aggregated weighted-average lives in entry/exit_price
+  // for PnL math and list-view display.
+  exits: Array<{ time: string; price: number; qty: number }>
 }
 
 export interface ParseOutcome {
@@ -306,6 +311,17 @@ export function parseSierraChartLog(text: string): ParseOutcome {
     const high_during_position = allHighs.length > 0 ? Math.max(...allHighs) : null
     const low_during_position = allLows.length > 0 ? Math.min(...allLows) : null
 
+    // Each individual closing fill becomes one element in the exits array.
+    // Sorted ascending by time so chart renderers can iterate in order.
+    const exits = closes
+      .slice()
+      .sort((a, b) => a.ts.getTime() - b.ts.getTime())
+      .map(c => ({
+        time: c.ts.toISOString(),
+        price: round2(c.fillPrice),
+        qty: c.qty,
+      }))
+
     rows.push({
       sierra_trade_id: `${g.account}:${g.firstOpenIOID}`,
       account: g.account,
@@ -319,6 +335,7 @@ export function parseSierraChartLog(text: string): ParseOutcome {
       pnl: round2(pnl),
       high_during_position: high_during_position != null ? round2(high_during_position) : null,
       low_during_position: low_during_position != null ? round2(low_during_position) : null,
+      exits,
     })
   }
 
@@ -359,5 +376,6 @@ export function mapRowToTrade(r: ParsedSCRow, tradingDayId: string) {
     pnl: r.pnl,
     high_during_position: r.high_during_position,
     low_during_position: r.low_during_position,
+    exits_json: r.exits,
   }
 }

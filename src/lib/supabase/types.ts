@@ -77,6 +77,7 @@ export interface Database {
           symbol: string | null
           high_during_position: number | null
           low_during_position: number | null
+          exits_json: TradeExit[] | null
           tags_json: TradeTags
           notes: string | null
           exit_time: string | null
@@ -215,6 +216,18 @@ export interface StatPerformanceBucket {
   label: string
   win_rate: number
   avg_r: number
+}
+
+/**
+ * One closing fill in a multi-leg exit. SC log writes a separate fill row
+ * per scale-out; the importer collects them all into `trades.exits_json` so
+ * charts can render each partial as its own marker (vs the aggregated
+ * weighted-average in `exit_time` / `exit_price`).
+ */
+export interface TradeExit {
+  time: string  // ISO-8601
+  price: number
+  qty: number
 }
 
 export interface TradeTags {

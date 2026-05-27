@@ -197,10 +197,10 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
         .filter((p): p is { time: Time; value: number } => p !== null),
     )
 
-    // Trade markers — entries are direction-shaped arrows, exits are circles
-    // on the opposite side. Both color-graded by PnL so the eye can pair
-    // them up at a glance. Sorted by time because lightweight-charts requires
-    // markers in ascending order.
+    // Trade markers — entries are direction-shaped arrows; exits are one
+    // circle PER partial-fill (from exits_json) so multi-leg scale-outs
+    // render distinctly. Falls back to the aggregated exit_time/exit_price
+    // single marker for old trades that pre-date exits_json.
     type Marker = {
       time: Time
       position: 'belowBar' | 'aboveBar'
@@ -212,24 +212,36 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
     for (const t of trades) {
       if (!t.entry_time || !t.direction) continue
       const isLong = t.direction === 'long'
+      const entryPrice = t.entry_price ?? null
       const pnl = t.pnl ?? 0
-      const color = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#6b7280'
-      // Entry marker
+      const entryColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#6b7280'
+      // Entry
       markers.push({
         time: (new Date(t.entry_time).getTime() / 1000) as Time,
         position: isLong ? 'belowBar' : 'aboveBar',
-        color,
+        color: entryColor,
         shape: isLong ? 'arrowUp' : 'arrowDown',
-        text: `${t.direction.toUpperCase()} ${t.quantity ?? ''}@${t.entry_price ?? '?'}`,
+        text: `${t.direction.toUpperCase()} ${t.quantity ?? ''}@${entryPrice ?? '?'}`,
       })
-      // Exit marker (hollow circle on opposite side of bar)
-      if (t.exit_time && t.exit_price != null) {
+      // Exits: prefer per-fill array, fall back to aggregated single exit
+      const exitList: Array<{ time: string; price: number; qty: number }> =
+        Array.isArray(t.exits_json) && t.exits_json.length > 0
+          ? t.exits_json
+          : t.exit_time && t.exit_price != null
+            ? [{ time: t.exit_time, price: t.exit_price, qty: t.quantity ?? 0 }]
+            : []
+      for (const e of exitList) {
+        // Per-exit color based on whether THIS partial was favorable
+        const favorable = entryPrice != null
+          ? (isLong ? e.price > entryPrice : e.price < entryPrice)
+          : true
+        const exitColor = favorable ? '#22c55e' : '#ef4444'
         markers.push({
-          time: (new Date(t.exit_time).getTime() / 1000) as Time,
+          time: (new Date(e.time).getTime() / 1000) as Time,
           position: isLong ? 'aboveBar' : 'belowBar',
-          color,
+          color: exitColor,
           shape: 'circle',
-          text: `Exit @ ${t.exit_price}${pnl !== 0 ? ` (${pnl >= 0 ? '+' : ''}${pnl.toFixed(0)})` : ''}`,
+          text: `Exit ${e.qty}@${e.price}`,
         })
       }
     }

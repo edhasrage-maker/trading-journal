@@ -66,6 +66,20 @@ export function tradeExitToPixelPct(
   return { x_pct: x, y_pct: y }
 }
 
+/**
+ * Generic time+price → pixel mapper. Used by the multi-leg exits renderer
+ * to position each individual partial-fill marker.
+ */
+export function pointToPixelPct(
+  point: { time: string; price: number },
+  calibration: ChartCalibration,
+): { x_pct: number; y_pct: number } | null {
+  const x = timeToXPct(point.time, calibration)
+  const y = priceToYPct(point.price, calibration)
+  if (x == null || y == null) return null
+  return { x_pct: x, y_pct: y }
+}
+
 /** Parse an "HH:MM" string into minutes since midnight. */
 function parseHHMM(s: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim())

@@ -89,6 +89,7 @@ create table if not exists trades (
   symbol text, -- e.g. "MNQM6.CME"; used for per-contract multiplier lookup when displaying MFE/MAE in dollars
   high_during_position numeric(10,2), -- tick-precise high price reached while position was open (Sierra's HighDuringPosition)
   low_during_position numeric(10,2),  -- tick-precise low price reached while position was open (Sierra's LowDuringPosition)
+  exits_json jsonb, -- array of partial exits: [{ time: ISO-8601, price: number, qty: number }, ...]; null/empty -> fall back to single exit_time/exit_price avg
   tags_json jsonb default '{}',
   -- tags_json shape:
   -- {
