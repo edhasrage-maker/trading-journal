@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import { tradeToPixelPct } from '@/lib/eod-transforms'
+import { tradeToPixelPct, tradeExitToPixelPct } from '@/lib/eod-transforms'
 import type { ChartCalibration, Trade } from '@/lib/supabase/types'
 
 interface Props {
@@ -13,13 +13,17 @@ interface Props {
   onClick?: (tradeId: string) => void
 }
 
-interface PlacedArrow {
+interface PlacedTrade {
   trade: Trade
-  x_pct: number
-  y_pct: number
+  entry: { x_pct: number; y_pct: number }
+  exit: { x_pct: number; y_pct: number } | null
 }
 
 const ARROW_SIZE = 16
+const EXIT_R = 5 // exit-marker radius in px
+
+const inBounds = (p: { x_pct: number; y_pct: number }) =>
+  p.x_pct >= 0 && p.x_pct <= 100 && p.y_pct >= 0 && p.y_pct <= 100
 
 export default function TradeArrowOverlay({
   trades,
@@ -29,20 +33,54 @@ export default function TradeArrowOverlay({
   onHoverLeave,
   onClick,
 }: Props) {
-  const arrows = useMemo<PlacedArrow[]>(() => {
-    const out: PlacedArrow[] = []
+  const placed = useMemo<PlacedTrade[]>(() => {
+    const out: PlacedTrade[] = []
     for (const trade of trades) {
-      const pos = tradeToPixelPct(trade, calibration)
-      if (!pos) continue
-      if (pos.x_pct < 0 || pos.x_pct > 100 || pos.y_pct < 0 || pos.y_pct > 100) continue
-      out.push({ trade, x_pct: pos.x_pct, y_pct: pos.y_pct })
+      const entry = tradeToPixelPct(trade, calibration)
+      if (!entry || !inBounds(entry)) continue
+      const exit = tradeExitToPixelPct(trade, calibration)
+      const exitInBounds = exit && inBounds(exit) ? exit : null
+      out.push({ trade, entry, exit: exitInBounds })
     }
     return out
   }, [trades, calibration])
 
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 5 }}>
-      {arrows.map(({ trade, x_pct, y_pct }) => {
+      {/* SVG overlay covering the whole image — used for the entry→exit
+          connecting lines and the hollow-circle exit markers. Per-trade
+          entry triangles + PnL labels stay as positioned divs (they need
+          per-element hover/click and CSS transforms). */}
+      <svg className="absolute inset-0 w-full h-full" style={{ pointerEvents: 'none' }}>
+        {placed.map(({ trade, entry, exit }) => {
+          if (!exit) return null
+          const pnl = trade.pnl ?? 0
+          const lineColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#9ca3af'
+          return (
+            <g key={`line-${trade.id}`} opacity={hoveredTradeId === trade.id ? 1 : 0.55}>
+              <line
+                x1={`${entry.x_pct}%`}
+                y1={`${entry.y_pct}%`}
+                x2={`${exit.x_pct}%`}
+                y2={`${exit.y_pct}%`}
+                stroke={lineColor}
+                strokeWidth={1.5}
+                strokeDasharray="3 3"
+              />
+              <circle
+                cx={`${exit.x_pct}%`}
+                cy={`${exit.y_pct}%`}
+                r={EXIT_R}
+                fill="#0a0a0a"
+                stroke={lineColor}
+                strokeWidth={2}
+              />
+            </g>
+          )
+        })}
+      </svg>
+
+      {placed.map(({ trade, entry }) => {
         const isLong = trade.direction === 'long'
         const isHovered = hoveredTradeId === trade.id
         const color = isLong ? '#22c55e' : '#ef4444'
@@ -58,8 +96,8 @@ export default function TradeArrowOverlay({
             key={trade.id}
             className="absolute pointer-events-auto cursor-pointer transition-transform"
             style={{
-              left: `${x_pct}%`,
-              top: `${y_pct}%`,
+              left: `${entry.x_pct}%`,
+              top: `${entry.y_pct}%`,
               transform: `translate(-50%, -50%) ${isHovered ? 'scale(1.4)' : 'scale(1)'}`,
             }}
             onMouseEnter={e => onHoverEnter(trade.id, e)}

@@ -197,24 +197,43 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
         .filter((p): p is { time: Time; value: number } => p !== null),
     )
 
-    // Trade markers
-    const markers = trades
-      .filter(t => t.entry_time && t.direction)
-      .map(t => {
-        const time = (new Date(t.entry_time!).getTime() / 1000) as Time
-        const isLong = t.direction === 'long'
-        const pnl = t.pnl ?? 0
-        return {
-          time,
-          position: (isLong ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
-          color: pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#6b7280',
-          shape: (isLong ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
-          text: `${(t.direction ?? '').toUpperCase()} ${t.quantity ?? ''}@${t.entry_price ?? '?'}${
-            pnl !== 0 ? ` (${pnl >= 0 ? '+' : ''}${pnl.toFixed(0)})` : ''
-          }`,
-        }
+    // Trade markers — entries are direction-shaped arrows, exits are circles
+    // on the opposite side. Both color-graded by PnL so the eye can pair
+    // them up at a glance. Sorted by time because lightweight-charts requires
+    // markers in ascending order.
+    type Marker = {
+      time: Time
+      position: 'belowBar' | 'aboveBar'
+      color: string
+      shape: 'arrowUp' | 'arrowDown' | 'circle'
+      text: string
+    }
+    const markers: Marker[] = []
+    for (const t of trades) {
+      if (!t.entry_time || !t.direction) continue
+      const isLong = t.direction === 'long'
+      const pnl = t.pnl ?? 0
+      const color = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#6b7280'
+      // Entry marker
+      markers.push({
+        time: (new Date(t.entry_time).getTime() / 1000) as Time,
+        position: isLong ? 'belowBar' : 'aboveBar',
+        color,
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        text: `${t.direction.toUpperCase()} ${t.quantity ?? ''}@${t.entry_price ?? '?'}`,
       })
-      .sort((a, b) => (a.time as number) - (b.time as number))
+      // Exit marker (hollow circle on opposite side of bar)
+      if (t.exit_time && t.exit_price != null) {
+        markers.push({
+          time: (new Date(t.exit_time).getTime() / 1000) as Time,
+          position: isLong ? 'aboveBar' : 'belowBar',
+          color,
+          shape: 'circle',
+          text: `Exit @ ${t.exit_price}${pnl !== 0 ? ` (${pnl >= 0 ? '+' : ''}${pnl.toFixed(0)})` : ''}`,
+        })
+      }
+    }
+    markers.sort((a, b) => (a.time as number) - (b.time as number))
     candleRef.current.setMarkers(markers)
 
     chartRef.current?.timeScale().fitContent()
