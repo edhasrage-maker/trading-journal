@@ -76,6 +76,15 @@ export default function MarketContextForm({ value, onChange }: Props) {
         updated.gbx_pct_adr = parseFloat(((onh - onl) / adr * 100).toFixed(2))
       }
     }
+    // Auto-derive IB vs 10d Avg ratio when IB Size or IB 10d Avg change.
+    // Stored as a ratio (1.30 = 30% above); the display layer formats as %.
+    if (key === 'ib_size' || key === 'ib_10d_avg') {
+      const ibSize = key === 'ib_size' ? (parsed as number | undefined) : (value.ib_size as number | undefined)
+      const ibAvg = key === 'ib_10d_avg' ? (parsed as number | undefined) : (value.ib_10d_avg as number | undefined)
+      if (ibSize != null && ibAvg != null && ibAvg > 0) {
+        updated.ib_vs_10d_avg = parseFloat((ibSize / ibAvg).toFixed(4))
+      }
+    }
     onChange(updated)
   }
 
@@ -86,8 +95,14 @@ export default function MarketContextForm({ value, onChange }: Props) {
     onChange({ ...value, [key]: v })
 
   const gbxRange = value.onh != null && value.onl != null ? Number(value.onh) - Number(value.onl) : null
-  const derivedGbxPctAdr = gbxRange != null && value.adr != null && Number(value.adr) > 0
-    ? (gbxRange / Number(value.adr) * 100).toFixed(1)
+  const derivedGbxPctAdrNum = gbxRange != null && value.adr != null && Number(value.adr) > 0
+    ? gbxRange / Number(value.adr) * 100
+    : null
+  // IB vs 10d Avg expressed as a percentage. Storage is still a ratio
+  // (1.30 = 30% above) per the schema's numeric(6,2); display layer
+  // multiplies by 100.
+  const derivedIbPctNum = value.ib_size != null && value.ib_10d_avg != null && Number(value.ib_10d_avg) > 0
+    ? Number(value.ib_size) / Number(value.ib_10d_avg) * 100
     : null
 
   return (
@@ -117,8 +132,12 @@ export default function MarketContextForm({ value, onChange }: Props) {
           <YesNoToggle label="Price in GBX range?" value={value.price_in_gbx_range} onChange={v => setBool('price_in_gbx_range', v)} />
           <div>
             <label className="block text-xs text-gray-400 mb-1">GBX % of ADR</label>
-            <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300">
-              {derivedGbxPctAdr != null ? `${derivedGbxPctAdr}%` : '—'}
+            <div className={`border rounded-lg px-3 py-2 text-sm transition-colors ${
+              derivedGbxPctAdrNum != null && derivedGbxPctAdrNum > 100
+                ? 'bg-green-950/40 border-green-700/60 text-green-300'
+                : 'bg-gray-800 border-gray-700 text-gray-300'
+            }`}>
+              {derivedGbxPctAdrNum != null ? `${derivedGbxPctAdrNum.toFixed(1)}%` : '—'}
               <span className="text-gray-600 text-xs ml-1">(auto)</span>
             </div>
           </div>
@@ -133,7 +152,17 @@ export default function MarketContextForm({ value, onChange }: Props) {
           <NumInput label="IBL" hint="IB Low" value={value.ibl} onChange={r => set('ibl', r)} />
           <NumInput label="IB Size" hint="Points" value={value.ib_size} onChange={r => set('ib_size', r)} />
           <NumInput label="IB 10d Avg" hint="Raw 10-day average" value={value.ib_10d_avg} onChange={r => set('ib_10d_avg', r)} />
-          <NumInput label="IB vs 10d Avg" hint="Ratio (1.2 = 20% above)" value={value.ib_vs_10d_avg} onChange={r => set('ib_vs_10d_avg', r)} />
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">IB vs 10d Avg</label>
+            <div className={`border rounded-lg px-3 py-2 text-sm transition-colors ${
+              derivedIbPctNum != null && derivedIbPctNum > 100
+                ? 'bg-green-950/40 border-green-700/60 text-green-300'
+                : 'bg-gray-800 border-gray-700 text-gray-300'
+            }`}>
+              {derivedIbPctNum != null ? `${derivedIbPctNum.toFixed(0)}%` : '—'}
+              <span className="text-gray-600 text-xs ml-1">(auto)</span>
+            </div>
+          </div>
         </div>
       </div>
 
