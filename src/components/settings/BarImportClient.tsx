@@ -6,7 +6,7 @@ import { format } from 'date-fns'
 import { Upload, Loader2, CandlestickChart, AlertCircle, CheckCircle2, HardDrive } from 'lucide-react'
 import type { BarImport, BarGranularity } from '@/lib/supabase/types'
 
-interface ScidFile { name: string; sizeBytes: number }
+interface ScidFile { name: string; sizeBytes: number; mtimeMs?: number }
 interface ScidImportResponse { upserted: number; tickCount: number; symbol: string; date: string; scidFile: string }
 
 interface ImportResponse {
@@ -181,7 +181,7 @@ export default function BarImportClient({ initialImports }: Props) {
                   <option value="">Select a file…</option>
                   {scidFiles.map(f => (
                     <option key={f.name} value={f.name}>
-                      {f.name} ({(f.sizeBytes / 1e6).toFixed(0)} MB)
+                      {f.name} ({(f.sizeBytes / 1e6).toFixed(0)} MB{f.mtimeMs ? ` · updated ${format(new Date(f.mtimeMs), 'MMM d')}` : ''})
                     </option>
                   ))}
                 </select>

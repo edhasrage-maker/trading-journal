@@ -23,11 +23,13 @@ export async function GET() {
       .filter(f => f.toLowerCase().endsWith('.scid'))
       .map(f => {
         const st = statSync(join(SIERRA_DATA_DIR, f))
-        return { name: f, sizeBytes: st.size }
+        return { name: f, sizeBytes: st.size, mtimeMs: st.mtimeMs }
       })
       // Skip empty placeholder files (56-byte header-only)
       .filter(f => f.sizeBytes > 56)
-      .sort((a, b) => b.sizeBytes - a.sizeBytes)
+      // Most-recently-written first: the live front-month contract Sierra is
+      // actively appending to has the newest mtime, so it lands on top.
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
     return NextResponse.json({ files, dir: SIERRA_DATA_DIR })
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'readdir failed', files: [] }, { status: 500 })
