@@ -121,29 +121,36 @@ function sierraEma(closes: number[], length: number): (number | null)[] {
 
 /**
  * EMA computed on an N-minute timeframe, returned aligned 1:1 with the input
- * 1-minute bars. Bars are grouped into N-minute buckets (by their PT-agnostic
- * UTC ms); the EMA runs over the per-bucket closes, and every 1-minute bar
- * carries its bucket's EMA value. tfMins <= 1 falls back to a plain 1-minute
- * EMA. This mirrors how a 5-minute EMA renders as a stepped line on a
- * 1-minute chart.
+ * 1-minute bars but populated only at each bucket's closing bar (every other
+ * index is null). Bars are grouped into N-minute buckets (by UTC ms); the EMA
+ * runs over the per-bucket closes, and the resulting value is anchored to the
+ * last 1-minute bar of its bucket.
+ *
+ * The client filters out the nulls when drawing the line, so plotting only
+ * these per-bucket points draws a clean polyline through the N-minute EMA
+ * values. (The previous approach repeated each bucket's value across all five
+ * 1-minute bars, producing a flat-then-jump staircase that looked jagged.)
+ * The values at each N-minute mark are identical to a native N-minute EMA, so
+ * this still matches a Sierra N-minute chart exactly. tfMins <= 1 falls back
+ * to a plain 1-minute EMA on every bar.
  */
 function emaOnTimeframe(annotated: AnnotatedBar[], tfMins: number, length: number): (number | null)[] {
   if (tfMins <= 1) return sierraEma(annotated.map(b => b.close), length)
   const bucketMs = tfMins * 60_000
   const bucketKeys: number[] = []
   const bucketClose = new Map<number, number>()
-  const barBucket: number[] = new Array(annotated.length)
+  const bucketLastIdx = new Map<number, number>()
   for (let i = 0; i < annotated.length; i++) {
     const b = annotated[i]
     const bk = Math.floor(b.ms / bucketMs) * bucketMs
     if (!bucketClose.has(bk)) bucketKeys.push(bk)
-    bucketClose.set(bk, b.close) // last close in the bucket
-    barBucket[i] = bk
+    bucketClose.set(bk, b.close)   // bucket closes on its last 1-min bar
+    bucketLastIdx.set(bk, i)       // ...remember where that bar is
   }
   const ema = sierraEma(bucketKeys.map(k => bucketClose.get(k)!), length)
-  const emaByBucket = new Map<number, number | null>()
-  bucketKeys.forEach((k, i) => emaByBucket.set(k, ema[i]))
-  return annotated.map((_, i) => emaByBucket.get(barBucket[i]) ?? null)
+  const out: (number | null)[] = new Array(annotated.length).fill(null)
+  bucketKeys.forEach((k, j) => { out[bucketLastIdx.get(k)!] = ema[j] })
+  return out
 }
 
 function hl(bars: AnnotatedBar[]): { high: number | null; low: number | null } {
