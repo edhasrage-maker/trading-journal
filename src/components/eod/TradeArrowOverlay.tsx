@@ -79,38 +79,6 @@ export default function TradeArrowOverlay({
 
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 5 }}>
-      {/* SVG layer: per-exit dashed line from entry + hollow exit circle.
-          Bumped to 75% baseline opacity for visibility (was 55%); pops to
-          100% on hover. */}
-      <svg className="absolute inset-0 w-full h-full" style={{ pointerEvents: 'none' }}>
-        {placed.map(({ trade, entry, exits }) =>
-          exits.map((exit, i) => {
-            const color = exit.favorable ? '#22c55e' : '#ef4444'
-            return (
-              <g key={`exit-${trade.id}-${i}`} opacity={hoveredTradeId === trade.id ? 1 : 0.75}>
-                <line
-                  x1={`${entry.x_pct}%`}
-                  y1={`${entry.y_pct}%`}
-                  x2={`${exit.x_pct}%`}
-                  y2={`${exit.y_pct}%`}
-                  stroke={color}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                />
-                <circle
-                  cx={`${exit.x_pct}%`}
-                  cy={`${exit.y_pct}%`}
-                  r={EXIT_R}
-                  fill="#0a0a0a"
-                  stroke={color}
-                  strokeWidth={2}
-                />
-              </g>
-            )
-          }),
-        )}
-      </svg>
-
       {placed.map(({ trade, entry, exits }) => {
         const isLong = trade.direction === 'long'
         const isHovered = hoveredTradeId === trade.id
@@ -157,20 +125,19 @@ export default function TradeArrowOverlay({
               </div>
             </div>
 
-            {/* Per-exit qty labels — small annotation next to each exit circle.
-                Lets you tell "3 contracts here / 2 contracts there" apart on
-                multi-leg exits without hovering. */}
-            {exits.length > 1 && exits.map((exit, i) => (
+            {/* Per-exit qty labels — small annotation next to each exit circle. */}
+            {exits.map((exit, i) => (
               <div
                 key={`label-${trade.id}-${i}`}
                 className="absolute pointer-events-none"
                 style={{
                   left: `${exit.x_pct}%`,
                   top: `${exit.y_pct}%`,
-                  transform: `translate(8px, -50%)`,
+                  transform: `translate(9px, -50%)`,
+                  zIndex: 7,
                 }}
               >
-                <span className="text-[9px] font-mono font-bold text-gray-200 bg-gray-900/80 px-1 rounded whitespace-nowrap">
+                <span className="text-[9px] font-mono font-bold text-gray-100 bg-gray-900/90 px-1 rounded whitespace-nowrap">
                   ×{exit.qty}
                 </span>
               </div>
@@ -178,6 +145,40 @@ export default function TradeArrowOverlay({
           </div>
         )
       })}
+
+      {/* Exit layer rendered LAST so it paints on top of the entry arrows +
+          PnL labels — otherwise a loss exit sitting just below/near its
+          entry gets hidden behind them. pointer-events-none keeps the entry
+          arrows underneath clickable. Lines at 75% opacity baseline, 100%
+          on hover. */}
+      <svg className="absolute inset-0 w-full h-full" style={{ pointerEvents: 'none', zIndex: 6 }}>
+        {placed.map(({ trade, entry, exits }) =>
+          exits.map((exit, i) => {
+            const color = exit.favorable ? '#22c55e' : '#ef4444'
+            return (
+              <g key={`exit-${trade.id}-${i}`} opacity={hoveredTradeId === trade.id ? 1 : 0.75}>
+                <line
+                  x1={`${entry.x_pct}%`}
+                  y1={`${entry.y_pct}%`}
+                  x2={`${exit.x_pct}%`}
+                  y2={`${exit.y_pct}%`}
+                  stroke={color}
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                />
+                <circle
+                  cx={`${exit.x_pct}%`}
+                  cy={`${exit.y_pct}%`}
+                  r={EXIT_R}
+                  fill="#0a0a0a"
+                  stroke={color}
+                  strokeWidth={2}
+                />
+              </g>
+            )
+          }),
+        )}
+      </svg>
     </div>
   )
 }

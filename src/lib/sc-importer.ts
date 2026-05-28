@@ -311,22 +311,22 @@ export function parseSierraChartLog(text: string): ParseOutcome {
     const high_during_position = allHighs.length > 0 ? Math.max(...allHighs) : null
     const low_during_position = allLows.length > 0 ? Math.min(...allLows) : null
 
-    // Build the exits array — ONE element per closing ORDER, not per fill
-    // record. Sierra fills a single scale-out order in multiple partial-fill
-    // rows (same InternalOrderID, same price, microseconds apart); collapsing
-    // them by order ID gives the trader-meaningful "took N contracts here"
-    // rather than a stack of overlapping ×1 markers.
-    //
-    // Fallback grouping key (time-to-the-second + price) handles the rare
-    // case of a fill row missing its InternalOrderID.
+    // Build the exits array — ONE element per (price, second), summing
+    // quantity. This matches how a trader thinks about scale-outs ("took 3
+    // at 29927, 2 at 29969") regardless of how many underlying fill records
+    // or closing orders Sierra split them across:
+    //   - A single order filled in 3 partial rows at one price/instant → ×3
+    //   - Two stop orders triggering simultaneously at one price → merged
+    //   - Exits at different prices OR different times → kept separate
+    // Round price to 2dp for the key so float jitter doesn't fragment groups.
     const exitGroups = new Map<string, { ts: Date; totalQty: number; totalValue: number }>()
     for (const c of closes) {
-      const key = c.internalOrderID || `${Math.floor(c.ts.getTime() / 1000)}:${c.fillPrice}`
+      const key = `${Math.floor(c.ts.getTime() / 1000)}:${round2(c.fillPrice)}`
       const g = exitGroups.get(key)
       if (g) {
         g.totalQty += c.qty
         g.totalValue += c.qty * c.fillPrice
-        if (c.ts.getTime() < g.ts.getTime()) g.ts = c.ts // earliest fill ts for the order
+        if (c.ts.getTime() < g.ts.getTime()) g.ts = c.ts
       } else {
         exitGroups.set(key, { ts: c.ts, totalQty: c.qty, totalValue: c.qty * c.fillPrice })
       }
