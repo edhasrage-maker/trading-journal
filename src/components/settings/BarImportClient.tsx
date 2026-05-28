@@ -1,10 +1,13 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Upload, Loader2, CandlestickChart, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Upload, Loader2, CandlestickChart, AlertCircle, CheckCircle2, HardDrive } from 'lucide-react'
 import type { BarImport, BarGranularity } from '@/lib/supabase/types'
+
+interface ScidFile { name: string; sizeBytes: number }
+interface ScidImportResponse { upserted: number; tickCount: number; symbol: string; date: string; scidFile: string }
 
 interface ImportResponse {
   upserted: number
@@ -31,6 +34,61 @@ export default function BarImportClient({ initialImports }: Props) {
   const [uploading, setUploading] = useState(false)
   const [result, setResult] = useState<{ ok: true; data: ImportResponse } | { ok: false; error: string; parseErrors?: string[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // --- Sierra SCID direct-import state ---
+  const [scidFiles, setScidFiles] = useState<ScidFile[]>([])
+  const [scidDir, setScidDir] = useState<string>('')
+  const [scidFile, setScidFile] = useState('')
+  const [scidStoreAs, setScidStoreAs] = useState('')
+  const [scidDate, setScidDate] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [scidImporting, setScidImporting] = useState(false)
+  const [scidResult, setScidResult] = useState<{ ok: true; data: ScidImportResponse } | { ok: false; error: string; hint?: string } | null>(null)
+
+  // Load available .scid files on mount.
+  useEffect(() => {
+    fetch('/api/bars/import-scid')
+      .then(r => r.json())
+      .then(d => {
+        setScidFiles(d.files ?? [])
+        if (d.dir) setScidDir(d.dir)
+      })
+      .catch(() => { /* surface nothing; section just shows empty */ })
+  }, [])
+
+  // When a SCID file is picked, prefill store-as with its symbol root.
+  const onPickScid = (name: string) => {
+    setScidFile(name)
+    setScidResult(null)
+    if (!scidStoreAs) setScidStoreAs(name.replace(/\.scid$/i, ''))
+  }
+
+  const submitScid = useCallback(async () => {
+    if (!scidFile || !scidStoreAs.trim() || !scidDate) return
+    setScidImporting(true)
+    setScidResult(null)
+    try {
+      const res = await fetch('/api/bars/import-scid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scidFile, storeAs: scidStoreAs.trim(), date: scidDate }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setScidResult({ ok: false, error: data.error ?? 'Unknown error', hint: data.hint })
+        return
+      }
+      setScidResult({ ok: true, data: data as ScidImportResponse })
+      const histRes = await fetch('/api/bars/import')
+      if (histRes.ok) setImports(await histRes.json())
+      router.refresh()
+    } catch (e) {
+      setScidResult({ ok: false, error: e instanceof Error ? e.message : 'Network error' })
+    } finally {
+      setScidImporting(false)
+    }
+  }, [scidFile, scidStoreAs, scidDate, router])
+
+  const scidCanSubmit = !!scidFile && scidStoreAs.trim().length > 0 && !!scidDate && !scidImporting
 
   const handleFile = (f: File) => {
     setFile(f)
@@ -93,9 +151,107 @@ export default function BarImportClient({ initialImports }: Props) {
         </p>
       </div>
 
-      {/* Upload form */}
+      {/* Sierra SCID direct import — preferred: reads the file Sierra auto-saves */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-        <h2 className="font-semibold text-white text-sm">Import bars</h2>
+        <div className="flex items-center gap-2">
+          <HardDrive className="w-4 h-4 text-blue-400" />
+          <h2 className="font-semibold text-white text-sm">Import from Sierra Chart (.scid)</h2>
+        </div>
+        <p className="text-xs text-gray-500">
+          Reads the intraday file Sierra continuously auto-saves — no manual export. Aggregates tick
+          data into 1-minute bars on the server.
+          {scidDir && <span className="block mt-1 font-mono text-gray-600">{scidDir}</span>}
+        </p>
+
+        {scidFiles.length === 0 ? (
+          <div className="text-xs text-yellow-300/80 bg-yellow-950/30 border border-yellow-900/50 rounded-lg p-3">
+            No .scid files found. Confirm Sierra&apos;s data directory — set <code className="text-yellow-200">SIERRA_DATA_DIR</code> in
+            <code className="text-yellow-200"> .env.local</code> if it isn&apos;t <code className="text-yellow-200">D:\SierraCharts\Data</code>, then restart the dev server.
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Source .scid file</label>
+                <select
+                  value={scidFile}
+                  onChange={e => onPickScid(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Select a file…</option>
+                  {scidFiles.map(f => (
+                    <option key={f.name} value={f.name}>
+                      {f.name} ({(f.sizeBytes / 1e6).toFixed(0)} MB)
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Day</label>
+                <input
+                  type="date"
+                  value={scidDate}
+                  onChange={e => { setScidDate(e.target.value); setScidResult(null) }}
+                  className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Store bars under symbol</label>
+                <input
+                  type="text"
+                  value={scidStoreAs}
+                  onChange={e => setScidStoreAs(e.target.value)}
+                  placeholder="MNQM6.CME"
+                  spellCheck={false}
+                  className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Must match the symbol on the trades you want to chart. E.g., read <span className="font-mono">NQM6.CME.scid</span> but
+                  store as <span className="font-mono">MNQM6.CME</span> — NQ &amp; MNQ share identical prices.
+                </p>
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={submitScid}
+                  disabled={!scidCanSubmit}
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {scidImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <HardDrive className="w-4 h-4" />}
+                  {scidImporting ? 'Reading…' : 'Import day'}
+                </button>
+              </div>
+            </div>
+
+            {scidResult?.ok && (
+              <div className="bg-green-950/40 border border-green-800/60 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <div>
+                  Imported <strong>{scidResult.data.upserted.toLocaleString()}</strong> 1m bars
+                  for <span className="font-mono">{scidResult.data.symbol}</span> on {scidResult.data.date}
+                  {' '}from <span className="font-mono">{scidResult.data.scidFile}</span>
+                  {' '}(aggregated {scidResult.data.tickCount.toLocaleString()} ticks).
+                </div>
+              </div>
+            )}
+            {scidResult && !scidResult.ok && (
+              <div className="bg-red-950/40 border border-red-800/60 rounded-lg p-3 text-sm text-red-200 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium">{scidResult.error}</p>
+                  {scidResult.hint && <p className="text-xs text-red-200/70 mt-1">{scidResult.hint}</p>}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Manual CSV upload — fallback for non-Sierra platforms */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+        <h2 className="font-semibold text-white text-sm">Import bars from CSV</h2>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
