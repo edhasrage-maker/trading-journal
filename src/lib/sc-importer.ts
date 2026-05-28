@@ -311,15 +311,32 @@ export function parseSierraChartLog(text: string): ParseOutcome {
     const high_during_position = allHighs.length > 0 ? Math.max(...allHighs) : null
     const low_during_position = allLows.length > 0 ? Math.min(...allLows) : null
 
-    // Each individual closing fill becomes one element in the exits array.
-    // Sorted ascending by time so chart renderers can iterate in order.
-    const exits = closes
-      .slice()
+    // Build the exits array — ONE element per closing ORDER, not per fill
+    // record. Sierra fills a single scale-out order in multiple partial-fill
+    // rows (same InternalOrderID, same price, microseconds apart); collapsing
+    // them by order ID gives the trader-meaningful "took N contracts here"
+    // rather than a stack of overlapping ×1 markers.
+    //
+    // Fallback grouping key (time-to-the-second + price) handles the rare
+    // case of a fill row missing its InternalOrderID.
+    const exitGroups = new Map<string, { ts: Date; totalQty: number; totalValue: number }>()
+    for (const c of closes) {
+      const key = c.internalOrderID || `${Math.floor(c.ts.getTime() / 1000)}:${c.fillPrice}`
+      const g = exitGroups.get(key)
+      if (g) {
+        g.totalQty += c.qty
+        g.totalValue += c.qty * c.fillPrice
+        if (c.ts.getTime() < g.ts.getTime()) g.ts = c.ts // earliest fill ts for the order
+      } else {
+        exitGroups.set(key, { ts: c.ts, totalQty: c.qty, totalValue: c.qty * c.fillPrice })
+      }
+    }
+    const exits = Array.from(exitGroups.values())
       .sort((a, b) => a.ts.getTime() - b.ts.getTime())
-      .map(c => ({
-        time: c.ts.toISOString(),
-        price: round2(c.fillPrice),
-        qty: c.qty,
+      .map(g => ({
+        time: g.ts.toISOString(),
+        price: round2(g.totalValue / g.totalQty),
+        qty: g.totalQty,
       }))
 
     rows.push({
