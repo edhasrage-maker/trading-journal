@@ -10,10 +10,11 @@ import {
   type IChartApi,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
+  type IPriceLine,
   type Time,
 } from 'lightweight-charts'
-import { calcEMA, calcVWAP, type IndicatorBar } from '@/lib/indicators'
 import type { Trade } from '@/lib/supabase/types'
+import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
 
 interface Props {
   date: string
@@ -72,6 +73,8 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   const ema20Ref = useRef<ISeriesApi<'Line'> | null>(null)
   // v5 moved markers off the series API into a separate primitive.
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  // Static session-level horizontal lines (recreated each data update).
+  const priceLinesRef = useRef<IPriceLine[]>([])
 
   const [bars, setBars] = useState<ApiBar[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -99,6 +102,19 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const tradesRef = useRef<Trade[]>(trades)
   useEffect(() => { tradesRef.current = trades }, [trades])
+
+  // Session levels (static lines) + study-matched VWAP/EMA series, computed
+  // server-side from the SCID over an 8-day lookback.
+  const [levels, setLevels] = useState<{ levels: SessionLevels | null; series: LevelSeriesPoint[] } | null>(null)
+  useEffect(() => {
+    if (!symbol) { setLevels(null); return }
+    let cancelled = false
+    fetch(`/api/bars/levels?symbol=${encodeURIComponent(symbol)}&date=${date}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setLevels({ levels: d.levels ?? null, series: d.series ?? [] }) })
+      .catch(() => { if (!cancelled) setLevels(null) })
+    return () => { cancelled = true }
+  }, [symbol, date])
 
   // Fetch bars when symbol/date change
   useEffect(() => {
@@ -214,6 +230,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
     return () => {
       obs.disconnect()
       markersRef.current = null
+      priceLinesRef.current = []
       chart.remove()
       chartRef.current = null
       candleRef.current = null
@@ -253,6 +270,8 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       ema9Ref.current.setData([])
       ema20Ref.current.setData([])
       markersRef.current?.setMarkers([])
+      for (const pl of priceLinesRef.current) candleRef.current.removePriceLine(pl)
+      priceLinesRef.current = []
       return
     }
 
@@ -265,27 +284,50 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
     }))
     candleRef.current.setData(candleData)
 
-    // Indicators — computed client-side so units stay in sync
-    const indBars: IndicatorBar[] = bars
-    const closes = bars.map(b => b.close)
-    const vwap = calcVWAP(indBars)
-    const ema9 = calcEMA(closes, 9)
-    const ema20 = calcEMA(closes, 20)
+    // Study-matched VWAP / EMA9 / EMA20 series from /api/bars/levels (replaces
+    // the previous simple client-side calc). Falls back to empty until levels
+    // load.
+    const ser = levels?.series ?? []
+    const toLine = (key: 'vwap' | 'ema9' | 'ema20') =>
+      ser
+        .filter(p => p[key] != null)
+        .map(p => ({ time: (new Date(p.ts).getTime() / 1000) as Time, value: p[key] as number }))
+    vwapRef.current.setData(toLine('vwap'))
+    ema9Ref.current.setData(toLine('ema9'))
+    ema20Ref.current.setData(toLine('ema20'))
 
-    vwapRef.current.setData(bars.map((b, i) => ({
-      time: (new Date(b.ts).getTime() / 1000) as Time,
-      value: vwap[i],
-    })))
-    ema9Ref.current.setData(
-      bars
-        .map((b, i) => ema9[i] != null ? { time: (new Date(b.ts).getTime() / 1000) as Time, value: ema9[i]! } : null)
-        .filter((p): p is { time: Time; value: number } => p !== null),
-    )
-    ema20Ref.current.setData(
-      bars
-        .map((b, i) => ema20[i] != null ? { time: (new Date(b.ts).getTime() / 1000) as Time, value: ema20[i]! } : null)
-        .filter((p): p is { time: Time; value: number } => p !== null),
-    )
+    // Static session levels as horizontal price lines (recreate each update).
+    for (const pl of priceLinesRef.current) candleRef.current.removePriceLine(pl)
+    priceLinesRef.current = []
+    const L = levels?.levels
+    if (L) {
+      const grey = '#9ca3af'
+      const dim = '#6b7280'
+      const addLine = (price: number | null | undefined, title: string, color: string, dashed = false) => {
+        if (price == null || !Number.isFinite(price)) return
+        priceLinesRef.current.push(candleRef.current!.createPriceLine({
+          price,
+          color,
+          lineWidth: 1,
+          lineStyle: dashed ? 2 : 0,
+          axisLabelVisible: true,
+          title,
+        }))
+      }
+      addLine(L.pdh, 'PDH', grey)
+      addLine(L.pdl, 'PDL', grey)
+      addLine(L.pdhFull, 'PDH·F', dim, true)
+      addLine(L.pdlFull, 'PDL·F', dim, true)
+      addLine(L.onh, 'ONH', grey)
+      addLine(L.onl, 'ONL', grey)
+      addLine(L.ibh, 'IBH', grey)
+      addLine(L.ibl, 'IBL', grey)
+      addLine(L.rthOpen, 'RTH Open', dim, true)
+      addLine(L.weeklyOpen, 'Wk Open', dim, true)
+      const pcts = [25, 50, 100]
+      L.ibhExt.forEach((v, i) => addLine(v, `IBH+${pcts[i]}%`, dim, true))
+      L.iblExt.forEach((v, i) => addLine(v, `IBL-${pcts[i]}%`, dim, true))
+    }
 
     // Trade markers — entries are direction-shaped arrows; exits are one
     // circle PER partial-fill (from exits_json) so multi-leg scale-outs
@@ -347,7 +389,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
     }
 
     chartRef.current?.timeScale().fitContent()
-  }, [bars, trades])
+  }, [bars, trades, levels])
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-2">
