@@ -75,6 +75,8 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   // Static session-level horizontal lines (recreated each data update).
   const priceLinesRef = useRef<IPriceLine[]>([])
+  // Per-trade entry→exit connector lines (2-point dashed line series each).
+  const tradeLinesRef = useRef<ISeriesApi<'Line'>[]>([])
 
   const [bars, setBars] = useState<ApiBar[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -231,6 +233,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       obs.disconnect()
       markersRef.current = null
       priceLinesRef.current = []
+      tradeLinesRef.current = []
       chart.remove()
       chartRef.current = null
       candleRef.current = null
@@ -272,6 +275,8 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       markersRef.current?.setMarkers([])
       for (const pl of priceLinesRef.current) candleRef.current.removePriceLine(pl)
       priceLinesRef.current = []
+      if (chartRef.current) for (const s of tradeLinesRef.current) chartRef.current.removeSeries(s)
+      tradeLinesRef.current = []
       return
     }
 
@@ -386,6 +391,47 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       markersRef.current.setMarkers(markers)
     } else {
       markersRef.current = createSeriesMarkers(candleRef.current, markers)
+    }
+
+    // Entry→exit connector lines: a 2-point dashed line series per trade leg.
+    // Endpoints snapped to the minute so they sit on the candle time scale;
+    // legs whose entry and exit fall in the same minute are skipped (a line
+    // would collapse to a point). Color matches the exit marker (green if the
+    // partial beat entry, red if not).
+    const chart = chartRef.current
+    if (chart) {
+      for (const s of tradeLinesRef.current) chart.removeSeries(s)
+      tradeLinesRef.current = []
+      const snapMin = (ms: number) => (Math.floor(ms / 60000) * 60) as Time
+      for (const t of trades) {
+        if (!t.entry_time || !t.direction || t.entry_price == null) continue
+        const isLong = t.direction === 'long'
+        const entryMin = snapMin(new Date(t.entry_time).getTime())
+        const exitList: Array<{ time: string; price: number }> =
+          Array.isArray(t.exits_json) && t.exits_json.length > 0
+            ? t.exits_json
+            : t.exit_time && t.exit_price != null
+              ? [{ time: t.exit_time, price: t.exit_price }]
+              : []
+        for (const e of exitList) {
+          const exitMin = snapMin(new Date(e.time).getTime())
+          if ((exitMin as number) <= (entryMin as number)) continue // same/earlier minute → skip
+          const favorable = isLong ? e.price > t.entry_price : e.price < t.entry_price
+          const line = chart.addSeries(LineSeries, {
+            color: favorable ? '#22c55e' : '#ef4444',
+            lineWidth: 1,
+            lineStyle: 2, // dashed
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          })
+          line.setData([
+            { time: entryMin, value: t.entry_price },
+            { time: exitMin, value: e.price },
+          ])
+          tradeLinesRef.current.push(line)
+        }
+      }
     }
 
     chartRef.current?.timeScale().fitContent()
