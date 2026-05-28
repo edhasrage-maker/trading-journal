@@ -37,20 +37,52 @@ interface ChartPrefs {
   upColor: string
   downColor: string
   showGrid: boolean
+  vwapColor: string
+  ema9Color: string
+  ema20Color: string
+  levelColor: string
+  fontFamily: string
+  fontSize: number
 }
 const DEFAULT_PREFS: ChartPrefs = {
   background: '#030712',
   upColor: '#22c55e',
   downColor: '#ef4444',
   showGrid: false, // grid off by default (task 1)
+  vwapColor: '#3b82f6',
+  ema9Color: '#eab308',
+  ema20Color: '#a855f7',
+  levelColor: '#9ca3af',
+  fontFamily: `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`,
+  fontSize: 12,
 }
-const PREFS_KEY = 'livechart-prefs-v1'
+const PREFS_KEY = 'livechart-prefs-v2'
+
+const FONT_OPTIONS: { label: string; value: string }[] = [
+  { label: 'Sans', value: `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif` },
+  { label: 'Monospace', value: `'Courier New', ui-monospace, monospace` },
+  { label: 'Serif', value: `Georgia, 'Times New Roman', serif` },
+  { label: 'System', value: `system-ui, sans-serif` },
+]
 
 interface HoverInfo {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   trade: any
   x: number
   y: number
+}
+
+// Per-symbol+date saved zoom/pan (task 2). Logical range is index-based so it
+// restores the same zoom regardless of how many bars loaded.
+const viewKey = (symbol: string, date: string) => `livechart-view-${symbol}-${date}`
+function loadView(symbol: string, date: string): { from: number; to: number } | null {
+  try { const r = localStorage.getItem(viewKey(symbol, date)); return r ? JSON.parse(r) : null } catch { return null }
+}
+function saveView(symbol: string, date: string, range: { from: number; to: number }) {
+  try { localStorage.setItem(viewKey(symbol, date), JSON.stringify(range)) } catch { /* ignore */ }
+}
+function clearView(symbol: string, date: string) {
+  try { localStorage.removeItem(viewKey(symbol, date)) } catch { /* ignore */ }
 }
 
 /**
@@ -104,6 +136,17 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const tradesRef = useRef<Trade[]>(trades)
   useEffect(() => { tradesRef.current = trades }, [trades])
+
+  // View-persistence refs. symbol/date refs let the once-subscribed range
+  // handler read current values; suppress flag stops programmatic restore/fit
+  // from being saved back as the user's view.
+  const symbolRef = useRef<string | null>(symbol)
+  const dateRef = useRef<string>(date)
+  useEffect(() => { symbolRef.current = symbol; dateRef.current = date }, [symbol, date])
+  const suppressViewSaveRef = useRef(false)
+  const viewSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [hasSavedView, setHasSavedView] = useState(false)
+  useEffect(() => { setHasSavedView(!!(symbol && loadView(symbol, date))) }, [symbol, date])
 
   // Session levels (static lines) + study-matched VWAP/EMA series, computed
   // server-side from the SCID over an 8-day lookback.
@@ -229,6 +272,17 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       else setHover(null)
     })
 
+    // Auto-save the user's zoom/pan per symbol+date (debounced). Guarded so the
+    // programmatic restore/fit on data load doesn't overwrite the saved view.
+    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (!range || suppressViewSaveRef.current || !symbolRef.current) return
+      if (viewSaveTimerRef.current) clearTimeout(viewSaveTimerRef.current)
+      viewSaveTimerRef.current = setTimeout(() => {
+        saveView(symbolRef.current!, dateRef.current, { from: range.from, to: range.to })
+        setHasSavedView(true)
+      }, 600)
+    })
+
     return () => {
       obs.disconnect()
       markersRef.current = null
@@ -244,11 +298,17 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   }, [height])
 
   // Apply appearance prefs to the live chart (runs on mount after localStorage
-  // load, and on every pref change).
+  // load, and on every pref change). Session-level line colors are applied in
+  // the data effect (price lines recreate there); this handles everything that
+  // can be set via applyOptions.
   useEffect(() => {
     if (!chartRef.current || !candleRef.current) return
     chartRef.current.applyOptions({
-      layout: { background: { color: prefs.background } },
+      layout: {
+        background: { color: prefs.background },
+        fontFamily: prefs.fontFamily,
+        fontSize: prefs.fontSize,
+      },
       grid: {
         vertLines: { visible: prefs.showGrid, color: '#1f2937' },
         horzLines: { visible: prefs.showGrid, color: '#1f2937' },
@@ -262,6 +322,9 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       wickUpColor: prefs.upColor,
       wickDownColor: prefs.downColor,
     })
+    vwapRef.current?.applyOptions({ color: prefs.vwapColor })
+    ema9Ref.current?.applyOptions({ color: prefs.ema9Color })
+    ema20Ref.current?.applyOptions({ color: prefs.ema20Color })
   }, [prefs])
 
   // Push data + markers whenever bars or trades change
@@ -306,8 +369,8 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
     priceLinesRef.current = []
     const L = levels?.levels
     if (L) {
-      const grey = '#9ca3af'
-      const dim = '#6b7280'
+      const grey = prefs.levelColor
+      const dim = prefs.levelColor
       const addLine = (price: number | null | undefined, title: string, color: string, dashed = false) => {
         if (price == null || !Number.isFinite(price)) return
         priceLinesRef.current.push(candleRef.current!.createPriceLine({
@@ -434,8 +497,16 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       }
     }
 
-    chartRef.current?.timeScale().fitContent()
-  }, [bars, trades, levels])
+    // View: restore a saved zoom for this symbol+date if one exists, else fit.
+    const tscale = chartRef.current?.timeScale()
+    if (tscale) {
+      const saved = symbol ? loadView(symbol, date) : null
+      suppressViewSaveRef.current = true
+      if (saved) tscale.setVisibleLogicalRange(saved)
+      else tscale.fitContent()
+      setTimeout(() => { suppressViewSaveRef.current = false }, 60)
+    }
+  }, [bars, trades, levels, prefs, symbol, date])
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-2">
@@ -461,34 +532,78 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
               <Settings2 className="w-3.5 h-3.5" />
             </button>
             {settingsOpen && (
-              <div className="absolute right-0 top-full mt-2 z-50 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-3 text-gray-300 normal-case">
+              <div className="absolute right-0 top-full mt-2 z-50 w-60 bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-3 text-gray-300 normal-case max-h-[420px] overflow-y-auto">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-white text-xs">Chart appearance</span>
                   <button type="button" onClick={() => setSettingsOpen(false)} className="text-gray-500 hover:text-white"><X className="w-3 h-3" /></button>
                 </div>
                 <div className="space-y-2 text-xs">
+                  {([
+                    ['Background', 'background'],
+                    ['Up bars', 'upColor'],
+                    ['Down bars', 'downColor'],
+                    ['VWAP', 'vwapColor'],
+                    ['EMA 9', 'ema9Color'],
+                    ['EMA 20', 'ema20Color'],
+                    ['Levels', 'levelColor'],
+                  ] as [string, keyof ChartPrefs][]).map(([label, key]) => (
+                    <label key={key} className="flex items-center justify-between">
+                      <span>{label}</span>
+                      <input
+                        type="color"
+                        value={prefs[key] as string}
+                        onChange={e => updatePref({ [key]: e.target.value } as Partial<ChartPrefs>)}
+                        className="w-8 h-5 bg-transparent border border-gray-700 rounded cursor-pointer"
+                      />
+                    </label>
+                  ))}
                   <label className="flex items-center justify-between">
-                    <span>Background</span>
-                    <input type="color" value={prefs.background} onChange={e => updatePref({ background: e.target.value })} className="w-8 h-5 bg-transparent border border-gray-700 rounded cursor-pointer" />
+                    <span>Font</span>
+                    <select
+                      value={prefs.fontFamily}
+                      onChange={e => updatePref({ fontFamily: e.target.value })}
+                      className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[11px] w-28"
+                    >
+                      {FONT_OPTIONS.map(f => <option key={f.label} value={f.value}>{f.label}</option>)}
+                    </select>
                   </label>
                   <label className="flex items-center justify-between">
-                    <span>Up bars</span>
-                    <input type="color" value={prefs.upColor} onChange={e => updatePref({ upColor: e.target.value })} className="w-8 h-5 bg-transparent border border-gray-700 rounded cursor-pointer" />
-                  </label>
-                  <label className="flex items-center justify-between">
-                    <span>Down bars</span>
-                    <input type="color" value={prefs.downColor} onChange={e => updatePref({ downColor: e.target.value })} className="w-8 h-5 bg-transparent border border-gray-700 rounded cursor-pointer" />
+                    <span>Font size</span>
+                    <input
+                      type="number" min={9} max={18} value={prefs.fontSize}
+                      onChange={e => updatePref({ fontSize: Number(e.target.value) || 12 })}
+                      className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[11px] w-12 text-right"
+                    />
                   </label>
                   <label className="flex items-center justify-between">
                     <span>Grid lines</span>
                     <input type="checkbox" checked={prefs.showGrid} onChange={e => updatePref({ showGrid: e.target.checked })} className="accent-blue-600" />
                   </label>
+
+                  <div className="border-t border-gray-800 pt-2 mt-1 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500">Saved zoom for this day</span>
+                      <span className={hasSavedView ? 'text-green-400' : 'text-gray-600'}>{hasSavedView ? 'on' : 'off'}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (symbol) clearView(symbol, date)
+                        setHasSavedView(false)
+                        chartRef.current?.timeScale().fitContent()
+                      }}
+                      className="w-full text-[10px] text-gray-400 hover:text-white border border-gray-700 rounded py-1"
+                    >
+                      Reset zoom (fit all)
+                    </button>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => updatePref(DEFAULT_PREFS)}
                     className="w-full mt-1 text-[10px] text-gray-400 hover:text-white border border-gray-700 rounded py-1"
                   >
-                    Reset to defaults
+                    Reset colors to defaults
                   </button>
                 </div>
               </div>
@@ -533,6 +648,15 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
                 {setups.length > 0 && <div className="text-blue-300">{setups.join(' · ')}</div>}
                 {mistakes.length > 0 && <div className="text-red-300">{mistakes.join(' · ')}</div>}
               </div>
+              {/* Trade entry screenshot (task 1) */}
+              {t.screenshot_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={t.screenshot_url}
+                  alt="Trade screenshot"
+                  className="mt-2 rounded border border-gray-700 max-w-[320px] max-h-[200px] object-contain block"
+                />
+              )}
             </div>
           )
         })()}
