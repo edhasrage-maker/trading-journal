@@ -165,22 +165,27 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   // Chart appearance prefs — persisted to localStorage, applied live.
   const [prefs, setPrefs] = useState<ChartPrefs>(DEFAULT_PREFS)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const prefsLoaded = useRef(false)
-  // Load once on mount.
+  const [prefsHydrated, setPrefsHydrated] = useState(false)
+  // Load once on mount, then flag hydrated so the persist effect may run.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(PREFS_KEY)
       if (raw) setPrefs({ ...DEFAULT_PREFS, ...JSON.parse(raw) })
     } catch { /* ignore */ }
-    prefsLoaded.current = true
+    setPrefsHydrated(true)
   }, [])
-  // Persist on every change (proper side-effect, not inside the updater — the
-  // previous in-updater write was unreliable under React StrictMode's
-  // double-invocation). Guarded so it doesn't fire before the initial load.
+  // Persist on change — but ONLY after hydration. The guard MUST be state, not
+  // a ref: the load effect and this effect run in the same initial commit, so a
+  // ref flipped to true inside the load effect would let this effect fire on
+  // that same commit while `prefs` is still DEFAULT_PREFS — clobbering the saved
+  // value with defaults (and under StrictMode the next pass re-reads that
+  // clobbered value, losing the prefs for good). The state guard is false for
+  // that first commit and only becomes true on the re-render that also carries
+  // the loaded prefs.
   useEffect(() => {
-    if (!prefsLoaded.current) return
+    if (!prefsHydrated) return
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
-  }, [prefs])
+  }, [prefs, prefsHydrated])
   const updatePref = (patch: Partial<ChartPrefs>) => setPrefs(prev => ({ ...prev, ...patch }))
 
   // Hover-to-show-trade (task 3). tradesRef keeps the crosshair handler (set up
@@ -197,6 +202,9 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   useEffect(() => { symbolRef.current = symbol; dateRef.current = date }, [symbol, date])
   const suppressViewSaveRef = useRef(false)
   const viewSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Tracks the symbol|date we've already restored the saved view for, so the
+  // restore runs once per day-open instead of on every data/prefs change.
+  const restoredKeyRef = useRef<string | null>(null)
   const [hasSavedView, setHasSavedView] = useState(false)
   useEffect(() => { setHasSavedView(!!(symbol && loadView(symbol, date))) }, [symbol, date])
   const [viewSavedFlash, setViewSavedFlash] = useState(false)
@@ -613,9 +621,15 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       }
     }
 
-    // View: restore a saved zoom for this symbol+date if one exists, else fit.
+    // View: restore the saved zoom for this symbol+date ONCE per day-open (on
+    // the first non-empty render). Re-running on every prefs/levels/background-
+    // refresh change would yank the chart back to a stale range and fight the
+    // user's current pan — which made the saved view feel like it never locked
+    // in. Navigating to another day changes the key and restores again.
     const tscale = chartRef.current?.timeScale()
-    if (tscale) {
+    const dayKey = `${symbol ?? ''}|${date}`
+    if (tscale && restoredKeyRef.current !== dayKey) {
+      restoredKeyRef.current = dayKey
       const saved = symbol ? loadView(symbol, date) : null
       suppressViewSaveRef.current = true
       if (saved) tscale.setVisibleLogicalRange(saved)
