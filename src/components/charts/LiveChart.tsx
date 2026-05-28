@@ -6,8 +6,10 @@ import {
   createChart,
   CandlestickSeries,
   LineSeries,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type Time,
 } from 'lightweight-charts'
 import { calcEMA, calcVWAP, type IndicatorBar } from '@/lib/indicators'
@@ -30,10 +32,10 @@ interface ApiBar {
 }
 
 /**
- * Native chart for the EOD page using TradingView's lightweight-charts.
- * Renders the day's 1m bars with VWAP + EMA(9) + EMA(20) overlays, and
- * trade entry markers via series.setMarkers(). Replaces the screenshot +
- * calibration flow for days where bars have been imported.
+ * Native chart (lightweight-charts v5) shared by the EOD + Intraday pages.
+ * Renders the day's 1m bars with VWAP + EMA(9) + EMA(20) overlays, plus
+ * entry/exit markers via the v5 createSeriesMarkers primitive. Replaces the
+ * screenshot + calibration flow for days where bars have been imported.
  *
  * Empty states:
  *   - No symbol on trades → "Import trades first" message
@@ -47,6 +49,8 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   const vwapRef = useRef<ISeriesApi<'Line'> | null>(null)
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema20Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  // v5 moved markers off the series API into a separate primitive.
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
 
   const [bars, setBars] = useState<ApiBar[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -146,6 +150,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
 
     return () => {
       obs.disconnect()
+      markersRef.current = null
       chart.remove()
       chartRef.current = null
       candleRef.current = null
@@ -163,6 +168,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       vwapRef.current.setData([])
       ema9Ref.current.setData([])
       ema20Ref.current.setData([])
+      markersRef.current?.setMarkers([])
       return
     }
 
@@ -246,7 +252,15 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       }
     }
     markers.sort((a, b) => (a.time as number) - (b.time as number))
-    candleRef.current.setMarkers(markers)
+    // v5 markers API: create the primitive once, then update it. (v4's
+    // candleSeries.setMarkers() was removed in v5 and threw here, which
+    // also prevented fitContent() below from running — leaving the chart
+    // looking blank even when candle data was set.)
+    if (markersRef.current) {
+      markersRef.current.setMarkers(markers)
+    } else {
+      markersRef.current = createSeriesMarkers(candleRef.current, markers)
+    }
 
     chartRef.current?.timeScale().fitContent()
   }, [bars, trades])
