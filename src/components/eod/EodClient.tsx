@@ -10,6 +10,7 @@ import ChartScreenshotPanel from './ChartScreenshotPanel'
 import CalibrationOverlay, { type CalibStep, type CalibDraft } from './CalibrationOverlay'
 import TradeArrowOverlay from './TradeArrowOverlay'
 import LiveChart from '@/components/charts/LiveChart'
+import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
 import HoverPopup from './HoverPopup'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
@@ -62,6 +63,9 @@ export default function EodClient({
   // compat; user opts into Live by clicking the toggle. State is per-mount
   // (resets on navigation between days) — fine for now.
   const [chartView, setChartView] = useState<'screenshot' | 'live'>('screenshot')
+  // Bumped by the background bar watcher when it imports bars for this day, so
+  // the Live chart re-fetches and shows the freshly-imported bars.
+  const [barsVersion, setBarsVersion] = useState(0)
 
   // Most-common trade symbol on this day — feeds LiveChart's bars query.
   // Days with no trades return null; LiveChart shows a "no symbol" message.
@@ -549,6 +553,10 @@ export default function EodClient({
             onActivity={(msg, type) => showToast(msg, type)}
             onImported={refreshTrades}
           />
+          <BarWatcher
+            activeDate={date}
+            onRefresh={() => setBarsVersion(v => v + 1)}
+          />
           <ImportTradesButton
             date={date}
             onImported={handleImported}
@@ -614,6 +622,7 @@ export default function EodClient({
           date={date}
           symbol={chartSymbol}
           trades={trades}
+          refreshKey={barsVersion}
         />
       ) : (
       <ChartScreenshotPanel

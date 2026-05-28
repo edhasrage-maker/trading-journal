@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, AlertCircle, Database, Settings2, X } from 'lucide-react'
 import {
   createChart,
@@ -22,6 +22,8 @@ interface Props {
   symbol: string | null
   trades: Trade[]
   height?: number
+  /** Bumped externally (e.g. by the bar watcher) to force a bars/levels re-fetch. */
+  refreshKey?: number
 }
 
 interface ApiBar {
@@ -139,7 +141,7 @@ function clearView(symbol: string, date: string) {
  *   - Bars not found for that symbol+date → "Import bars" hint with link
  *     to /settings/bars
  */
-export default function LiveChart({ date, symbol, trades, height = 480 }: Props) {
+export default function LiveChart({ date, symbol, trades, height = 480, refreshKey = 0 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -252,39 +254,48 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       .then(d => { if (!cancelled) setLevels({ levels: d.levels ?? null, series: d.series ?? [] }) })
       .catch(() => { if (!cancelled) setLevels(null) })
     return () => { cancelled = true }
-  }, [symbol, date, prefs.emaTimeframeMins])
+  }, [symbol, date, prefs.emaTimeframeMins, refreshKey])
 
-  // Fetch bars when symbol/date change
-  useEffect(() => {
+  // Fetch bars. `silent` skips the loading spinner — used for the background
+  // bar-watcher refresh so the chart doesn't flash a loader every few minutes.
+  // A request-id guard discards responses superseded by a newer fetch.
+  const barsReqRef = useRef(0)
+  const loadBars = useCallback(async (silent: boolean) => {
     if (!symbol) {
       setError('no-symbol')
       setLoading(false)
       setBars(null)
       return
     }
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}&date=${date}`)
-      .then(async r => {
-        const data = await r.json()
-        if (cancelled) return
-        if (!r.ok) {
-          setError(data.error ?? 'Failed to fetch bars')
-          setBars(null)
-        } else {
-          setBars(data.bars ?? [])
-        }
-      })
-      .catch(err => {
-        if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Network error')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
+    const reqId = ++barsReqRef.current
+    if (!silent) { setLoading(true); setError(null) }
+    try {
+      const r = await fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}&date=${date}`)
+      const data = await r.json()
+      if (reqId !== barsReqRef.current) return // superseded by a newer request
+      if (!r.ok) { setError(data.error ?? 'Failed to fetch bars'); setBars(null) }
+      else { setBars(data.bars ?? []) }
+    } catch (err) {
+      if (reqId !== barsReqRef.current) return
+      if (!silent) setError(err instanceof Error ? err.message : 'Network error')
+    } finally {
+      if (reqId === barsReqRef.current && !silent) setLoading(false)
+    }
   }, [symbol, date])
+
+  // Initial + on symbol/date change: full load with spinner.
+  useEffect(() => { loadBars(false) }, [loadBars])
+
+  // Background refresh when the bar watcher bumps refreshKey: silent re-fetch
+  // via the latest loadBars (kept in a ref so this only fires on refreshKey,
+  // not on every symbol/date change). Skips the first run (refreshKey starts 0).
+  const loadBarsRef = useRef(loadBars)
+  useEffect(() => { loadBarsRef.current = loadBars }, [loadBars])
+  const firstRefreshRef = useRef(true)
+  useEffect(() => {
+    if (firstRefreshRef.current) { firstRefreshRef.current = false; return }
+    loadBarsRef.current(true)
+  }, [refreshKey])
 
   // Initialize chart once
   useEffect(() => {
