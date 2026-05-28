@@ -43,6 +43,9 @@ interface ChartPrefs {
   levelColor: string
   fontFamily: string
   fontSize: number
+  emaTimeframeMins: number
+  showLevels: boolean
+  hiddenLevels: string[]
 }
 const DEFAULT_PREFS: ChartPrefs = {
   background: '#030712',
@@ -55,6 +58,9 @@ const DEFAULT_PREFS: ChartPrefs = {
   levelColor: '#9ca3af',
   fontFamily: `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`,
   fontSize: 12,
+  emaTimeframeMins: 5,
+  showLevels: true,
+  hiddenLevels: [],
 }
 const PREFS_KEY = 'livechart-prefs-v2'
 
@@ -107,6 +113,9 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   // Static session-level horizontal lines (recreated each data update).
   const priceLinesRef = useRef<IPriceLine[]>([])
+  // Parallel record of the currently-drawn levels (key + price) so the
+  // right-click handler can hit-test a click against the nearest line.
+  const levelLinesRef = useRef<Array<{ key: string; price: number }>>([])
   // Per-trade entry→exit connector lines (2-point dashed line series each).
   const tradeLinesRef = useRef<ISeriesApi<'Line'>[]>([])
 
@@ -168,18 +177,45 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
     setTimeout(() => setViewSavedFlash(false), 1500)
   }
 
+  // Right-click a level line to hide it. Hit-tests the click Y against each
+  // drawn level's screen coordinate (priceToCoordinate); if one is within ~8px
+  // we suppress the browser menu and add its key to hiddenLevels. Re-show via
+  // the settings popover's "Hidden levels" chips or "Show all".
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!candleRef.current || levelLinesRef.current.length === 0) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    let bestKey: string | null = null
+    let bestDelta = Infinity
+    for (const lvl of levelLinesRef.current) {
+      const coord = candleRef.current.priceToCoordinate(lvl.price)
+      if (coord == null) continue
+      const d = Math.abs(coord - y)
+      if (d < bestDelta) { bestDelta = d; bestKey = lvl.key }
+    }
+    if (bestKey && bestDelta <= 8) {
+      e.preventDefault()
+      const key = bestKey
+      setPrefs(prev =>
+        prev.hiddenLevels.includes(key)
+          ? prev
+          : { ...prev, hiddenLevels: [...prev.hiddenLevels, key] },
+      )
+    }
+  }
+
   // Session levels (static lines) + study-matched VWAP/EMA series, computed
   // server-side from the SCID over an 8-day lookback.
   const [levels, setLevels] = useState<{ levels: SessionLevels | null; series: LevelSeriesPoint[] } | null>(null)
   useEffect(() => {
     if (!symbol) { setLevels(null); return }
     let cancelled = false
-    fetch(`/api/bars/levels?symbol=${encodeURIComponent(symbol)}&date=${date}`)
+    fetch(`/api/bars/levels?symbol=${encodeURIComponent(symbol)}&date=${date}&emaTf=${prefs.emaTimeframeMins}`)
       .then(r => r.json())
       .then(d => { if (!cancelled) setLevels({ levels: d.levels ?? null, series: d.series ?? [] }) })
       .catch(() => { if (!cancelled) setLevels(null) })
     return () => { cancelled = true }
-  }, [symbol, date])
+  }, [symbol, date, prefs.emaTimeframeMins])
 
   // Fetch bars when symbol/date change
   useEffect(() => {
@@ -307,6 +343,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       obs.disconnect()
       markersRef.current = null
       priceLinesRef.current = []
+      levelLinesRef.current = []
       tradeLinesRef.current = []
       chart.remove()
       chartRef.current = null
@@ -358,6 +395,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       markersRef.current?.setMarkers([])
       for (const pl of priceLinesRef.current) candleRef.current.removePriceLine(pl)
       priceLinesRef.current = []
+      levelLinesRef.current = []
       if (chartRef.current) for (const s of tradeLinesRef.current) chartRef.current.removeSeries(s)
       tradeLinesRef.current = []
       return
@@ -385,14 +423,21 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
     ema20Ref.current.setData(toLine('ema20'))
 
     // Static session levels as horizontal price lines (recreate each update).
+    // Gated on the master `showLevels` toggle; individual levels listed in
+    // `hiddenLevels` (toggled via right-click or the settings popover) are
+    // skipped. Each drawn line is recorded in levelLinesRef for hit-testing.
     for (const pl of priceLinesRef.current) candleRef.current.removePriceLine(pl)
     priceLinesRef.current = []
+    levelLinesRef.current = []
     const L = levels?.levels
-    if (L) {
+    if (L && prefs.showLevels) {
       const grey = prefs.levelColor
       const dim = prefs.levelColor
+      const hidden = new Set(prefs.hiddenLevels)
       const addLine = (price: number | null | undefined, title: string, color: string, dashed = false) => {
         if (price == null || !Number.isFinite(price)) return
+        if (hidden.has(title)) return
+        levelLinesRef.current.push({ key: title, price })
         priceLinesRef.current.push(candleRef.current!.createPriceLine({
           price,
           color,
@@ -600,6 +645,53 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
                     <input type="checkbox" checked={prefs.showGrid} onChange={e => updatePref({ showGrid: e.target.checked })} className="accent-blue-600" />
                   </label>
 
+                  {/* Session levels controls */}
+                  <div className="border-t border-gray-800 pt-2 mt-1 space-y-2">
+                    <label className="flex items-center justify-between">
+                      <span>Show levels</span>
+                      <input type="checkbox" checked={prefs.showLevels} onChange={e => updatePref({ showLevels: e.target.checked })} className="accent-blue-600" />
+                    </label>
+                    <label className="flex items-center justify-between">
+                      <span>EMA timeframe</span>
+                      <select
+                        value={prefs.emaTimeframeMins}
+                        onChange={e => updatePref({ emaTimeframeMins: Number(e.target.value) || 5 })}
+                        className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[11px] w-20"
+                      >
+                        {[1, 3, 5, 15].map(m => <option key={m} value={m}>{m} min</option>)}
+                      </select>
+                    </label>
+                    {prefs.showLevels && (
+                      <p className="text-[10px] text-gray-500">Right-click a level line on the chart to hide it.</p>
+                    )}
+                    {prefs.hiddenLevels.length > 0 && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-gray-500">Hidden levels (click to restore)</span>
+                          <button
+                            type="button"
+                            onClick={() => updatePref({ hiddenLevels: [] })}
+                            className="text-[10px] text-blue-400 hover:text-blue-300"
+                          >
+                            Show all
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {prefs.hiddenLevels.map(k => (
+                            <button
+                              key={k}
+                              type="button"
+                              onClick={() => updatePref({ hiddenLevels: prefs.hiddenLevels.filter(h => h !== k) })}
+                              className="text-[10px] bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-gray-400 hover:text-white hover:border-gray-500"
+                            >
+                              {k} ✕
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="border-t border-gray-800 pt-2 mt-1 space-y-1.5">
                     {/* Primary: lock everything in for this day */}
                     <button
@@ -644,7 +736,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
 
       {/* Chart container — always rendered so the chart instance can mount */}
       <div className="relative">
-        <div ref={containerRef} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
+        <div ref={containerRef} onContextMenu={handleContextMenu} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
 
         {/* Hover-to-show-trade popup (task 3) */}
         {hover && (() => {

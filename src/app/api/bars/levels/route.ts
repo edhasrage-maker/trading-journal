@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { readScidBars } from '@/lib/scid-reader'
-import { computeSessionLevels } from '@/lib/session-levels'
+import { computeSessionLevels, DEFAULT_LEVELS_CONFIG } from '@/lib/session-levels'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
 
@@ -85,6 +85,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: `No bars in lookback for ${safeName}`, levels: null, series: [] }, { status: 200 })
   }
 
-  const { levels, series } = computeSessionLevels(bars, date)
+  const emaTf = Number(searchParams.get('emaTf') ?? '5') || 5
+  const { levels, series } = computeSessionLevels(bars, date, {
+    ...DEFAULT_LEVELS_CONFIG,
+    emaTimeframeMins: emaTf,
+  })
   return NextResponse.json({ levels, series, scidFile: safeName })
 }

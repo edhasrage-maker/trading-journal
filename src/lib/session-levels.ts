@@ -25,6 +25,7 @@ export interface LevelsConfig {
   weeklyAnchorDow: number // 0 = Sunday
   weeklyAnchorSec: number
   extPercents: [number, number, number]
+  emaTimeframeMins: number // EMA computed on this bar timeframe (study default 1; common 5)
 }
 
 export const DEFAULT_LEVELS_CONFIG: LevelsConfig = {
@@ -36,6 +37,7 @@ export const DEFAULT_LEVELS_CONFIG: LevelsConfig = {
   weeklyAnchorDow: 0,
   weeklyAnchorSec: 15 * 3600,    // Sunday 15:00
   extPercents: [25, 50, 100],
+  emaTimeframeMins: 5,           // 9/20 EMA on the 5-minute by default
 }
 
 export interface SessionLevels {
@@ -115,6 +117,33 @@ function sierraEma(closes: number[], length: number): (number | null)[] {
     out[i] = ema
   }
   return out
+}
+
+/**
+ * EMA computed on an N-minute timeframe, returned aligned 1:1 with the input
+ * 1-minute bars. Bars are grouped into N-minute buckets (by their PT-agnostic
+ * UTC ms); the EMA runs over the per-bucket closes, and every 1-minute bar
+ * carries its bucket's EMA value. tfMins <= 1 falls back to a plain 1-minute
+ * EMA. This mirrors how a 5-minute EMA renders as a stepped line on a
+ * 1-minute chart.
+ */
+function emaOnTimeframe(annotated: AnnotatedBar[], tfMins: number, length: number): (number | null)[] {
+  if (tfMins <= 1) return sierraEma(annotated.map(b => b.close), length)
+  const bucketMs = tfMins * 60_000
+  const bucketKeys: number[] = []
+  const bucketClose = new Map<number, number>()
+  const barBucket: number[] = new Array(annotated.length)
+  for (let i = 0; i < annotated.length; i++) {
+    const b = annotated[i]
+    const bk = Math.floor(b.ms / bucketMs) * bucketMs
+    if (!bucketClose.has(bk)) bucketKeys.push(bk)
+    bucketClose.set(bk, b.close) // last close in the bucket
+    barBucket[i] = bk
+  }
+  const ema = sierraEma(bucketKeys.map(k => bucketClose.get(k)!), length)
+  const emaByBucket = new Map<number, number | null>()
+  bucketKeys.forEach((k, i) => emaByBucket.set(k, ema[i]))
+  return annotated.map((_, i) => emaByBucket.get(barBucket[i]) ?? null)
 }
 
 function hl(bars: AnnotatedBar[]): { high: number | null; low: number | null } {
@@ -233,10 +262,9 @@ export function computeSessionLevels(
     return anchorBar ? anchorBar.ms : (targetBars[0]?.ms ?? null)
   })()
 
-  // EMA over full series
-  const closes = annotated.map(b => b.close)
-  const ema9All = sierraEma(closes, 9)
-  const ema20All = sierraEma(closes, 20)
+  // EMA over full series, on the configured timeframe (default 5m)
+  const ema9All = emaOnTimeframe(annotated, cfg.emaTimeframeMins, 9)
+  const ema20All = emaOnTimeframe(annotated, cfg.emaTimeframeMins, 20)
 
   // VWAP accumulators
   let dPV = 0, dV = 0, wPV = 0, wV = 0
