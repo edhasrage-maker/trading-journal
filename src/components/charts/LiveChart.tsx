@@ -624,9 +624,9 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
           )}
         </div>
         <div className="flex items-center gap-3 text-[10px]">
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-500" />VWAP</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-yellow-500" />EMA 9</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-purple-500" />EMA 20</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.vwapColor }} />VWAP</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema9Color }} />EMA 9</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema20Color }} />EMA 20</span>
           <div className="relative">
             <button
               type="button"
