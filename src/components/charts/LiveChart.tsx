@@ -114,22 +114,26 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Chart appearance prefs (task 2) — persisted to localStorage, applied live.
+  // Chart appearance prefs — persisted to localStorage, applied live.
   const [prefs, setPrefs] = useState<ChartPrefs>(DEFAULT_PREFS)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const prefsLoaded = useRef(false)
+  // Load once on mount.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(PREFS_KEY)
       if (raw) setPrefs({ ...DEFAULT_PREFS, ...JSON.parse(raw) })
     } catch { /* ignore */ }
+    prefsLoaded.current = true
   }, [])
-  const updatePref = (patch: Partial<ChartPrefs>) => {
-    setPrefs(prev => {
-      const next = { ...prev, ...patch }
-      try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
-      return next
-    })
-  }
+  // Persist on every change (proper side-effect, not inside the updater — the
+  // previous in-updater write was unreliable under React StrictMode's
+  // double-invocation). Guarded so it doesn't fire before the initial load.
+  useEffect(() => {
+    if (!prefsLoaded.current) return
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
+  }, [prefs])
+  const updatePref = (patch: Partial<ChartPrefs>) => setPrefs(prev => ({ ...prev, ...patch }))
 
   // Hover-to-show-trade (task 3). tradesRef keeps the crosshair handler (set up
   // once) reading the latest trades without re-subscribing.
@@ -147,6 +151,22 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   const viewSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [hasSavedView, setHasSavedView] = useState(false)
   useEffect(() => { setHasSavedView(!!(symbol && loadView(symbol, date))) }, [symbol, date])
+  const [viewSavedFlash, setViewSavedFlash] = useState(false)
+
+  // Explicit "Save chart view" — locks in the current zoom for this day plus
+  // the appearance prefs, with a confirmation flash. (Colors/font already
+  // auto-persist; this also captures the per-day zoom and reassures the user
+  // everything is locked.)
+  const saveChartView = () => {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
+    const r = chartRef.current?.timeScale().getVisibleLogicalRange()
+    if (r && symbol) {
+      saveView(symbol, date, { from: r.from, to: r.to })
+      setHasSavedView(true)
+    }
+    setViewSavedFlash(true)
+    setTimeout(() => setViewSavedFlash(false), 1500)
+  }
 
   // Session levels (static lines) + study-matched VWAP/EMA series, computed
   // server-side from the SCID over an 8-day lookback.
@@ -580,11 +600,22 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
                     <input type="checkbox" checked={prefs.showGrid} onChange={e => updatePref({ showGrid: e.target.checked })} className="accent-blue-600" />
                   </label>
 
-                  <div className="border-t border-gray-800 pt-2 mt-1 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Saved zoom for this day</span>
-                      <span className={hasSavedView ? 'text-green-400' : 'text-gray-600'}>{hasSavedView ? 'on' : 'off'}</span>
-                    </div>
+                  <div className="border-t border-gray-800 pt-2 mt-1 space-y-1.5">
+                    {/* Primary: lock everything in for this day */}
+                    <button
+                      type="button"
+                      onClick={saveChartView}
+                      className={`w-full text-xs font-medium rounded py-1.5 transition-colors ${
+                        viewSavedFlash
+                          ? 'bg-green-600 text-white'
+                          : 'bg-blue-600 hover:bg-blue-500 text-white'
+                      }`}
+                    >
+                      {viewSavedFlash ? 'Saved ✓' : 'Save chart view'}
+                    </button>
+                    <p className="text-[10px] text-gray-500">
+                      Locks the current zoom for {date} + your colors/font. Restored automatically next time you open this day.
+                    </p>
                     <button
                       type="button"
                       onClick={() => {
@@ -596,15 +627,14 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
                     >
                       Reset zoom (fit all)
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => updatePref(DEFAULT_PREFS)}
+                      className="w-full text-[10px] text-gray-400 hover:text-white border border-gray-700 rounded py-1"
+                    >
+                      Reset colors to defaults
+                    </button>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => updatePref(DEFAULT_PREFS)}
-                    className="w-full mt-1 text-[10px] text-gray-400 hover:text-white border border-gray-700 rounded py-1"
-                  >
-                    Reset colors to defaults
-                  </button>
                 </div>
               </div>
             )}
