@@ -7,6 +7,7 @@ import {
   CandlestickSeries,
   LineSeries,
   createSeriesMarkers,
+  TickMarkType,
   type IChartApi,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
@@ -43,6 +44,7 @@ interface ChartPrefs {
   levelColor: string
   fontFamily: string
   fontSize: number
+  timeZone: string
   emaTimeframeMins: number
   showLevels: boolean
   hiddenLevels: string[]
@@ -58,6 +60,7 @@ const DEFAULT_PREFS: ChartPrefs = {
   levelColor: '#9ca3af',
   fontFamily: `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`,
   fontSize: 12,
+  timeZone: 'America/Los_Angeles', // axis/crosshair display only; level windows stay PT
   emaTimeframeMins: 5,
   showLevels: true,
   hiddenLevels: [],
@@ -70,6 +73,40 @@ const FONT_OPTIONS: { label: string; value: string }[] = [
   { label: 'Serif', value: `Georgia, 'Times New Roman', serif` },
   { label: 'System', value: `system-ui, sans-serif` },
 ]
+
+// Display-timezone choices for the time axis + crosshair. The browser's own
+// zone is prepended as "Local" when it isn't already one of the presets.
+const TZ_OPTIONS: { label: string; value: string }[] = (() => {
+  const base = [
+    { label: 'Pacific (PT)', value: 'America/Los_Angeles' },
+    { label: 'Mountain (MT)', value: 'America/Denver' },
+    { label: 'Central (CT)', value: 'America/Chicago' },
+    { label: 'Eastern (ET)', value: 'America/New_York' },
+    { label: 'UTC', value: 'UTC' },
+  ]
+  let local = 'UTC'
+  try { local = Intl.DateTimeFormat().resolvedOptions().timeZone } catch { /* ignore */ }
+  if (!base.some(o => o.value === local)) base.unshift({ label: `Local (${local})`, value: local })
+  return base
+})()
+
+// lightweight-charts has no native timezone support, so we render the axis +
+// crosshair labels via Intl formatters bound to the chosen zone. The bar
+// timestamps themselves stay UTC unix seconds — only the labels are localized.
+function makeTimeFormatters(timeZone: string) {
+  const hm = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' })
+  const md = new Intl.DateTimeFormat('en-US', { timeZone, month: 'short', day: 'numeric' })
+  const full = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return {
+    tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) => {
+      const ms = (time as number) * 1000
+      return tickMarkType === TickMarkType.Time || tickMarkType === TickMarkType.TimeWithSeconds
+        ? hm.format(ms)
+        : md.format(ms)
+    },
+    timeFormatter: (time: Time) => full.format((time as number) * 1000),
+  }
+}
 
 interface HoverInfo {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -360,6 +397,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
   // can be set via applyOptions.
   useEffect(() => {
     if (!chartRef.current || !candleRef.current) return
+    const { tickMarkFormatter, timeFormatter } = makeTimeFormatters(prefs.timeZone)
     chartRef.current.applyOptions({
       layout: {
         background: { color: prefs.background },
@@ -370,6 +408,8 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
         vertLines: { visible: prefs.showGrid, color: '#1f2937' },
         horzLines: { visible: prefs.showGrid, color: '#1f2937' },
       },
+      localization: { timeFormatter },
+      timeScale: { tickMarkFormatter },
     })
     candleRef.current.applyOptions({
       upColor: prefs.upColor,
@@ -643,6 +683,16 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
                   <label className="flex items-center justify-between">
                     <span>Grid lines</span>
                     <input type="checkbox" checked={prefs.showGrid} onChange={e => updatePref({ showGrid: e.target.checked })} className="accent-blue-600" />
+                  </label>
+                  <label className="flex items-center justify-between">
+                    <span>Time zone</span>
+                    <select
+                      value={prefs.timeZone}
+                      onChange={e => updatePref({ timeZone: e.target.value })}
+                      className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[11px] w-32"
+                    >
+                      {TZ_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                    </select>
                   </label>
 
                   {/* Session levels controls */}
