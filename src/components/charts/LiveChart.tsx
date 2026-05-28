@@ -141,6 +141,7 @@ export default function LiveChart({ date, symbol, trades, height = 480 }: Props)
       layout: {
         background: { color: '#030712' },
         textColor: '#9ca3af',
+        attributionLogo: false, // hide the TradingView watermark — we render our own data, no TV feed
       },
       grid: {
         vertLines: { visible: false, color: '#1f2937' },
