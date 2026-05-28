@@ -31,19 +31,31 @@ export async function GET(req: Request) {
   const start = `${date}T00:00:00Z`
   const end = `${date}T23:59:59.999Z`
 
-  const { data, error } = await supabase
-    .from('ohlcv_bars')
-    .select('ts, open, high, low, close, volume')
-    .eq('symbol', symbol)
-    .gte('ts', start)
-    .lte('ts', end)
-    .order('ts', { ascending: true })
-    .limit(10000)
-
-  if (error) {
-    console.error('[api/bars] query failed:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  // Paginate past Supabase's default 1000-row response cap. A full UTC day of
+  // 1m bars is up to 1440 rows, so this is typically 2 round-trips.
+  const PAGE = 1000
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const all: any[] = []
+  let from = 0
+  // Hard ceiling so a bad query can't loop forever (10 pages = 10k bars).
+  for (let page = 0; page < 10; page++) {
+    const { data, error } = await supabase
+      .from('ohlcv_bars')
+      .select('ts, open, high, low, close, volume')
+      .eq('symbol', symbol)
+      .gte('ts', start)
+      .lte('ts', end)
+      .order('ts', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) {
+      console.error('[api/bars] query failed:', error)
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    const rows = data ?? []
+    all.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
   }
 
-  return NextResponse.json({ bars: data ?? [] })
+  return NextResponse.json({ bars: all })
 }
