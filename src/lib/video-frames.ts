@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
 import { existsSync, statSync } from 'fs'
+import { basename } from 'path'
 
 /**
  * Thin wrappers around ffprobe + ffmpeg for extracting a single JPEG frame at a
@@ -32,9 +33,17 @@ function runCapture(cmd: string, args: string[]): Promise<{ stdout: Buffer; stde
 }
 
 /**
- * Read the recording's start time + duration. OBS embeds creation_time in the
- * MP4/MKV container; if it's missing (some recorders don't set it), we fall
- * back to filesystem mtime minus duration, which is accurate to ~1s.
+ * Read the recording's start time + duration. Tries (in order):
+ *   1. ffprobe `format.tags.creation_time` — present on OBS MP4 and most
+ *      mainstream recorders.
+ *   2. Filesystem `birthtime` — on Windows this is the file-creation instant,
+ *      which equals OBS's recording start to the millisecond. The reason this
+ *      matters: OBS's *MKV* output (popular for crash resilience) does NOT
+ *      embed creation_time at all.
+ *   3. The OBS-default filename pattern `YYYY-MM-DD HH-MM-SS.*` (local time).
+ *   4. `mtime − duration` — last-ditch, accurate to ~1s.
+ * All four converge on the same instant for OBS in practice; ordering just
+ * picks the most direct source available.
  */
 export async function probeVideo(path: string): Promise<VideoInfo> {
   if (!existsSync(path)) throw new Error(`Video not found: ${path}`)
@@ -47,11 +56,27 @@ export async function probeVideo(path: string): Promise<VideoInfo> {
   }
   const fmt = json.format ?? {}
   const durationMs = Math.round(Number(fmt.duration ?? 0) * 1000)
+  const stat = statSync(path)
+
   let creationTimeMs = NaN
+  // 1. ffprobe-reported creation_time (e.g. MP4 from OBS, Game Bar, ShadowPlay).
   if (fmt.tags?.creation_time) creationTimeMs = Date.parse(fmt.tags.creation_time)
+  // 2. Windows file birthtime = OBS recording-start instant.
   if (!Number.isFinite(creationTimeMs) || creationTimeMs <= 0) {
-    // Fallback: file mtime - duration. ~1s accuracy, enough for "what's on screen".
-    creationTimeMs = statSync(path).mtimeMs - durationMs
+    if (stat.birthtimeMs && stat.birthtimeMs > 0) creationTimeMs = stat.birthtimeMs
+  }
+  // 3. OBS-default filename pattern: "YYYY-MM-DD HH-MM-SS.*" (local time).
+  if (!Number.isFinite(creationTimeMs) || creationTimeMs <= 0) {
+    const m = basename(path).match(/(\d{4})-(\d{2})-(\d{2})[ _T](\d{2})[-:](\d{2})[-:](\d{2})/)
+    if (m) {
+      const [, Y, M, D, h, min, s] = m
+      const t = new Date(Number(Y), Number(M) - 1, Number(D), Number(h), Number(min), Number(s)).getTime()
+      if (Number.isFinite(t) && t > 0) creationTimeMs = t
+    }
+  }
+  // 4. Last resort: mtime − duration.
+  if (!Number.isFinite(creationTimeMs) || creationTimeMs <= 0) {
+    creationTimeMs = stat.mtimeMs - durationMs
   }
   return { creationTimeMs, durationMs }
 }
