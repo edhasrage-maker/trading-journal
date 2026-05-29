@@ -25,6 +25,8 @@ interface Props {
   height?: number
   /** Bumped externally (e.g. by the bar watcher) to force a bars/levels re-fetch. */
   refreshKey?: number
+  /** Trade currently hovered in the EOD list — highlight it on the chart + show its popup. */
+  hoverTradeId?: string | null
 }
 
 interface ApiBar {
@@ -146,7 +148,7 @@ function clearView(symbol: string, date: string) {
  *   - Bars not found for that symbol+date → "Import bars" hint with link
  *     to /settings/bars
  */
-export default function LiveChart({ date, symbol, trades, height = 480, refreshKey = 0 }: Props) {
+export default function LiveChart({ date, symbol, trades, height = 480, refreshKey = 0, hoverTradeId = null }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -201,6 +203,9 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const tradesRef = useRef<Trade[]>(trades)
   useEffect(() => { tradesRef.current = trades }, [trades])
+  // While a trade row is hovered we drive the crosshair programmatically; this
+  // suppresses the mouse crosshair handler so it doesn't clear our popup.
+  const suppressCrosshairRef = useRef(false)
 
   // Tracks the symbol|date we've already restored the saved view for, so the
   // restore runs once per day-open instead of on every data/prefs change.
@@ -408,6 +413,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // entry time, surface that trade in a popup. Reads tradesRef so we never
     // re-subscribe on trade changes.
     chart.subscribeCrosshairMove(param => {
+      if (suppressCrosshairRef.current) return // row-driven hover owns the popup
       if (param.time == null || !param.point) { setHover(null); return }
       const timeSec = param.time as number
       let best: Trade | null = null
@@ -693,6 +699,32 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       }
     }
   }, [bars, trades, levels, prefs, symbol, date])
+
+  // Row-hover ↔ chart link: when a trade is hovered in the EOD list, drop the
+  // crosshair on its entry (highlight where it was) and show the same
+  // details+screenshot popup at that point. Clears when no row is hovered.
+  useEffect(() => {
+    const chart = chartRef.current
+    const candle = candleRef.current
+    if (!chart || !candle) return
+    if (!hoverTradeId) {
+      if (suppressCrosshairRef.current) {
+        suppressCrosshairRef.current = false
+        chart.clearCrosshairPosition()
+        setHover(null)
+      }
+      return
+    }
+    const t = trades.find(x => x.id === hoverTradeId)
+    if (!t || !t.entry_time) return
+    const timeSec = (Math.floor(new Date(t.entry_time).getTime() / 60000) * 60) as Time
+    const price = t.entry_price ?? null
+    suppressCrosshairRef.current = true // hold across the synthetic crosshair event
+    if (price != null) chart.setCrosshairPosition(price, timeSec, candle)
+    const x = chart.timeScale().timeToCoordinate(timeSec)
+    const y = price != null ? candle.priceToCoordinate(price) : null
+    setHover({ trade: t, x: x ?? 8, y: y ?? height / 2 })
+  }, [hoverTradeId, trades, bars, levels, height])
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-2">

@@ -696,6 +696,7 @@ export default function EodClient({
           symbol={chartSymbol}
           trades={trades}
           refreshKey={barsVersion}
+          hoverTradeId={hoveredTradeId}
         />
       ) : (
       <ChartScreenshotPanel
