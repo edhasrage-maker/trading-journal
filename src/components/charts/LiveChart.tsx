@@ -327,6 +327,10 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         timeVisible: true,
         secondsVisible: false,
         borderColor: '#374151',
+        // Keep the SAME bars visible when the chart width changes (window resize,
+        // opening/closing DevTools, layout shifts) instead of re-spreading bar
+        // spacing — so the saved zoom looks consistent regardless of width.
+        lockVisibleTimeRangeOnResize: true,
       },
       rightPriceScale: {
         borderColor: '#374151',
