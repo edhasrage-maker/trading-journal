@@ -12,11 +12,7 @@ type ContextRow = Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'i
 export default async function AnalyticsPage() {
   const supabase: AnyClient = await createClient()
 
-  const [{ data: tradesRaw }, { data: daysRaw }, { data: contextsRaw }] = await Promise.all([
-    supabase
-      .from('trades')
-      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id')
-      .order('entry_time', { ascending: true }) as Promise<{ data: Trade[] | null }>,
+  const [{ data: daysRaw }, { data: contextsRaw }] = await Promise.all([
     supabase
       .from('trading_days')
       .select('id, date, day_type') as Promise<{ data: DayRow[] | null }>,
@@ -25,7 +21,25 @@ export default async function AnalyticsPage() {
       .select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m') as Promise<{ data: ContextRow[] | null }>,
   ])
 
-  const trades = tradesRaw ?? []
+  // Paginate past Supabase's 1000-row cap. The journal has thousands of trades,
+  // and the recently-tagged ones are the NEWEST — so a single capped query
+  // (ascending) returned only the oldest, untagged trades and Analytics came up
+  // empty. id is the tiebreaker so range() paging is deterministic.
+  const PAGE = 1000
+  const trades: Trade[] = []
+  for (let p = 0; p < 50; p++) {
+    const { data, error } = await supabase
+      .from('trades')
+      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id')
+      .order('entry_time', { ascending: true })
+      .order('id', { ascending: true })
+      .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (error) { console.error('[analytics] trades page', p, 'failed:', error.message); break }
+    const rows = (data ?? []) as Trade[]
+    trades.push(...rows)
+    if (rows.length < PAGE) break
+  }
+
   const days = daysRaw ?? []
   const contexts = contextsRaw ?? []
   const joined = joinTradesWithContext(trades, days, contexts)
