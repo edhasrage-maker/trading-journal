@@ -17,6 +17,7 @@ import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import DeleteDayDangerZone from './DeleteDayDangerZone'
+import RecordingCommentary from './RecordingCommentary'
 import type {
   TradingDay,
   Trade,
@@ -123,7 +124,6 @@ export default function EodClient({
       } catch { /* ignore */ }
       missing.push(t)
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing cached summaries from localStorage
     setSummaries(cached)
     if (missing.length === 0) return
 
@@ -809,6 +809,8 @@ export default function EodClient({
         summaries={summaries}
         summariesLoading={summariesLoading}
       />
+
+      <RecordingCommentary trades={trades} />
 
       {/* EOD Notes */}
       <EodNotesForm
