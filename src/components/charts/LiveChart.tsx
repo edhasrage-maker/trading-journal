@@ -371,24 +371,32 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         return { priceRange: { minValue: min - pad, maxValue: max + pad } }
       },
     })
+    // VWAP/EMA overlays must NOT drive the price axis — on a trend day the
+    // session-anchored VWAP sits far from the candles and would blow out the
+    // vertical scale (squashing the candles). Returning null keeps the price
+    // axis fit to the candles only; these lines clip if they fall off-screen.
+    const noAutoscale = { autoscaleInfoProvider: () => null }
     vwapRef.current = chart.addSeries(LineSeries, {
       color: '#3b82f6',
       lineWidth: 2,
       lineStyle: 2, // dashed
       priceLineVisible: false,
       lastValueVisible: false,
+      ...noAutoscale,
     })
     ema9Ref.current = chart.addSeries(LineSeries, {
       color: '#eab308',
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
+      ...noAutoscale,
     })
     ema20Ref.current = chart.addSeries(LineSeries, {
       color: '#a855f7',
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
+      ...noAutoscale,
     })
 
     const obs = new ResizeObserver(([entry]) => {
@@ -642,6 +650,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
             lastValueVisible: false,
             priceLineVisible: false,
             crosshairMarkerVisible: false,
+            autoscaleInfoProvider: () => null, // don't let connectors drive the price axis
           })
           line.setData([
             { time: entryMin, value: t.entry_price },
