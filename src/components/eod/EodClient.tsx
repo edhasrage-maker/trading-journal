@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { Crosshair, Image as ImageIcon, CandlestickChart } from 'lucide-react'
@@ -33,6 +33,19 @@ interface Props {
   initialMarketContext: MarketContext | null
   allTags: TradeTag[]
 }
+
+// Stable content hash for a trade's summary-relevant fields, so a cached AI
+// summary is reused until the tags/notes/fills actually change. djb2.
+function hashTrade(t: Trade): string {
+  const basis = JSON.stringify({
+    d: t.direction, e: t.entry_price, p: t.pnl, q: t.quantity,
+    x: t.exits_json, tg: t.tags_json, n: t.notes,
+  })
+  let h = 5381
+  for (let i = 0; i < basis.length; i++) h = ((h << 5) + h + basis.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
+}
+const summaryCacheKey = (id: string) => `trade-summary-${id}`
 
 export default function EodClient({
   date,
@@ -67,6 +80,12 @@ export default function EodClient({
   // the Live chart re-fetches and shows the freshly-imported bars.
   const [barsVersion, setBarsVersion] = useState(0)
 
+  // AI 1-2 line per-trade narratives shown in the trade list's Overview column.
+  // Cached in localStorage by content hash so we only call Claude when a trade's
+  // tags/notes/fills change.
+  const [summaries, setSummaries] = useState<Record<string, string>>({})
+  const [summariesLoading, setSummariesLoading] = useState(false)
+
   // Most-common trade symbol on this day — feeds LiveChart's bars query.
   // Days with no trades return null; LiveChart shows a "no symbol" message.
   const chartSymbol = useMemo<string | null>(() => {
@@ -81,6 +100,60 @@ export default function EodClient({
     }
     return best
   }, [initialTrades])
+
+  // Generate (or reuse cached) AI Overview summaries whenever trades change.
+  // Pulls hits from localStorage by content hash; batches the misses into one
+  // /api/trades/summary call. Silent on failure (e.g. ANTHROPIC_API_KEY unset).
+  useEffect(() => {
+    if (trades.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing summaries when day has no trades
+      setSummaries({})
+      return
+    }
+    const cached: Record<string, string> = {}
+    const missing: Trade[] = []
+    for (const t of trades) {
+      const h = hashTrade(t)
+      try {
+        const raw = localStorage.getItem(summaryCacheKey(t.id))
+        if (raw) {
+          const c = JSON.parse(raw) as { h: string; s: string }
+          if (c.h === h && c.s) { cached[t.id] = c.s; continue }
+        }
+      } catch { /* ignore */ }
+      missing.push(t)
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing cached summaries from localStorage
+    setSummaries(cached)
+    if (missing.length === 0) return
+
+    let cancelled = false
+    setSummariesLoading(true)
+    fetch('/api/trades/summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        trades: missing.map(t => ({
+          id: t.id, direction: t.direction, entry_price: t.entry_price, pnl: t.pnl,
+          quantity: t.quantity, exits_json: t.exits_json, tags_json: t.tags_json, notes: t.notes,
+        })),
+      }),
+    })
+      .then(r => r.json())
+      .then((d: { summaries?: Record<string, string> }) => {
+        if (cancelled) return
+        const got = d.summaries ?? {}
+        setSummaries(prev => ({ ...prev, ...got }))
+        for (const t of missing) {
+          if (got[t.id]) {
+            try { localStorage.setItem(summaryCacheKey(t.id), JSON.stringify({ h: hashTrade(t), s: got[t.id] })) } catch { /* ignore */ }
+          }
+        }
+      })
+      .catch(() => { /* silent */ })
+      .finally(() => { if (!cancelled) setSummariesLoading(false) })
+    return () => { cancelled = true }
+  }, [trades])
 
   const handleHoverEnter = (tradeId: string, e: React.MouseEvent) => {
     setHoveredTradeId(tradeId)
@@ -732,6 +805,8 @@ export default function EodClient({
         onDelete={handleDeleteTrade}
         deletingId={deletingTradeId}
         onRowOpen={id => router.push(`/intraday/${date}?trade=${id}`)}
+        summaries={summaries}
+        summariesLoading={summariesLoading}
       />
 
       {/* EOD Notes */}
