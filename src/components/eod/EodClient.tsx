@@ -62,7 +62,7 @@ export default function EodClient({
   // rendering from imported OHLCV bars. Default to screenshot for backward
   // compat; user opts into Live by clicking the toggle. State is per-mount
   // (resets on navigation between days) — fine for now.
-  const [chartView, setChartView] = useState<'screenshot' | 'live'>('screenshot')
+  const [chartView, setChartView] = useState<'screenshot' | 'live'>('live')
   // Bumped by the background bar watcher when it imports bars for this day, so
   // the Live chart re-fetches and shows the freshly-imported bars.
   const [barsVersion, setBarsVersion] = useState(0)
@@ -598,21 +598,21 @@ export default function EodClient({
         <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
           <button
             type="button"
-            onClick={() => setChartView('screenshot')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-              chartView === 'screenshot' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
-            }`}
-          >
-            <ImageIcon className="w-3.5 h-3.5" /> Screenshot
-          </button>
-          <button
-            type="button"
             onClick={() => setChartView('live')}
             className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
               chartView === 'live' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
             }`}
           >
             <CandlestickChart className="w-3.5 h-3.5" /> Live chart
+          </button>
+          <button
+            type="button"
+            onClick={() => setChartView('screenshot')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+              chartView === 'screenshot' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+            }`}
+          >
+            <ImageIcon className="w-3.5 h-3.5" /> Screenshot
           </button>
         </div>
       </div>

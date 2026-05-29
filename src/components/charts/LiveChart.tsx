@@ -117,9 +117,11 @@ interface HoverInfo {
   y: number
 }
 
-// Per-symbol+date saved zoom/pan (task 2). Logical range is index-based so it
-// restores the same zoom regardless of how many bars loaded.
-const viewKey = (symbol: string, date: string) => `livechart-view-${symbol}-${date}`
+// Per-symbol+date saved zoom/pan. Stored as a visible TIME range ({from,to} in
+// unix seconds), not a bar-index range — so it restores the same wall-clock
+// window + zoom even on the live day as new bars append. (v2 key: v1 stored
+// index ranges, which would be misread as timestamps, so we ignore those.)
+const viewKey = (symbol: string, date: string) => `livechart-view-v2-${symbol}-${date}`
 function loadView(symbol: string, date: string): { from: number; to: number } | null {
   try { const r = localStorage.getItem(viewKey(symbol, date)); return r ? JSON.parse(r) : null } catch { return null }
 }
@@ -215,9 +217,11 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   // everything is locked.)
   const saveChartView = () => {
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
-    const r = chartRef.current?.timeScale().getVisibleLogicalRange()
+    // Capture the visible TIME range (current zoom + position) so it restores
+    // to the same window regardless of how many bars have since loaded.
+    const r = chartRef.current?.timeScale().getVisibleRange()
     if (r && symbol) {
-      saveView(symbol, date, { from: r.from, to: r.to })
+      saveView(symbol, date, { from: r.from as number, to: r.to as number })
       setHasSavedView(true)
     }
     setViewSavedFlash(true)
@@ -387,13 +391,16 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       else setHover(null)
     })
 
-    // Auto-save the user's zoom/pan per symbol+date (debounced). Guarded so the
-    // programmatic restore/fit on data load doesn't overwrite the saved view.
-    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    // Auto-save the user's zoom/pan per symbol+date (debounced) as a time range.
+    // Guarded so the programmatic restore/fit on data load doesn't overwrite the
+    // saved view.
+    chart.timeScale().subscribeVisibleTimeRangeChange(range => {
       if (!range || suppressViewSaveRef.current || !symbolRef.current) return
       if (viewSaveTimerRef.current) clearTimeout(viewSaveTimerRef.current)
+      const from = range.from as number
+      const to = range.to as number
       viewSaveTimerRef.current = setTimeout(() => {
-        saveView(symbolRef.current!, dateRef.current, { from: range.from, to: range.to })
+        saveView(symbolRef.current!, dateRef.current, { from, to })
         setHasSavedView(true)
       }, 600)
     })
@@ -635,7 +642,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       restoredKeyRef.current = dayKey
       const saved = symbol ? loadView(symbol, date) : null
       suppressViewSaveRef.current = true
-      if (saved) tscale.setVisibleLogicalRange(saved)
+      if (saved) tscale.setVisibleRange({ from: saved.from as Time, to: saved.to as Time })
       else tscale.fitContent()
       setTimeout(() => { suppressViewSaveRef.current = false }, 60)
     }
