@@ -8,10 +8,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params
   const supabase: AnyClient = await createClient()
   const body = await req.json()
+  // `date` is the page's trading day, not a column on trades (it maps to
+  // trading_day_id, already set on the row). Strip it so the update doesn't
+  // reference a non-existent column — same as POST. Editing never changes the day.
+  const { date: _date, ...tradeData } = body
+  void _date
 
   const { data, error } = await supabase
     .from('trades')
-    .update({ ...body, updated_at: new Date().toISOString() })
+    .update({ ...tradeData, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select().single()
 
