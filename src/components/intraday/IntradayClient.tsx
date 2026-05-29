@@ -13,6 +13,8 @@ interface Props {
   date: string
   initialTrades: Trade[]
   allTags: TradeTag[]
+  /** Trade to auto-open + scroll to on mount (deep-link from the EOD trade list). */
+  initialOpenTradeId?: string | null
 }
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
@@ -28,11 +30,24 @@ function rMultiple(t: Trade): string | null {
   return (t.pnl / risk).toFixed(1) + 'R'
 }
 
-export default function IntradayClient({ date, initialTrades, allTags }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags, initialOpenTradeId }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   const [mode, setMode] = useState<Mode>({ type: 'list' })
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [expanded, setExpanded] = useState<Set<string>>(
+    () => (initialOpenTradeId ? new Set([initialOpenTradeId]) : new Set()),
+  )
+  const [highlightId, setHighlightId] = useState<string | null>(initialOpenTradeId ?? null)
+
+  // Deep-link from the EOD trade list: open + scroll to the requested trade.
+  useEffect(() => {
+    if (!initialOpenTradeId) return
+    const el = document.getElementById(`trade-${initialOpenTradeId}`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // Fade the highlight after a moment.
+    const t = setTimeout(() => setHighlightId(null), 2400)
+    return () => clearTimeout(t)
+  }, [initialOpenTradeId])
   const [deleting, setDeleting] = useState<string | null>(null)
   const [pastedFile, setPastedFile] = useState<File | null>(null)
   const [showChart, setShowChart] = useState(true)
@@ -178,7 +193,13 @@ export default function IntradayClient({ date, initialTrades, allTags }: Props) 
         }
 
         return (
-          <div key={trade.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div
+            key={trade.id}
+            id={`trade-${trade.id}`}
+            className={`bg-gray-900 border rounded-xl overflow-hidden transition-colors ${
+              highlightId === trade.id ? 'border-blue-500 ring-1 ring-blue-500/60' : 'border-gray-800'
+            }`}
+          >
             {/* Trade header row */}
             <div className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-800/40 transition-colors select-none"
               onClick={() => toggle(trade.id)}>

@@ -5,8 +5,15 @@ import type { Trade, TradeTag } from '@/lib/supabase/types'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
-export default async function IntradayPage({ params }: { params: Promise<{ date: string }> }) {
+export default async function IntradayPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ date: string }>
+  searchParams: Promise<{ trade?: string }>
+}) {
   const { date } = await params
+  const { trade: openTradeId } = await searchParams
   const supabase: AnyClient = await createClient()
 
   const { data: day } = await supabase.from('trading_days').select('id').eq('date', date).single()
@@ -26,6 +33,7 @@ export default async function IntradayPage({ params }: { params: Promise<{ date:
         date={date}
         initialTrades={trades}
         allTags={(tags ?? []) as TradeTag[]}
+        initialOpenTradeId={openTradeId ?? null}
       />
     </div>
   )

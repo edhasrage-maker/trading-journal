@@ -14,6 +14,8 @@ interface Props {
   nearDuplicateIds: Set<string>
   onDelete: (tradeId: string) => void
   deletingId: string | null
+  /** Open this trade's full log in the intraday page. */
+  onRowOpen?: (tradeId: string) => void
 }
 
 export default function TradeList({
@@ -26,6 +28,7 @@ export default function TradeList({
   nearDuplicateIds,
   onDelete,
   deletingId,
+  onRowOpen,
 }: Props) {
   if (trades.length === 0) {
     return (
@@ -68,7 +71,9 @@ export default function TradeList({
                   key={t.id}
                   onMouseEnter={e => onHoverEnter(t.id, e)}
                   onMouseLeave={onHoverLeave}
-                  className={`group border-b border-gray-800 transition-colors cursor-default ${
+                  onClick={() => onRowOpen?.(t.id)}
+                  title="Open this trade's log in the intraday page"
+                  className={`group border-b border-gray-800 transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${
                     isSelected
                       ? 'bg-blue-900/30'
                       : isHovered

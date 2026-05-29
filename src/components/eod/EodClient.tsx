@@ -731,6 +731,7 @@ export default function EodClient({
         nearDuplicateIds={nearDuplicateIds}
         onDelete={handleDeleteTrade}
         deletingId={deletingTradeId}
+        onRowOpen={id => router.push(`/intraday/${date}?trade=${id}`)}
       />
 
       {/* EOD Notes */}
