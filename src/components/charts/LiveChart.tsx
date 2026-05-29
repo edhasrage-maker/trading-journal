@@ -216,9 +216,6 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     if (r && symbol) {
       saveView(symbol, date, { from: r.from, to: r.to })
       setHasSavedView(true)
-      console.log(`[LiveChart view] SAVED ${date} -> ${JSON.stringify({ from: r.from, to: r.to })}`)
-    } else {
-      console.warn('[LiveChart view] save skipped — no visible range', { hasRange: !!r, symbol })
     }
     setViewSavedFlash(true)
     setTimeout(() => setViewSavedFlash(false), 1500)
@@ -643,16 +640,15 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // Re-apply after the library's post-setData layout pass — a synchronous
         // range set on the FIRST data load is otherwise overridden by the
         // chart's auto-fit, which is why the saved zoom never stuck.
-        requestAnimationFrame(() => {
-          applyView()
-          console.log(
-            `[LiveChart view] RESTORE ${date} saved=${JSON.stringify(saved)} -> actual=${JSON.stringify(tscale.getVisibleLogicalRange())}`,
-          )
-        })
+        requestAnimationFrame(applyView)
       } else if (prevRange) {
-        // Already restored: this is a data update (watcher refresh, levels or
-        // trades loading). Re-apply the pre-setData view so it stays put.
-        tscale.setVisibleLogicalRange(prevRange)
+        // Already restored: a data update (watcher refresh, levels/trades load).
+        // Re-apply the pre-setData view both now AND after the layout pass —
+        // setData re-fits a frame later, which was widening the locked zoom on
+        // every live-day bar-watcher refresh.
+        const pr = { from: prevRange.from, to: prevRange.to }
+        tscale.setVisibleLogicalRange(pr)
+        requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(pr) })
       }
     }
   }, [bars, trades, levels, prefs, symbol, date])
