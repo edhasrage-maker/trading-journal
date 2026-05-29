@@ -216,6 +216,9 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     if (r && symbol) {
       saveView(symbol, date, { from: r.from, to: r.to })
       setHasSavedView(true)
+      console.log(`[VIEW] SAVED ${date} -> ${JSON.stringify({ from: r.from, to: r.to })}`)
+    } else {
+      console.warn(`[VIEW] SAVE SKIPPED hasRange=${!!r} symbol=${symbol}`)
     }
     setViewSavedFlash(true)
     setTimeout(() => setViewSavedFlash(false), 1500)
@@ -387,6 +390,12 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // NOTE: no auto-save-on-pan. The saved view is written ONLY by the explicit
     // "Save chart view" button, so it's a true lock-in — panning/zooming (or new
     // bars shifting the range on the live day) can never silently overwrite it.
+
+    // TEMP DIAGNOSTIC: log every visible-range change so we can see exactly what
+    // widens the chart and when. Remove once the zoom-lock bug is confirmed.
+    chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
+      console.log(`[VIEW] range-change -> ${JSON.stringify(r)} @ ${new Date().toISOString().slice(11, 23)}`)
+    })
 
     return () => {
       obs.disconnect()
@@ -641,6 +650,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // range set on the FIRST data load is otherwise overridden by the
         // chart's auto-fit, which is why the saved zoom never stuck.
         requestAnimationFrame(applyView)
+        console.log(`[VIEW] RESTORE firstOpen ${date} saved=${JSON.stringify(saved)}`)
       } else if (prevRange) {
         // Already restored: a data update (watcher refresh, levels/trades load).
         // Re-apply the pre-setData view both now AND after the layout pass —
@@ -649,6 +659,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         const pr = { from: prevRange.from, to: prevRange.to }
         tscale.setVisibleLogicalRange(pr)
         requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(pr) })
+        console.log(`[VIEW] PRESERVE ${date} reapply=${JSON.stringify(pr)}`)
       }
     }
   }, [bars, trades, levels, prefs, symbol, date])
