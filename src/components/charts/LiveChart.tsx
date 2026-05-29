@@ -196,14 +196,6 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const tradesRef = useRef<Trade[]>(trades)
   useEffect(() => { tradesRef.current = trades }, [trades])
 
-  // View-persistence refs. symbol/date refs let the once-subscribed range
-  // handler read current values; suppress flag stops programmatic restore/fit
-  // from being saved back as the user's view.
-  const symbolRef = useRef<string | null>(symbol)
-  const dateRef = useRef<string>(date)
-  useEffect(() => { symbolRef.current = symbol; dateRef.current = date }, [symbol, date])
-  const suppressViewSaveRef = useRef(false)
-  const viewSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Tracks the symbol|date we've already restored the saved view for, so the
   // restore runs once per day-open instead of on every data/prefs change.
   const restoredKeyRef = useRef<string | null>(null)
@@ -391,19 +383,9 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       else setHover(null)
     })
 
-    // Auto-save the user's zoom/pan per symbol+date (debounced) as a time range.
-    // Guarded so the programmatic restore/fit on data load doesn't overwrite the
-    // saved view.
-    chart.timeScale().subscribeVisibleTimeRangeChange(range => {
-      if (!range || suppressViewSaveRef.current || !symbolRef.current) return
-      if (viewSaveTimerRef.current) clearTimeout(viewSaveTimerRef.current)
-      const from = range.from as number
-      const to = range.to as number
-      viewSaveTimerRef.current = setTimeout(() => {
-        saveView(symbolRef.current!, dateRef.current, { from, to })
-        setHasSavedView(true)
-      }, 600)
-    })
+    // NOTE: no auto-save-on-pan. The saved view is written ONLY by the explicit
+    // "Save chart view" button, so it's a true lock-in — panning/zooming (or new
+    // bars shifting the range on the live day) can never silently overwrite it.
 
     return () => {
       obs.disconnect()
@@ -641,10 +623,8 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     if (tscale && restoredKeyRef.current !== dayKey) {
       restoredKeyRef.current = dayKey
       const saved = symbol ? loadView(symbol, date) : null
-      suppressViewSaveRef.current = true
       if (saved) tscale.setVisibleRange({ from: saved.from as Time, to: saved.to as Time })
       else tscale.fitContent()
-      setTimeout(() => { suppressViewSaveRef.current = false }, 60)
     }
   }, [bars, trades, levels, prefs, symbol, date])
 
