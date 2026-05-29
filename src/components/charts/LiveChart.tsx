@@ -287,7 +287,10 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       if (reqId !== barsReqRef.current) return
       if (!silent) setError(err instanceof Error ? err.message : 'Network error')
     } finally {
-      if (reqId === barsReqRef.current && !silent) setLoading(false)
+      // Whichever request is the latest clears the spinner — even a silent one.
+      // Otherwise a silent background refresh that supersedes the initial load
+      // leaves `loading` stuck true, freezing the chart behind its overlay.
+      if (reqId === barsReqRef.current) setLoading(false)
     }
   }, [symbol, date])
 
