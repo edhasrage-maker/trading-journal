@@ -117,11 +117,13 @@ interface HoverInfo {
   y: number
 }
 
-// Per-symbol+date saved zoom/pan. Stored as a visible TIME range ({from,to} in
-// unix seconds), not a bar-index range — so it restores the same wall-clock
-// window + zoom even on the live day as new bars append. (v2 key: v1 stored
-// index ranges, which would be misread as timestamps, so we ignore those.)
-const viewKey = (symbol: string, date: string) => `livechart-view-v2-${symbol}-${date}`
+// Per-symbol+date saved zoom/pan. Stored as a LOGICAL (bar-index) range —
+// setVisibleLogicalRange restores reliably right after setData, whereas the
+// time-range API (setVisibleRange) is frequently overridden by the library's
+// post-setData layout, so the zoom never locked. Index ranges are stable across
+// reloads (same bars) and on the live day (appended bars don't shift earlier
+// indices). v3 key: prior keys stored a different range type — ignore them.
+const viewKey = (symbol: string, date: string) => `livechart-view-v3-${symbol}-${date}`
 function loadView(symbol: string, date: string): { from: number; to: number } | null {
   try { const r = localStorage.getItem(viewKey(symbol, date)); return r ? JSON.parse(r) : null } catch { return null }
 }
@@ -209,12 +211,14 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   // everything is locked.)
   const saveChartView = () => {
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
-    // Capture the visible TIME range (current zoom + position) so it restores
-    // to the same window regardless of how many bars have since loaded.
-    const r = chartRef.current?.timeScale().getVisibleRange()
+    // Capture the visible logical (bar-index) range — current zoom + position.
+    const r = chartRef.current?.timeScale().getVisibleLogicalRange()
     if (r && symbol) {
-      saveView(symbol, date, { from: r.from as number, to: r.to as number })
+      saveView(symbol, date, { from: r.from, to: r.to })
       setHasSavedView(true)
+      console.log('[LiveChart view] saved', { symbol, date, range: { from: r.from, to: r.to } })
+    } else {
+      console.warn('[LiveChart view] save skipped — no visible range', { hasRange: !!r, symbol })
     }
     setViewSavedFlash(true)
     setTimeout(() => setViewSavedFlash(false), 1500)
@@ -456,7 +460,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // the visible range, so for an already-restored day we re-apply this below
     // (background refreshes from the bar watcher, levels/trades loading, etc.
     // must not move the chart). Null on the first non-empty render (no data yet).
-    const prevRange = chartRef.current?.timeScale().getVisibleRange() ?? null
+    const prevRange = chartRef.current?.timeScale().getVisibleLogicalRange() ?? null
 
     const candleData = bars.map(b => ({
       time: (new Date(b.ts).getTime() / 1000) as Time,
@@ -631,12 +635,17 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // First open of this day: restore the saved view (or fit if none).
         restoredKeyRef.current = dayKey
         const saved = symbol ? loadView(symbol, date) : null
-        if (saved) tscale.setVisibleRange({ from: saved.from as Time, to: saved.to as Time })
-        else tscale.fitContent()
+        if (saved) {
+          tscale.setVisibleLogicalRange({ from: saved.from, to: saved.to })
+          console.log('[LiveChart view] restored', { symbol, date, range: saved })
+        } else {
+          tscale.fitContent()
+          console.log('[LiveChart view] no saved view → fitContent', { symbol, date })
+        }
       } else if (prevRange) {
         // Already restored: this is a data update (watcher refresh, levels or
         // trades loading). Re-apply the pre-setData view so it stays put.
-        tscale.setVisibleRange(prevRange)
+        tscale.setVisibleLogicalRange(prevRange)
       }
     }
   }, [bars, trades, levels, prefs, symbol, date])
