@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { ArrowUpDown, ArrowUp, ArrowDown, ChevronDown } from 'lucide-react'
 import type { TagPerf } from '@/lib/analytics'
 
 interface Props {
@@ -27,6 +27,7 @@ export default function TagPerformanceTable({
 }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('total_pnl')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [open, setOpen] = useState(true)
 
   const filtered = useMemo(() => data.filter(d => d.stats.count >= minCount), [data, minCount])
 
@@ -78,15 +79,18 @@ export default function TagPerformanceTable({
 
   return (
     <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-      <div className="mb-4">
-        <h2 className="font-semibold text-white">{title}</h2>
-        {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
-      </div>
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left">
+        <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <div>
+          <h2 className="font-semibold text-white">{title}</h2>
+          {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
+        </div>
+      </button>
 
-      {sorted.length === 0 ? (
+      {open && (sorted.length === 0 ? (
         <p className="text-center text-xs text-gray-600 italic py-6">{emptyMessage}</p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto mt-4">
           <table className="w-full text-xs font-mono">
             <thead className="text-gray-500 border-b border-gray-800">
               <tr>
@@ -136,7 +140,7 @@ export default function TagPerformanceTable({
             </tbody>
           </table>
         </div>
-      )}
+      ))}
     </section>
   )
 }

@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import BarChart from '@/components/charts/BarChart'
 import { bucketByNumeric, type TradeWithContext, type Bucket } from '@/lib/analytics'
 
@@ -55,20 +56,26 @@ interface Props {
 }
 
 export default function ConditionBuckets({ trades }: Props) {
+  const [open, setOpen] = useState(true)
   return (
     <section>
-      <header className="mb-3">
-        <h2 className="font-semibold text-white">Performance by Market Condition</h2>
-        <p className="text-xs text-gray-500 mt-0.5">
-          How your trades performed across different market regimes — {trades.length} trade{trades.length === 1 ? '' : 's'} in window
-        </p>
-      </header>
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left mb-3">
+        <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <div>
+          <h2 className="font-semibold text-white">Performance by Market Condition</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            How your trades performed across different market regimes — {trades.length} trade{trades.length === 1 ? '' : 's'} in window
+          </p>
+        </div>
+      </button>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {CONDITIONS.map(c => (
-          <ConditionCard key={c.key} cond={c} trades={trades} />
-        ))}
-      </div>
+      {open && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {CONDITIONS.map(c => (
+            <ConditionCard key={c.key} cond={c} trades={trades} />
+          ))}
+        </div>
+      )}
     </section>
   )
 }
