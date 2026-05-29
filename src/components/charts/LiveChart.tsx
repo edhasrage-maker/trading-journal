@@ -452,6 +452,12 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       return
     }
 
+    // Capture the user's current view BEFORE replacing data: setData() resets
+    // the visible range, so for an already-restored day we re-apply this below
+    // (background refreshes from the bar watcher, levels/trades loading, etc.
+    // must not move the chart). Null on the first non-empty render (no data yet).
+    const prevRange = chartRef.current?.timeScale().getVisibleRange() ?? null
+
     const candleData = bars.map(b => ({
       time: (new Date(b.ts).getTime() / 1000) as Time,
       open: b.open,
@@ -620,11 +626,18 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // in. Navigating to another day changes the key and restores again.
     const tscale = chartRef.current?.timeScale()
     const dayKey = `${symbol ?? ''}|${date}`
-    if (tscale && restoredKeyRef.current !== dayKey) {
-      restoredKeyRef.current = dayKey
-      const saved = symbol ? loadView(symbol, date) : null
-      if (saved) tscale.setVisibleRange({ from: saved.from as Time, to: saved.to as Time })
-      else tscale.fitContent()
+    if (tscale) {
+      if (restoredKeyRef.current !== dayKey) {
+        // First open of this day: restore the saved view (or fit if none).
+        restoredKeyRef.current = dayKey
+        const saved = symbol ? loadView(symbol, date) : null
+        if (saved) tscale.setVisibleRange({ from: saved.from as Time, to: saved.to as Time })
+        else tscale.fitContent()
+      } else if (prevRange) {
+        // Already restored: this is a data update (watcher refresh, levels or
+        // trades loading). Re-apply the pre-setData view so it stays put.
+        tscale.setVisibleRange(prevRange)
+      }
     }
   }, [bars, trades, levels, prefs, symbol, date])
 
