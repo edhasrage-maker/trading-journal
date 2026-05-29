@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import AnalyticsClient from '@/components/analytics/AnalyticsClient'
-import { joinTradesWithContext } from '@/lib/analytics'
+import { joinTradesWithContext, type TradeWithContext } from '@/lib/analytics'
 import type { TradingDay, Trade, MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -8,6 +8,48 @@ type AnyClient = any
 
 type DayRow = Pick<TradingDay, 'id' | 'date' | 'day_type'>
 type ContextRow = Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>
+
+interface HistRow {
+  id: string
+  net_pnl: number | null
+  entry_price: number | null
+  quantity: number | null
+  side: string | null
+  open_at: string | null
+  trade_date: string | null
+  realized_rr: number | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tags_json: any
+}
+
+/**
+ * Map an imported historical (Tradezella) trade into the TradeWithContext shape
+ * the analytics aggregations consume. We synthesize a stop price from the
+ * recorded realized RR so Avg R includes these trades too (rMultiple =
+ * pnl / (|entry-stop|*qty) == realized_rr by construction).
+ */
+function histToContext(h: HistRow): TradeWithContext {
+  const entry = h.entry_price, qty = h.quantity, pnl = h.net_pnl, rr = h.realized_rr
+  let stop: number | null = null
+  if (entry != null && qty && pnl != null && rr != null && rr !== 0) {
+    const dist = Math.abs(pnl / (rr * qty))
+    if (Number.isFinite(dist) && dist > 0) stop = h.side === 'short' ? entry + dist : entry - dist
+  }
+  return {
+    id: h.id,
+    pnl,
+    entry_price: entry,
+    stop_price: stop,
+    quantity: qty,
+    direction: (h.side as 'long' | 'short' | null) ?? null,
+    entry_time: h.open_at,
+    tags_json: h.tags_json ?? {},
+    trading_day_id: '',
+    date: h.trade_date ?? '',
+    day_type: (h.tags_json?.day_type as string) ?? null,
+    rvol: null, ib_size: null, ib_vs_10d_avg: null, adr: null, atr_1m: null,
+  }
+}
 
 export default async function AnalyticsPage() {
   const supabase: AnyClient = await createClient()
@@ -40,18 +82,36 @@ export default async function AnalyticsPage() {
     if (rows.length < PAGE) break
   }
 
+  // Imported historical trades (e.g. Tradezella) — a separate read-only store
+  // merged in for long-term tag analysis. Paginated the same way.
+  const hist: HistRow[] = []
+  for (let p = 0; p < 50; p++) {
+    const { data, error } = await supabase
+      .from('historical_trades')
+      .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, tags_json')
+      .order('trade_date', { ascending: true })
+      .order('id', { ascending: true })
+      .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (error) { console.error('[analytics] historical page', p, 'failed:', error.message); break }
+    const rows = (data ?? []) as HistRow[]
+    hist.push(...rows)
+    if (rows.length < PAGE) break
+  }
+
   const days = daysRaw ?? []
   const contexts = contextsRaw ?? []
   const joined = joinTradesWithContext(trades, days, contexts)
+  const merged = [...joined, ...hist.map(histToContext)]
 
-  const sortedDates = days.map(d => d.date).sort()
-  const defaultStartDate = sortedDates[0] ?? new Date().toISOString().slice(0, 10)
-  const defaultEndDate = sortedDates[sortedDates.length - 1] ?? new Date().toISOString().slice(0, 10)
+  // Earliest date across native days + historical trades, so "All" covers both.
+  const allDates = [...days.map(d => d.date), ...hist.map(h => h.trade_date).filter((d): d is string => !!d)].sort()
+  const defaultStartDate = allDates[0] ?? new Date().toISOString().slice(0, 10)
+  const defaultEndDate = allDates[allDates.length - 1] ?? new Date().toISOString().slice(0, 10)
 
   return (
     <div className="max-w-6xl mx-auto">
       <AnalyticsClient
-        trades={joined}
+        trades={merged}
         defaultStartDate={defaultStartDate}
         defaultEndDate={defaultEndDate}
       />
