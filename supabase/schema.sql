@@ -431,6 +431,52 @@ create policy "Authenticated full access" on bar_imports
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================
+-- historical_trades: imported third-party history (e.g. Tradezella)
+-- ============================================================
+-- A separate read-only store of historical trades imported from another
+-- journal, kept OUT of the live `trades` table so day-to-day EOD/Intraday
+-- pages stay clean. Analytics/Tag Performance UNIONs these with native trades
+-- for long-term tag analysis. tags_json uses the same shape as trades.tags_json
+-- (normalized to our 7 categories) so the aggregation can treat both uniformly.
+create table if not exists historical_trades (
+  id uuid primary key default uuid_generate_v4(),
+  source text not null default 'tradezella',
+  account text,
+  symbol text,
+  side text check (side in ('long', 'short')),
+  status text,                       -- Win / Loss / BE etc., as provided
+  open_at timestamptz,               -- combined open date + time
+  close_at timestamptz,              -- combined close date + time
+  trade_date date,                   -- local trading day (grouping/filtering)
+  entry_price numeric,
+  exit_price numeric,
+  quantity numeric,
+  net_pnl numeric,
+  gross_pnl numeric,
+  net_roi numeric,
+  realized_rr numeric,
+  reward_ratio numeric,
+  trade_risk numeric,
+  position_mfe numeric,
+  position_mae numeric,
+  price_mfe numeric,
+  price_mae numeric,
+  duration_sec numeric,
+  rating numeric,
+  zella_score numeric,
+  tags_json jsonb default '{}',      -- normalized: { setups[], confluences[], order_flow[], trade_management[], day_type, mistakes[], emotions[] }
+  raw_json jsonb,                    -- original CSV row (traceability)
+  dedup_key text unique,             -- stable hash → re-import is idempotent
+  imported_at timestamptz default now()
+);
+create index if not exists historical_trades_date_idx on historical_trades(trade_date);
+
+alter table historical_trades enable row level security;
+drop policy if exists "Authenticated full access" on historical_trades;
+create policy "Authenticated full access" on historical_trades
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
 -- Storage buckets (run separately in Supabase dashboard or CLI)
 -- ============================================================
 -- Bucket: 'screenshots'  (for chart + trade entry screenshots)
