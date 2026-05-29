@@ -13,6 +13,7 @@ import {
   type ISeriesMarkersPluginApi,
   type IPriceLine,
   type Time,
+  type AutoscaleInfo,
 } from 'lightweight-charts'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
@@ -149,6 +150,9 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  // Current candle OHLC (kept in a ref) so the price-scale autoscale provider
+  // can fit the axis to the VISIBLE candles instead of the far-away level lines.
+  const candleDataRef = useRef<Array<{ high: number; low: number }>>([])
   const vwapRef = useRef<ISeriesApi<'Line'> | null>(null)
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema20Ref = useRef<ISeriesApi<'Line'> | null>(null)
@@ -216,9 +220,6 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     if (r && symbol) {
       saveView(symbol, date, { from: r.from, to: r.to })
       setHasSavedView(true)
-      console.log(`[VIEW] SAVED ${date} -> ${JSON.stringify({ from: r.from, to: r.to })}`)
-    } else {
-      console.warn(`[VIEW] SAVE SKIPPED hasRange=${!!r} symbol=${symbol}`)
     }
     setViewSavedFlash(true)
     setTimeout(() => setViewSavedFlash(false), 1500)
@@ -347,6 +348,28 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       borderDownColor: '#dc2626',
       wickUpColor: '#16a34a',
       wickDownColor: '#dc2626',
+      // Fit the price axis to the VISIBLE candles (+ padding), not the session-
+      // level price lines. Without this the far levels (Wk Open, IBH+100%, …)
+      // blow out the vertical range and squash the candles — which read as
+      // "scale not zoomed in enough". Manual price-axis drag still overrides
+      // this (it disables autoScale for the scale).
+      autoscaleInfoProvider: (baseImpl: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+        const data = candleDataRef.current
+        const lr = chartRef.current?.timeScale().getVisibleLogicalRange()
+        if (!data.length || !lr) return baseImpl()
+        const from = Math.max(0, Math.floor(lr.from))
+        const to = Math.min(data.length - 1, Math.ceil(lr.to))
+        let min = Infinity, max = -Infinity
+        for (let i = from; i <= to; i++) {
+          const b = data[i]
+          if (!b) continue
+          if (b.low < min) min = b.low
+          if (b.high > max) max = b.high
+        }
+        if (!isFinite(min) || !isFinite(max)) return baseImpl()
+        const pad = (max - min) * 0.12 || 1
+        return { priceRange: { minValue: min - pad, maxValue: max + pad } }
+      },
     })
     vwapRef.current = chart.addSeries(LineSeries, {
       color: '#3b82f6',
@@ -394,12 +417,6 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // NOTE: no auto-save-on-pan. The saved view is written ONLY by the explicit
     // "Save chart view" button, so it's a true lock-in — panning/zooming (or new
     // bars shifting the range on the live day) can never silently overwrite it.
-
-    // TEMP DIAGNOSTIC: log every visible-range change so we can see exactly what
-    // widens the chart and when. Remove once the zoom-lock bug is confirmed.
-    chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
-      console.log(`[VIEW] range-change -> ${JSON.stringify(r)} @ ${new Date().toISOString().slice(11, 23)}`)
-    })
 
     return () => {
       obs.disconnect()
@@ -454,6 +471,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     if (!candleRef.current || !vwapRef.current || !ema9Ref.current || !ema20Ref.current) return
     if (!bars || bars.length === 0) {
       candleRef.current.setData([])
+      candleDataRef.current = []
       vwapRef.current.setData([])
       ema9Ref.current.setData([])
       ema20Ref.current.setData([])
@@ -480,6 +498,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       close: b.close,
     }))
     candleRef.current.setData(candleData)
+    candleDataRef.current = candleData // for the price-scale autoscale provider
 
     // Study-matched VWAP / EMA9 / EMA20 series from /api/bars/levels (replaces
     // the previous simple client-side calc). Falls back to empty until levels
@@ -654,7 +673,6 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // range set on the FIRST data load is otherwise overridden by the
         // chart's auto-fit, which is why the saved zoom never stuck.
         requestAnimationFrame(applyView)
-        console.log(`[VIEW] RESTORE firstOpen ${date} saved=${JSON.stringify(saved)}`)
       } else if (prevRange) {
         // Already restored: a data update (watcher refresh, levels/trades load).
         // Re-apply the pre-setData view both now AND after the layout pass —
@@ -663,7 +681,6 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         const pr = { from: prevRange.from, to: prevRange.to }
         tscale.setVisibleLogicalRange(pr)
         requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(pr) })
-        console.log(`[VIEW] PRESERVE ${date} reapply=${JSON.stringify(pr)}`)
       }
     }
   }, [bars, trades, levels, prefs, symbol, date])
