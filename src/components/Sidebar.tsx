@@ -16,6 +16,7 @@ import {
   Archive,
   Database,
   CandlestickChart,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -24,6 +25,7 @@ const settingsItems = [
   { href: '/settings/stats', label: 'Perf Stats', icon: Settings },
   { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database },
   { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart },
+  { href: '/settings/tradezella', label: 'Tradezella', icon: FileSpreadsheet },
   { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive },
 ]
 

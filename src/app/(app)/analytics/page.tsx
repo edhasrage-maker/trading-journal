@@ -27,8 +27,13 @@ interface HistRow {
  * the analytics aggregations consume. We synthesize a stop price from the
  * recorded realized RR so Avg R includes these trades too (rMultiple =
  * pnl / (|entry-stop|*qty) == realized_rr by construction).
+ *
+ * Optional `ctx` is the market_context row for the trade's date (looked up via
+ * trading_days.date in the caller). When present, the historical trade can be
+ * bucketed by rvol/ADR/ATR/IB the same as native trades — otherwise it lands
+ * in the "Unknown" bucket on the Condition Buckets section.
  */
-function histToContext(h: HistRow): TradeWithContext {
+function histToContext(h: HistRow, ctx: ContextRow | null): TradeWithContext {
   const entry = h.entry_price, qty = h.quantity, pnl = h.net_pnl, rr = h.realized_rr
   let stop: number | null = null
   if (entry != null && qty && pnl != null && rr != null && rr !== 0) {
@@ -47,7 +52,11 @@ function histToContext(h: HistRow): TradeWithContext {
     trading_day_id: '',
     date: h.trade_date ?? '',
     day_type: (h.tags_json?.day_type as string) ?? null,
-    rvol: null, ib_size: null, ib_vs_10d_avg: null, adr: null, atr_1m: null,
+    rvol: ctx?.rvol ?? null,
+    ib_size: ctx?.ib_size ?? null,
+    ib_vs_10d_avg: ctx?.ib_vs_10d_avg ?? null,
+    adr: ctx?.adr ?? null,
+    atr_1m: ctx?.atr_1m ?? null,
   }
 }
 
@@ -101,10 +110,46 @@ export default async function AnalyticsPage() {
   const days = daysRaw ?? []
   const contexts = contextsRaw ?? []
   const joined = joinTradesWithContext(trades, days, contexts)
-  const merged = [...joined, ...hist.map(histToContext)]
 
-  // Earliest date across native days + historical trades, so "All" covers both.
-  const allDates = [...days.map(d => d.date), ...hist.map(h => h.trade_date).filter((d): d is string => !!d)].sort()
+  // Dedup against the native side: any date that has native trades wins, so
+  // historical_trades rows on that date are dropped. Without this, dates the
+  // user has both logged natively AND imported from Tradezella get
+  // double-counted across every tag/PnL aggregate (102 trades vs 57 in
+  // Tradezella for the same month, ~3x PnL, etc.). Mirror of the dedup logic
+  // in /calendar/page.tsx.
+  // Build a date → market_context lookup so historical trades can borrow the
+  // user's manually-entered market context when a trading_day exists for the
+  // same date. Without this, every TZ trade lands in the "Unknown" condition
+  // bucket regardless of whether market_context has been filled in for the date.
+  const ctxByTradingDay = new Map<string, ContextRow>()
+  for (const c of contexts) {
+    if (c.trading_day_id) ctxByTradingDay.set(c.trading_day_id, c)
+  }
+  const ctxByDate = new Map<string, ContextRow>()
+  for (const d of days) {
+    const c = ctxByTradingDay.get(d.id)
+    if (c) ctxByDate.set(d.date, c)
+  }
+
+  // Tag each row with its source. We do NOT pre-dedup on the server — that
+  // would collapse the historical count to ~195 (only overlap-free dates),
+  // so a user picking "Historical only" wouldn't see their full 915-row
+  // Tradezella set. Dedup is applied conditionally on the client based on
+  // the Source filter (see AnalyticsClient.filtered).
+  const merged: TradeWithContext[] = [
+    ...joined.map(t => ({ ...t, source: 'native' as const })),
+    ...hist.map(h => {
+      const ctx = h.trade_date ? ctxByDate.get(h.trade_date.slice(0, 10)) ?? null : null
+      return { ...histToContext(h, ctx), source: 'historical' as const }
+    }),
+  ]
+
+  // Earliest/latest date across all sources so the date pickers can reach
+  // every row.
+  const allDates = [
+    ...days.map(d => d.date),
+    ...hist.map(h => h.trade_date).filter((d): d is string => !!d),
+  ].sort()
   const defaultStartDate = allDates[0] ?? new Date().toISOString().slice(0, 10)
   const defaultEndDate = allDates[allDates.length - 1] ?? new Date().toISOString().slice(0, 10)
 

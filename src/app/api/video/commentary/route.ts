@@ -1,10 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { existsSync } from 'fs'
-import { join, basename } from 'path'
+import { join, basename, isAbsolute, extname } from 'path'
 import { probeVideo, extractFrameJpegBase64 } from '@/lib/video-frames'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { OBS_RECORDINGS_DIR } from '../list/route'
+
+const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.mov'])
 
 const client = new Anthropic()
 
@@ -41,19 +43,37 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
   }
 
-  let body: { videoFile?: string; trades?: CommentaryTrade[] }
+  let body: { videoFile?: string; videoPath?: string; trades?: CommentaryTrade[] }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid body' }, { status: 400 }) }
-  const { videoFile, trades } = body
-  if (!videoFile || !Array.isArray(trades) || trades.length === 0) {
-    return NextResponse.json({ error: 'videoFile and non-empty trades[] required' }, { status: 400 })
+  const { videoFile, videoPath, trades } = body
+  if (!Array.isArray(trades) || trades.length === 0) {
+    return NextResponse.json({ error: 'non-empty trades[] required' }, { status: 400 })
+  }
+  if (!videoFile && !videoPath) {
+    return NextResponse.json({ error: 'videoFile or videoPath required' }, { status: 400 })
   }
 
-  // Path-traversal guard — only allow a bare filename in the recordings dir.
-  const safeName = basename(videoFile)
-  if (safeName !== videoFile) {
-    return NextResponse.json({ error: 'invalid videoFile name' }, { status: 400 })
+  // Two resolution modes:
+  //   1. videoFile = bare filename inside OBS_RECORDINGS_DIR (dropdown selection).
+  //   2. videoPath = absolute path to any video on disk (custom-import option).
+  // Both must end in a supported extension and the file must exist. The path
+  // never leaves the user's machine — ffmpeg reads it locally.
+  let fullPath: string
+  if (videoPath) {
+    if (!isAbsolute(videoPath)) {
+      return NextResponse.json({ error: 'videoPath must be an absolute path' }, { status: 400 })
+    }
+    if (!VIDEO_EXTS.has(extname(videoPath).toLowerCase())) {
+      return NextResponse.json({ error: `Unsupported video extension. Use ${Array.from(VIDEO_EXTS).join(', ')}.` }, { status: 400 })
+    }
+    fullPath = videoPath
+  } else {
+    const safeName = basename(videoFile!)
+    if (safeName !== videoFile) {
+      return NextResponse.json({ error: 'invalid videoFile name' }, { status: 400 })
+    }
+    fullPath = join(OBS_RECORDINGS_DIR, safeName)
   }
-  const fullPath = join(OBS_RECORDINGS_DIR, safeName)
   if (!existsSync(fullPath)) {
     return NextResponse.json({ error: `Recording not found: ${fullPath}` }, { status: 404 })
   }

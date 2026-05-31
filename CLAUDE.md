@@ -41,7 +41,7 @@ RLS is enabled on every table with one policy: `for all using (auth.role() = 'au
 
 `src/components/charts/LiveChart.tsx` carries **4 pre-existing `react-hooks/set-state-in-effect` errors** (load-prefs effect, hasSavedView effect, two more) — they're committed and the dev build runs fine. Don't try to "fix" them by ripping out the patterns; they're load-from-localStorage shims that need to setState in the effect. The rule fires inconsistently — when adding new sync `setState` in an effect, add `// eslint-disable-next-line react-hooks/set-state-in-effect -- <reason>` only if eslint actually flags it.
 
-## Recently shipped (latest commits on `feat/chart-migration-phase-1`)
+## Recently shipped (on `main` — trunk-based dev going forward; previously `feat/chart-migration-phase-1`, now merged + deleted)
 
 - Live chart (lightweight-charts v5) with VWAP/EMA/session-level lines, working saved zoom, row-hover ↔ chart crosshair link, AI Overview column per trade.
 - Background `BarWatcher` auto-imports today's bars from `.scid` every 3 min.

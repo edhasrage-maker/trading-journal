@@ -61,6 +61,8 @@ export interface LevelSeriesPoint {
   weeklyVwap: number | null
   ema9: number | null
   ema20: number | null
+  /** 1-minute ATR-10 using Wilder's smoothing. Null until enough bars have warmed up. */
+  atr: number | null
 }
 
 export interface LevelsResult {
@@ -150,6 +152,35 @@ function emaOnTimeframe(annotated: AnnotatedBar[], tfMins: number, length: numbe
   const ema = sierraEma(bucketKeys.map(k => bucketClose.get(k)!), length)
   const out: (number | null)[] = new Array(annotated.length).fill(null)
   bucketKeys.forEach((k, j) => { out[bucketLastIdx.get(k)!] = ema[j] })
+  return out
+}
+
+/**
+ * Wilder's ATR over the bar series (always on the underlying 1-minute bars).
+ * Seed = SMA of the first `length` true ranges; subsequent values use
+ * ATR = (ATR_prev * (length - 1) + TR) / length. Indices before the seed are
+ * null. Computed over the entire lookback so the target day's first value is
+ * already fully warmed up.
+ */
+function wilderAtr(annotated: AnnotatedBar[], length: number): (number | null)[] {
+  const n = annotated.length
+  const out: (number | null)[] = new Array(n).fill(null)
+  if (n === 0 || length <= 0 || n < length) return out
+  const tr: number[] = new Array(n)
+  tr[0] = annotated[0].high - annotated[0].low
+  for (let i = 1; i < n; i++) {
+    const b = annotated[i]
+    const prevClose = annotated[i - 1].close
+    tr[i] = Math.max(b.high - b.low, Math.abs(b.high - prevClose), Math.abs(b.low - prevClose))
+  }
+  let sum = 0
+  for (let i = 0; i < length; i++) sum += tr[i]
+  let atr = sum / length
+  out[length - 1] = atr
+  for (let i = length; i < n; i++) {
+    atr = (atr * (length - 1) + tr[i]) / length
+    out[i] = atr
+  }
   return out
 }
 
@@ -272,6 +303,9 @@ export function computeSessionLevels(
   // EMA over full series, on the configured timeframe (default 5m)
   const ema9All = emaOnTimeframe(annotated, cfg.emaTimeframeMins, 9)
   const ema20All = emaOnTimeframe(annotated, cfg.emaTimeframeMins, 20)
+  // ATR-10 (Wilder) on the underlying 1-min bars — always on 1m regardless of
+  // the EMA timeframe pref (the user spec is "1 min ATR-10 Wilders Method").
+  const atrAll = wilderAtr(annotated, 10)
 
   // VWAP accumulators
   let dPV = 0, dV = 0, wPV = 0, wV = 0
@@ -289,6 +323,7 @@ export function computeSessionLevels(
         weeklyVwap: wV > 0 ? wPV / wV : null,
         ema9: ema9All[i],
         ema20: ema20All[i],
+        atr: atrAll[i],
       })
     }
   }

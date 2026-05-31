@@ -19,6 +19,10 @@ export interface TradeWithContext extends TradeLike {
   ib_vs_10d_avg: number | null
   adr: number | null
   atr_1m: number | null
+  /** Which import pipeline produced this row — drives the Source filter in
+   * AnalyticsClient. 'native' = Sierra Chart import / manual entry (per-fill
+   * granular). 'historical' = Tradezella re-import (aggregated per position). */
+  source?: 'native' | 'historical'
 }
 
 export interface DaySummary {

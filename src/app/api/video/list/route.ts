@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { existsSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 
-export const OBS_RECORDINGS_DIR = process.env.OBS_RECORDINGS_DIR || 'C:\\Users\\lamed\\Videos'
+export const OBS_RECORDINGS_DIR = process.env.OBS_RECORDINGS_DIR || 'D:\\obs-studio\\Videos'
 
 /**
  * GET /api/video/list — list MP4/MKV/MOV recordings in OBS_RECORDINGS_DIR

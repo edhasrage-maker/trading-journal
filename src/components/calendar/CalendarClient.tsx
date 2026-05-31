@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { format, subMonths } from 'date-fns'
+import { format, parseISO, subMonths } from 'date-fns'
 import CalendarHeatmap from './CalendarHeatmap'
 import type { DaySummary } from '@/lib/analytics'
 
@@ -24,12 +24,14 @@ export default function CalendarClient({ summaries, defaultStartDate, defaultEnd
   const [rangeMonths, setRangeMonths] = useState(6)
   const [dayType, setDayType] = useState<string>('all')
 
-  const today = format(new Date(), 'yyyy-MM-dd')
+  // Anchor on server-passed `defaultEndDate` rather than `new Date()` — calling
+  // Date during render in a client component causes SSR vs hydration drift
+  // (see the same fix in AnalyticsClient).
+  const endDate = defaultEndDate
   const startDate = useMemo(() => {
     if (rangeMonths === 0) return defaultStartDate
-    return format(subMonths(new Date(), rangeMonths), 'yyyy-MM-01')
-  }, [rangeMonths, defaultStartDate])
-  const endDate = today > defaultEndDate ? today : defaultEndDate
+    return format(subMonths(parseISO(defaultEndDate), rangeMonths), 'yyyy-MM-01')
+  }, [rangeMonths, defaultStartDate, defaultEndDate])
 
   const filtered = useMemo(() => {
     return summaries.filter(s => {
