@@ -3,14 +3,15 @@
 import { useMemo, useState } from 'react'
 import { LayoutGrid, List as ListIcon, X } from 'lucide-react'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
-import CalendarHeatmap from '@/components/calendar/CalendarHeatmap'
+import MonthlyCalendarView from './MonthlyCalendarView'
 
 interface Props {
   initialDays: DayRowData[]
   allSetups: string[]
   allDayTypes: string[]
-  windowStart: string // YYYY-MM-DD — earliest fetched day
+  windowStart: string // YYYY-MM-DD — earliest fetched day (outer bound, ~180d ago)
   windowEnd: string   // YYYY-MM-DD — today
+  defaultFilterStart: string // YYYY-MM-DD — list-view date filter default start (~30d ago)
 }
 
 type ViewMode = 'list' | 'calendar'
@@ -33,49 +34,45 @@ export default function RecentDaysSection({
   allDayTypes,
   windowStart,
   windowEnd,
+  defaultFilterStart,
 }: Props) {
   const [view, setView] = useState<ViewMode>('list')
-  const [startDate, setStartDate] = useState(windowStart)
+  const [startDate, setStartDate] = useState(defaultFilterStart)
   const [endDate, setEndDate] = useState(windowEnd)
   const [setupFilter, setSetupFilter] = useState<string>('')
   const [dayTypeFilter, setDayTypeFilter] = useState<string>('')
 
-  const filteredDays = useMemo(() => {
+  // Apply setup/day-type filters universally, plus the date range for list
+  // view. Calendar view ignores the date-range slider (it navigates month by
+  // month within the full window) so the same setup/day-type filters cascade
+  // there but the date-range narrowing doesn't.
+  const filteredByTags = useMemo(() => {
     return initialDays.filter(d => {
-      if (d.date < startDate || d.date > endDate) return false
       if (dayTypeFilter && (d.day_type ?? '').trim() !== dayTypeFilter) return false
       if (setupFilter && !d.setups.includes(setupFilter)) return false
       return true
     })
-  }, [initialDays, startDate, endDate, setupFilter, dayTypeFilter])
+  }, [initialDays, setupFilter, dayTypeFilter])
+
+  const filteredDays = useMemo(() => {
+    return filteredByTags.filter(d => {
+      if (d.date < startDate || d.date > endDate) return false
+      return true
+    })
+  }, [filteredByTags, startDate, endDate])
 
   const filtersActive =
-    startDate !== windowStart ||
+    startDate !== defaultFilterStart ||
     endDate !== windowEnd ||
     setupFilter !== '' ||
     dayTypeFilter !== ''
 
   const clearFilters = () => {
-    setStartDate(windowStart)
+    setStartDate(defaultFilterStart)
     setEndDate(windowEnd)
     setSetupFilter('')
     setDayTypeFilter('')
   }
-
-  // Map filtered DayRowData -> DaySummary shape the heatmap expects. Wins /
-  // losses are derived from win_rate * trade_count; the heatmap only renders
-  // pnl + trade_count, so the approximation is harmless.
-  const summaries = useMemo(() => filteredDays.map(d => {
-    const wins = d.win_rate != null ? Math.round((d.win_rate / 100) * d.trade_count) : 0
-    return {
-      date: d.date,
-      pnl: d.eod_pnl ?? 0,
-      trade_count: d.trade_count,
-      wins,
-      losses: d.trade_count - wins,
-      day_type: d.day_type,
-    }
-  }), [filteredDays])
 
   return (
     <div className="space-y-3">
@@ -104,27 +101,32 @@ export default function RecentDaysSection({
         </div>
       </div>
 
-      {/* Filter bar */}
+      {/* Filter bar. Date range is hidden in calendar mode (calendar has its
+          own month navigation) since combining the two would be confusing. */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <input
-          type="date"
-          value={startDate}
-          min={windowStart}
-          max={endDate}
-          onChange={e => setStartDate(e.target.value || windowStart)}
-          className="bg-gray-800 border border-gray-700 text-gray-200 font-mono rounded-md px-2 py-1 focus:outline-none focus:border-blue-500"
-          title="Filter start date"
-        />
-        <span className="text-gray-600">to</span>
-        <input
-          type="date"
-          value={endDate}
-          min={startDate}
-          max={windowEnd}
-          onChange={e => setEndDate(e.target.value || windowEnd)}
-          className="bg-gray-800 border border-gray-700 text-gray-200 font-mono rounded-md px-2 py-1 focus:outline-none focus:border-blue-500"
-          title="Filter end date"
-        />
+        {view === 'list' && (
+          <>
+            <input
+              type="date"
+              value={startDate}
+              min={windowStart}
+              max={endDate}
+              onChange={e => setStartDate(e.target.value || defaultFilterStart)}
+              className="bg-gray-800 border border-gray-700 text-gray-200 font-mono rounded-md px-2 py-1 focus:outline-none focus:border-blue-500"
+              title="Filter start date"
+            />
+            <span className="text-gray-600">to</span>
+            <input
+              type="date"
+              value={endDate}
+              min={startDate}
+              max={windowEnd}
+              onChange={e => setEndDate(e.target.value || windowEnd)}
+              className="bg-gray-800 border border-gray-700 text-gray-200 font-mono rounded-md px-2 py-1 focus:outline-none focus:border-blue-500"
+              title="Filter end date"
+            />
+          </>
+        )}
 
         <select
           value={setupFilter}
@@ -161,9 +163,17 @@ export default function RecentDaysSection({
         )}
 
         <span className="ml-auto text-gray-500">
-          {filteredDays.length} day{filteredDays.length === 1 ? '' : 's'}
-          {filtersActive && initialDays.length !== filteredDays.length && (
-            <span className="text-gray-700"> / {initialDays.length}</span>
+          {view === 'list' ? (
+            <>
+              {filteredDays.length} day{filteredDays.length === 1 ? '' : 's'}
+              {filtersActive && initialDays.length !== filteredDays.length && (
+                <span className="text-gray-700"> / {initialDays.length}</span>
+              )}
+            </>
+          ) : (
+            <>
+              {filteredByTags.length} day{filteredByTags.length === 1 ? '' : 's'} in window
+            </>
           )}
         </span>
       </div>
@@ -176,15 +186,11 @@ export default function RecentDaysSection({
           <RecentDaysList initialDays={filteredDays} />
         )
       ) : (
-        filteredDays.length === 0 ? (
-          <p className="text-gray-500 text-sm py-6 text-center">No days match the current filters.</p>
-        ) : (
-          <CalendarHeatmap
-            summaries={summaries}
-            startDate={startDate}
-            endDate={endDate}
-          />
-        )
+        <MonthlyCalendarView
+          days={filteredByTags}
+          windowStart={windowStart}
+          windowEnd={windowEnd}
+        />
       )}
     </div>
   )

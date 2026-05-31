@@ -33,6 +33,11 @@ export interface ParsedSCRow {
   //   short: MFE = entry - low,     MAE = high - entry
   high_during_position: number | null
   low_during_position: number | null
+  // Each individual closing fill, in chronological order. Multi-leg exits
+  // (scale-outs) show up as multiple entries; single-exit trades have one
+  // entry here too. The aggregated weighted-average lives in entry/exit_price
+  // for PnL math and list-view display.
+  exits: Array<{ time: string; price: number; qty: number }>
 }
 
 export interface ParseOutcome {
@@ -306,6 +311,34 @@ export function parseSierraChartLog(text: string): ParseOutcome {
     const high_during_position = allHighs.length > 0 ? Math.max(...allHighs) : null
     const low_during_position = allLows.length > 0 ? Math.min(...allLows) : null
 
+    // Build the exits array — ONE element per (price, second), summing
+    // quantity. This matches how a trader thinks about scale-outs ("took 3
+    // at 29927, 2 at 29969") regardless of how many underlying fill records
+    // or closing orders Sierra split them across:
+    //   - A single order filled in 3 partial rows at one price/instant → ×3
+    //   - Two stop orders triggering simultaneously at one price → merged
+    //   - Exits at different prices OR different times → kept separate
+    // Round price to 2dp for the key so float jitter doesn't fragment groups.
+    const exitGroups = new Map<string, { ts: Date; totalQty: number; totalValue: number }>()
+    for (const c of closes) {
+      const key = `${Math.floor(c.ts.getTime() / 1000)}:${round2(c.fillPrice)}`
+      const g = exitGroups.get(key)
+      if (g) {
+        g.totalQty += c.qty
+        g.totalValue += c.qty * c.fillPrice
+        if (c.ts.getTime() < g.ts.getTime()) g.ts = c.ts
+      } else {
+        exitGroups.set(key, { ts: c.ts, totalQty: c.qty, totalValue: c.qty * c.fillPrice })
+      }
+    }
+    const exits = Array.from(exitGroups.values())
+      .sort((a, b) => a.ts.getTime() - b.ts.getTime())
+      .map(g => ({
+        time: g.ts.toISOString(),
+        price: round2(g.totalValue / g.totalQty),
+        qty: g.totalQty,
+      }))
+
     rows.push({
       sierra_trade_id: `${g.account}:${g.firstOpenIOID}`,
       account: g.account,
@@ -319,6 +352,7 @@ export function parseSierraChartLog(text: string): ParseOutcome {
       pnl: round2(pnl),
       high_during_position: high_during_position != null ? round2(high_during_position) : null,
       low_during_position: low_during_position != null ? round2(low_during_position) : null,
+      exits,
     })
   }
 
@@ -359,5 +393,6 @@ export function mapRowToTrade(r: ParsedSCRow, tradingDayId: string) {
     pnl: r.pnl,
     high_during_position: r.high_during_position,
     low_during_position: r.low_during_position,
+    exits_json: r.exits,
   }
 }

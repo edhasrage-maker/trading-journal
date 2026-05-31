@@ -35,8 +35,8 @@ export function timeToXPct(timeIso: string, c: ChartCalibration): number | null 
 }
 
 /**
- * Combine price + time conversion for a trade. Returns null if either axis is
- * degenerate or the trade lacks the required fields.
+ * Combine price + time conversion for a trade's ENTRY. Returns null if either
+ * axis is degenerate or the trade lacks the required fields.
  */
 export function tradeToPixelPct(
   trade: { entry_time?: string | null; entry_price?: number | null },
@@ -45,6 +45,37 @@ export function tradeToPixelPct(
   if (trade.entry_time == null || trade.entry_price == null) return null
   const x = timeToXPct(trade.entry_time, calibration)
   const y = priceToYPct(trade.entry_price, calibration)
+  if (x == null || y == null) return null
+  return { x_pct: x, y_pct: y }
+}
+
+/**
+ * Pixel position for a trade's EXIT. Same math as the entry counterpart but
+ * reads exit_time / exit_price. Returns null for open trades or trades that
+ * never recorded an exit (e.g., manually-entered ones the trader didn't fill
+ * out).
+ */
+export function tradeExitToPixelPct(
+  trade: { exit_time?: string | null; exit_price?: number | null },
+  calibration: ChartCalibration,
+): { x_pct: number; y_pct: number } | null {
+  if (trade.exit_time == null || trade.exit_price == null) return null
+  const x = timeToXPct(trade.exit_time, calibration)
+  const y = priceToYPct(trade.exit_price, calibration)
+  if (x == null || y == null) return null
+  return { x_pct: x, y_pct: y }
+}
+
+/**
+ * Generic time+price → pixel mapper. Used by the multi-leg exits renderer
+ * to position each individual partial-fill marker.
+ */
+export function pointToPixelPct(
+  point: { time: string; price: number },
+  calibration: ChartCalibration,
+): { x_pct: number; y_pct: number } | null {
+  const x = timeToXPct(point.time, calibration)
+  const y = priceToYPct(point.price, calibration)
   if (x == null || y == null) return null
   return { x_pct: x, y_pct: y }
 }

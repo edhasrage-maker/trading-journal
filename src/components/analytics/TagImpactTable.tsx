@@ -1,5 +1,7 @@
 'use client'
 
+import { useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import type { TagImpact } from '@/lib/analytics'
 
 interface Props {
@@ -22,23 +24,27 @@ export default function TagImpactTable({
   minCount = 3,
 }: Props) {
   const filtered = data.filter(d => d.withStats.count >= minCount)
+  const [open, setOpen] = useState(true)
   const tone = variant === 'mistakes'
     ? 'bg-red-900/30 border-red-800 text-red-300'
     : 'bg-purple-900/30 border-purple-800 text-purple-300'
 
   return (
     <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-      <div className="mb-4">
-        <h2 className="font-semibold text-white">{title}</h2>
-        {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
-      </div>
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left">
+        <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <div>
+          <h2 className="font-semibold text-white">{title}</h2>
+          {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
+        </div>
+      </button>
 
-      {filtered.length === 0 ? (
+      {open && (filtered.length === 0 ? (
         <p className="text-center text-xs text-gray-600 italic py-6">
           Not enough tagged trades yet (need ≥ {minCount} per tag).
         </p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto mt-4">
           <table className="w-full text-xs font-mono">
             <thead className="text-gray-500 border-b border-gray-800">
               <tr>
@@ -86,7 +92,7 @@ export default function TagImpactTable({
             </tbody>
           </table>
         </div>
-      )}
+      ))}
     </section>
   )
 }

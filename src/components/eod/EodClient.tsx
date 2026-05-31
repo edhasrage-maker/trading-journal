@@ -1,20 +1,23 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Crosshair } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
 import CalibrationOverlay, { type CalibStep, type CalibDraft } from './CalibrationOverlay'
 import TradeArrowOverlay from './TradeArrowOverlay'
+import LiveChart from '@/components/charts/LiveChart'
+import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
 import HoverPopup from './HoverPopup'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import DeleteDayDangerZone from './DeleteDayDangerZone'
+import RecordingCommentary from './RecordingCommentary'
 import type {
   TradingDay,
   Trade,
@@ -31,6 +34,19 @@ interface Props {
   initialMarketContext: MarketContext | null
   allTags: TradeTag[]
 }
+
+// Stable content hash for a trade's summary-relevant fields, so a cached AI
+// summary is reused until the tags/notes/fills actually change. djb2.
+function hashTrade(t: Trade): string {
+  const basis = JSON.stringify({
+    d: t.direction, e: t.entry_price, p: t.pnl, q: t.quantity,
+    x: t.exits_json, tg: t.tags_json, n: t.notes,
+  })
+  let h = 5381
+  for (let i = 0; i < basis.length; i++) h = ((h << 5) + h + basis.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
+}
+const summaryCacheKey = (id: string) => `trade-summary-${id}`
 
 export default function EodClient({
   date,
@@ -55,6 +71,89 @@ export default function EodClient({
   })
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  // Chart view mode: 'screenshot' = legacy ChartScreenshotPanel +
+  // calibration + TradeArrowOverlay; 'live' = native lightweight-charts
+  // rendering from imported OHLCV bars. Default to screenshot for backward
+  // compat; user opts into Live by clicking the toggle. State is per-mount
+  // (resets on navigation between days) — fine for now.
+  const [chartView, setChartView] = useState<'screenshot' | 'live'>('live')
+  // Bumped by the background bar watcher when it imports bars for this day, so
+  // the Live chart re-fetches and shows the freshly-imported bars.
+  const [barsVersion, setBarsVersion] = useState(0)
+
+  // AI 1-2 line per-trade narratives shown in the trade list's Overview column.
+  // Cached in localStorage by content hash so we only call Claude when a trade's
+  // tags/notes/fills change.
+  const [summaries, setSummaries] = useState<Record<string, string>>({})
+  const [summariesLoading, setSummariesLoading] = useState(false)
+
+  // Most-common trade symbol on this day — feeds LiveChart's bars query.
+  // Days with no trades return null; LiveChart shows a "no symbol" message.
+  const chartSymbol = useMemo<string | null>(() => {
+    const counts = new Map<string, number>()
+    for (const t of initialTrades) {
+      if (t.symbol) counts.set(t.symbol, (counts.get(t.symbol) ?? 0) + 1)
+    }
+    let best: string | null = null
+    let bestCount = 0
+    for (const [sym, c] of counts) {
+      if (c > bestCount) { best = sym; bestCount = c }
+    }
+    return best
+  }, [initialTrades])
+
+  // Generate (or reuse cached) AI Overview summaries whenever trades change.
+  // Pulls hits from localStorage by content hash; batches the misses into one
+  // /api/trades/summary call. Silent on failure (e.g. ANTHROPIC_API_KEY unset).
+  useEffect(() => {
+    if (trades.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing summaries when day has no trades
+      setSummaries({})
+      return
+    }
+    const cached: Record<string, string> = {}
+    const missing: Trade[] = []
+    for (const t of trades) {
+      const h = hashTrade(t)
+      try {
+        const raw = localStorage.getItem(summaryCacheKey(t.id))
+        if (raw) {
+          const c = JSON.parse(raw) as { h: string; s: string }
+          if (c.h === h && c.s) { cached[t.id] = c.s; continue }
+        }
+      } catch { /* ignore */ }
+      missing.push(t)
+    }
+    setSummaries(cached)
+    if (missing.length === 0) return
+
+    let cancelled = false
+    setSummariesLoading(true)
+    fetch('/api/trades/summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        trades: missing.map(t => ({
+          id: t.id, direction: t.direction, entry_price: t.entry_price, pnl: t.pnl,
+          quantity: t.quantity, exits_json: t.exits_json, tags_json: t.tags_json, notes: t.notes,
+        })),
+      }),
+    })
+      .then(r => r.json())
+      .then((d: { summaries?: Record<string, string> }) => {
+        if (cancelled) return
+        const got = d.summaries ?? {}
+        setSummaries(prev => ({ ...prev, ...got }))
+        for (const t of missing) {
+          if (got[t.id]) {
+            try { localStorage.setItem(summaryCacheKey(t.id), JSON.stringify({ h: hashTrade(t), s: got[t.id] })) } catch { /* ignore */ }
+          }
+        }
+      })
+      .catch(() => { /* silent */ })
+      .finally(() => { if (!cancelled) setSummariesLoading(false) })
+    return () => { cancelled = true }
+  }, [trades])
 
   const handleHoverEnter = (tradeId: string, e: React.MouseEvent) => {
     setHoveredTradeId(tradeId)
@@ -337,9 +436,11 @@ export default function EodClient({
   const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
 
-  // --- Trade-merge selection state ---
+  // --- Trade-selection state (shared by merge + bulk-delete actions) ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [merging, setMerging] = useState(false)
+  const [deletingTradeId, setDeletingTradeId] = useState<string | null>(null)
+  const [bulkDeletingTrades, setBulkDeletingTrades] = useState(false)
 
   // Trades sharing the same direction within ±60s are flagged as potential
   // duplicates (e.g., a manual intraday-tagged trade vs an SC-imported fill).
@@ -417,6 +518,82 @@ export default function EodClient({
     }
   }
 
+  const handleDeleteTrade = async (id: string) => {
+    const t = trades.find(tr => tr.id === id)
+    if (!t) return
+    const desc = `${t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'} ${t.direction?.toUpperCase() ?? '--'} @ ${t.entry_price ?? '--'}`
+    if (!confirm(`Delete trade ${desc}?\n\nThis permanently removes the row${t.sierra_trade_id ? ' (will re-appear on next SC log re-import if the fill is still in the log)' : ''}. Cannot be undone.`)) return
+
+    setDeletingTradeId(id)
+    try {
+      const res = await fetch(`/api/trades/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showToast(`Delete failed: ${data.error ?? res.statusText}`, 'error')
+        return
+      }
+      // Also clean up the screenshot blob if this trade has one
+      if (t.screenshot_url) {
+        await deleteBlob(t.screenshot_url).catch(() => { /* non-fatal */ })
+      }
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      await refreshTrades()
+      showToast('Trade deleted', 'success')
+    } catch (e) {
+      showToast(`Delete failed: ${e instanceof Error ? e.message : 'unknown'}`, 'error')
+    } finally {
+      setDeletingTradeId(null)
+    }
+  }
+
+  const handleBulkDeleteTrades = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    const selected = trades.filter(t => selectedIds.has(t.id))
+    const proceed = confirm(
+      `Delete ${ids.length} trade${ids.length === 1 ? '' : 's'}?\n\n` +
+        selected.map(t => `  • ${t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'} ${t.direction?.toUpperCase() ?? '--'} @ ${t.entry_price ?? '--'}${t.sierra_trade_id ? ' [SC]' : ' [manual]'}`).join('\n') +
+        `\n\nThis permanently removes the rows${selected.some(t => t.sierra_trade_id) ? ' (SC-imported ones will re-appear on next log re-import)' : ''}. Cannot be undone.`,
+    )
+    if (!proceed) return
+
+    setBulkDeletingTrades(true)
+    const succeeded: string[] = []
+    const failed: string[] = []
+    const blobsToCleanup: string[] = []
+    for (const t of selected) {
+      try {
+        const res = await fetch(`/api/trades/${t.id}`, { method: 'DELETE' })
+        if (res.ok) {
+          succeeded.push(t.id)
+          if (t.screenshot_url) blobsToCleanup.push(t.screenshot_url)
+        } else {
+          failed.push(t.id)
+        }
+      } catch {
+        failed.push(t.id)
+      }
+    }
+    // Best-effort blob cleanup for deleted trades' screenshots
+    for (const url of blobsToCleanup) {
+      void deleteBlob(url).catch(() => { /* non-fatal */ })
+    }
+    clearSelection()
+    setBulkDeletingTrades(false)
+    await refreshTrades()
+    if (failed.length === 0) {
+      showToast(`Deleted ${succeeded.length} trade${succeeded.length === 1 ? '' : 's'}`, 'success')
+    } else if (succeeded.length === 0) {
+      showToast(`All ${failed.length} deletes failed`, 'error')
+    } else {
+      showToast(`Deleted ${succeeded.length}, ${failed.length} failed`, 'error')
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {toast && (
@@ -448,6 +625,10 @@ export default function EodClient({
           <SCFolderWatcher
             onActivity={(msg, type) => showToast(msg, type)}
             onImported={refreshTrades}
+          />
+          <BarWatcher
+            activeDate={date}
+            onRefresh={() => setBarsVersion(v => v + 1)}
           />
           <ImportTradesButton
             date={date}
@@ -482,7 +663,42 @@ export default function EodClient({
         </div>
       </div>
 
-      {/* Chart screenshot + calibration overlay (arrows in next checkpoint) */}
+      {/* Chart area — toggle between legacy screenshot+calibration and the
+          new live-bars rendering. Screenshot path will be removed in Phase 5
+          of the chart migration once Live has proven itself across the
+          intraday + dashboard surfaces too. */}
+      <div className="flex justify-end -mb-2">
+        <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
+          <button
+            type="button"
+            onClick={() => setChartView('live')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+              chartView === 'live' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+            }`}
+          >
+            <CandlestickChart className="w-3.5 h-3.5" /> Live chart
+          </button>
+          <button
+            type="button"
+            onClick={() => setChartView('screenshot')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+              chartView === 'screenshot' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+            }`}
+          >
+            <ImageIcon className="w-3.5 h-3.5" /> Screenshot
+          </button>
+        </div>
+      </div>
+
+      {chartView === 'live' ? (
+        <LiveChart
+          date={date}
+          symbol={chartSymbol}
+          trades={trades}
+          refreshKey={barsVersion}
+          hoverTradeId={hoveredTradeId}
+        />
+      ) : (
       <ChartScreenshotPanel
         ref={imageContainerRef}
         chartUrl={chartUrl}
@@ -537,7 +753,8 @@ export default function EodClient({
           />
         )}
       </ChartScreenshotPanel>
-      {day?.last_sc_import_at && (
+      )}
+      {chartView === 'screenshot' && day?.last_sc_import_at && (
         <p className="text-xs text-gray-500 -mt-3 ml-1">
           Last import: {format(new Date(day.last_sc_import_at), 'MMM d, HH:mm')}
         </p>
@@ -560,8 +777,16 @@ export default function EodClient({
             </button>
             <button
               type="button"
+              onClick={handleBulkDeleteTrades}
+              disabled={bulkDeletingTrades || merging}
+              className="bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+            >
+              {bulkDeletingTrades ? 'Deleting…' : `Delete selected`}
+            </button>
+            <button
+              type="button"
               onClick={handleMergeSelected}
-              disabled={selectedIds.size !== 2 || merging}
+              disabled={selectedIds.size !== 2 || merging || bulkDeletingTrades}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
             >
               {merging ? 'Merging…' : 'Merge selected'}
@@ -578,7 +803,14 @@ export default function EodClient({
         selectedIds={selectedIds}
         onToggleSelect={toggleTradeSelection}
         nearDuplicateIds={nearDuplicateIds}
+        onDelete={handleDeleteTrade}
+        deletingId={deletingTradeId}
+        onRowOpen={id => router.push(`/intraday/${date}?trade=${id}`)}
+        summaries={summaries}
+        summariesLoading={summariesLoading}
       />
+
+      <RecordingCommentary trades={trades} />
 
       {/* EOD Notes */}
       <EodNotesForm

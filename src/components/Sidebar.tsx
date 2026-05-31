@@ -15,6 +15,7 @@ import {
   Tag,
   Archive,
   Database,
+  CandlestickChart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -22,6 +23,7 @@ const settingsItems = [
   { href: '/settings/tags', label: 'Tags', icon: Tag },
   { href: '/settings/stats', label: 'Perf Stats', icon: Settings },
   { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database },
+  { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart },
   { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive },
 ]
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { format } from 'date-fns'
-import { Check } from 'lucide-react'
+import { Check, Trash2, Loader2 } from 'lucide-react'
 import type { Trade } from '@/lib/supabase/types'
 
 interface Props {
@@ -12,6 +12,14 @@ interface Props {
   selectedIds: Set<string>
   onToggleSelect: (tradeId: string) => void
   nearDuplicateIds: Set<string>
+  onDelete: (tradeId: string) => void
+  deletingId: string | null
+  /** Open this trade's full log in the intraday page. */
+  onRowOpen?: (tradeId: string) => void
+  /** AI 1-2 line narrative per trade id (shown in the Overview column). */
+  summaries?: Record<string, string>
+  /** True while summaries are being generated. */
+  summariesLoading?: boolean
 }
 
 export default function TradeList({
@@ -22,6 +30,11 @@ export default function TradeList({
   selectedIds,
   onToggleSelect,
   nearDuplicateIds,
+  onDelete,
+  deletingId,
+  onRowOpen,
+  summaries = {},
+  summariesLoading = false,
 }: Props) {
   if (trades.length === 0) {
     return (
@@ -45,9 +58,9 @@ export default function TradeList({
               <th className="text-right font-normal pb-2 pr-3">Stop</th>
               <th className="text-right font-normal pb-2 pr-3">TP1</th>
               <th className="text-right font-normal pb-2 pr-3">Qty</th>
-              <th className="text-left font-normal pb-2 pr-3">Setup</th>
-              <th className="text-left font-normal pb-2 pr-3">Mistakes</th>
-              <th className="text-right font-normal pb-2">PnL</th>
+              <th className="text-right font-normal pb-2 pr-3">PnL</th>
+              <th className="text-left font-normal pb-2">Overview</th>
+              <th className="w-8" />
             </tr>
           </thead>
           <tbody>
@@ -56,14 +69,15 @@ export default function TradeList({
               const isHovered = hoveredTradeId === t.id
               const isSelected = selectedIds.has(t.id)
               const isNearDup = nearDuplicateIds.has(t.id)
-              const setups = t.tags_json?.setups ?? []
-              const mistakes = t.tags_json?.mistakes ?? []
+              const summary = summaries[t.id]
               return (
                 <tr
                   key={t.id}
                   onMouseEnter={e => onHoverEnter(t.id, e)}
                   onMouseLeave={onHoverLeave}
-                  className={`border-b border-gray-800 transition-colors cursor-default ${
+                  onClick={() => onRowOpen?.(t.id)}
+                  title="Open this trade's log in the intraday page"
+                  className={`group border-b border-gray-800 transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${
                     isSelected
                       ? 'bg-blue-900/30'
                       : isHovered
@@ -109,45 +123,37 @@ export default function TradeList({
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-300">{t.quantity ?? '--'}</td>
-                  <td className="py-1.5 pr-3">
-                    <div className="flex flex-wrap gap-1">
-                      {setups.length === 0 ? (
-                        <span className="text-gray-600">—</span>
-                      ) : (
-                        setups.map(s => (
-                          <span
-                            key={s}
-                            className="bg-blue-900/40 border border-blue-800 text-blue-200 px-1.5 py-0.5 rounded text-[10px]"
-                          >
-                            {s}
-                          </span>
-                        ))
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-1.5 pr-3">
-                    <div className="flex flex-wrap gap-1">
-                      {mistakes.length === 0 ? (
-                        <span className="text-gray-600">—</span>
-                      ) : (
-                        mistakes.map(s => (
-                          <span
-                            key={s}
-                            className="bg-red-900/40 border border-red-800 text-red-200 px-1.5 py-0.5 rounded text-[10px]"
-                          >
-                            {s}
-                          </span>
-                        ))
-                      )}
-                    </div>
-                  </td>
                   <td
-                    className={`py-1.5 text-right font-bold ${
+                    className={`py-1.5 pr-3 text-right font-bold ${
                       pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-500'
                     }`}
                   >
                     {pnl >= 0 ? '+' : ''}
                     {pnl.toFixed(2)}
+                  </td>
+                  <td className="py-1.5 pr-2 max-w-md">
+                    {summary ? (
+                      <span className="text-gray-300 font-sans whitespace-normal leading-snug">{summary}</span>
+                    ) : summariesLoading ? (
+                      <span className="text-gray-600 inline-flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" /> summarizing…
+                      </span>
+                    ) : (
+                      <span className="text-gray-700">—</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 pl-2 text-right">
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); onDelete(t.id) }}
+                      disabled={deletingId === t.id}
+                      className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30 disabled:cursor-wait"
+                      title="Delete this trade"
+                    >
+                      {deletingId === t.id
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
                   </td>
                 </tr>
               )

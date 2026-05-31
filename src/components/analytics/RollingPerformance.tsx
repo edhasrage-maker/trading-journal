@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import LineChart from '@/components/charts/LineChart'
 import { rollingStats, maxDrawdown, type TradeLike } from '@/lib/analytics'
 import { format } from 'date-fns'
@@ -15,6 +16,7 @@ const COLORS = ['#60a5fa', '#a78bfa', '#fbbf24'] // blue, violet, amber
 export default function RollingPerformance({ trades }: Props) {
   const baseline = useMemo(() => rollingStats(trades, 1), [trades])
   const series = useMemo(() => WINDOWS.map(w => rollingStats(trades, w)), [trades])
+  const [open, setOpen] = useState(true)
 
   if (baseline.length === 0) {
     return (
@@ -48,13 +50,17 @@ export default function RollingPerformance({ trades }: Props) {
 
   return (
     <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-6">
-      <div>
-        <h2 className="font-semibold text-white">Rolling Performance</h2>
-        <p className="text-xs text-gray-500 mt-0.5">
-          Equity curve and rolling stats over the last {trades.length} trades.
-        </p>
-      </div>
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left">
+        <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <div>
+          <h2 className="font-semibold text-white">Rolling Performance</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Equity curve and rolling stats over the last {trades.length} trades.
+          </p>
+        </div>
+      </button>
 
+      {open && (<>
       {/* Equity curve */}
       <div>
         <div className="flex items-baseline justify-between mb-2">
@@ -131,6 +137,7 @@ export default function RollingPerformance({ trades }: Props) {
           zeroLine
         />
       </div>
+      </>)}
     </section>
   )
 }

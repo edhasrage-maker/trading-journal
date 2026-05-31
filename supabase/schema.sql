@@ -89,6 +89,7 @@ create table if not exists trades (
   symbol text, -- e.g. "MNQM6.CME"; used for per-contract multiplier lookup when displaying MFE/MAE in dollars
   high_during_position numeric(10,2), -- tick-precise high price reached while position was open (Sierra's HighDuringPosition)
   low_during_position numeric(10,2),  -- tick-precise low price reached while position was open (Sierra's LowDuringPosition)
+  exits_json jsonb, -- array of partial exits: [{ time: ISO-8601, price: number, qty: number }, ...]; null/empty -> fall back to single exit_time/exit_price avg
   tags_json jsonb default '{}',
   -- tags_json shape:
   -- {
@@ -215,6 +216,49 @@ create table if not exists performance_stats (
 create index if not exists perf_stats_category_idx on performance_stats(category);
 
 -- ============================================================
+-- Chart migration Phase 1: OHLCV bars data layer
+-- ============================================================
+-- Foundation for replacing the screenshot+calibration chart flow with native
+-- chart rendering (lightweight-charts). 1-minute bars are the canonical
+-- granularity stored; coarser views (5m/15m/1h) are aggregated at render
+-- time from the 1m source. Phase 0 decisions documented in memory:
+-- project_chart_migration_direction.md.
+
+create table if not exists ohlcv_bars (
+  symbol text not null,                  -- e.g. "MNQM6.CME" (matches trades.symbol)
+  ts timestamptz not null,               -- bar's open timestamp
+  open numeric(12,2) not null,
+  high numeric(12,2) not null,
+  low  numeric(12,2) not null,
+  close numeric(12,2) not null,
+  volume bigint,                         -- nullable: some sources only export OHLC
+  primary key (symbol, ts)
+);
+
+-- Bar lookups for the chart renderer query by symbol within a time range and
+-- order by timestamp desc/asc. Covering index on (symbol, ts) lets PG seek
+-- straight into the position and stream out.
+create index if not exists ohlcv_bars_symbol_ts_idx
+  on ohlcv_bars(symbol, ts desc);
+
+-- Import history. Per-import row tracking what was uploaded, used by the
+-- import UI to show "last import: NQ 2026-04-01 → 2026-05-21, 8,400 rows".
+create table if not exists bar_imports (
+  id uuid primary key default uuid_generate_v4(),
+  symbol text not null,
+  granularity text not null check (granularity in ('1m', '5m', '15m', '1h', '1d')),
+  date_range_start date not null,
+  date_range_end date not null,
+  rows_inserted integer,
+  rows_updated integer,                  -- ON CONFLICT path: existing bars re-uploaded
+  source_filename text,                  -- CSV filename for traceability
+  imported_at timestamptz default now()
+);
+
+create index if not exists bar_imports_symbol_idx
+  on bar_imports(symbol, imported_at desc);
+
+-- ============================================================
 -- Phase 5: EOD Recap additions
 -- ============================================================
 alter table trading_days
@@ -334,6 +378,8 @@ alter table condition_thresholds enable row level security;
 alter table condition_lookup enable row level security;
 alter table daily_prep enable row level security;
 alter table lookup_metadata enable row level security;
+alter table ohlcv_bars enable row level security;
+alter table bar_imports enable row level security;
 
 -- Policy: authenticated users can read/write their own data
 -- (single-user journal — all authenticated users own all rows)
@@ -373,6 +419,61 @@ create policy "Authenticated full access" on daily_prep
   for all using (auth.role() = 'authenticated');
 
 create policy "Authenticated full access" on lookup_metadata
+  for all using (auth.role() = 'authenticated');
+
+drop policy if exists "Authenticated full access" on ohlcv_bars;
+drop policy if exists "Authenticated full access" on bar_imports;
+
+create policy "Authenticated full access" on ohlcv_bars
+  for all using (auth.role() = 'authenticated');
+
+create policy "Authenticated full access" on bar_imports
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- historical_trades: imported third-party history (e.g. Tradezella)
+-- ============================================================
+-- A separate read-only store of historical trades imported from another
+-- journal, kept OUT of the live `trades` table so day-to-day EOD/Intraday
+-- pages stay clean. Analytics/Tag Performance UNIONs these with native trades
+-- for long-term tag analysis. tags_json uses the same shape as trades.tags_json
+-- (normalized to our 7 categories) so the aggregation can treat both uniformly.
+create table if not exists historical_trades (
+  id uuid primary key default uuid_generate_v4(),
+  source text not null default 'tradezella',
+  account text,
+  symbol text,
+  side text check (side in ('long', 'short')),
+  status text,                       -- Win / Loss / BE etc., as provided
+  open_at timestamptz,               -- combined open date + time
+  close_at timestamptz,              -- combined close date + time
+  trade_date date,                   -- local trading day (grouping/filtering)
+  entry_price numeric,
+  exit_price numeric,
+  quantity numeric,
+  net_pnl numeric,
+  gross_pnl numeric,
+  net_roi numeric,
+  realized_rr numeric,
+  reward_ratio numeric,
+  trade_risk numeric,
+  position_mfe numeric,
+  position_mae numeric,
+  price_mfe numeric,
+  price_mae numeric,
+  duration_sec numeric,
+  rating numeric,
+  zella_score numeric,
+  tags_json jsonb default '{}',      -- normalized: { setups[], confluences[], order_flow[], trade_management[], day_type, mistakes[], emotions[] }
+  raw_json jsonb,                    -- original CSV row (traceability)
+  dedup_key text unique,             -- stable hash → re-import is idempotent
+  imported_at timestamptz default now()
+);
+create index if not exists historical_trades_date_idx on historical_trades(trade_date);
+
+alter table historical_trades enable row level security;
+drop policy if exists "Authenticated full access" on historical_trades;
+create policy "Authenticated full access" on historical_trades
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================

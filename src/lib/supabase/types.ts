@@ -74,6 +74,10 @@ export interface Database {
           tp1_pin_x: number | null
           tp1_pin_y: number | null
           sierra_trade_id: string | null
+          symbol: string | null
+          high_during_position: number | null
+          low_during_position: number | null
+          exits_json: TradeExit[] | null
           tags_json: TradeTags
           notes: string | null
           exit_time: string | null
@@ -110,9 +114,48 @@ export interface Database {
         Insert: Omit<Database['public']['Tables']['performance_stats']['Row'], 'id' | 'created_at' | 'updated_at'>
         Update: Partial<Database['public']['Tables']['performance_stats']['Insert']>
       }
+      ohlcv_bars: {
+        Row: {
+          symbol: string
+          ts: string           // timestamptz ISO string
+          open: number
+          high: number
+          low: number
+          close: number
+          volume: number | null
+        }
+        Insert: Database['public']['Tables']['ohlcv_bars']['Row']
+        Update: Partial<Database['public']['Tables']['ohlcv_bars']['Insert']>
+      }
+      bar_imports: {
+        Row: {
+          id: string
+          symbol: string
+          granularity: BarGranularity
+          date_range_start: string  // date
+          date_range_end: string    // date
+          rows_inserted: number | null
+          rows_updated: number | null
+          source_filename: string | null
+          imported_at: string       // timestamptz ISO string
+        }
+        Insert: Omit<Database['public']['Tables']['bar_imports']['Row'], 'id' | 'imported_at'>
+        Update: Partial<Database['public']['Tables']['bar_imports']['Insert']>
+      }
     }
   }
 }
+
+export type OhlcvBar = Database['public']['Tables']['ohlcv_bars']['Row']
+export type BarImport = Database['public']['Tables']['bar_imports']['Row']
+/**
+ * Bar granularity stored alongside each ohlcv_bars row's `symbol` only via the
+ * import history table (bar_imports). The bars themselves are 1-minute
+ * canonical per Phase 0 decision — coarser granularities (5m/15m/1h) are
+ * aggregated on the fly at render time. Keeping this as a string union now so
+ * if we ever decide to denormalize for performance, the type is ready.
+ */
+export type BarGranularity = '1m' | '5m' | '15m' | '1h' | '1d'
 
 export type TagCategory = 'setups' | 'confluences' | 'order_flow' | 'entry_model' | 'trade_management' | 'day_type' | 'mistakes' | 'emotions'
 export type StatCategory = 'rvol' | 'ib_sizing' | 'adr' | 'atr'
@@ -173,6 +216,18 @@ export interface StatPerformanceBucket {
   label: string
   win_rate: number
   avg_r: number
+}
+
+/**
+ * One closing fill in a multi-leg exit. SC log writes a separate fill row
+ * per scale-out; the importer collects them all into `trades.exits_json` so
+ * charts can render each partial as its own marker (vs the aggregated
+ * weighted-average in `exit_time` / `exit_price`).
+ */
+export interface TradeExit {
+  time: string  // ISO-8601
+  price: number
+  qty: number
 }
 
 export interface TradeTags {
