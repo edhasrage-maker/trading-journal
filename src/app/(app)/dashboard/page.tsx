@@ -54,17 +54,29 @@ export default async function DashboardPage() {
     symbol: string | null
   }
   const dayIds = recentDaysBase.map(d => d.id)
-  const { data: tradesRaw } = dayIds.length > 0
-    ? await supabase
-        .from('trades')
-        .select('trading_day_id, tags_json, pnl, direction, entry_price, high_during_position, low_during_position, quantity, symbol')
-        .in('trading_day_id', dayIds)
-    : { data: [] as TradeSlim[] }
+  const [{ data: tradesRaw }, { data: contextsRaw }] = dayIds.length > 0
+    ? await Promise.all([
+        supabase
+          .from('trades')
+          .select('trading_day_id, tags_json, pnl, direction, entry_price, high_during_position, low_during_position, quantity, symbol')
+          .in('trading_day_id', dayIds),
+        // market_context.atr_1m is the user's per-day 1-min ATR-10 (Wilder) entered
+        // during prep — drives the optional ATR display unit on Avg MFE/MAE.
+        supabase
+          .from('market_context')
+          .select('trading_day_id, atr_1m')
+          .in('trading_day_id', dayIds),
+      ])
+    : [{ data: [] as TradeSlim[] }, { data: [] as { trading_day_id: string; atr_1m: number | null }[] }]
   const tradesByDay = new Map<string, TradeSlim[]>()
   for (const t of (tradesRaw ?? []) as TradeSlim[]) {
     const arr = tradesByDay.get(t.trading_day_id) ?? []
     arr.push(t)
     tradesByDay.set(t.trading_day_id, arr)
+  }
+  const atrByDay = new Map<string, number | null>()
+  for (const c of (contextsRaw ?? []) as { trading_day_id: string; atr_1m: number | null }[]) {
+    atrByDay.set(c.trading_day_id, c.atr_1m)
   }
 
   const recentDays = recentDaysBase.map(d => {
@@ -145,6 +157,7 @@ export default async function DashboardPage() {
       avg_mae_pts: avgMaePts,
       avg_mfe_dollars: avgMfeDollars,
       avg_mae_dollars: avgMaeDollars,
+      atr_1m: atrByDay.get(d.id) ?? null,
     }
   })
 

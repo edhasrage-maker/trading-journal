@@ -20,6 +20,8 @@ export interface DayRowData {
   avg_mae_pts: number | null
   avg_mfe_dollars: number | null
   avg_mae_dollars: number | null
+  /** 1-min ATR-10 (Wilder) entered during prep — drives the ATR display unit on MFE/MAE. */
+  atr_1m: number | null
 }
 
 interface Props {
@@ -239,8 +241,8 @@ export default function RecentDaysList({ initialDays }: Props) {
               <SortableTh label="Grade" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
               <SortableTh label="Process" column="process" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
               <SortableTh label="Trades" column="trades" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
-              <th className="font-normal py-2 pr-3 text-center w-40 relative">
-                <div className="inline-flex items-center gap-1.5">
+              <th className="font-normal py-2 pr-3 text-center w-28 relative">
+                <div className="flex flex-col items-center gap-0.5">
                   <button
                     type="button"
                     onClick={() => setSort('mfe_mae')}
@@ -259,22 +261,23 @@ export default function RecentDaysList({ initialDays }: Props) {
                     value={mfeUnit}
                     onChange={e => setMfeUnit(e.target.value as MfeUnit)}
                     onClick={e => e.stopPropagation()}
-                    className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] rounded px-1 py-0.5 focus:outline-none focus:border-blue-500"
+                    className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight"
                     title="Display unit for MFE/MAE"
                   >
                     <option value="pts">pts</option>
                     <option value="dollars">$</option>
-                    <option value="atr" disabled>ATR (after chart migration)</option>
+                    <option value="atr">ATR</option>
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => setMfeInfoOpen(o => !o)}
-                    className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                    title="What is MFE/MAE?"
-                  >
-                    <HelpCircle className="w-3 h-3" />
-                  </button>
                 </div>
+                {/* Help icon parked absolute so it doesn't push the centered title/select off-axis */}
+                <button
+                  type="button"
+                  onClick={() => setMfeInfoOpen(o => !o)}
+                  className={`absolute top-2 right-1 transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                  title="What is MFE/MAE?"
+                >
+                  <HelpCircle className="w-3 h-3" />
+                </button>
                 {mfeInfoOpen && (
                   <div
                     ref={mfeInfoRef}
@@ -303,7 +306,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                     <ul className="list-disc pl-4 space-y-1">
                       <li><strong>pts</strong>: raw price points</li>
                       <li><strong>$</strong>: points × per-symbol contract multiplier × trade quantity</li>
-                      <li><strong>ATR</strong>: 1× ATR-10 Wilders units. Disabled — requires OHLCV bars from the chart migration.</li>
+                      <li><strong>ATR</strong>: 1× ATR-10 (Wilder) units. Uses the day&apos;s prep ATR (market_context.atr_1m); shows — if not entered.</li>
                     </ul>
                     <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
                   </div>
@@ -455,10 +458,21 @@ function DayRowItem({
 }
 
 function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
-  // ATR option is disabled at the dropdown level but guard here too in case
-  // it ever sneaks through.
+  // ATR unit divides the points-based MFE/MAE by the day's prep ATR-10 to
+  // express the excursion in "how many ATRs of typical 1m range." Falls back
+  // to em-dash when the day's market_context.atr_1m wasn't filled in.
   if (unit === 'atr') {
-    return <span className="text-gray-700">—</span>
+    if (day.avg_mfe_pts == null || day.avg_mae_pts == null || !day.atr_1m) {
+      return <span className="text-gray-700">—</span>
+    }
+    const fmt = (v: number) => `${v.toFixed(2)}×`
+    return (
+      <span>
+        <span className="text-green-400">+{fmt(day.avg_mfe_pts / day.atr_1m)}</span>
+        <span className="text-gray-600"> / </span>
+        <span className="text-red-400">-{fmt(day.avg_mae_pts / day.atr_1m)}</span>
+      </span>
+    )
   }
   const mfe = unit === 'dollars' ? day.avg_mfe_dollars : day.avg_mfe_pts
   const mae = unit === 'dollars' ? day.avg_mae_dollars : day.avg_mae_pts
