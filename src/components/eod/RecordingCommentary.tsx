@@ -42,10 +42,17 @@ export default function RecordingCommentary({ trades }: Props) {
   const [dir, setDir] = useState<string>('')
   const [filesError, setFilesError] = useState<string | null>(null)
   const [videoFile, setVideoFile] = useState<string>('')
+  // Custom-path import: type/paste an absolute path to ANY video on disk,
+  // bypassing the OBS_RECORDINGS_DIR scan. Server validates it exists + ext.
+  const [useCustomPath, setUseCustomPath] = useState(false)
+  const [customPath, setCustomPath] = useState('')
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<CommentaryResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [commentary, setCommentary] = useState<Record<string, string>>({})
+
+  // The effective source identifier used for cache keying + the POST body.
+  const activeSource = useCustomPath ? customPath.trim() : videoFile
 
   // Load available recordings on mount.
   useEffect(() => {
@@ -61,7 +68,7 @@ export default function RecordingCommentary({ trades }: Props) {
 
   // Hydrate cached commentaries whenever the selected video or trades change.
   useEffect(() => {
-    if (!videoFile || trades.length === 0) {
+    if (!activeSource || trades.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing cached commentaries when no recording is selected
       setCommentary({})
       return
@@ -72,11 +79,11 @@ export default function RecordingCommentary({ trades }: Props) {
         const raw = localStorage.getItem(cacheKey(t.id))
         if (!raw) continue
         const c = JSON.parse(raw) as { h: string; s: string }
-        if (c.h === hashTradeForCommentary(t, videoFile) && c.s) cached[t.id] = c.s
+        if (c.h === hashTradeForCommentary(t, activeSource) && c.s) cached[t.id] = c.s
       } catch { /* ignore */ }
     }
     setCommentary(cached)
-  }, [videoFile, trades])
+  }, [activeSource, trades])
 
   const run = useCallback(async () => {
     if (!videoFile || trades.length === 0) return
