@@ -96,10 +96,10 @@ export default function BarChart({
                 fill={color}
                 opacity={0.85}
               >
-                <title>
-                  {d.label}: {formatValue(d.value)}
-                  {d.hint ? ` · ${d.hint}` : ''}
-                </title>
+                {/* React 19 / Next 16 require a single string child for <title>; */}
+                {/* mixing text + interpolations creates a children array which */}
+                {/* triggers a hydration mismatch on the server boundary. */}
+                <title>{`${d.label}: ${formatValue(d.value)}${d.hint ? ` · ${d.hint}` : ''}`}</title>
               </rect>
             </g>
           )
