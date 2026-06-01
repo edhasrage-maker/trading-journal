@@ -70,8 +70,8 @@ export default function JournalThemes({ from, to }: Props) {
   // Auto-load cached themes whenever the date range changes. forceRefresh is
   // false so this is free if the cache is warm — only the explicit Generate
   // button triggers a Claude call (and the corresponding token spend).
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- load() triggers loading/error setState chains; this is the standard sync-effect shape per CLAUDE.md.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load() triggers loading/error setState chains; this is the standard sync-effect shape per CLAUDE.md.
     void load(false)
   }, [load])
 
