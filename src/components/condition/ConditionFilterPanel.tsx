@@ -5,6 +5,7 @@ import { formatDistanceToNowStrict } from 'date-fns'
 import { Save, Loader2, AlertTriangle, Info, Activity, Clock, Check } from 'lucide-react'
 import {
   VERDICT_LABELS,
+  VERDICT_DISPLAY,
   VERDICT_EMOJI,
   VERDICT_TONE,
   type LookupOutcome,
@@ -439,7 +440,7 @@ function ConsolidatedVerdict({ verdict, outcome }: { verdict: ConditionVerdict; 
           <span className="text-3xl">{VERDICT_EMOJI[verdict]}</span>
           <div>
             <div className={`text-2xl font-bold ${verdictColor}`}>{VERDICT_LABELS[verdict]}</div>
-            <div className="text-xs text-gray-500 font-mono mt-0.5">{verdict}</div>
+            <div className="text-xs text-gray-400 mt-0.5" title={`Internal code: ${verdict}`}>{VERDICT_DISPLAY[verdict]}</div>
           </div>
         </div>
         <div className="text-right text-xs text-gray-500 font-mono">
@@ -475,8 +476,8 @@ function MatchCard({ title, match, picked }: { title: string; match: MatchResult
         <div className="text-xs text-gray-500">{title} {picked && <span className="text-blue-400 ml-1">·  picked</span>}</div>
         <div className="text-[10px] text-gray-600 font-mono">spec {r.specificity}</div>
       </div>
-      <div className={`text-sm font-semibold ${verdictColor}`}>
-        {VERDICT_EMOJI[r.verdict]} {r.verdict}
+      <div className={`text-sm font-semibold ${verdictColor}`} title={`Internal code: ${r.verdict}`}>
+        {VERDICT_EMOJI[r.verdict]} {VERDICT_DISPLAY[r.verdict]}
       </div>
       <div className="text-[10px] text-gray-600 font-mono mb-2 truncate" title={r.condition_id}>
         {r.condition_id}
@@ -523,13 +524,14 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
           <p>Input today&apos;s 5 market-state metrics, computed at 7:30 AM PT (end of NY Initial Balance). The lookup table tells you whether your historical edge in similar market conditions is positive, negative, or noise.</p>
 
           <div>
-            <div className="font-semibold text-white text-sm mb-1">Verdicts</div>
+            <div className="font-semibold text-white text-sm mb-1">Grades</div>
             <ul className="space-y-1 text-xs">
-              <li><span className="text-green-400">🟢 GREEN_ROBUST</span> — Trade normally (n≥100, EV CI excludes zero)</li>
-              <li><span className="text-green-400">🟢 GREEN_DIRECTIONAL</span> — Likely edge (n≥50, EV CI excludes zero)</li>
-              <li><span className="text-red-400">🔴 RED_DIRECTIONAL</span> — Likely losing (n≥50, EV&lt;0, lower CI &lt; -$10) → reduce size or sit out</li>
-              <li><span className="text-yellow-400">🟡 YELLOW_FLAT_POS / YELLOW_FLAT_NEG</span> — n≥50 but CI includes zero → no statistical signal</li>
-              <li><span className="text-gray-400">⚪ INSUFFICIENT_DATA</span> — n&lt;50 historical matches</li>
+              <li><span className="text-green-400">🟢 Grade A</span> — Trade normally (n≥100, EV CI excludes zero)</li>
+              <li><span className="text-green-400">🟢 Grade B</span> — Likely edge (n≥50, EV CI excludes zero)</li>
+              <li><span className="text-yellow-400">🟡 Grade C</span> — n≥50, slight positive lean but CI includes zero → no statistical signal</li>
+              <li><span className="text-yellow-400">🟡 Grade D</span> — n≥50, slight negative lean but CI includes zero → no statistical signal</li>
+              <li><span className="text-red-400">🔴 Grade F</span> — Likely losing (n≥50, EV&lt;0, lower CI &lt; -$10) → reduce size or sit out</li>
+              <li><span className="text-gray-400">⚪ Ungraded</span> — n&lt;50 historical matches</li>
             </ul>
           </div>
 
@@ -537,7 +539,7 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
             <div className="font-semibold text-white text-sm mb-1">Caveats</div>
             <ul className="space-y-1.5 text-xs list-disc list-inside text-gray-400">
               <li>All claims are from MNQ trading (2025-06 through 2026-03, n=828 trades with market data overlay). A different instrument or regime may behave differently.</li>
-              <li>YELLOW verdicts mean &quot;the sample says nothing definitive.&quot; Don&apos;t read YELLOW_FLAT_POS as bullish or YELLOW_FLAT_NEG as bearish — both mean the CI includes zero.</li>
+              <li>Grade C and Grade D mean &quot;the sample says nothing definitive.&quot; Don&apos;t read Grade C as bullish or Grade D as bearish — both mean the CI includes zero, just with a slight positive or negative lean respectively.</li>
               <li>The lookup uses only market-state metrics. It does NOT consider your setup tags, orderflow tags, or psychological state — those sit on top, not in place of.</li>
               <li>The 5 metrics are NOT independent. High RVOL days usually have high IB and high ATR_730 too. The 3-way cells have smaller samples and noisier estimates.</li>
               <li><span className="text-red-300 font-semibold">Trap pattern:</span> ATR_730_LOW + ATR_entry_HIGH. When the session starts quiet but volatility expands into the entry, the data shows directional losses (n=115, EV -$25). The clearest &quot;avoid&quot; condition.</li>

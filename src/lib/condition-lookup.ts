@@ -243,7 +243,7 @@ export function consolidate(
   const tf = VERDICT_FAMILY[t.verdict]
   const conflict = (mf === 'GREEN' && tf === 'RED') || (mf === 'RED' && tf === 'GREEN')
   const conflictReason = conflict
-    ? `Median says ${m.verdict}, tertile says ${t.verdict} — they disagree on direction.`
+    ? `Median says ${VERDICT_DISPLAY[m.verdict]}, tertile says ${VERDICT_DISPLAY[t.verdict]} — they disagree on direction.`
     : null
 
   let pick: 'median' | 'tertile'
@@ -313,6 +313,18 @@ export const VERDICT_LABELS: Record<ConditionVerdict, string> = {
   YELLOW_FLAT_POS: 'Be selective',
   YELLOW_FLAT_NEG: 'Be cautious',
   INSUFFICIENT_DATA: 'No statistical basis',
+}
+
+// Short human-readable grades shown next to the action label in the UI.
+// Internal codes (GREEN_ROBUST etc.) remain the storage/lookup keys — these
+// strings are display-only, so renaming a grade here is safe and instant.
+export const VERDICT_DISPLAY: Record<ConditionVerdict, string> = {
+  GREEN_ROBUST: 'Grade A',
+  GREEN_DIRECTIONAL: 'Grade B',
+  YELLOW_FLAT_POS: 'Grade C',
+  YELLOW_FLAT_NEG: 'Grade D',
+  RED_DIRECTIONAL: 'Grade F',
+  INSUFFICIENT_DATA: 'Ungraded',
 }
 
 export const VERDICT_EMOJI: Record<ConditionVerdict, string> = {
