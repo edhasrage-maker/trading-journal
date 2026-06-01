@@ -12,6 +12,12 @@ REM Loop added 2026-05-31 so the dev server survives mid-session kills.
 setlocal
 cd /d "%~dp0"
 
+REM Clear ANTHROPIC_API_KEY before launching so .env.local wins.
+REM Claude Code leaks an EMPTY ANTHROPIC_API_KEY into spawned shells, which
+REM overrides .env.local and makes every AI route 503 with
+REM "ANTHROPIC_API_KEY is not configured". Clearing it here is the fix.
+set "ANTHROPIC_API_KEY="
+
 REM Skip if another instance is already listening on port 3000
 netstat -ano | findstr /R /C:":3000 .*LISTENING" >nul 2>&1
 if %errorlevel% equ 0 (
