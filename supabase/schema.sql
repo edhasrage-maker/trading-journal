@@ -477,6 +477,39 @@ create policy "Authenticated full access" on historical_trades
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================
+-- eod_themes_analysis: AI-extracted recurring themes from eod_notes
+-- ============================================================
+-- Cached output of /api/extract-themes. The route scans every non-empty
+-- eod_notes row in the date range, sends them to Claude, and stores the
+-- structured response keyed by (from_date, to_date, prompt_version).
+--
+-- prompt_version is a manual bump value — when the route's prompt changes
+-- meaningfully, the constant in the route is incremented so prior cache
+-- entries no longer match and the next call regenerates. Stale rows are
+-- left in place (free historical reference) since the cache key includes
+-- the version, so the table grows monotonically with prompt iterations.
+create table if not exists eod_themes_analysis (
+  id uuid primary key default uuid_generate_v4(),
+  from_date date not null,
+  to_date date not null,
+  prompt_version integer not null default 1,
+  themes_json jsonb not null,            -- { themes: [{ label, summary, frequency_estimate, trend, excerpts, n_days_evidence, avg_grade, avg_pnl }] }
+  notes_count integer,                   -- how many EOD notes contributed to the corpus
+  total_chars integer,                   -- size of the corpus that was sent to Claude
+  model text default 'claude-sonnet-4-6',
+  generated_at timestamptz default now(),
+  unique(from_date, to_date, prompt_version)
+);
+
+create index if not exists eod_themes_analysis_range_idx
+  on eod_themes_analysis(from_date, to_date, prompt_version);
+
+alter table eod_themes_analysis enable row level security;
+drop policy if exists "Authenticated full access" on eod_themes_analysis;
+create policy "Authenticated full access" on eod_themes_analysis
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
 -- Storage buckets (run separately in Supabase dashboard or CLI)
 -- ============================================================
 -- Bucket: 'screenshots'  (for chart + trade entry screenshots)
