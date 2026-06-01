@@ -6,6 +6,7 @@ import TagPerformanceTable from './TagPerformanceTable'
 import TagImpactTable from './TagImpactTable'
 import ConditionBuckets from './ConditionBuckets'
 import RollingPerformance from './RollingPerformance'
+import JournalThemes from './JournalThemes'
 import CsvExportButton from './CsvExportButton'
 import {
   aggregateByTag,
@@ -162,6 +163,8 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
       <ConditionBuckets trades={filtered} />
 
       <RollingPerformance trades={filtered} />
+
+      <JournalThemes from={startDate} to={endDate} />
     </div>
   )
 }
