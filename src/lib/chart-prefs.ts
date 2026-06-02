@@ -40,8 +40,21 @@
  */
 
 const MIGRATION_FLAG = 'chart-prefs-migrated-v1'
-const PREFIX = 'livechart-'                          // sync filter — any key starting with this gets considered
 const DEBOUNCE_MS = 1000                             // 1 s after last change → fire upsert
+
+/**
+ * Narrow allow-list for the keys this module ever touches. Two patterns
+ * the current LiveChart.tsx code actually reads:
+ *   - `livechart-prefs-v2` exact — the 13-field appearance object.
+ *   - `livechart-view-v3-*` prefix — per-day saved zooms.
+ * Legacy keys (livechart-prefs-v1, livechart-view-v2-*, livechart-view-*
+ * with no version suffix) are ignored — the chart code stopped reading
+ * them long ago. Bump this predicate when bumping the version inside
+ * LiveChart.tsx (e.g., a future v4 view key).
+ */
+function isActiveChartPrefKey(k: string): boolean {
+  return k === 'livechart-prefs-v2' || k.startsWith('livechart-view-v3-')
+}
 
 // Per-key debounce timers so rapid edits to the same key coalesce into one
 // network call, but edits to DIFFERENT keys don't block each other.
@@ -67,7 +80,7 @@ export function readAllLocalChartPrefs(): Array<{ key: string; value: unknown }>
   const out: Array<{ key: string; value: unknown }> = []
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i)
-    if (!k || !k.startsWith(PREFIX)) continue
+    if (!k || !isActiveChartPrefKey(k)) continue
     try {
       const raw = localStorage.getItem(k)
       if (raw == null) continue
@@ -105,14 +118,17 @@ export function migrateChartPrefs(): Promise<MigrationResult> {
       serverEntries = []
     }
 
-    // Branch A: server has rows → hydrate localStorage from them.
+    // Branch A: server has rows → hydrate localStorage from them. Skip any
+    // legacy keys the server might still hold (defensive — the active
+    // POST guard rejects them now, but old rows could pre-date the guard).
     if (serverEntries.length > 0) {
+      let applied = 0
       for (const e of serverEntries) {
-        if (!e.key.startsWith(PREFIX)) continue
-        try { localStorage.setItem(e.key, JSON.stringify(e.value)) } catch { /* ignore */ }
+        if (!isActiveChartPrefKey(e.key)) continue
+        try { localStorage.setItem(e.key, JSON.stringify(e.value)); applied++ } catch { /* ignore */ }
       }
       try { localStorage.setItem(MIGRATION_FLAG, new Date().toISOString()) } catch { /* ignore */ }
-      return { action: 'hydrated', rowsApplied: serverEntries.length }
+      return { action: 'hydrated', rowsApplied: applied }
     }
 
     // Branch B: server is empty → push localStorage to server as baseline.
@@ -149,7 +165,7 @@ export function migrateChartPrefs(): Promise<MigrationResult> {
  */
 export function schedulePushChartPref(key: string, value: unknown): void {
   if (typeof window === 'undefined') return
-  if (!key.startsWith(PREFIX)) return
+  if (!isActiveChartPrefKey(key)) return
   const existing = pendingTimers.get(key)
   if (existing) clearTimeout(existing)
   const t = setTimeout(() => {

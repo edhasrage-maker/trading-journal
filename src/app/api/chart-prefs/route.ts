@@ -48,10 +48,16 @@ export async function POST(req: Request) {
   if (entries.length === 0) {
     return NextResponse.json({ ok: true, written: 0 })
   }
-  // Narrow guard: only chart-related keys live in this table.
+  // Narrow allow-list: only the keys the current LiveChart code actually
+  // reads. Mirrors `isActiveChartPrefKey` in src/lib/chart-prefs.ts. Stops
+  // legacy/cruft keys (livechart-prefs-v1, livechart-view-v2-*, etc.) from
+  // landing in the table and being re-applied to the OTHER PC's localStorage
+  // by its migration. Bump both sides together when LiveChart's key version
+  // changes.
   for (const e of entries) {
-    if (typeof e?.key !== 'string' || !e.key.startsWith('livechart-')) {
-      return NextResponse.json({ error: `invalid key: ${e?.key} (must start with "livechart-")` }, { status: 400 })
+    const k = e?.key
+    if (typeof k !== 'string' || (k !== 'livechart-prefs-v2' && !k.startsWith('livechart-view-v3-'))) {
+      return NextResponse.json({ error: `invalid key: ${k} (must be livechart-prefs-v2 or livechart-view-v3-*)` }, { status: 400 })
     }
   }
 
