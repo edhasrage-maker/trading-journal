@@ -954,7 +954,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
                   {(t.direction ?? '').toUpperCase()} {t.quantity ?? ''} @ {t.entry_price ?? '?'}
                 </span>
                 <span className={`font-mono font-bold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-                  {pnl >= 0 ? '+' : ''}{pnl.toFixed(0)}
+                  {`${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl).toFixed(0)}`}
                 </span>
               </div>
               <div className="text-gray-400 space-y-0.5">

@@ -141,7 +141,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider">Day P&L</div>
             <div className={`text-lg font-bold ${pnlColor(totalPnl)}`}>
-              {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
+              {`${totalPnl >= 0 ? '+' : '−'}$${Math.abs(totalPnl).toFixed(2)}`}
             </div>
           </div>
           <div>
@@ -230,7 +230,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
               {/* P&L + R */}
               <div className="text-right shrink-0">
                 <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
-                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(0)}`}
+                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
                 </div>
                 {r && <div className="text-xs text-gray-500">{r}</div>}
               </div>
