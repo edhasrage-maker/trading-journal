@@ -1,8 +1,8 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import type { MarketContext } from '@/lib/supabase/types'
 
-type PerfFlag = 'red' | 'yellow' | 'green'
 type ContextFields = Omit<MarketContext, 'id' | 'trading_day_id' | 'stat_performance_json' | 'created_at'>
 
 interface Props {
@@ -10,21 +10,61 @@ interface Props {
   onChange: (v: Partial<ContextFields>) => void
 }
 
-const flagDefs = [
-  { val: 'red' as PerfFlag, label: 'Bad', idle: 'border-gray-700 text-gray-500 hover:border-red-700', on: 'bg-red-700 border-red-600 text-white' },
-  { val: 'yellow' as PerfFlag, label: 'Mid', idle: 'border-gray-700 text-gray-500 hover:border-yellow-600', on: 'bg-yellow-600 border-yellow-500 text-white' },
-  { val: 'green' as PerfFlag, label: 'Good', idle: 'border-gray-700 text-gray-500 hover:border-green-700', on: 'bg-green-700 border-green-600 text-white' },
-]
+// Distribution stats for the three numeric stats below the input — drives the
+// auto LOW/MID/HIGH pills. Fetched once on mount; cached in module-level state
+// across remounts of the same prep session.
+interface Distribution {
+  count: number
+  p33: number | null
+  p67: number | null
+  median: number | null
+  min: number | null
+  max: number | null
+}
+type DistMap = { rvol: Distribution; adr: Distribution; atr_1m: Distribution }
+let cachedDist: DistMap | null = null
 
-function FlagRow({ value, onChange }: { value: PerfFlag | null | undefined; onChange: (v: PerfFlag | null) => void }) {
+type Bucket = 'LOW' | 'MID' | 'HIGH'
+function classify(value: number | null | undefined, dist: Distribution | undefined): Bucket | null {
+  if (value == null || !Number.isFinite(value) || !dist || dist.p33 == null || dist.p67 == null) return null
+  if (value < dist.p33) return 'LOW'
+  if (value > dist.p67) return 'HIGH'
+  return 'MID'
+}
+
+function DistributionPill({
+  value, dist, lowGood,
+}: {
+  value: number | null | undefined
+  dist: Distribution | undefined
+  /** True when LOW is the "good" end of the distribution (e.g. low DR_ADR is good).
+   *  Affects color only — the bucket label is unchanged. Default: HIGH = good. */
+  lowGood?: boolean
+}) {
+  const bucket = classify(value, dist)
+  if (!dist || dist.p33 == null) {
+    return (
+      <div className="mt-1 text-[10px] text-gray-600 font-mono">
+        not enough history yet
+      </div>
+    )
+  }
+  const tone = bucket === 'MID'
+    ? 'bg-yellow-900/40 border-yellow-800 text-yellow-200'
+    : bucket === (lowGood ? 'LOW' : 'HIGH')
+      ? 'bg-green-900/40 border-green-800 text-green-200'
+      : bucket === (lowGood ? 'HIGH' : 'LOW')
+        ? 'bg-red-900/40 border-red-800 text-red-200'
+        : 'bg-gray-800 border-gray-700 text-gray-500'
+  const fmt = (n: number | null) => n == null ? '—' : n.toFixed(n < 10 ? 2 : 0)
   return (
-    <div className="flex gap-1 mt-1">
-      {flagDefs.map(({ val, label, idle, on }) => (
-        <button key={val} type="button"
-          onClick={() => onChange(value === val ? null : val)}
-          className={`flex-1 text-xs py-1 rounded border transition-colors ${value === val ? on : `bg-gray-800 ${idle}`}`}
-        >{label}</button>
-      ))}
+    <div className="mt-1.5 flex items-center gap-2">
+      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${tone}`}>
+        {bucket ?? '—'}
+      </span>
+      <span className="text-[10px] text-gray-500 font-mono">
+        p33 {fmt(dist.p33)} · p67 {fmt(dist.p67)} · n={dist.count}
+      </span>
     </div>
   )
 }
@@ -62,6 +102,20 @@ function NumInput({ label, hint, value, onChange }: { label: string; hint?: stri
 }
 
 export default function MarketContextForm({ value, onChange }: Props) {
+  const [dist, setDist] = useState<DistMap | null>(cachedDist)
+  // One-shot fetch on mount — cached in module scope so navigating between
+  // prep days doesn't re-fetch. Distribution data is the same for every date.
+  useEffect(() => {
+    if (cachedDist) return
+    fetch('/api/market-context/distribution')
+      .then(r => r.json())
+      .then((d: DistMap) => {
+        cachedDist = d
+        setDist(d)
+      })
+      .catch(() => { /* silent — pills will show "not enough history yet" */ })
+  }, [])
+
   const set = (key: keyof ContextFields, raw: string) => {
     const num = parseFloat(raw)
     const parsed = raw === '' ? undefined : isNaN(num) ? raw : num
@@ -90,9 +144,6 @@ export default function MarketContextForm({ value, onChange }: Props) {
 
   const setBool = (key: keyof ContextFields, v: boolean | null) =>
     onChange({ ...value, [key]: v === null ? undefined : v })
-
-  const setDirect = (key: keyof ContextFields, v: unknown) =>
-    onChange({ ...value, [key]: v })
 
   const gbxRange = value.onh != null && value.onl != null ? Number(value.onh) - Number(value.onl) : null
   const derivedGbxPctAdrNum = gbxRange != null && value.adr != null && Number(value.adr) > 0
@@ -170,25 +221,26 @@ export default function MarketContextForm({ value, onChange }: Props) {
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Stats</h3>
         <div className="space-y-3">
-          {/* Rvol */}
+          {/* Rvol — HIGH = good (more activity) */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
               <NumInput label="Rvol" hint="Relative Volume" value={value.rvol} onChange={r => set('rvol', r)} />
-              <FlagRow value={value.rvol_flag as PerfFlag | null | undefined} onChange={v => setDirect('rvol_flag', v)} />
+              <DistributionPill value={value.rvol as number | undefined} dist={dist?.rvol} />
             </div>
           </div>
-          {/* ADR + GBX% of ADR side by side */}
+          {/* ADR — HIGH = good (more range available) */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
               <NumInput label="ADR" hint="Avg Daily Range (RTH)" value={value.adr} onChange={r => set('adr', r)} />
-              <FlagRow value={value.adr_flag as PerfFlag | null | undefined} onChange={v => setDirect('adr_flag', v)} />
+              <DistributionPill value={value.adr as number | undefined} dist={dist?.adr} />
             </div>
           </div>
-          {/* ATR */}
+          {/* ATR-10 — HIGH = high volatility (neither inherently good nor bad);
+              treating HIGH as red so big-ATR days flag a caution signal. */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
               <NumInput label="ATR-10 (1m)" hint="1×ATR on 1min chart" value={value.atr_1m} onChange={r => set('atr_1m', r)} />
-              <FlagRow value={value.atr_flag as PerfFlag | null | undefined} onChange={v => setDirect('atr_flag', v)} />
+              <DistributionPill value={value.atr_1m as number | undefined} dist={dist?.atr_1m} lowGood />
             </div>
           </div>
         </div>

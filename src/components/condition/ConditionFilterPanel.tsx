@@ -10,7 +10,6 @@ import {
   VERDICT_TONE,
   type LookupOutcome,
   type MatchResult,
-  type BucketAssignment,
 } from '@/lib/condition-lookup'
 import type { ConditionMetric, ConditionVerdict, DailyPrep } from '@/lib/supabase/types'
 
@@ -18,18 +17,21 @@ import type { ConditionMetric, ConditionVerdict, DailyPrep } from '@/lib/supabas
  * Morning prep condition filter — input 5 metrics, get a verdict, save the snapshot.
  */
 
+// ATR_entry intentionally NOT in METRICS — prep happens before any trade is
+// entered, so the field has nothing to show during prep. The DB column on
+// daily_prep is preserved (the intraday flow may still populate it); we just
+// don't surface it in the prep UI.
 const METRICS: Array<{
   metric: ConditionMetric
-  field: 'rvol' | 'dr_adr' | 'ib' | 'atr_730' | 'atr_entry'
+  field: 'rvol' | 'dr_adr' | 'ib' | 'atr_730'
   label: string
   placeholder: string
   hint: string
 }> = [
-  { metric: 'RVOL', field: 'rvol', label: 'RVOL @ 7:30 PT', placeholder: '1.05', hint: 'Today\'s 6:30-7:30 volume / 10d avg of same window' },
+  { metric: 'RVOL', field: 'rvol', label: 'RVOL @ 7:30 PT', placeholder: '101', hint: 'Today\'s 6:30-7:30 volume / 10d avg of same window (percentage: 100 = average)' },
   { metric: 'DR_ADR', field: 'dr_adr', label: 'DR vs ADR @ 7:30 PT', placeholder: '0.60', hint: '(High-Low since 6:30) / 10d avg cash session range' },
   { metric: 'IB', field: 'ib', label: 'IB vs 10d Avg', placeholder: '0.93', hint: '(IBH-IBL) / 10d avg IB range; IB = 6:30-7:30 PT' },
   { metric: 'ATR_730', field: 'atr_730', label: 'ATR-10 (1m) @ 7:30', placeholder: '18.0', hint: '1-min ATR-10 Wilder, read at 7:30 PT' },
-  { metric: 'ATR_entry', field: 'atr_entry', label: 'ATR-10 (1m) @ entry', placeholder: '12.6', hint: 'Same study, live value at moment of trade entry (optional)' },
 ]
 
 interface VintageInfo {
@@ -47,7 +49,6 @@ interface InputState {
   dr_adr: string
   ib: string
   atr_730: string
-  atr_entry: string
 }
 
 interface MarketContextPrefill {
@@ -64,7 +65,7 @@ interface Props {
   marketContext?: MarketContextPrefill
 }
 
-const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '', atr_entry: '' }
+const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '' }
 
 // Set of fields that are auto-fillable from Market Context (used for visual hint)
 const PREFILL_FIELDS: Array<keyof InputState> = ['rvol', 'ib', 'atr_730']
@@ -93,7 +94,6 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
     dr_adr: inputs.dr_adr,
     ib: inputs.ib || fromContext(marketContext?.ib_vs_10d_avg),
     atr_730: inputs.atr_730 || fromContext(marketContext?.atr_1m),
-    atr_entry: inputs.atr_entry,
   }
   const isAutoFilled = (field: keyof InputState): boolean =>
     PREFILL_FIELDS.includes(field) && inputs[field] === '' && effectiveInputs[field] !== ''
@@ -115,7 +115,6 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
           dr_adr: p.dr_adr != null ? String(p.dr_adr) : '',
           ib: p.ib != null ? String(p.ib) : '',
           atr_730: p.atr_730 != null ? String(p.atr_730) : '',
-          atr_entry: p.atr_entry != null ? String(p.atr_entry) : '',
         }
         setInputs(next)
         setNotes(p.notes ?? '')
@@ -126,7 +125,6 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
       }
     })()
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date])
 
   // ── Debounced lookup on input change ──────────────────────────────────────
@@ -136,7 +134,6 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
       dr_adr: parseFloat(state.dr_adr),
       ib: parseFloat(state.ib),
       atr_730: parseFloat(state.atr_730),
-      atr_entry: parseFloat(state.atr_entry),
     }
     const anyValid = Object.values(parsed).some(v => Number.isFinite(v))
     if (!anyValid) {
@@ -152,7 +149,7 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
         dr_adr: Number.isFinite(parsed.dr_adr) ? parsed.dr_adr : null,
         ib: Number.isFinite(parsed.ib) ? parsed.ib : null,
         atr_730: Number.isFinite(parsed.atr_730) ? parsed.atr_730 : null,
-        atr_entry: Number.isFinite(parsed.atr_entry) ? parsed.atr_entry : null,
+        atr_entry: null,  // intraday flow populates this; prep doesn't surface it
       }
       const res = await fetch('/api/condition-lookup', {
         method: 'POST',
@@ -183,7 +180,7 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
     // Dep array intentionally tracks the merged values so lookup re-fires when
     // either user input or Market Context changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveInputs.rvol, effectiveInputs.dr_adr, effectiveInputs.ib, effectiveInputs.atr_730, effectiveInputs.atr_entry, runLookup])
+  }, [effectiveInputs.rvol, effectiveInputs.dr_adr, effectiveInputs.ib, effectiveInputs.atr_730, runLookup])
 
   // ── Save snapshot ─────────────────────────────────────────────────────────
   const save = async () => {
@@ -199,7 +196,7 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
         dr_adr: parse(effectiveInputs.dr_adr),
         ib: parse(effectiveInputs.ib),
         atr_730: parse(effectiveInputs.atr_730),
-        atr_entry: parse(effectiveInputs.atr_entry),
+        atr_entry: null,  // not surfaced in prep — intraday flow owns this field
         matched_median_condition_id: outcome?.best_median?.row.condition_id ?? null,
         matched_tertile_condition_id: outcome?.best_tertile?.row.condition_id ?? null,
         consolidated_verdict: outcome?.consolidated.verdict ?? null,
@@ -282,18 +279,24 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
           </div>
         )}
 
-        {/* Input grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {/* Unified metric cards — label + editable value + classification pills
+            in a single row. The previous design had a separate input grid
+            duplicating values that the BucketReadout already shows; collapsed
+            into one card per metric so values don't appear twice. */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {METRICS.map(m => {
-            const isPrefillField = PREFILL_FIELDS.includes(m.field)
+            const bucket = outcome?.buckets.find(b => b.metric === m.metric) ?? null
             const auto = isAutoFilled(m.field)
             return (
-              <div key={m.field}>
-                <label className="block text-xs font-medium text-gray-400 mb-1 flex items-center gap-1" title={m.hint}>
-                  {m.label}
+              <div key={m.field} className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 space-y-1.5">
+                <label
+                  className="flex items-center justify-between gap-1 text-[10px] text-gray-500 uppercase tracking-wider"
+                  title={m.hint}
+                >
+                  <span>{m.metric}</span>
                   {auto && (
                     <span
-                      className="text-[9px] bg-blue-900/40 border border-blue-800 text-blue-300 px-1 rounded normal-case"
+                      className="text-[9px] bg-blue-900/40 border border-blue-800 text-blue-300 px-1 rounded normal-case lowercase tracking-normal"
                       title="Auto-filled from Market Context below. Type to override."
                     >
                       ↳ auto
@@ -304,22 +307,25 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
                   type="number"
                   step="any"
                   inputMode="decimal"
-                  placeholder={isPrefillField ? `${m.placeholder} · auto-fills from Market Context` : m.placeholder}
+                  placeholder={m.placeholder}
                   value={effectiveInputs[m.field]}
                   onChange={e => setInputs(s => ({ ...s, [m.field]: e.target.value }))}
-                  className={`w-full bg-gray-950 border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-blue-500 font-mono ${
-                    auto ? 'border-blue-900/60' : 'border-gray-700'
+                  className={`w-full bg-transparent border-b text-sm text-white placeholder-gray-700 font-mono focus:outline-none px-0.5 pb-0.5 ${
+                    auto ? 'border-blue-900/60 focus:border-blue-500' : 'border-gray-800 focus:border-blue-500'
                   }`}
                 />
+                <div className="flex gap-1.5 text-[10px] font-mono">
+                  <span className={`px-1.5 py-0.5 rounded ${bucketTone(bucket?.median_bucket ?? null)}`}>
+                    med: {bucket?.median_bucket ?? '—'}
+                  </span>
+                  <span className={`px-1.5 py-0.5 rounded ${tertileTone(bucket?.tertile_bucket ?? null)}`}>
+                    ter: {bucket?.tertile_bucket ?? '—'}
+                  </span>
+                </div>
               </div>
             )
           })}
         </div>
-
-        {/* Bucket readout */}
-        {outcome && (
-          <BucketReadout buckets={outcome.buckets} />
-        )}
 
         {/* Errors */}
         {error && (
@@ -395,27 +401,6 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
-
-function BucketReadout({ buckets }: { buckets: BucketAssignment[] }) {
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
-      {buckets.map(b => (
-        <div key={b.metric} className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
-          <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">{b.metric}</div>
-          <div className="font-mono text-sm text-white">{b.value ?? <span className="text-gray-700">—</span>}</div>
-          <div className="flex gap-1.5 mt-1 text-[10px] font-mono">
-            <span className={`px-1.5 py-0.5 rounded ${bucketTone(b.median_bucket)}`}>
-              med: {b.median_bucket ?? '—'}
-            </span>
-            <span className={`px-1.5 py-0.5 rounded ${tertileTone(b.tertile_bucket)}`}>
-              ter: {b.tertile_bucket ?? '—'}
-            </span>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
 
 function ConsolidatedVerdict({ verdict, outcome }: { verdict: ConditionVerdict; outcome: LookupOutcome }) {
   const tone = VERDICT_TONE[verdict]
