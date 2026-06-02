@@ -225,7 +225,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider">Day P&L</div>
             <div className={`text-lg font-bold ${pnlColor(totalPnl)}`}>
-              {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
+              {`${totalPnl >= 0 ? '+' : '−'}$${Math.abs(totalPnl).toFixed(2)}`}
             </div>
           </div>
           <div>

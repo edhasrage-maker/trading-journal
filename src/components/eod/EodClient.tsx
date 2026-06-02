@@ -662,7 +662,7 @@ export default function EodClient({
           <div>
             <div className="text-xs text-gray-500">PnL</div>
             <div className={`font-mono text-lg ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-              {computedPnl >= 0 ? '+' : ''}{computedPnl.toFixed(2)}
+              {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
             </div>
           </div>
           <div title={`Avg MFE Capture across ${captureStats.count} trade${captureStats.count === 1 ? '' : 's'} on this day. Higher = took more of the favorable move offered.`}>
