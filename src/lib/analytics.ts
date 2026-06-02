@@ -113,15 +113,52 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
  *
  * Display tip: multiply by 100 and render as "%".
  */
+/**
+ * Minimum MFE-to-planned-risk ratio required before captureRatio reports a
+ * value. Below this, the trade barely went favorable and the capture ratio
+ * is dominated by noise — a +$5 MFE on a -$50 loss is a "-1000% capture"
+ * that doesn't mean "gave back a winner," it means "trade went against you
+ * almost immediately." Hide rather than mislead.
+ */
+const MIN_MFE_RATIO_FOR_CAPTURE = 0.2
+
 export function captureRatio(t: TradeWithExcursion): number | null {
   if (t.pnl == null || t.quantity == null) return null
   const xc = mfeMaePoints(t)
   if (!xc) return null
   if (xc.mfe <= 0) return null
+  // Noise filter: require MFE to be at least 20% of planned risk so we don't
+  // print degenerate ratios on trades that barely tagged green. When stop is
+  // unknown, skip the filter (fall back to the bare > 0 check above).
+  if (t.entry_price != null && t.stop_price != null) {
+    const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+    if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
+  }
   const mult = symbolToMultiplier(t.symbol ?? '')
   const mfeDollars = xc.mfe * mult * t.quantity
   if (mfeDollars === 0) return null
   return t.pnl / mfeDollars
+}
+
+/**
+ * True if the trade is a "real" give-back: closed at a loss AND had MFE of
+ * at least 1.0R favorable before reversing. Used to bold the capture chip in
+ * the row header so the trader sees these on review.
+ *
+ * Why 1.0R: that's the "I had a winner" threshold — the trade reached the
+ * trader's own unit of meaningful profit (1× planned risk) before going red.
+ * A trade that only tagged green by 0.2R isn't a give-back; it's just a small
+ * loss that briefly turned positive. The bold should be reserved for trades
+ * where there was a real winner to give back.
+ */
+export function isGiveBackTrade(t: TradeWithExcursion): boolean {
+  if ((t.pnl ?? 0) >= 0) return false
+  if (t.entry_price == null || t.stop_price == null) return false
+  const xc = mfeMaePoints(t)
+  if (!xc) return false
+  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  if (plannedRiskPts === 0) return false
+  return xc.mfe >= plannedRiskPts // MFE >= 1R favorable
 }
 
 /**

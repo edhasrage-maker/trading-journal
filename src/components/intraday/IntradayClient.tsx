@@ -7,7 +7,7 @@ import { Plus, Edit2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import TradeForm from './TradeForm'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
-import { captureRatio, maeLossRatio, mfeMaePoints } from '@/lib/analytics'
+import { captureRatio, maeLossRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 interface Props {
@@ -66,7 +66,15 @@ function CapLossInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
 
   // Cross-case detection. These are the trades you most want to NOT miss on
   // review — surfaced visibly so they don't blend into the row average.
-  const isGiveBack = cap != null && cap < 0
+  //
+  // Give-back: had MFE >= 1R favorable AND closed at a loss. A negative
+  // capture alone isn't enough — a +0.2R MFE that turned into a small loss is
+  // just a normal small loss, not a "winner I gave back". 1R = the threshold
+  // for what the trader's own R-multiple framework considers a real winner.
+  //
+  // Lucky escape: a winning trade whose MAE exceeded the planned stop. Got
+  // bailed out by the trade reversing — a discipline lesson hiding in a W.
+  const isGiveBack = isGiveBackTrade(trade)
   const isLuckyEscape = (trade.pnl ?? 0) > 0 && loss != null && loss > 1.0
 
   const capColor = cap == null
