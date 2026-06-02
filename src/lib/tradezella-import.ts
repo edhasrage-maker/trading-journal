@@ -8,7 +8,8 @@
  */
 
 export type TagCategory =
-  | 'setups' | 'confluences' | 'order_flow' | 'trade_management' | 'day_type' | 'mistakes' | 'emotions'
+  | 'setups' | 'confluences' | 'order_flow' | 'entry_model'
+  | 'trade_management' | 'day_type' | 'mistakes' | 'emotions'
 
 export type TZRow = Record<string, string>
 
@@ -26,7 +27,7 @@ const CATEGORY_MAP: Array<{ col: string; cat: TagCategory }> = [
 ]
 
 export const TAG_CATEGORIES: TagCategory[] =
-  ['setups', 'confluences', 'order_flow', 'trade_management', 'day_type', 'mistakes', 'emotions']
+  ['setups', 'confluences', 'order_flow', 'entry_model', 'trade_management', 'day_type', 'mistakes', 'emotions']
 
 /** Match key: lowercase, strip non-alphanumerics. "IB Hold" == "ib hold" == "ib-hold". */
 export function tagKey(s: string): string {
@@ -103,7 +104,7 @@ export type TagLookup = Record<TagCategory, Map<string, string>>
 
 export function emptyTagLookup(): TagLookup {
   return {
-    setups: new Map(), confluences: new Map(), order_flow: new Map(),
+    setups: new Map(), confluences: new Map(), order_flow: new Map(), entry_model: new Map(),
     trade_management: new Map(), day_type: new Map(), mistakes: new Map(), emotions: new Map(),
   }
 }
