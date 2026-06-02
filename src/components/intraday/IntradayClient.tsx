@@ -49,6 +49,63 @@ function burnDisplay(t: Trade): string | null {
   return `${r.toFixed(2)}×R`
 }
 
+/**
+ * Inline R · Capture · Burn line shown under the row's PnL in the collapsed
+ * trade list. Capture and Burn each render as a small colored chip; cross-case
+ * patterns (give-back loser, lucky-escape winner) get bold weight so they
+ * stand out from a sea of normal trades when scanning the list. The bold is
+ * the only extra signal — color bands match the expanded-detail view to keep
+ * the visual language consistent.
+ */
+function CapBurnInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | null }) {
+  const cap = captureRatio(trade)
+  const burn = maeBurnRatio(trade)
+  if (cap == null && burn == null && !rDisplay) return null
+
+  // Cross-case detection. These are the trades you most want to NOT miss on
+  // review — surfaced visibly so they don't blend into the row average.
+  const isGiveBack = cap != null && cap < 0
+  const isLuckyEscape = (trade.pnl ?? 0) > 0 && burn != null && burn > 1.0
+
+  const capColor = cap == null
+    ? 'text-gray-500'
+    : cap >= 0.7 ? 'text-green-400'
+      : cap >= 0.4 ? 'text-yellow-400'
+      : cap >= 0 ? 'text-orange-400'
+      : 'text-red-400'
+  const burnColor = burn == null
+    ? 'text-gray-500'
+    : burn <= 0.5 ? 'text-green-400'
+      : burn <= 1.0 ? 'text-yellow-400'
+      : 'text-red-400'
+
+  return (
+    <div className="flex items-center justify-end gap-1.5 text-xs text-gray-500">
+      {rDisplay && <span>{rDisplay}</span>}
+      {cap != null && (
+        <span
+          className={`${capColor} ${isGiveBack ? 'font-bold' : ''}`}
+          title={isGiveBack
+            ? `Give-back: trade went favorable then closed negative. Capture ${captureDisplay(trade)} of MFE.`
+            : `Capture: ${captureDisplay(trade)} of peak favorable excursion realized as PnL.`}
+        >
+          {captureDisplay(trade)}
+        </span>
+      )}
+      {burn != null && (
+        <span
+          className={`${burnColor} ${isLuckyEscape ? 'font-bold' : ''}`}
+          title={isLuckyEscape
+            ? `Lucky escape: winner sat through ${burnDisplay(trade)} of planned risk — violated stop level.`
+            : `Burn: ${burnDisplay(trade)} of planned stop distance touched as MAE.`}
+        >
+          {burnDisplay(trade)}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function IntradayClient({ date, initialTrades, allTags, initialOpenTradeId, prepDayType }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -244,12 +301,15 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                 ))}
               </div>
 
-              {/* P&L + R */}
+              {/* P&L · R · Capture % · Burn ×R. Capture and burn are bolded when
+                  the trade matches a high-signal cross-case pattern:
+                    - "Give-back" = loser that went green first (negative capture)
+                    - "Lucky escape" = winner that violated the planned stop (burn > 1×R) */}
               <div className="text-right shrink-0">
                 <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
-                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(0)}`}
+                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
                 </div>
-                {r && <div className="text-xs text-gray-500">{r}</div>}
+                <CapBurnInline trade={trade} rDisplay={r} />
               </div>
 
               {isOpen ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0" />}
