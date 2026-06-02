@@ -2,7 +2,22 @@
 
 import { format } from 'date-fns'
 import { Check, Trash2, Loader2 } from 'lucide-react'
+import { captureRatio, maeLossRatio, isGiveBackTrade } from '@/lib/analytics'
 import type { Trade } from '@/lib/supabase/types'
+
+/** Display capture % per trade — uses the same null-handling as the intraday row. */
+function captureDisplay(t: Trade): string | null {
+  const r = captureRatio(t)
+  if (r == null) return null
+  return `${Math.max(-999, Math.min(999, r * 100)).toFixed(0)}%`
+}
+
+/** Display MAE loss ×R per trade. */
+function lossDisplay(t: Trade): string | null {
+  const r = maeLossRatio(t)
+  if (r == null) return null
+  return `${r.toFixed(2)}×R`
+}
 
 interface Props {
   trades: Trade[]
@@ -63,6 +78,8 @@ export default function TradeList({
               <th className="text-right font-normal pb-2 pr-3">Qty</th>
               <th className="text-right font-normal pb-2 pr-3" title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot.">ATR@</th>
               <th className="text-right font-normal pb-2 pr-3">PnL</th>
+              <th className="text-right font-normal pb-2 pr-3" title="MFE Capture: realized PnL / peak favorable excursion in $. 100% = you took the high. Bolded when the trade was a give-back (MFE >= 1R favorable then closed at a loss).">Cap</th>
+              <th className="text-right font-normal pb-2 pr-3" title="MAE Loss: peak adverse / planned stop distance. 1.0× = MAE touched stop. Bolded on lucky-escape winners (loss > 1×R but trade closed green).">Loss</th>
               <th className="text-left font-normal pb-2">Overview</th>
               <th className="w-8" />
             </tr>
@@ -138,6 +155,38 @@ export default function TradeList({
                     {pnl >= 0 ? '+' : ''}
                     {pnl.toFixed(2)}
                   </td>
+                  {/* Cap and Loss: same per-trade math as the intraday row chip.
+                      Bold marks high-signal cross-cases that deserve attention
+                      on review (give-back loser, lucky-escape winner). */}
+                  {(() => {
+                    const cap = captureRatio(t)
+                    const loss = maeLossRatio(t)
+                    const isGiveBack = isGiveBackTrade(t)
+                    const isLuckyEscape = (t.pnl ?? 0) > 0 && loss != null && loss > 1.0
+                    const capColor = cap == null
+                      ? 'text-gray-700'
+                      : cap >= 0.7 ? 'text-green-400'
+                        : cap >= 0.4 ? 'text-yellow-400'
+                        : cap >= 0 ? 'text-orange-400'
+                        : 'text-red-400'
+                    const lossColor = loss == null
+                      ? 'text-gray-700'
+                      : loss <= 0.5 ? 'text-green-400'
+                        : loss <= 1.0 ? 'text-yellow-400'
+                        : 'text-red-400'
+                    return (
+                      <>
+                        <td className={`py-1.5 pr-3 text-right ${capColor} ${isGiveBack ? 'font-bold' : ''}`}
+                          title={isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.' : undefined}>
+                          {captureDisplay(t) ?? '—'}
+                        </td>
+                        <td className={`py-1.5 pr-3 text-right ${lossColor} ${isLuckyEscape ? 'font-bold' : ''}`}
+                          title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : undefined}>
+                          {lossDisplay(t) ?? '—'}
+                        </td>
+                      </>
+                    )
+                  })()}
                   <td className="py-1.5 pr-2 max-w-md">
                     {summary ? (
                       <span className="text-gray-300 font-sans whitespace-normal leading-snug">{summary}</span>
