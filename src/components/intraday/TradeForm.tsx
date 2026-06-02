@@ -3,6 +3,8 @@
 import { useState, useCallback } from 'react'
 import { Loader2, Save, X, ScanLine } from 'lucide-react'
 import PinPlacement, { type PinType, type Pin } from './PinPlacement'
+// PinType / Pin still used by the legacy pin-position fields kept in FormState
+// so existing trades load + save their saved pin coordinates without loss.
 import TagSelector from './TagSelector'
 import { deleteBlob } from '@/lib/storage'
 import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
@@ -112,22 +114,10 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   const clearScreenshot = () =>
     setForm(f => ({ ...f, screenshot_url: null, pendingFile: null, activePin: null, entry_pin_x: null, entry_pin_y: null, stop_pin_x: null, stop_pin_y: null, tp1_pin_x: null, tp1_pin_y: null }))
 
-  const activatePin = (type: PinType) =>
-    set('activePin', form.activePin === type ? null : type)
-
-  const clearPin = (type: PinType) => {
-    setForm(f => ({ ...f, [`${type}_pin_x`]: null, [`${type}_pin_y`]: null }))
-  }
-
-  const placePin = (type: PinType, pin: Pin) => {
-    setForm(f => ({
-      ...f,
-      [`${type}_pin_x`]: pin.x,
-      [`${type}_pin_y`]: pin.y,
-      activePin: null,
-    }))
-  }
-
+  // Pin display only — placement UI was removed once /api/extract-trade
+  // started auto-detecting entry/stop/TP1 prices. Legacy pin coordinates on
+  // existing trades still render via the PinPlacement overlay so historical
+  // screenshots keep their visual markers.
   const pins: Partial<Record<PinType, Pin>> = {}
   if (form.entry_pin_x != null && form.entry_pin_y != null) pins.entry = { x: form.entry_pin_x, y: form.entry_pin_y }
   if (form.stop_pin_x != null && form.stop_pin_y != null) pins.stop = { x: form.stop_pin_x, y: form.stop_pin_y }
@@ -310,10 +300,6 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               <PinPlacement
                 imageUrl={form.screenshot_url}
                 pins={pins}
-                activePin={form.activePin}
-                onActivate={activatePin}
-                onPlace={placePin}
-                onClear={clearPin}
               />
               <div className="flex items-center gap-4">
                 <button type="button" onClick={readScreenshot} disabled={extracting}
