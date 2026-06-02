@@ -131,12 +131,29 @@ export default function MarketContextForm({ value, onChange }: Props) {
           <NumInput label="ONL" hint="Overnight Low" value={value.onl} onChange={r => set('onl', r)} />
           <YesNoToggle label="Price in GBX range?" value={value.price_in_gbx_range} onChange={v => setBool('price_in_gbx_range', v)} />
           <div>
-            <label className="block text-xs text-gray-400 mb-1">GBX % of ADR</label>
-            <div className={`border rounded-lg px-3 py-2 text-sm transition-colors ${
-              derivedGbxPctAdrNum != null && derivedGbxPctAdrNum > 100
-                ? 'bg-green-950/40 border-green-700/60 text-green-300'
-                : 'bg-gray-800 border-gray-700 text-gray-300'
-            }`}>
+            <label className="block text-xs text-gray-400 mb-1" title="Globex range / ADR. <60% = room to run, 60–90% = significant range used, >90% = exhaustion risk (mean-reversion more likely).">
+              GBX % of ADR
+            </label>
+            <div
+              className={`border rounded-lg px-3 py-2 text-sm transition-colors ${
+                derivedGbxPctAdrNum == null
+                  ? 'bg-gray-800 border-gray-700 text-gray-300'
+                  : derivedGbxPctAdrNum >= 90
+                    ? 'bg-red-950/40 border-red-700/60 text-red-300'
+                    : derivedGbxPctAdrNum >= 60
+                      ? 'bg-yellow-950/40 border-yellow-700/60 text-yellow-300'
+                      : 'bg-green-950/40 border-green-700/60 text-green-300'
+              }`}
+              title={
+                derivedGbxPctAdrNum == null
+                  ? 'Auto-derived from ONH − ONL ÷ ADR. Fill in ONH, ONL and ADR to see it.'
+                  : derivedGbxPctAdrNum >= 90
+                    ? 'Overnight has consumed most of the expected daily range — favor mean reversion and beware of further trend expansion.'
+                    : derivedGbxPctAdrNum >= 60
+                      ? 'Significant range already used — pick spots, don\'t chase.'
+                      : 'Plenty of expected daily range left — room for directional moves.'
+              }
+            >
               {derivedGbxPctAdrNum != null ? `${derivedGbxPctAdrNum.toFixed(1)}%` : '—'}
               <span className="text-gray-600 text-xs ml-1">(auto)</span>
             </div>
