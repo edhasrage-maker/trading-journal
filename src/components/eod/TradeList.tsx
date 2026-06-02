@@ -20,6 +20,8 @@ interface Props {
   summaries?: Record<string, string>
   /** True while summaries are being generated. */
   summariesLoading?: boolean
+  /** Per-trade live ATR-10 (Wilder) in points, computed at each trade's entry_time from 1-min bars. Powers an "ATR @ entry" chip. */
+  liveAtrByTradeId?: Record<string, number>
 }
 
 export default function TradeList({
@@ -35,6 +37,7 @@ export default function TradeList({
   onRowOpen,
   summaries = {},
   summariesLoading = false,
+  liveAtrByTradeId,
 }: Props) {
   if (trades.length === 0) {
     return (
@@ -58,6 +61,7 @@ export default function TradeList({
               <th className="text-right font-normal pb-2 pr-3">Stop</th>
               <th className="text-right font-normal pb-2 pr-3">TP1</th>
               <th className="text-right font-normal pb-2 pr-3">Qty</th>
+              <th className="text-right font-normal pb-2 pr-3" title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot.">ATR@</th>
               <th className="text-right font-normal pb-2 pr-3">PnL</th>
               <th className="text-left font-normal pb-2">Overview</th>
               <th className="w-8" />
@@ -123,6 +127,9 @@ export default function TradeList({
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-300">{t.quantity ?? '--'}</td>
+                  <td className="py-1.5 pr-3 text-right text-gray-400" title={liveAtrByTradeId?.[t.id] != null ? `Live ATR-10 (1m Wilder) at this trade's entry_time` : 'Bars unavailable for live ATR — fallback to prep ATR not shown here'}>
+                    {liveAtrByTradeId?.[t.id] != null ? liveAtrByTradeId[t.id].toFixed(2) : '—'}
+                  </td>
                   <td
                     className={`py-1.5 pr-3 text-right font-bold ${
                       pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-500'

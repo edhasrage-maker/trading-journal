@@ -34,6 +34,8 @@ interface Props {
   initialTrades: Trade[]
   initialMarketContext: MarketContext | null
   allTags: TradeTag[]
+  /** Map of trade.id → per-trade live ATR-10 (Wilder) at entry_time, in price points. Computed server-side from 1-min bars. Missing entries fall back to no chip. */
+  liveAtrByTradeId?: Record<string, number>
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -54,6 +56,7 @@ export default function EodClient({
   initialDay,
   initialTrades,
   initialMarketContext,
+  liveAtrByTradeId,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -833,6 +836,7 @@ export default function EodClient({
         onRowOpen={id => router.push(`/intraday/${date}?trade=${id}`)}
         summaries={summaries}
         summariesLoading={summariesLoading}
+        liveAtrByTradeId={liveAtrByTradeId}
       />
 
       <RecordingCommentary trades={trades} />

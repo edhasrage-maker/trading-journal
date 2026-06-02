@@ -5,6 +5,7 @@ import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeLossRatio, type TradeWithExcursion } from '@/lib/analytics'
+import { liveAtr, fetchAllBars, type AtrBar } from '@/lib/atr'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // Disable static generation so the date is recomputed on every request
@@ -43,7 +44,9 @@ export default async function DashboardPage() {
   // direction + entry_price + symbol + quantity feed the per-day avg
   // MFE / MAE computed below.
   type TradeSlim = {
+    id: string
     trading_day_id: string
+    entry_time: string | null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tags_json: any
     pnl: number | null
@@ -56,14 +59,15 @@ export default async function DashboardPage() {
     symbol: string | null
   }
   const dayIds = recentDaysBase.map(d => d.id)
+  const dayDateById = new Map<string, string>(recentDaysBase.map(d => [d.id, d.date]))
   const [{ data: tradesRaw }, { data: contextsRaw }] = dayIds.length > 0
     ? await Promise.all([
         supabase
           .from('trades')
-          .select('trading_day_id, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol')
+          .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol')
           .in('trading_day_id', dayIds),
         // market_context.atr_1m is the user's per-day 1-min ATR-10 (Wilder) entered
-        // during prep — drives the optional ATR display unit on Avg MFE/MAE.
+        // during prep — kept as a fallback when bars are missing.
         supabase
           .from('market_context')
           .select('trading_day_id, atr_1m')
@@ -76,9 +80,46 @@ export default async function DashboardPage() {
     arr.push(t)
     tradesByDay.set(t.trading_day_id, arr)
   }
-  const atrByDay = new Map<string, number | null>()
+  const prepAtrByDay = new Map<string, number | null>()
   for (const c of (contextsRaw ?? []) as { trading_day_id: string; atr_1m: number | null }[]) {
-    atrByDay.set(c.trading_day_id, c.atr_1m)
+    prepAtrByDay.set(c.trading_day_id, c.atr_1m)
+  }
+
+  // Per-trade LIVE ATR: compute ATR-10 Wilder from 1-min bars at each trade's
+  // entry_time. The dashboard's "in ATR" display previously divided MFE/MAE
+  // by the day's prep ATR (one value, possibly hours stale by trade time);
+  // this replaces that with the actual ATR reading at the trade's moment.
+  //
+  // Fetch strategy: one query per distinct (symbol, date) that actually has
+  // trades. ~390 1-min bars per RTH day, well under the 1000-row Supabase
+  // cap. Concurrent fetches via Promise.all so 30 days of bar loads run in
+  // parallel instead of serialized. Falls back silently to prep_atr when bars
+  // are missing for that date+symbol (e.g., historical data before SCID
+  // import) so the dashboard always renders something.
+  const symbolDatePairs = new Set<string>()
+  const tradesNeedingAtr: TradeSlim[] = []
+  for (const t of (tradesRaw ?? []) as TradeSlim[]) {
+    if (!t.symbol || !t.entry_time) continue
+    const date = dayDateById.get(t.trading_day_id)
+    if (!date) continue
+    symbolDatePairs.add(`${t.symbol}|${date}`)
+    tradesNeedingAtr.push(t)
+  }
+  const barsBySymbolDate = new Map<string, AtrBar[]>()
+  await Promise.all(
+    Array.from(symbolDatePairs).map(async key => {
+      const [symbol, date] = key.split('|')
+      const bars = await fetchAllBars(supabase, symbol, date)
+      barsBySymbolDate.set(key, bars)
+    }),
+  )
+  const liveAtrByTradeId = new Map<string, number>()
+  for (const t of tradesNeedingAtr) {
+    const date = dayDateById.get(t.trading_day_id)!
+    const bars = barsBySymbolDate.get(`${t.symbol}|${date}`)
+    if (!bars || bars.length === 0) continue
+    const value = liveAtr(bars, new Date(t.entry_time!), 10)
+    if (value != null) liveAtrByTradeId.set(t.id, value)
   }
 
   const recentDays = recentDaysBase.map(d => {
@@ -145,18 +186,25 @@ export default async function DashboardPage() {
       avgMaeDollars = maeDollarSum / mfeMaeTrades.length
     }
 
-    // Day-level execution quality: avg MFE capture % and avg MAE burn ×R.
-    // Computed via the shared analytics helpers so the math matches the
-    // intraday per-trade display and the EOD recap header exactly. The
-    // trade rows have the right shape (entry/stop/direction/high/low/symbol
-    // /quantity/pnl) so we can cast through TradeWithExcursion.
-    // The TradeSlim rows have the fields the analytics helpers actually read
-    // (entry/stop/direction/high/low/symbol/quantity/pnl); the helpers ignore
-    // id/trading_day_id/entry_time/tags_json. Cast via unknown so we don't
-    // have to materialize the unused fields.
+    // Day-level execution quality: avg MFE capture % and avg MAE loss ×R.
+    // Cast trades to TradeWithExcursion[] via unknown — TradeSlim has the
+    // fields the helpers actually read; id/trading_day_id/entry_time/tags_json
+    // are unused by the helpers but kept in TradeSlim for other code paths.
     const xcTrades = trades as unknown as TradeWithExcursion[]
     const captureStats = avgCaptureRatio(xcTrades)
     const lossStats = avgMaeLossRatio(xcTrades)
+
+    // Live ATR averaged across the day's trades — replaces prep_atr for the
+    // dashboard "in ATR" display. Falls back to prep_atr when bars are
+    // missing (older days before SCID import).
+    let avgLiveAtr1m: number | null = null
+    let liveAtrCount = 0
+    let liveAtrSum = 0
+    for (const t of trades) {
+      const v = liveAtrByTradeId.get(t.id)
+      if (v != null) { liveAtrSum += v; liveAtrCount++ }
+    }
+    if (liveAtrCount > 0) avgLiveAtr1m = liveAtrSum / liveAtrCount
 
     return {
       id: d.id,
@@ -174,7 +222,9 @@ export default async function DashboardPage() {
       avg_mae_dollars: avgMaeDollars,
       avg_capture: captureStats.avg,    // 0..1 fraction, or null
       avg_loss: lossStats.avg,          // 0..n× of planned stop, or null
-      atr_1m: atrByDay.get(d.id) ?? null,
+      atr_1m: prepAtrByDay.get(d.id) ?? null,
+      avg_live_atr_1m: avgLiveAtr1m,
+      live_atr_count: liveAtrCount,
     }
   })
 
