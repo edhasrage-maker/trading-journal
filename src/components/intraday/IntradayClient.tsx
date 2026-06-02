@@ -7,7 +7,7 @@ import { Plus, Edit2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import TradeForm from './TradeForm'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
-import { captureRatio, maeBurnRatio, mfeMaePoints } from '@/lib/analytics'
+import { captureRatio, maeLossRatio, mfeMaePoints } from '@/lib/analytics'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 interface Props {
@@ -42,30 +42,32 @@ function captureDisplay(t: Trade): string | null {
   return `${pct.toFixed(0)}%`
 }
 
-/** Display-formatted MAE burn — "0.6×R" style. Null when no stop or no MAE. */
-function burnDisplay(t: Trade): string | null {
-  const r = maeBurnRatio(t)
+/** Display-formatted MAE loss — "0.6×R" style. Null when no stop or no MAE.
+ *  Note: "loss" here is % of planned stop touched as MAE, not the realized
+ *  dollar loss on the trade (which is the separate PnL field). */
+function lossDisplay(t: Trade): string | null {
+  const r = maeLossRatio(t)
   if (r == null) return null
   return `${r.toFixed(2)}×R`
 }
 
 /**
- * Inline R · Capture · Burn line shown under the row's PnL in the collapsed
- * trade list. Capture and Burn each render as a small colored chip; cross-case
+ * Inline R · Capture · Loss line shown under the row's PnL in the collapsed
+ * trade list. Capture and Loss each render as a small colored chip; cross-case
  * patterns (give-back loser, lucky-escape winner) get bold weight so they
  * stand out from a sea of normal trades when scanning the list. The bold is
  * the only extra signal — color bands match the expanded-detail view to keep
  * the visual language consistent.
  */
-function CapBurnInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | null }) {
+function CapLossInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | null }) {
   const cap = captureRatio(trade)
-  const burn = maeBurnRatio(trade)
-  if (cap == null && burn == null && !rDisplay) return null
+  const loss = maeLossRatio(trade)
+  if (cap == null && loss == null && !rDisplay) return null
 
   // Cross-case detection. These are the trades you most want to NOT miss on
   // review — surfaced visibly so they don't blend into the row average.
   const isGiveBack = cap != null && cap < 0
-  const isLuckyEscape = (trade.pnl ?? 0) > 0 && burn != null && burn > 1.0
+  const isLuckyEscape = (trade.pnl ?? 0) > 0 && loss != null && loss > 1.0
 
   const capColor = cap == null
     ? 'text-gray-500'
@@ -73,10 +75,10 @@ function CapBurnInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
       : cap >= 0.4 ? 'text-yellow-400'
       : cap >= 0 ? 'text-orange-400'
       : 'text-red-400'
-  const burnColor = burn == null
+  const lossColor = loss == null
     ? 'text-gray-500'
-    : burn <= 0.5 ? 'text-green-400'
-      : burn <= 1.0 ? 'text-yellow-400'
+    : loss <= 0.5 ? 'text-green-400'
+      : loss <= 1.0 ? 'text-yellow-400'
       : 'text-red-400'
 
   return (
@@ -92,14 +94,14 @@ function CapBurnInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
           {captureDisplay(trade)}
         </span>
       )}
-      {burn != null && (
+      {loss != null && (
         <span
-          className={`${burnColor} ${isLuckyEscape ? 'font-bold' : ''}`}
+          className={`${lossColor} ${isLuckyEscape ? 'font-bold' : ''}`}
           title={isLuckyEscape
-            ? `Lucky escape: winner sat through ${burnDisplay(trade)} of planned risk — violated stop level.`
-            : `Burn: ${burnDisplay(trade)} of planned stop distance touched as MAE.`}
+            ? `Lucky escape: winner sat through ${lossDisplay(trade)} of planned risk — violated stop level.`
+            : `Loss: ${lossDisplay(trade)} of planned stop distance touched as MAE.`}
         >
-          {burnDisplay(trade)}
+          {lossDisplay(trade)}
         </span>
       )}
     </div>
@@ -301,15 +303,15 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                 ))}
               </div>
 
-              {/* P&L · R · Capture % · Burn ×R. Capture and burn are bolded when
+              {/* P&L · R · Capture % · Loss ×R. Capture and loss are bolded when
                   the trade matches a high-signal cross-case pattern:
                     - "Give-back" = loser that went green first (negative capture)
-                    - "Lucky escape" = winner that violated the planned stop (burn > 1×R) */}
+                    - "Lucky escape" = winner that violated the planned stop (loss > 1×R) */}
               <div className="text-right shrink-0">
                 <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
                   {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
                 </div>
-                <CapBurnInline trade={trade} rDisplay={r} />
+                <CapLossInline trade={trade} rDisplay={r} />
               </div>
 
               {isOpen ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0" />}
@@ -333,23 +335,23 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                 </div>
 
                 {/* Execution quality: capture % (how much of MFE did I take?) and
-                    MAE burn (did I sit through more than my planned stop?). */}
-                {(captureDisplay(trade) != null || burnDisplay(trade) != null) && (() => {
+                    MAE loss (did I sit through more than my planned stop?). */}
+                {(captureDisplay(trade) != null || lossDisplay(trade) != null) && (() => {
                   const xc = mfeMaePoints(trade)
                   const cap = captureDisplay(trade)
-                  const burn = burnDisplay(trade)
+                  const loss = lossDisplay(trade)
                   const capRatio = captureRatio(trade)
-                  const burnRatio = maeBurnRatio(trade)
+                  const lossRatio = maeLossRatio(trade)
                   const capColor = capRatio == null
                     ? 'text-gray-500'
                     : capRatio >= 0.7 ? 'text-green-400'
                       : capRatio >= 0.4 ? 'text-yellow-400'
                       : capRatio >= 0 ? 'text-orange-400'
                       : 'text-red-400'
-                  const burnColor = burnRatio == null
+                  const lossColor = lossRatio == null
                     ? 'text-gray-500'
-                    : burnRatio <= 0.5 ? 'text-green-400'
-                      : burnRatio <= 1.0 ? 'text-yellow-400'
+                    : lossRatio <= 0.5 ? 'text-green-400'
+                      : lossRatio <= 1.0 ? 'text-yellow-400'
                       : 'text-red-400'
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
@@ -360,10 +362,10 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                         <div className={`font-medium ${capColor}`}>{cap ?? '—'}</div>
                       </div>
                       <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="Peak adverse excursion / planned stop distance. 1.0× = MAE touched your stop level.">
-                          MAE Burn
+                        <div className="text-xs text-gray-500 mb-0.5" title="Peak adverse excursion / planned stop distance. 1.0× = MAE touched your stop level. (% of planned risk used as MAE — separate from realized PnL.)">
+                          MAE Loss
                         </div>
-                        <div className={`font-medium ${burnColor}`}>{burn ?? '—'}</div>
+                        <div className={`font-medium ${lossColor}`}>{loss ?? '—'}</div>
                       </div>
                       <div className="hidden sm:block">
                         <div className="text-xs text-gray-500 mb-0.5" title="Raw MFE in points">Peak MFE</div>

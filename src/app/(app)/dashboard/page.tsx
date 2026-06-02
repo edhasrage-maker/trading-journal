@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
-import { avgCaptureRatio, avgMaeBurnRatio, type TradeWithExcursion } from '@/lib/analytics'
+import { avgCaptureRatio, avgMaeLossRatio, type TradeWithExcursion } from '@/lib/analytics'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // Disable static generation so the date is recomputed on every request
@@ -156,7 +156,7 @@ export default async function DashboardPage() {
     // have to materialize the unused fields.
     const xcTrades = trades as unknown as TradeWithExcursion[]
     const captureStats = avgCaptureRatio(xcTrades)
-    const burnStats = avgMaeBurnRatio(xcTrades)
+    const lossStats = avgMaeLossRatio(xcTrades)
 
     return {
       id: d.id,
@@ -173,7 +173,7 @@ export default async function DashboardPage() {
       avg_mfe_dollars: avgMfeDollars,
       avg_mae_dollars: avgMaeDollars,
       avg_capture: captureStats.avg,    // 0..1 fraction, or null
-      avg_burn: burnStats.avg,          // 0..n× of planned stop, or null
+      avg_loss: lossStats.avg,          // 0..n× of planned stop, or null
       atr_1m: atrByDay.get(d.id) ?? null,
     }
   })

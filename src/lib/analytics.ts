@@ -125,20 +125,24 @@ export function captureRatio(t: TradeWithExcursion): number | null {
 }
 
 /**
- * MAE burn ratio = peak adverse excursion / planned risk, both in points
+ * MAE loss ratio = peak adverse excursion / planned risk, both in points
  * per contract (so multiplier and quantity cancel).
  *
- *   burn = 0    → trade went green immediately, no heat
- *   burn = 0.5  → sat through half your stop distance
- *   burn = 1.0  → MAE touched your stop level exactly
- *   burn > 1.0  → MAE went past your stop (you moved it, or got slipped)
+ *   loss = 0    → trade went green immediately, no adverse pressure
+ *   loss = 0.5  → sat through half your stop distance
+ *   loss = 1.0  → MAE touched your stop level exactly
+ *   loss > 1.0  → MAE went past your stop (you moved it, or got slipped)
+ *
+ * Note: "loss" here refers to the % of planned-risk distance touched as MAE,
+ * not the realized dollar loss on the trade. A winning trade can still have
+ * a high loss ratio if it went deep against you first ("lucky escape").
  *
  * Returns null when stop_price, entry_price, or high/low is missing, or when
  * planned risk is zero (entry == stop).
  *
- * Display tip: render as "×R" (e.g. 0.60 → "0.6× R").
+ * Display tip: render as "×R" (e.g. 0.60 → "0.6× R") to preserve the unit.
  */
-export function maeBurnRatio(t: TradeWithExcursion): number | null {
+export function maeLossRatio(t: TradeWithExcursion): number | null {
   if (t.entry_price == null || t.stop_price == null) return null
   const xc = mfeMaePoints(t)
   if (!xc) return null
@@ -158,12 +162,12 @@ export function avgCaptureRatio(trades: TradeWithExcursion[]): { avg: number | n
   return { avg: n > 0 ? sum / n : null, count: n }
 }
 
-/** Aggregate MAE burn across a set of trades. Skips trades whose ratio is null. */
-export function avgMaeBurnRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
+/** Aggregate MAE loss across a set of trades. Skips trades whose ratio is null. */
+export function avgMaeLossRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
   let sum = 0
   let n = 0
   for (const t of trades) {
-    const r = maeBurnRatio(t)
+    const r = maeLossRatio(t)
     if (r != null) { sum += r; n++ }
   }
   return { avg: n > 0 ? sum / n : null, count: n }

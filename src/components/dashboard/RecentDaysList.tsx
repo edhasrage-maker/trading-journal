@@ -22,8 +22,8 @@ export interface DayRowData {
   avg_mae_dollars: number | null
   /** Day-level MFE Capture %: realized PnL / peak favorable in $. Null when no trades had MFE data. */
   avg_capture: number | null
-  /** Day-level MAE Burn ×R: peak adverse / planned risk in points. Null when no stops were set. */
-  avg_burn: number | null
+  /** Day-level MAE Loss ×R: peak adverse / planned risk in points (NOT realized dollar loss). Null when no stops were set. */
+  avg_loss: number | null
   /** 1-min ATR-10 (Wilder) entered during prep — drives the ATR display unit on MFE/MAE. */
   atr_1m: number | null
 }
@@ -317,7 +317,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                   </div>
                 )}
               </th>
-              <SortableTh label="Cap / Burn" column="capture" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-24" />
+              <SortableTh label="Cap / Loss" column="capture" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-24" />
               <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
               <th className="w-10" />
@@ -440,7 +440,7 @@ function DayRowItem({
         <MfeMaeCell day={day} unit={mfeUnit} />
       </td>
       <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-        <CaptureBurnCell day={day} />
+        <CaptureLossCell day={day} />
       </td>
       <td className={`py-2 pr-3 text-center font-mono ${cellBg}`}>
         {day.win_rate === null
@@ -504,12 +504,12 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
 }
 
 /**
- * Capture % / MAE Burn ×R per day. Capture = realized PnL / peak favorable in $;
- * Burn = peak adverse / planned stop distance in pts. Capture > MAE Burn pair
- * shows execution quality across the day.
+ * Capture % / MAE Loss ×R per day. Capture = realized PnL / peak favorable in $;
+ * Loss = peak adverse / planned stop distance in pts (% of planned risk used as
+ * MAE — not realized dollar loss).
  */
-function CaptureBurnCell({ day }: { day: DayRowData }) {
-  if (day.avg_capture == null && day.avg_burn == null) {
+function CaptureLossCell({ day }: { day: DayRowData }) {
+  if (day.avg_capture == null && day.avg_loss == null) {
     return <span className="text-gray-700">—</span>
   }
   const capColor = day.avg_capture == null
@@ -518,16 +518,16 @@ function CaptureBurnCell({ day }: { day: DayRowData }) {
       : day.avg_capture >= 0.4 ? 'text-yellow-400'
       : day.avg_capture >= 0 ? 'text-orange-400'
       : 'text-red-400'
-  const burnColor = day.avg_burn == null
+  const lossColor = day.avg_loss == null
     ? 'text-gray-700'
-    : day.avg_burn <= 0.5 ? 'text-green-400'
-      : day.avg_burn <= 1.0 ? 'text-yellow-400'
+    : day.avg_loss <= 0.5 ? 'text-green-400'
+      : day.avg_loss <= 1.0 ? 'text-yellow-400'
       : 'text-red-400'
   return (
-    <span title="Capture = avg of (realized PnL / peak favorable $) per trade. Burn = avg of (peak adverse / planned risk) per trade.">
+    <span title="Capture = avg of (realized PnL / peak favorable $) per trade. Loss = avg of (peak adverse / planned risk) per trade — % of stop touched as MAE, not the realized dollar PnL.">
       <span className={capColor}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
       <span className="text-gray-600"> / </span>
-      <span className={burnColor}>{day.avg_burn == null ? '—' : `${day.avg_burn.toFixed(2)}×`}</span>
+      <span className={lossColor}>{day.avg_loss == null ? '—' : `${day.avg_loss.toFixed(2)}×`}</span>
     </span>
   )
 }
