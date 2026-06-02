@@ -8,7 +8,7 @@ import { symbolToMultiplier } from '@/lib/futures-symbols'
  */
 
 export type TradeLike = Pick<Trade,
-  'id' | 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'entry_time' | 'tags_json' | 'trading_day_id'
+  'id' | 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'entry_time' | 'tags_json' | 'trading_day_id' | 'symbol'
 >
 
 /** Same as TradeLike plus the tick-extreme + symbol fields needed for MFE/MAE math. */
@@ -60,13 +60,28 @@ const ZERO_STATS: PerformanceStats = {
   avg_r: null, r_count: 0,
 }
 
-/** R-multiple for a single trade. Returns null when entry/stop/qty/pnl missing or risk is zero. */
+/**
+ * R-multiple for a single trade.
+ *
+ *   R = pnl / risk_in_dollars
+ *   risk_in_dollars = |entry − stop| × quantity × contract_multiplier
+ *
+ * The contract multiplier is crucial: without it, R is off by the multiplier
+ * factor (2× for MNQ, 20× for NQ, 50× for ES, etc.) Earlier versions of this
+ * helper omitted the multiplier — the previous incorrect formula
+ * `pnl / (|entry − stop| × qty)` produced "dollars per point-contract"
+ * which is not R. Fixed here so Avg R on the analytics page and all
+ * per-row R displays are unit-correct.
+ *
+ * Returns null when entry/stop/qty/pnl are missing or risk is zero.
+ */
 export function rMultiple(t: TradeLike): number | null {
   const ep = t.entry_price, sp = t.stop_price, pnl = t.pnl, qty = t.quantity
   if (ep == null || sp == null || pnl == null || qty == null) return null
-  const risk = Math.abs(ep - sp) * qty
-  if (risk === 0) return null
-  return pnl / risk
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  const riskDollars = Math.abs(ep - sp) * qty * mult
+  if (riskDollars === 0) return null
+  return pnl / riskDollars
 }
 
 // ────────────────────────────────────────────────────────────────────────────

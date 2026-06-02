@@ -8,6 +8,7 @@ import TradeForm from './TradeForm'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
 import { captureRatio, maeLossRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 interface Props {
@@ -28,7 +29,10 @@ function fmt(n: number | null) { return n == null ? '—' : n.toFixed(2) }
 
 function rMultiple(t: Trade): string | null {
   if (!t.entry_price || !t.stop_price || !t.pnl) return null
-  const risk = Math.abs(t.entry_price - t.stop_price) * (t.quantity ?? 1)
+  // R = pnl / risk_in_dollars. Risk in dollars requires the contract multiplier;
+  // without it the value is off by 2× for MNQ, 20× for NQ, 50× for ES, etc.
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  const risk = Math.abs(t.entry_price - t.stop_price) * (t.quantity ?? 1) * mult
   if (risk === 0) return null
   return (t.pnl / risk).toFixed(1) + 'R'
 }
