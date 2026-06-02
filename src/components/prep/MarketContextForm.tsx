@@ -1,9 +1,20 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import type { MarketContext } from '@/lib/supabase/types'
+import { suggestFlag, type MetricBuckets, type MetricSuggestion } from '@/lib/metric-buckets'
 
 type PerfFlag = 'red' | 'yellow' | 'green'
 type ContextFields = Omit<MarketContext, 'id' | 'trading_day_id' | 'stat_performance_json' | 'created_at'>
+
+interface AllBuckets {
+  rvol: MetricBuckets
+  adr: MetricBuckets
+  ib_size: MetricBuckets
+  atr_1m: MetricBuckets
+  total_days: number
+  date_range: { from: string; to: string } | null
+}
 
 interface Props {
   value: Partial<ContextFields>
@@ -16,15 +27,59 @@ const flagDefs = [
   { val: 'green' as PerfFlag, label: 'Good', idle: 'border-gray-700 text-gray-500 hover:border-green-700', on: 'bg-green-700 border-green-600 text-white' },
 ]
 
-function FlagRow({ value, onChange }: { value: PerfFlag | null | undefined; onChange: (v: PerfFlag | null) => void }) {
+function FlagRow({
+  value,
+  onChange,
+  suggestion,
+}: {
+  value: PerfFlag | null | undefined
+  onChange: (v: PerfFlag | null) => void
+  suggestion?: MetricSuggestion | null
+}) {
   return (
-    <div className="flex gap-1 mt-1">
-      {flagDefs.map(({ val, label, idle, on }) => (
-        <button key={val} type="button"
-          onClick={() => onChange(value === val ? null : val)}
-          className={`flex-1 text-xs py-1 rounded border transition-colors ${value === val ? on : `bg-gray-800 ${idle}`}`}
-        >{label}</button>
-      ))}
+    <div className="mt-1 space-y-1">
+      {suggestion && <SuggestionHint suggestion={suggestion} />}
+      <div className="flex gap-1">
+        {flagDefs.map(({ val, label, idle, on }) => {
+          const isSuggested = suggestion?.flag === val && value == null
+          // Suggested-but-unselected gets a subtle ring so the eye lands on it
+          // without committing to the value. Once the user clicks any flag,
+          // the ring disappears so we don't double-signal.
+          return (
+            <button
+              key={val}
+              type="button"
+              onClick={() => onChange(value === val ? null : val)}
+              className={`flex-1 text-xs py-1 rounded border transition-colors ${value === val ? on : `bg-gray-800 ${idle}`} ${isSuggested ? 'ring-1 ring-offset-0 ring-blue-500/60' : ''}`}
+              title={isSuggested
+                ? `Historical bucket suggests "${label}" for today's value`
+                : value === val
+                  ? `Currently set to ${label}`
+                  : undefined}
+            >{label}</button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** Compact one-liner describing where today's value sits historically. */
+function SuggestionHint({ suggestion }: { suggestion: MetricSuggestion }) {
+  const tone = suggestion.flag === 'green'
+    ? 'text-green-400'
+    : suggestion.flag === 'yellow'
+      ? 'text-yellow-400'
+      : 'text-red-400'
+  const tierLabel = suggestion.tier === 'low' ? 'low' : suggestion.tier === 'mid' ? 'mid' : 'high'
+  const wr = (suggestion.win_rate * 100).toFixed(0)
+  const pnl = suggestion.avg_pnl
+  const pnlStr = `${pnl >= 0 ? '+' : ''}$${Math.round(pnl)}`
+  return (
+    <div className="text-[10px] text-gray-500 leading-tight" title={`Across ${suggestion.count} historical sessions where this metric was in the ${tierLabel} tercile.`}>
+      <span>{tierLabel} tercile · </span>
+      <span>{wr}% WR · {pnlStr} avg · n={suggestion.count}</span>
+      <span className={`ml-1 font-semibold ${tone}`}>→ {suggestion.flag === 'green' ? 'Good' : suggestion.flag === 'yellow' ? 'Mid' : 'Bad'}</span>
     </div>
   )
 }
@@ -62,6 +117,30 @@ function NumInput({ label, hint, value, onChange }: { label: string; hint?: stri
 }
 
 export default function MarketContextForm({ value, onChange }: Props) {
+  // Fetched once on mount. The bucket structure is computed across the
+  // user's full session history and changes slowly, so a single fetch per
+  // prep-page mount is fine. Failure is silent — no buckets means no
+  // suggestion chips, the form continues to work manually.
+  const [buckets, setBuckets] = useState<AllBuckets | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const r = await fetch('/api/metric-buckets')
+        if (!r.ok) return
+        const data = await r.json() as AllBuckets
+        if (!cancelled) setBuckets(data)
+      } catch {
+        /* network/server failure → no suggestions, form still works */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const rvolSuggestion = buckets ? suggestFlag(value.rvol == null ? null : Number(value.rvol), buckets.rvol) : null
+  const adrSuggestion = buckets ? suggestFlag(value.adr == null ? null : Number(value.adr), buckets.adr) : null
+  const atrSuggestion = buckets ? suggestFlag(value.atr_1m == null ? null : Number(value.atr_1m), buckets.atr_1m) : null
+
   const set = (key: keyof ContextFields, raw: string) => {
     const num = parseFloat(raw)
     const parsed = raw === '' ? undefined : isNaN(num) ? raw : num
@@ -174,21 +253,21 @@ export default function MarketContextForm({ value, onChange }: Props) {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
               <NumInput label="Rvol" hint="Relative Volume" value={value.rvol} onChange={r => set('rvol', r)} />
-              <FlagRow value={value.rvol_flag as PerfFlag | null | undefined} onChange={v => setDirect('rvol_flag', v)} />
+              <FlagRow value={value.rvol_flag as PerfFlag | null | undefined} onChange={v => setDirect('rvol_flag', v)} suggestion={rvolSuggestion} />
             </div>
           </div>
           {/* ADR + GBX% of ADR side by side */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
               <NumInput label="ADR" hint="Avg Daily Range (RTH)" value={value.adr} onChange={r => set('adr', r)} />
-              <FlagRow value={value.adr_flag as PerfFlag | null | undefined} onChange={v => setDirect('adr_flag', v)} />
+              <FlagRow value={value.adr_flag as PerfFlag | null | undefined} onChange={v => setDirect('adr_flag', v)} suggestion={adrSuggestion} />
             </div>
           </div>
           {/* ATR */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
               <NumInput label="ATR-10 (1m)" hint="1×ATR on 1min chart" value={value.atr_1m} onChange={r => set('atr_1m', r)} />
-              <FlagRow value={value.atr_flag as PerfFlag | null | undefined} onChange={v => setDirect('atr_flag', v)} />
+              <FlagRow value={value.atr_flag as PerfFlag | null | undefined} onChange={v => setDirect('atr_flag', v)} suggestion={atrSuggestion} />
             </div>
           </div>
         </div>
