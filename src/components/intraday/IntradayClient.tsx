@@ -7,6 +7,7 @@ import { Plus, Edit2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import TradeForm from './TradeForm'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
+import { captureRatio, maeLossRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 interface Props {
@@ -30,6 +31,89 @@ function rMultiple(t: Trade): string | null {
   const risk = Math.abs(t.entry_price - t.stop_price) * (t.quantity ?? 1)
   if (risk === 0) return null
   return (t.pnl / risk).toFixed(1) + 'R'
+}
+
+/** Display-formatted capture % — null when MFE can't be computed or was non-positive. */
+function captureDisplay(t: Trade): string | null {
+  const r = captureRatio(t)
+  if (r == null) return null
+  // Bound display at -999/+999% so a degenerate ratio doesn't blow the layout.
+  const pct = Math.max(-999, Math.min(999, r * 100))
+  return `${pct.toFixed(0)}%`
+}
+
+/** Display-formatted MAE loss — "0.6×R" style. Null when no stop or no MAE.
+ *  Note: "loss" here is % of planned stop touched as MAE, not the realized
+ *  dollar loss on the trade (which is the separate PnL field). */
+function lossDisplay(t: Trade): string | null {
+  const r = maeLossRatio(t)
+  if (r == null) return null
+  return `${r.toFixed(2)}×R`
+}
+
+/**
+ * Inline R · Capture · Loss line shown under the row's PnL in the collapsed
+ * trade list. Capture and Loss each render as a small colored chip; cross-case
+ * patterns (give-back loser, lucky-escape winner) get bold weight so they
+ * stand out from a sea of normal trades when scanning the list. The bold is
+ * the only extra signal — color bands match the expanded-detail view to keep
+ * the visual language consistent.
+ */
+function CapLossInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | null }) {
+  const cap = captureRatio(trade)
+  const loss = maeLossRatio(trade)
+  if (cap == null && loss == null && !rDisplay) return null
+
+  // Cross-case detection. These are the trades you most want to NOT miss on
+  // review — surfaced visibly so they don't blend into the row average.
+  //
+  // Give-back: had MFE >= 1R favorable AND closed at a loss. A negative
+  // capture alone isn't enough — a +0.2R MFE that turned into a small loss is
+  // just a normal small loss, not a "winner I gave back". 1R = the threshold
+  // for what the trader's own R-multiple framework considers a real winner.
+  //
+  // Lucky escape: a winning trade whose MAE exceeded the planned stop. Got
+  // bailed out by the trade reversing — a discipline lesson hiding in a W.
+  const isGiveBack = isGiveBackTrade(trade)
+  const isLuckyEscape = (trade.pnl ?? 0) > 0 && loss != null && loss > 1.0
+
+  const capColor = cap == null
+    ? 'text-gray-500'
+    : cap >= 0.7 ? 'text-green-400'
+      : cap >= 0.4 ? 'text-yellow-400'
+      : cap >= 0 ? 'text-orange-400'
+      : 'text-red-400'
+  const lossColor = loss == null
+    ? 'text-gray-500'
+    : loss <= 0.5 ? 'text-green-400'
+      : loss <= 1.0 ? 'text-yellow-400'
+      : 'text-red-400'
+
+  return (
+    <div className="flex items-center justify-end gap-1.5 text-xs text-gray-500">
+      {rDisplay && <span>{rDisplay}</span>}
+      {cap != null && (
+        <span
+          className={`${capColor} ${isGiveBack ? 'font-bold' : ''}`}
+          title={isGiveBack
+            ? `Give-back: trade went favorable then closed negative. Capture ${captureDisplay(trade)} of MFE.`
+            : `Capture: ${captureDisplay(trade)} of peak favorable excursion realized as PnL.`}
+        >
+          {captureDisplay(trade)}
+        </span>
+      )}
+      {loss != null && (
+        <span
+          className={`${lossColor} ${isLuckyEscape ? 'font-bold' : ''}`}
+          title={isLuckyEscape
+            ? `Lucky escape: winner sat through ${lossDisplay(trade)} of planned risk — violated stop level.`
+            : `Loss: ${lossDisplay(trade)} of planned stop distance touched as MAE.`}
+        >
+          {lossDisplay(trade)}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export default function IntradayClient({ date, initialTrades, allTags, initialOpenTradeId, prepDayType }: Props) {
@@ -227,12 +311,15 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                 ))}
               </div>
 
-              {/* P&L + R */}
+              {/* P&L · R · Capture % · Loss ×R. Capture and loss are bolded when
+                  the trade matches a high-signal cross-case pattern:
+                    - "Give-back" = loser that went green first (negative capture)
+                    - "Lucky escape" = winner that violated the planned stop (loss > 1×R) */}
               <div className="text-right shrink-0">
                 <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
-                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(0)}`}
+                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
                 </div>
-                {r && <div className="text-xs text-gray-500">{r}</div>}
+                <CapLossInline trade={trade} rDisplay={r} />
               </div>
 
               {isOpen ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0" />}
@@ -254,6 +341,51 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                     </div>
                   ))}
                 </div>
+
+                {/* Execution quality: capture % (how much of MFE did I take?) and
+                    MAE loss (did I sit through more than my planned stop?). */}
+                {(captureDisplay(trade) != null || lossDisplay(trade) != null) && (() => {
+                  const xc = mfeMaePoints(trade)
+                  const cap = captureDisplay(trade)
+                  const loss = lossDisplay(trade)
+                  const capRatio = captureRatio(trade)
+                  const lossRatio = maeLossRatio(trade)
+                  const capColor = capRatio == null
+                    ? 'text-gray-500'
+                    : capRatio >= 0.7 ? 'text-green-400'
+                      : capRatio >= 0.4 ? 'text-yellow-400'
+                      : capRatio >= 0 ? 'text-orange-400'
+                      : 'text-red-400'
+                  const lossColor = lossRatio == null
+                    ? 'text-gray-500'
+                    : lossRatio <= 0.5 ? 'text-green-400'
+                      : lossRatio <= 1.0 ? 'text-yellow-400'
+                      : 'text-red-400'
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div>
+                        <div className="text-xs text-gray-500 mb-0.5" title="Realized PnL / peak favorable excursion. 100% = you took the high.">
+                          MFE Capture
+                        </div>
+                        <div className={`font-medium ${capColor}`}>{cap ?? '—'}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 mb-0.5" title="Peak adverse excursion / planned stop distance. 1.0× = MAE touched your stop level. (% of planned risk used as MAE — separate from realized PnL.)">
+                          MAE Loss
+                        </div>
+                        <div className={`font-medium ${lossColor}`}>{loss ?? '—'}</div>
+                      </div>
+                      <div className="hidden sm:block">
+                        <div className="text-xs text-gray-500 mb-0.5" title="Raw MFE in points">Peak MFE</div>
+                        <div className="text-gray-300 font-mono">{xc ? `+${xc.mfe.toFixed(2)}` : '—'}</div>
+                      </div>
+                      <div className="hidden sm:block">
+                        <div className="text-xs text-gray-500 mb-0.5" title="Raw MAE in points">Peak MAE</div>
+                        <div className="text-gray-300 font-mono">{xc ? `−${xc.mae.toFixed(2)}` : '—'}</div>
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* Screenshot with pins */}
                 {trade.screenshot_url && (
