@@ -124,16 +124,20 @@ const MIN_MFE_RATIO_FOR_CAPTURE = 0.2
 
 export function captureRatio(t: TradeWithExcursion): number | null {
   if (t.pnl == null || t.quantity == null) return null
+  // Stop is required: without a planned-risk baseline we can't tell whether
+  // a small MFE is meaningful ("trade barely tagged green") or significant
+  // ("trade hit my target"). A trade like an unplanned intraday discretionary
+  // exit has no MFE/R baseline, so we don't report a capture for it. (The
+  // alternative — fallback to ATR — would conflate per-trade execution with
+  // the day's volatility regime; cleaner to just require the stop.)
+  if (t.entry_price == null || t.stop_price == null) return null
   const xc = mfeMaePoints(t)
   if (!xc) return null
   if (xc.mfe <= 0) return null
   // Noise filter: require MFE to be at least 20% of planned risk so we don't
-  // print degenerate ratios on trades that barely tagged green. When stop is
-  // unknown, skip the filter (fall back to the bare > 0 check above).
-  if (t.entry_price != null && t.stop_price != null) {
-    const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
-    if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
-  }
+  // print degenerate ratios on trades that barely tagged green before fading.
+  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
   const mult = symbolToMultiplier(t.symbol ?? '')
   const mfeDollars = xc.mfe * mult * t.quantity
   if (mfeDollars === 0) return null
