@@ -12,6 +12,7 @@ import AiAnalysisCard from './AiAnalysisCard'
 import DiscordDashboard from './DiscordDashboard'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
+import DayTypePredictor from './DayTypePredictor'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan } from '@/lib/supabase/types'
 import type { SpellCheckCorrection } from '@/app/api/spell-check/route'
@@ -692,6 +693,11 @@ export default function PrepClient({ date, initialDay, initialContext }: Props) 
             {backfilling ? 'Applying…' : `Apply "${dayType}" to existing trades for this day`}
           </button>
         )}
+        <DayTypePredictor
+          date={date}
+          currentDayType={dayType}
+          onAccept={setDayType}
+        />
       </div>
 
       {/* Condition Filter (Morning Conditions) */}
