@@ -186,3 +186,64 @@ export function resetChartPrefsMigrationFlag(): void {
   try { localStorage.removeItem(MIGRATION_FLAG) } catch { /* ignore */ }
   migrationPromise = null
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Pull-on-mount: targeted fetch for a single key.
+//
+// The migration is one-shot. After it runs, this PC pushes its own changes
+// but never pulls others'. That means a view saved on the OTHER PC after
+// migration completed never gets restored here. This helper closes that gap
+// by letting LiveChart (or any caller) request a single key from the server
+// just-in-time. Cached per key for a short TTL so repeated mounts of the
+// same chart (e.g., toggling chartView) don't re-fetch.
+// ────────────────────────────────────────────────────────────────────────────
+
+const PULL_CACHE_TTL_MS = 30_000
+
+interface PullCacheEntry {
+  value: unknown | null   // null = server has no row for this key
+  at: number
+}
+const pullCache: Map<string, PullCacheEntry> = new Map()
+
+/**
+ * Fetch a single key from `chart_prefs` server-side. Returns null if the
+ * server has no row for that key, the fetch failed, or the key isn't on
+ * the active allow-list.
+ *
+ * Cached per key for 30 seconds. Calling repeatedly within the window
+ * resolves from cache without a network hit.
+ */
+export async function pullChartPref(key: string): Promise<unknown | null> {
+  if (typeof window === 'undefined') return null
+  if (!isActiveChartPrefKey(key)) return null
+
+  const cached = pullCache.get(key)
+  const nowMs = typeof performance !== 'undefined' ? performance.now() : 0
+  if (cached && nowMs - cached.at < PULL_CACHE_TTL_MS) {
+    return cached.value
+  }
+
+  try {
+    const r = await fetch(`/api/chart-prefs?key=${encodeURIComponent(key)}`)
+    if (!r.ok) {
+      pullCache.set(key, { value: null, at: nowMs })
+      return null
+    }
+    const body = await r.json() as { entries?: ServerEntry[] }
+    const entry = body.entries?.find(e => e.key === key) ?? null
+    const value = entry ? entry.value : null
+    pullCache.set(key, { value, at: nowMs })
+    return value
+  } catch {
+    // Network failure → don't cache, let next call retry. Better than
+    // pinning a "no value" answer until TTL when the issue is transient.
+    return null
+  }
+}
+
+/** Test/diagnostic helper: drop the pull cache so the next pullChartPref()
+ *  refetches. Not wired into any UI. */
+export function resetPullCache(): void {
+  pullCache.clear()
+}
