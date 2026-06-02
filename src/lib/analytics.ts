@@ -50,6 +50,10 @@ export interface PerformanceStats {
   profit_factor: number     // sum_winners / |sum_losers|; Infinity if no losers
   avg_r: number | null      // mean R-multiple (only counted when computable)
   r_count: number           // how many trades had a computable R
+  avg_capture: number | null  // mean MFE Capture % (only trades with MFE >= 20% of risk)
+  capture_count: number       // how many trades had a computable capture
+  avg_loss: number | null     // mean MAE Loss ×R (peak adverse / planned stop, in points)
+  loss_count: number          // how many trades had a computable loss
 }
 
 const ZERO_STATS: PerformanceStats = {
@@ -58,6 +62,8 @@ const ZERO_STATS: PerformanceStats = {
   avg_winner: 0, avg_loser: 0,
   expectancy: 0, profit_factor: 0,
   avg_r: null, r_count: 0,
+  avg_capture: null, capture_count: 0,
+  avg_loss: null, loss_count: 0,
 }
 
 /**
@@ -235,6 +241,8 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
   let wins = 0, losses = 0, scratches = 0
   let total = 0, sumWinners = 0, sumLosers = 0
   let rSum = 0, rCount = 0
+  let capSum = 0, capCount = 0
+  let lossSum = 0, lossCount = 0
   for (const t of trades) {
     const pnl = t.pnl ?? 0
     total += pnl
@@ -243,6 +251,15 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     else scratches++
     const r = rMultiple(t)
     if (r != null) { rSum += r; rCount++ }
+    // Capture / Loss: trades may or may not have high/low_during_position. The
+    // helpers accept TradeWithExcursion but the relevant fields are optional
+    // on Trade and null-handled internally — cast through unknown so callers
+    // that pass TradeLike still type-check, and the helpers null-out trades
+    // that don't have the necessary data.
+    const cap = captureRatio(t as unknown as TradeWithExcursion)
+    if (cap != null) { capSum += cap; capCount++ }
+    const lossR = maeLossRatio(t as unknown as TradeWithExcursion)
+    if (lossR != null) { lossSum += lossR; lossCount++ }
   }
   const decided = wins + losses
   const winRate = decided > 0 ? wins / decided : 0
@@ -266,6 +283,10 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     profit_factor: profitFactor,
     avg_r: rCount > 0 ? rSum / rCount : null,
     r_count: rCount,
+    avg_capture: capCount > 0 ? capSum / capCount : null,
+    capture_count: capCount,
+    avg_loss: lossCount > 0 ? lossSum / lossCount : null,
+    loss_count: lossCount,
   }
 }
 

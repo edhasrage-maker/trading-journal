@@ -89,7 +89,7 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
       </div>
 
       {/* Overall stats */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
         <StatCard label="Trades" value={overall.count.toString()} positive={null} />
         <StatCard
           label="Win Rate"
@@ -116,6 +116,18 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
           value={overall.avg_r == null ? '—' : `${overall.avg_r >= 0 ? '+' : ''}${overall.avg_r.toFixed(2)}R`}
           hint={`${overall.r_count} of ${overall.count}`}
           positive={overall.avg_r != null && overall.avg_r >= 0}
+        />
+        <StatCard
+          label="Avg Capture"
+          value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
+          hint={`${overall.capture_count} of ${overall.count}`}
+          positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
+        />
+        <StatCard
+          label="Avg Loss"
+          value={overall.avg_loss == null ? '—' : `${overall.avg_loss.toFixed(2)}×R`}
+          hint={`${overall.loss_count} of ${overall.count}`}
+          positive={overall.avg_loss != null && overall.avg_loss <= 0.6}
         />
       </div>
 
