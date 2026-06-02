@@ -20,8 +20,12 @@ export interface DayRowData {
   avg_mae_pts: number | null
   avg_mfe_dollars: number | null
   avg_mae_dollars: number | null
-  /** 1-min ATR-10 (Wilder) entered during prep — drives the ATR display unit on MFE/MAE. */
+  /** 1-min ATR-10 (Wilder) entered during prep — fallback when bars are missing for the live computation. */
   atr_1m: number | null
+  /** Avg of per-trade LIVE ATR-10 (Wilder) computed at each trade's entry_time from 1-min bars. Preferred over atr_1m for the "in ATR" display when present. Null when no trades had bar data available. */
+  avg_live_atr_1m: number | null
+  /** How many of the day's trades fed avg_live_atr_1m. Powers a tooltip noting partial coverage. */
+  live_atr_count: number
 }
 
 interface Props {
@@ -462,15 +466,25 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
   // express the excursion in "how many ATRs of typical 1m range." Falls back
   // to em-dash when the day's market_context.atr_1m wasn't filled in.
   if (unit === 'atr') {
-    if (day.avg_mfe_pts == null || day.avg_mae_pts == null || !day.atr_1m) {
+    // Prefer live ATR (avg of per-trade ATR computed from 1-min bars at each
+    // trade's entry_time) over the prep snapshot when available. Bar coverage
+    // exists for SCID-imported days, ~since the start of the import; older
+    // days fall back to prep_atr_1m so they don't silently render as em-dash.
+    const atrRef = day.avg_live_atr_1m ?? day.atr_1m
+    const isLive = day.avg_live_atr_1m != null
+    if (day.avg_mfe_pts == null || day.avg_mae_pts == null || !atrRef) {
       return <span className="text-gray-700">—</span>
     }
     const fmt = (v: number) => `${v.toFixed(2)}×`
+    const title = isLive
+      ? `Per-trade live ATR-10 averaged across ${day.live_atr_count} trade${day.live_atr_count === 1 ? '' : 's'} on this day (${atrRef.toFixed(2)} pts).`
+      : `Prep-time ATR-10 (${atrRef.toFixed(2)} pts) — live computation unavailable because bars are missing for this day.`
     return (
-      <span>
-        <span className="text-green-400">+{fmt(day.avg_mfe_pts / day.atr_1m)}</span>
+      <span title={title}>
+        <span className="text-green-400">+{fmt(day.avg_mfe_pts / atrRef)}</span>
         <span className="text-gray-600"> / </span>
-        <span className="text-red-400">-{fmt(day.avg_mae_pts / day.atr_1m)}</span>
+        <span className="text-red-400">-{fmt(day.avg_mae_pts / atrRef)}</span>
+        {!isLive && <span className="text-gray-600 text-[9px] ml-1">prep</span>}
       </span>
     )
   }
