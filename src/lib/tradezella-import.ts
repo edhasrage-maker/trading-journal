@@ -18,7 +18,12 @@ const CATEGORY_MAP: Array<{ col: string; cat: TagCategory }> = [
   { col: 'Setups', cat: 'setups' },
   { col: 'Playbook', cat: 'setups' },
   { col: 'Orderflow', cat: 'order_flow' },
-  { col: 'Entry Model', cat: 'order_flow' },
+  // Tradezella's "Entry Model" column → entry_model (NOT order_flow). Earlier
+  // versions of this map dumped them into order_flow, which created six
+  // case-variant duplicates ("1 Atr Entry" vs "1 ATR Entry", etc.) under the
+  // wrong category. The dupes were cleaned up post-fact; this prevents future
+  // re-imports from re-creating them.
+  { col: 'Entry Model', cat: 'entry_model' },
   { col: 'Custom Tags', cat: 'confluences' },
   { col: 'Trade Management', cat: 'trade_management' },
   { col: 'Day Type', cat: 'day_type' },
@@ -29,9 +34,14 @@ const CATEGORY_MAP: Array<{ col: string; cat: TagCategory }> = [
 export const TAG_CATEGORIES: TagCategory[] =
   ['setups', 'confluences', 'order_flow', 'entry_model', 'trade_management', 'day_type', 'mistakes', 'emotions']
 
-/** Match key: lowercase, strip non-alphanumerics. "IB Hold" == "ib hold" == "ib-hold". */
+/**
+ * Match key: lowercase, normalize `&` → `and` (Tradezella exports both forms
+ * interchangeably — "Supply & Demand" vs "Supply And Demand"), then strip
+ * non-alphanumerics. "IB Hold" == "ib hold" == "ib-hold"; "Break & Retest" ==
+ * "Break And Retest".
+ */
 export function tagKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return s.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '')
 }
 
 /** Pretty label for a NEW tag: collapse whitespace, Title Case words, keep punctuation. */

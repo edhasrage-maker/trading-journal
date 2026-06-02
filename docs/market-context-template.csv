@@ -1,0 +1,9 @@
+trade_date,pdh,pdl,onh,onl,ibh,ibl,ib_size,rvol,adr,ib_vs_10d_avg,atr_1m
+# Fill one row per trading date (YYYY-MM-DD in America/Los_Angeles).
+# Blank fields will be stored as NULL. Numeric units:
+#   pdh/pdl/onh/onl/ibh/ibl/ib_size/adr/atr_1m → NQ index points
+#   rvol → percentage (100 = average, 150 = 50% above, 70 = 30% below)
+#   ib_vs_10d_avg → ratio (1.0 = average)
+# Lines starting with '#' are comments and will be skipped on import.
+# Delete this comment block (and the example row below) before uploading.
+2026-04-15,22150.25,21984.50,22095.75,21945.50,22087.00,21998.50,88.50,101,372.23,0.76,12.44
