@@ -4,6 +4,7 @@ import { existsSync } from 'fs'
 import { join, basename } from 'path'
 import { probeVideo, extractFrameJpegBase64 } from '@/lib/video-frames'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
+import { createClient } from '@/lib/supabase/server'
 import { OBS_RECORDINGS_DIR } from '../list/route'
 
 const client = new Anthropic()
@@ -70,6 +71,19 @@ export async function POST(req: Request) {
   const mediaType = normalizeAnthropicMediaType('image/jpeg')!
   const durationSec = info.durationMs / 1000
 
+  // Fetch the current mistakes library — we'll show the AI exactly what
+  // labels exist so it suggests from the user's taxonomy instead of free-
+  // texting. The client constrains suggestions to this list too (it would
+  // need to know which chips correspond to real tag rows).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase: any = await createClient()
+  const { data: mistakeRows } = await supabase
+    .from('trade_tags')
+    .select('label')
+    .eq('category', 'mistakes')
+    .order('sort_order') as { data: { label: string }[] | null }
+  const mistakeLibrary = (mistakeRows ?? []).map(r => r.label)
+
   // Build the multimodal content array: one image block per frame, then the text.
   const blocks: Anthropic.MessageParam['content'] = []
   const labels: string[] = []
@@ -124,9 +138,13 @@ export async function POST(req: Request) {
   setups: ${setups} | order_flow: ${orderFlow} | mistakes: ${mistakes}${notes}`
   }).join('\n')
 
+  const mistakeListBlock = mistakeLibrary.length > 0
+    ? `\n\nAvailable mistake tags (suggest 0–3 per trade, ONLY from this list — copy labels verbatim, do not invent new ones; pick ONLY mistakes clearly visible in the frames, not speculative):\n${mistakeLibrary.map(m => `  - ${m}`).join('\n')}`
+    : ''
+
   const prompt = `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is what the trader was looking at on the chart at a precise moment.
 
-For each trade you see frames of (an ENTRY frame and, when distinct, an EXIT frame), write 1–3 sentences of HONEST commentary tying what's visibly on screen — chart structure, key levels, order flow, where price was relative to the setup — to the trade the trader actually took. Be specific. If the entry frame doesn't support the tagged setup, say so. If price did something obvious between entry and exit that the trader missed, point it out. The trader is paying you to be direct, not encouraging.
+For each trade you see frames of (an ENTRY frame and, when distinct, an EXIT frame), write 1–3 sentences of HONEST commentary tying what's visibly on screen — chart structure, key levels, order flow, where price was relative to the setup — to the trade the trader actually took. Be specific. If the entry frame doesn't support the tagged setup, say so. If price did something obvious between entry and exit that the trader missed, point it out. The trader is paying you to be direct, not encouraging.${mistakeListBlock}
 
 The image array above is ordered as follows:
 ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}
@@ -134,8 +152,8 @@ ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}
 Trade context (matches the image labels by trade id):
 ${tradeDescriptions}
 
-Respond with ONLY valid JSON (no markdown, no code fences), mapping each trade id to its commentary string:
-{ "commentary": { "<tradeId>": "<1-3 sentence commentary>", ... } }`
+Respond with ONLY valid JSON (no markdown, no code fences). Map each trade id to its commentary AND a (possibly empty) array of suggested mistake labels chosen from the list above. Omit suggested_mistakes or use [] when nothing visible warrants a flag:
+{ "trades": { "<tradeId>": { "commentary": "<1-3 sentence commentary>", "suggested_mistakes": ["<exact label from list>", ...] }, ... } }`
 
   blocks.push({ type: 'text', text: prompt })
 
@@ -149,13 +167,37 @@ Respond with ONLY valid JSON (no markdown, no code fences), mapping each trade i
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
       return NextResponse.json({
-        commentary: {}, skipped, framesUsed: blocks.length - 1,
+        commentary: {}, suggested_mistakes: {}, skipped, framesUsed: blocks.length - 1,
         note: 'AI returned no parseable JSON.',
       })
     }
-    const parsed = JSON.parse(jsonMatch[0]) as { commentary?: Record<string, string> }
+    // Accept two shapes for resilience:
+    //   { "trades": { id: { commentary, suggested_mistakes } } }   ← new schema
+    //   { "commentary": { id: "..." } }                            ← legacy
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      trades?: Record<string, { commentary?: string; suggested_mistakes?: string[] }>
+      commentary?: Record<string, string>
+    }
+    const commentary: Record<string, string> = {}
+    const suggested: Record<string, string[]> = {}
+    if (parsed.trades && typeof parsed.trades === 'object') {
+      const librarySet = new Set(mistakeLibrary)
+      for (const [id, v] of Object.entries(parsed.trades)) {
+        if (typeof v?.commentary === 'string') commentary[id] = v.commentary
+        if (Array.isArray(v?.suggested_mistakes)) {
+          // Constrain to known mistake labels — if the model hallucinates,
+          // drop those entries silently. The "+ Add tag" flow is the right
+          // place to introduce new labels, not the AI.
+          const valid = v.suggested_mistakes.filter(s => typeof s === 'string' && librarySet.has(s))
+          if (valid.length > 0) suggested[id] = valid
+        }
+      }
+    } else if (parsed.commentary) {
+      Object.assign(commentary, parsed.commentary)
+    }
     return NextResponse.json({
-      commentary: parsed.commentary ?? {},
+      commentary,
+      suggested_mistakes: suggested,
       skipped,
       framesUsed: blocks.length - 1,
       recordingStartIso: new Date(info.creationTimeMs).toISOString(),

@@ -810,7 +810,7 @@ export default function EodClient({
         summariesLoading={summariesLoading}
       />
 
-      <RecordingCommentary trades={trades} />
+      <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
 
       {/* EOD Notes */}
       <EodNotesForm
