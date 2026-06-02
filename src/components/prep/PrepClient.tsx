@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
-import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle } from 'lucide-react'
+import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle, Layers } from 'lucide-react'
 import ScreenshotUpload from './ScreenshotUpload'
 import ConditionFilterPanel from '@/components/condition/ConditionFilterPanel'
 import MarketContextForm from './MarketContextForm'
@@ -50,6 +50,7 @@ export default function PrepClient({ date, initialDay, initialContext }: Props) 
   const [savedChartUrl, setSavedChartUrl] = useState<string | null>(initialDay?.chart_screenshot_url ?? null)
   const [chartUrl, setChartUrl] = useState<string | null>(initialDay?.chart_screenshot_url ?? null)
   const [dayType, setDayType] = useState<string>(initialDay?.day_type ?? '')
+  const [backfilling, setBackfilling] = useState(false)
   const [context, setContext] = useState<Partial<Omit<MarketContext, 'id' | 'trading_day_id' | 'stat_performance_json' | 'created_at'>>>(
     initialContext ? {
       symbol: initialContext.symbol,
@@ -136,6 +137,44 @@ export default function PrepClient({ date, initialDay, initialContext }: Props) 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 4000)
+  }
+
+  // One-shot button under the day-type grid: overwrites every existing trade's
+  // tags_json.day_type for this date with the currently-selected dayType. Trades
+  // already tagged the same value are skipped server-side.
+  const backfillDayType = async () => {
+    if (!dayType) return
+    if (!confirm(
+      `Apply day type "${dayType}" to all existing trades on ${date}?\n\n` +
+      `Trades already tagged "${dayType}" will be skipped. ` +
+      `Each updated trade's other tags are preserved.`
+    )) return
+    setBackfilling(true)
+    try {
+      const res = await fetch('/api/trades/backfill-day-type', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, dayType }),
+      })
+      const data = await res.json() as { updated?: number; total?: number; skipped?: number; error?: string }
+      if (!res.ok) {
+        showToast(`Backfill failed: ${data.error ?? res.statusText}`, 'error')
+        return
+      }
+      const { updated = 0, total = 0, skipped = 0 } = data
+      if (total === 0) {
+        showToast(`No trades logged for ${date} yet`, 'success')
+      } else if (updated === 0) {
+        showToast(`All ${total} trade${total === 1 ? '' : 's'} already tagged "${dayType}"`, 'success')
+      } else {
+        const skipNote = skipped > 0 ? ` (${skipped} already tagged)` : ''
+        showToast(`Updated ${updated} of ${total} trade${total === 1 ? '' : 's'} → "${dayType}"${skipNote}`, 'success')
+      }
+    } catch (e) {
+      showToast(`Backfill failed: ${e instanceof Error ? e.message : 'unknown error'}`, 'error')
+    } finally {
+      setBackfilling(false)
+    }
   }
 
   const save = async (opts: { auto?: boolean } = {}) => {
@@ -639,6 +678,20 @@ export default function PrepClient({ date, initialDay, initialContext }: Props) 
             </button>
           ))}
         </div>
+        {dayType && (
+          <button
+            type="button"
+            onClick={backfillDayType}
+            disabled={backfilling}
+            className="mt-3 flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+            title={`Set day_type tag = "${dayType}" on every existing trade for ${date}`}
+          >
+            {backfilling
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <Layers className="w-3 h-3" />}
+            {backfilling ? 'Applying…' : `Apply "${dayType}" to existing trades for this day`}
+          </button>
+        )}
       </div>
 
       {/* Condition Filter (Morning Conditions) */}
