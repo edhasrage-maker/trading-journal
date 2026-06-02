@@ -12,6 +12,7 @@ interface Props {
 interface Prediction {
   prediction: string
   reasoning: string
+  confidence: 'high' | 'medium' | 'low'
   model: string
   generated_at: string
 }
@@ -103,9 +104,12 @@ export default function DayTypePredictor({ date, currentDayType, onAccept }: Pro
           <div className="flex items-start gap-2">
             <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <div className="text-xs text-purple-400 font-medium">
-                Claude suggests <span className="text-purple-200 font-semibold">{prediction.prediction}</span>
-                {isCurrent && <span className="text-purple-400 font-normal ml-2">(already set)</span>}
+              <div className="text-xs text-purple-400 font-medium flex items-center flex-wrap gap-x-2 gap-y-0.5">
+                <span>
+                  Claude suggests <span className="text-purple-200 font-semibold">{prediction.prediction}</span>
+                </span>
+                <ConfidenceBadge confidence={prediction.confidence} />
+                {isCurrent && <span className="text-purple-400 font-normal">(already set)</span>}
               </div>
               <p className="text-xs text-gray-300 italic mt-1 leading-snug">{prediction.reasoning}</p>
             </div>
@@ -144,5 +148,33 @@ export default function DayTypePredictor({ date, currentDayType, onAccept }: Pro
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Confidence chip beside the suggestion. Honesty signal — low confidence
+ * means the heuristics didn't cleanly converge and the trader should treat
+ * the suggestion as a starting point, not a verdict.
+ */
+function ConfidenceBadge({ confidence }: { confidence: 'high' | 'medium' | 'low' }) {
+  const styles =
+    confidence === 'high'
+      ? 'bg-green-900/40 border-green-700/60 text-green-300'
+      : confidence === 'medium'
+        ? 'bg-yellow-900/40 border-yellow-700/60 text-yellow-300'
+        : 'bg-red-900/40 border-red-700/60 text-red-300'
+  const title =
+    confidence === 'high'
+      ? 'Heuristics align cleanly across structural inputs and bias.'
+      : confidence === 'medium'
+        ? 'Most signals align but at least one conflict or missing input — verify before accepting.'
+        : 'Signals are conflicting or sparse — treat this as a starting point, not a verdict.'
+  return (
+    <span
+      className={`text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${styles}`}
+      title={title}
+    >
+      {confidence} confidence
+    </span>
   )
 }

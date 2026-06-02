@@ -25,7 +25,10 @@ const DAY_TYPES = [
 interface PredictResponse {
   prediction: string
   reasoning: string
+  confidence: 'high' | 'medium' | 'low'
 }
+
+const CONFIDENCE_VALUES = ['high', 'medium', 'low'] as const
 
 /**
  * POST /api/predict-day-type
@@ -112,6 +115,11 @@ async function handle(req: Request) {
     if (!DAY_TYPES.includes(parsed.prediction as typeof DAY_TYPES[number])) {
       throw new Error(`Prediction "${parsed.prediction}" is not one of the allowed day types`)
     }
+    // Confidence is required but tolerate a missing/weird value — default to
+    // medium so the UI can still render rather than 500'ing.
+    if (!CONFIDENCE_VALUES.includes(parsed.confidence as typeof CONFIDENCE_VALUES[number])) {
+      parsed.confidence = 'medium'
+    }
   } catch (e) {
     console.error('[predict-day-type] parse failed:', e, '\nraw text:', text.slice(0, 500))
     return NextResponse.json(
@@ -126,6 +134,7 @@ async function handle(req: Request) {
   return NextResponse.json({
     prediction: parsed.prediction,
     reasoning: parsed.reasoning,
+    confidence: parsed.confidence,
     model: 'claude-sonnet-4-6',
     generated_at: new Date().toISOString(),
   })
@@ -186,15 +195,39 @@ ${ctxBlock}
 Pre-market notes from the trader:
 ${notesBlock}
 
+══ HEURISTICS TO APPLY ══
+
+These are well-established structural rules. Treat them as priors that should weight your call — not absolutes, but the trader's own bias notes and structural context must JUSTIFY overriding them, not just compete with them.
+
+1. **GBX % of ADR ≥ 80 BEFORE RTH opens**: the expected daily range is mostly spent overnight. The statistical base rate strongly favors mean reversion — Range Day, Neutral Day, or Double Distribution. Trend Day requires a fresh expansion narrative (scheduled news, decisive IB break, regime shift) that has NOT already been played out overnight. Sustained continuation from an already-extended overnight is the LESS common outcome.
+
+2. **Failure to take out PDH (for longs) or PDL (for shorts) despite a strong overnight extension**: rotation / distribution risk. Don't predict Trend Day in the direction of the prior overnight move without a CONFIRMED level break. "If price breaks the IB high" is conditional — the breakout has not happened yet.
+
+3. **Inside prior day's value with no level break**: leans Neutral Day or Range Day. Inside-day rotation is the default; Trend Days usually require leaving the prior session's value area early and not coming back.
+
+4. **IB size ≥ 100% of 10-day avg with location inside prior day's value**: Double Distribution risk — the IB expansion may be one distribution that pulls back to value before a second one forms. Not auto-Trend.
+
+5. **P-shape profile at session highs**: ambiguous on its own. Confirms continuation ONLY when paired with a long-tail at the lows AND the IBL holding firm on retest. P-shape with stalling at the highs and NO confirming long-tail can equally mean distribution / topping action.
+
+6. **Weight current state over conditional state**: phrases like "if it breaks IB highs" or "once it clears PDH" describe a future event that has not happened. The most likely outcome must reflect what the inputs say RIGHT NOW, not what they say AFTER a hypothetical breakout.
+
+7. **The trader's bias notes are inputs, not conclusions**: a "bullish bias" from the trader does not by itself elevate Trend Day. If structural data (heuristics 1-6) conflict with the bias, the structural data wins and the reasoning should flag the conflict.
+
 ══ HOW TO ANSWER ══
 
-Reason through what these inputs suggest about session character. Cite the specific metric values that drive your call — don't speak generically. Be honest if the signal is weak: if the data is sparse or conflicted, lean toward "Neutral Day" and say so in the reasoning.
+Apply the heuristics above to today's specific inputs. Cite the actual metric values that drive your call — don't speak generically. When heuristics conflict (e.g., a high IB with a fresh news driver), call out the conflict explicitly in the reasoning.
+
+Set "confidence" honestly:
+- **high**: heuristics align, structural inputs are unambiguous, and the trader's bias matches.
+- **medium**: most signals align but at least one conflict needs resolving (e.g., structure says Range, bias says Trend; or a key input is missing).
+- **low**: conflicting heuristics, sparse data, or the call genuinely could go more than one way. When in doubt between two day types, pick the more conservative ("Neutral Day" beats "Trend Day" under low confidence) and set confidence low.
 
 ══ RESPONSE FORMAT ══
 
 Respond with ONLY a valid JSON object (no markdown, no code fences, no preamble):
 {
   "prediction": "<one of the 7 day types EXACTLY as written above, including spaces and capitalization>",
-  "reasoning": "<2-3 sentences. Cite specific numbers or notes from the inputs.>"
+  "reasoning": "<2-3 sentences. Cite specific numbers or notes from the inputs. If you're overriding any heuristic above, explain why explicitly.>",
+  "confidence": "high" | "medium" | "low"
 }`
 }
