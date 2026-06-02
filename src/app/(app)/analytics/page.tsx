@@ -45,6 +45,14 @@ function histToContext(h: HistRow): TradeWithContext {
     entry_time: h.open_at,
     tags_json: h.tags_json ?? {},
     trading_day_id: '',
+    // symbol left null intentionally: Tradezella history doesn't carry the
+    // contract symbol, and `realized_rr` was already computed externally with
+    // whatever multiplier was appropriate. Passing null makes symbolToMultiplier
+    // return 1, so rMultiple computes pnl / (|entry-stop|*qty) — which equals
+    // realized_rr by construction (see the stop synthesis above). Setting a
+    // real symbol here would scale R by 1/multiplier and break parity with
+    // realized_rr.
+    symbol: null,
     date: h.trade_date ?? '',
     day_type: (h.tags_json?.day_type as string) ?? null,
     rvol: null, ib_size: null, ib_vs_10d_avg: null, adr: null, atr_1m: null,
