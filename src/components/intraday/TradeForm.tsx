@@ -16,6 +16,9 @@ interface Props {
    *  day_type tag on NEW trades. Ignored when editing an existing trade
    *  (the trade's own tags_json wins). */
   prepDayType?: string | null
+  /** Bubble up custom tags created inline so the parent can append to the
+   *  shared `allTags` list (TradeForms across the page all share one list). */
+  onTagCreated?: (tag: TradeTag) => void
   onSave: (trade: Trade) => void
   onCancel: () => void
 }
@@ -81,7 +84,7 @@ function rMultiple(s: FormState): string | null {
   return null
 }
 
-export default function TradeForm({ date, allTags, trade, initialFile, prepDayType, onSave, onCancel }: Props) {
+export default function TradeForm({ date, allTags, trade, initialFile, prepDayType, onTagCreated, onSave, onCancel }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
@@ -381,13 +384,19 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           />
         </div>
 
-        {/* Tags */}
-        {allTags.length > 0 && (
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Tags</label>
-            <TagSelector tags={allTags} selected={form.tags} suggested={form.suggestedTags} onChange={t => set('tags', t)} />
-          </div>
-        )}
+        {/* Tags — render even when allTags is empty so the user can add the
+            first one inline. TagSelector itself handles the empty-category
+            case with "+ Add tag" affordances. */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Tags</label>
+          <TagSelector
+            tags={allTags}
+            selected={form.tags}
+            suggested={form.suggestedTags}
+            onChange={t => set('tags', t)}
+            onTagCreated={onTagCreated}
+          />
+        </div>
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
