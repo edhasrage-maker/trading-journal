@@ -82,6 +82,8 @@ export interface Database {
           notes: string | null
           exit_time: string | null
           exit_price: number | null
+          /** AI-generated per-trade commentary from /api/video/commentary; persisted so it survives browser/machine. */
+          recording_commentary: string | null
           created_at: string
           updated_at: string
         }

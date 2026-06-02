@@ -102,6 +102,7 @@ create table if not exists trades (
   --   emotions: string[]
   -- }
   notes text,
+  recording_commentary text, -- AI-generated per-trade commentary from /api/video/commentary; persisted so it survives across browser/machine
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

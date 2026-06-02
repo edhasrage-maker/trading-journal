@@ -59,23 +59,50 @@ export default function RecordingCommentary({ trades }: Props) {
       .catch(() => setFilesError('Failed to list recordings.'))
   }, [])
 
-  // Hydrate cached commentaries whenever the selected video or trades change.
+  // Populate commentaries from two layers:
+  //   1. DB persistence — trades[].recording_commentary survives across browser
+  //      / machine. Shown whenever present, even if the user hasn't picked a
+  //      recording yet (so re-opening the EOD page just shows prior coaching).
+  //   2. localStorage cache — keyed by trade-state hash + video filename. May
+  //      have a FRESHER value than the DB if the user just ran commentary
+  //      this session. Overlays the DB layer when matching.
   useEffect(() => {
-    if (!videoFile || trades.length === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing cached commentaries when no recording is selected
+    if (trades.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing when no trades
       setCommentary({})
       return
     }
-    const cached: Record<string, string> = {}
+    const next: Record<string, string> = {}
     for (const t of trades) {
-      try {
-        const raw = localStorage.getItem(cacheKey(t.id))
-        if (!raw) continue
-        const c = JSON.parse(raw) as { h: string; s: string }
-        if (c.h === hashTradeForCommentary(t, videoFile) && c.s) cached[t.id] = c.s
-      } catch { /* ignore */ }
+      if (t.recording_commentary) next[t.id] = t.recording_commentary
     }
-    setCommentary(cached)
+    if (videoFile) {
+      for (const t of trades) {
+        try {
+          const raw = localStorage.getItem(cacheKey(t.id))
+          if (!raw) continue
+          const c = JSON.parse(raw) as { h: string; s: string }
+          if (c.h === hashTradeForCommentary(t, videoFile) && c.s) next[t.id] = c.s
+        } catch { /* ignore */ }
+      }
+    }
+    setCommentary(next)
+
+    // Silent one-time backfill: any localStorage commentary that the DB
+    // doesn't yet have for this trade gets persisted now. Idempotent — only
+    // fires PATCH where `trade.recording_commentary` is null but we have a
+    // value in state. After the backfill, the next page load will see the
+    // populated DB value and skip the PATCH. Lets pre-persistence localStorage
+    // commentaries migrate to DB without re-running the AI.
+    for (const t of trades) {
+      if (next[t.id] && !t.recording_commentary) {
+        fetch(`/api/trades/${t.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recording_commentary: next[t.id] }),
+        }).catch(() => { /* silent */ })
+      }
+    }
   }, [videoFile, trades])
 
   const run = useCallback(async () => {
@@ -105,9 +132,19 @@ export default function RecordingCommentary({ trades }: Props) {
       const got = data.commentary ?? {}
       setCommentary(prev => ({ ...prev, ...got }))
       for (const t of trades) {
-        if (got[t.id]) {
-          try { localStorage.setItem(cacheKey(t.id), JSON.stringify({ h: hashTradeForCommentary(t, videoFile), s: got[t.id] })) } catch { /* ignore */ }
-        }
+        const text = got[t.id]
+        if (!text) continue
+        // Fast in-session cache.
+        try { localStorage.setItem(cacheKey(t.id), JSON.stringify({ h: hashTradeForCommentary(t, videoFile), s: text })) } catch { /* ignore */ }
+        // Persist to DB so the commentary survives across browser / machine.
+        // Fire-and-forget — UI already shows the result; if the PATCH fails
+        // (e.g. recording_commentary column not yet added), localStorage
+        // still has it for the rest of the session.
+        fetch(`/api/trades/${t.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recording_commentary: text }),
+        }).catch(() => { /* silent */ })
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Network error')
