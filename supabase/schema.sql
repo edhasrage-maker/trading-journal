@@ -366,6 +366,20 @@ create table if not exists lookup_metadata (
   updated_at timestamptz default now()
 );
 
+-- Cross-PC sync for the LiveChart appearance preferences and per-day saved
+-- zoom levels. Keys mirror their original localStorage names so the migration
+-- on each PC is a simple Map.entries-style round-trip:
+--   key='livechart-prefs-v2'                  -> the 13-field ChartPrefs object
+--   key='livechart-view-v3-{symbol}-{date}'   -> {from, to} logical bar-index range
+-- The per-day-zoom keys grow as the user uses more days; each is tiny so
+-- storage cost is negligible. Migration on first load is gated by a
+-- per-PC localStorage flag 'chart-prefs-migrated-v1' so each PC runs it once.
+create table if not exists chart_prefs (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz default now()
+);
+
 -- ============================================================
 -- Row Level Security
 -- ============================================================
@@ -380,6 +394,7 @@ alter table daily_prep enable row level security;
 alter table lookup_metadata enable row level security;
 alter table ohlcv_bars enable row level security;
 alter table bar_imports enable row level security;
+alter table chart_prefs enable row level security;
 
 -- Policy: authenticated users can read/write their own data
 -- (single-user journal — all authenticated users own all rows)
@@ -428,6 +443,9 @@ create policy "Authenticated full access" on ohlcv_bars
   for all using (auth.role() = 'authenticated');
 
 create policy "Authenticated full access" on bar_imports
+  for all using (auth.role() = 'authenticated');
+
+create policy "Authenticated full access" on chart_prefs
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================

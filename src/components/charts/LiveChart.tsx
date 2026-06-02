@@ -17,6 +17,7 @@ import {
 } from 'lightweight-charts'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
+import { migrateChartPrefs, schedulePushChartPref } from '@/lib/chart-prefs'
 
 interface Props {
   date: string
@@ -177,12 +178,32 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [prefsHydrated, setPrefsHydrated] = useState(false)
   // Load once on mount, then flag hydrated so the persist effect may run.
+  // Now also runs the Supabase one-shot migration (gated by the
+  // `chart-prefs-migrated-v1` flag): on the OTHER PC it overwrites local
+  // prefs with whatever the server has; on THIS PC (first run, empty server)
+  // it pushes local up as the baseline. After migration, if localStorage was
+  // changed by the hydrate path, we re-read it so the chart picks up the
+  // synced values immediately.
   useEffect(() => {
+    // Synchronous hot path: read whatever's in localStorage RIGHT NOW.
     try {
       const raw = localStorage.getItem(PREFS_KEY)
       if (raw) setPrefs({ ...DEFAULT_PREFS, ...JSON.parse(raw) })
     } catch { /* ignore */ }
     setPrefsHydrated(true)
+
+    // Async: trigger the cross-PC migration. If it hydrated localStorage from
+    // the server, re-read so the chart reflects the synced values on this
+    // render cycle (otherwise the user would see stale local prefs flash
+    // before the next reload picked them up).
+    migrateChartPrefs().then(result => {
+      if (result.action === 'hydrated') {
+        try {
+          const raw = localStorage.getItem(PREFS_KEY)
+          if (raw) setPrefs({ ...DEFAULT_PREFS, ...JSON.parse(raw) })
+        } catch { /* ignore */ }
+      }
+    })
   }, [])
   // Persist on change — but ONLY after hydration. The guard MUST be state, not
   // a ref: the load effect and this effect run in the same initial commit, so a
@@ -195,6 +216,9 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   useEffect(() => {
     if (!prefsHydrated) return
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
+    // Cross-PC sync: debounced upsert to Supabase. localStorage is still the
+    // synchronous source of truth; the server write is fire-and-forget.
+    schedulePushChartPref(PREFS_KEY, prefs)
   }, [prefs, prefsHydrated])
   const updatePref = (patch: Partial<ChartPrefs>) => setPrefs(prev => ({ ...prev, ...patch }))
 
@@ -220,10 +244,17 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   // everything is locked.)
   const saveChartView = () => {
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
+    // Cross-PC: push the appearance prefs immediately too (the change-tracking
+    // effect already debounces these, but this button is explicit "lock in".)
+    schedulePushChartPref(PREFS_KEY, prefs)
     // Capture the visible logical (bar-index) range — current zoom + position.
     const r = chartRef.current?.timeScale().getVisibleLogicalRange()
     if (r && symbol) {
-      saveView(symbol, date, { from: r.from, to: r.to })
+      const range = { from: r.from, to: r.to }
+      saveView(symbol, date, range)
+      // Push the per-day view to Supabase so opening the same day on the
+      // other PC restores the same zoom.
+      schedulePushChartPref(viewKey(symbol, date), range)
       setHasSavedView(true)
     }
     setViewSavedFlash(true)
