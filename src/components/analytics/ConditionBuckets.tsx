@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import BarChart from '@/components/charts/BarChart'
 import { bucketByNumeric, type TradeWithContext, type Bucket } from '@/lib/analytics'
@@ -17,9 +17,9 @@ const CONDITIONS: ConditionDef[] = [
   {
     key: 'rvol',
     title: 'Relative Volume',
-    description: '1.0 = average. Higher Rvol = more activity than typical.',
-    breaks: [0.7, 1.0, 1.5, 2.0],
-    format: n => n.toFixed(2),
+    description: '100 = average. Higher Rvol = more activity than typical (stored as percentage).',
+    breaks: [70, 100, 150, 200],
+    format: n => n.toFixed(0),
   },
   {
     key: 'ib_vs_10d_avg',
@@ -32,14 +32,19 @@ const CONDITIONS: ConditionDef[] = [
     key: 'ib_size',
     title: 'IB Size (points)',
     description: 'Initial Balance range in raw points.',
-    breaks: [30, 50, 80, 120],
+    // Calibrated for NQ/MNQ — recent native values cluster 137–330 with
+    // median ~185. Older small-instrument breakpoints [30, 50, 80, 120]
+    // dumped every NQ day into the ≥120 bucket.
+    breaks: [120, 160, 200, 260],
     format: n => n.toFixed(0),
   },
   {
     key: 'adr',
     title: 'Average Daily Range',
     description: 'ADR in points (RTH).',
-    breaks: [80, 120, 180],
+    // NQ ADR typically 280–410. Older [80, 120, 180] thresholds were below
+    // even the quietest NQ days.
+    breaks: [300, 340, 380],
     format: n => n.toFixed(0),
   },
   {
@@ -57,6 +62,16 @@ interface Props {
 
 export default function ConditionBuckets({ trades }: Props) {
   const [open, setOpen] = useState(true)
+  // Defer the BarChart render to post-hydration. The buckets feed BarChart's
+  // SVG <rect> + <title> structure where the title text is derived from float
+  // PnL totals; tiny float-precision drift between the SSR pass and the client
+  // hydration pass (e.g. when the trades array order shifts even slightly under
+  // memoization edge cases) shows up as a hydration mismatch on the title text.
+  // Rendering the grid only after mount fully sidesteps SSR comparison for this
+  // sub-tree without forcing the rest of the page to be client-only.
+  const [mounted, setMounted] = useState(false)
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag to gate post-hydration rendering of the BarChart sub-tree
+  useEffect(() => { setMounted(true) }, [])
   return (
     <section>
       <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left mb-3">
@@ -71,9 +86,11 @@ export default function ConditionBuckets({ trades }: Props) {
 
       {open && (
         <div className="grid gap-4 lg:grid-cols-2">
-          {CONDITIONS.map(c => (
-            <ConditionCard key={c.key} cond={c} trades={trades} />
-          ))}
+          {mounted
+            ? CONDITIONS.map(c => <ConditionCard key={c.key} cond={c} trades={trades} />)
+            : CONDITIONS.map(c => (
+                <div key={c.key} className="bg-gray-900 border border-gray-800 rounded-xl p-5 h-[280px]" />
+              ))}
         </div>
       )}
     </section>
@@ -99,6 +116,13 @@ function ConditionCard({ cond, trades }: { cond: ConditionDef; trades: TradeWith
     )
   }
 
+  // BarChart shows only the real buckets (defined numeric ranges). The
+  // "Unknown" bucket is intentionally excluded from the chart — when many
+  // historical trades lack market_context, an oversized Unknown bar dwarfs
+  // the rest and the chart reads as a single green spike. The Unknown count
+  // still surfaces in the table below so the user knows it's there.
+  const barBuckets = visible.filter(b => b.range[0] != null || b.range[1] != null)
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
       <div>
@@ -106,14 +130,17 @@ function ConditionCard({ cond, trades }: { cond: ConditionDef; trades: TradeWith
         <p className="text-xs text-gray-500 mt-0.5">{cond.description}</p>
       </div>
 
+      {/* showValueLabels=false and no hint → bars + bucket-label row only, so
+          the dense per-bucket numbers live exclusively in BucketTable below
+          (which has dedicated columns for N / Win% / Expectancy / PnL). */}
       <BarChart
-        data={visible.map(b => ({
+        data={barBuckets.map(b => ({
           label: b.label,
           value: b.stats.total_pnl,
-          hint: `${b.stats.count} · ${(b.stats.win_rate * 100).toFixed(0)}%`,
         }))}
         height={140}
         formatValue={v => `${v >= 0 ? '+' : ''}$${v.toFixed(0)}`}
+        showValueLabels={false}
       />
 
       <BucketTable buckets={visible} />

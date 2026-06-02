@@ -168,6 +168,12 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const levelLinesRef = useRef<Array<{ key: string; price: number }>>([])
   // Per-trade entry→exit connector lines (2-point dashed line series each).
   const tradeLinesRef = useRef<ISeriesApi<'Line'>[]>([])
+  // ATR(10, 1m, Wilder) — display-only measurement. atrByTimeRef maps each
+  // bar's unix second to its ATR for O(1) crosshair lookup; latestAtr/atrCursor
+  // drive the header chip. Cursor value falls back to latest when no hover.
+  const atrByTimeRef = useRef<Map<number, number>>(new Map())
+  const [latestAtr, setLatestAtr] = useState<number | null>(null)
+  const [atrCursor, setAtrCursor] = useState<number | null>(null)
 
   const [bars, setBars] = useState<ApiBar[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -445,8 +451,15 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // re-subscribe on trade changes.
     chart.subscribeCrosshairMove(param => {
       if (suppressCrosshairRef.current) return // row-driven hover owns the popup
-      if (param.time == null || !param.point) { setHover(null); return }
+      if (param.time == null || !param.point) {
+        setHover(null)
+        setAtrCursor(null)
+        return
+      }
       const timeSec = param.time as number
+      // ATR-at-crosshair lookup (independent of trade-popup logic).
+      const atrHere = atrByTimeRef.current.get(timeSec) ?? null
+      setAtrCursor(atrHere)
       let best: Trade | null = null
       let bestDelta = Infinity
       for (const t of tradesRef.current) {
@@ -556,6 +569,20 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     vwapRef.current.setData(toLine('vwap'))
     ema9Ref.current.setData(toLine('ema9'))
     ema20Ref.current.setData(toLine('ema20'))
+
+    // ATR(10, 1m, Wilder) lookup: build a time-second → atr map for the crosshair
+    // chip, and surface the last non-null value as the default ("latest") display.
+    const nextAtrMap = new Map<number, number>()
+    let lastAtr: number | null = null
+    for (const p of ser) {
+      if (p.atr == null) continue
+      const ts = Math.floor(new Date(p.ts).getTime() / 1000)
+      nextAtrMap.set(ts, p.atr)
+      lastAtr = p.atr
+    }
+    atrByTimeRef.current = nextAtrMap
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- ATR display value derived from the same `levels` payload this effect consumes
+    setLatestAtr(lastAtr)
 
     // Static session levels as horizontal price lines (recreate each update).
     // Gated on the master `showLevels` toggle; individual levels listed in
@@ -748,10 +775,27 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     }
     const t = trades.find(x => x.id === hoverTradeId)
     if (!t || !t.entry_time) return
-    const timeSec = (Math.floor(new Date(t.entry_time).getTime() / 60000) * 60) as Time
+    const entryMs = new Date(t.entry_time).getTime()
+    if (!Number.isFinite(entryMs)) return // unparseable entry_time
+    const timeSec = (Math.floor(entryMs / 60000) * 60) as Time
     const price = t.entry_price ?? null
     suppressCrosshairRef.current = true // hold across the synthetic crosshair event
-    if (price != null) chart.setCrosshairPosition(price, timeSec, candle)
+    // Guard: lightweight-charts throws ensureNotNull from
+    // _internal_setAndSaveSyntheticPosition when the candle series has no
+    // data loaded yet (empty day / pre-fetch race) or when the requested
+    // time falls outside the loaded bar range. Skip the chart sync in those
+    // cases — the popup still shows at a safe fallback coordinate.
+    const hasBars = !!bars && bars.length > 0
+    const inRange = hasBars
+      && entryMs >= new Date(bars![0].ts).getTime()
+      && entryMs <= new Date(bars![bars!.length - 1].ts).getTime() + 60_000
+    if (price != null && Number.isFinite(price) && inRange) {
+      try {
+        chart.setCrosshairPosition(price, timeSec, candle)
+      } catch {
+        // belt-and-suspenders — never let a chart-internal crash bubble up
+      }
+    }
     const x = chart.timeScale().timeToCoordinate(timeSec)
     const y = price != null ? candle.priceToCoordinate(price) : null
     setHover({ trade: t, x: x ?? 8, y: y ?? height / 2 })
@@ -771,6 +815,14 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.vwapColor }} />VWAP</span>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema9Color }} />EMA 9</span>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema20Color }} />EMA 20</span>
+          {(atrCursor ?? latestAtr) != null && (
+            <span
+              className={`font-mono ${atrCursor != null ? 'text-amber-300' : 'text-amber-300/70'}`}
+              title="1-minute ATR-10 (Wilder). Shows the value at the crosshair when hovered, otherwise the most recent bar."
+            >
+              ATR(10) {(atrCursor ?? latestAtr ?? 0).toFixed(2)}
+            </span>
+          )}
           <div className="relative">
             <button
               type="button"
