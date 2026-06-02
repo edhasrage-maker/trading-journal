@@ -278,6 +278,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
         if (isEditing) {
           return (
             <TradeForm key={trade.id} date={date} allTags={allTags} trade={trade}
+              defaultSymbol={chartSymbol}
               onSave={handleSave} onCancel={() => setMode({ type: 'list' })} />
           )
         }
@@ -452,6 +453,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
       {/* Add trade form */}
       {isAdding && (
         <TradeForm date={date} allTags={allTags} initialFile={pastedFile} prepDayType={prepDayType}
+          defaultSymbol={chartSymbol}
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />
       )}
 
