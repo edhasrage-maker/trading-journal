@@ -20,9 +20,13 @@ interface Props {
   date: string
   initialDay: TradingDay | null
   initialContext: MarketContext | null
+  /** Day-type labels from trade_tags. Single source of truth shared with the
+   *  intraday TradeForm — picking one here pre-selects the matching chip on
+   *  every NEW trade for the day (via the auto-populate flow). */
+  dayTypeOptions: string[]
 }
 
-export default function PrepClient({ date, initialDay, initialContext }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -620,25 +624,32 @@ export default function PrepClient({ date, initialDay, initialContext }: Props) 
         )}
       </div>
 
-      {/* Day Type */}
+      {/* Day Type — chips sourced from trade_tags.day_type so prep + intraday
+          stay in sync. Falls back to a hint when the library is empty. */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <label className="block text-sm font-medium text-gray-300 mb-2">Day Type</label>
-        <div className="flex flex-wrap gap-2">
-          {['Trend Day', 'Range Day', 'Neutral Day', 'Gap and Go', 'Gap Reversal', 'Double Distribution', 'Volatile/News Day'].map(t => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setDayType(dayType === t ? '' : t)}
-              className={`px-3 py-1.5 rounded-lg text-sm transition-colors border ${
-                dayType === t
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        {dayTypeOptions.length === 0 ? (
+          <p className="text-xs text-gray-500">
+            No day types in the library yet. Add some from <span className="font-mono">/settings/tags</span>.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {dayTypeOptions.map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setDayType(dayType === t ? '' : t)}
+                className={`px-3 py-1.5 rounded-lg text-sm transition-colors border ${
+                  dayType === t
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Condition Filter (Morning Conditions) */}
