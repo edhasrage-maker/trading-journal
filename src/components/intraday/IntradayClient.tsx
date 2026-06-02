@@ -15,6 +15,8 @@ interface Props {
   allTags: TradeTag[]
   /** Trade to auto-open + scroll to on mount (deep-link from the EOD trade list). */
   initialOpenTradeId?: string | null
+  /** day_type from trading_days for this date — auto-populated on NEW trades only. */
+  prepDayType?: string | null
 }
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
@@ -30,7 +32,7 @@ function rMultiple(t: Trade): string | null {
   return (t.pnl / risk).toFixed(1) + 'R'
 }
 
-export default function IntradayClient({ date, initialTrades, allTags, initialOpenTradeId }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags, initialOpenTradeId, prepDayType }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   const [mode, setMode] = useState<Mode>({ type: 'list' })
@@ -313,7 +315,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
 
       {/* Add trade form */}
       {isAdding && (
-        <TradeForm date={date} allTags={allTags} initialFile={pastedFile}
+        <TradeForm date={date} allTags={allTags} initialFile={pastedFile} prepDayType={prepDayType}
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />
       )}
 

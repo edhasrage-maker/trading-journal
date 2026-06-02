@@ -16,7 +16,7 @@ export default async function IntradayPage({
   const { trade: openTradeId } = await searchParams
   const supabase: AnyClient = await createClient()
 
-  const { data: day } = await supabase.from('trading_days').select('id').eq('date', date).single()
+  const { data: day } = await supabase.from('trading_days').select('id, day_type').eq('date', date).single()
 
   let trades: Trade[] = []
   if (day) {
@@ -34,6 +34,7 @@ export default async function IntradayPage({
         initialTrades={trades}
         allTags={(tags ?? []) as TradeTag[]}
         initialOpenTradeId={openTradeId ?? null}
+        prepDayType={(day?.day_type as string | null) ?? null}
       />
     </div>
   )

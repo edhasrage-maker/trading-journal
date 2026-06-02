@@ -12,6 +12,10 @@ interface Props {
   allTags: TradeTag[]
   trade?: Trade | null
   initialFile?: File | null
+  /** day_type from trading_days for this date — used to pre-fill the
+   *  day_type tag on NEW trades. Ignored when editing an existing trade
+   *  (the trade's own tags_json wins). */
+  prepDayType?: string | null
   onSave: (trade: Trade) => void
   onCancel: () => void
 }
@@ -77,13 +81,16 @@ function rMultiple(s: FormState): string | null {
   return null
 }
 
-export default function TradeForm({ date, allTags, trade, initialFile, onSave, onCancel }: Props) {
+export default function TradeForm({ date, allTags, trade, initialFile, prepDayType, onSave, onCancel }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
     if (initialFile) {
       base.screenshot_url = URL.createObjectURL(initialFile)
       base.pendingFile = initialFile
+    }
+    if (prepDayType) {
+      base.tags = { ...base.tags, day_type: [prepDayType] }
     }
     return base
   })
