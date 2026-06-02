@@ -20,6 +20,10 @@ export interface DayRowData {
   avg_mae_pts: number | null
   avg_mfe_dollars: number | null
   avg_mae_dollars: number | null
+  /** Day-level MFE Capture %: realized PnL / peak favorable in $. Null when no trades had MFE data. */
+  avg_capture: number | null
+  /** Day-level MAE Burn ×R: peak adverse / planned risk in points. Null when no stops were set. */
+  avg_burn: number | null
   /** 1-min ATR-10 (Wilder) entered during prep — drives the ATR display unit on MFE/MAE. */
   atr_1m: number | null
 }
@@ -28,7 +32,7 @@ interface Props {
   initialDays: DayRowData[]
 }
 
-type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'mfe_mae' | 'win_rate' | 'pnl'
+type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'mfe_mae' | 'capture' | 'win_rate' | 'pnl'
 type SortDirection = 'asc' | 'desc'
 type MfeUnit = 'pts' | 'dollars' | 'atr'
 
@@ -101,6 +105,7 @@ export default function RecentDaysList({ initialDays }: Props) {
         case 'process': return d.process_score
         case 'trades': return d.trade_count
         case 'mfe_mae': return d.avg_mfe_pts // unit-agnostic; ordering identical across pts/dollars
+        case 'capture': return d.avg_capture
         case 'win_rate': return d.win_rate
         case 'pnl': return d.eod_pnl
       }
@@ -312,6 +317,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                   </div>
                 )}
               </th>
+              <SortableTh label="Cap / Burn" column="capture" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-24" />
               <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
               <th className="w-10" />
@@ -433,6 +439,9 @@ function DayRowItem({
       <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
         <MfeMaeCell day={day} unit={mfeUnit} />
       </td>
+      <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
+        <CaptureBurnCell day={day} />
+      </td>
       <td className={`py-2 pr-3 text-center font-mono ${cellBg}`}>
         {day.win_rate === null
           ? <span className="text-gray-700">—</span>
@@ -490,6 +499,35 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
       <span className="text-green-400">+{fmt(mfe)}</span>
       <span className="text-gray-600"> / </span>
       <span className="text-red-400">-{fmt(mae)}</span>
+    </span>
+  )
+}
+
+/**
+ * Capture % / MAE Burn ×R per day. Capture = realized PnL / peak favorable in $;
+ * Burn = peak adverse / planned stop distance in pts. Capture > MAE Burn pair
+ * shows execution quality across the day.
+ */
+function CaptureBurnCell({ day }: { day: DayRowData }) {
+  if (day.avg_capture == null && day.avg_burn == null) {
+    return <span className="text-gray-700">—</span>
+  }
+  const capColor = day.avg_capture == null
+    ? 'text-gray-700'
+    : day.avg_capture >= 0.7 ? 'text-green-400'
+      : day.avg_capture >= 0.4 ? 'text-yellow-400'
+      : day.avg_capture >= 0 ? 'text-orange-400'
+      : 'text-red-400'
+  const burnColor = day.avg_burn == null
+    ? 'text-gray-700'
+    : day.avg_burn <= 0.5 ? 'text-green-400'
+      : day.avg_burn <= 1.0 ? 'text-yellow-400'
+      : 'text-red-400'
+  return (
+    <span title="Capture = avg of (realized PnL / peak favorable $) per trade. Burn = avg of (peak adverse / planned risk) per trade.">
+      <span className={capColor}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
+      <span className="text-gray-600"> / </span>
+      <span className={burnColor}>{day.avg_burn == null ? '—' : `${day.avg_burn.toFixed(2)}×`}</span>
     </span>
   )
 }

@@ -18,6 +18,7 @@ import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import DeleteDayDangerZone from './DeleteDayDangerZone'
 import RecordingCommentary from './RecordingCommentary'
+import { avgCaptureRatio, avgMaeBurnRatio } from '@/lib/analytics'
 import type {
   TradingDay,
   Trade,
@@ -436,6 +437,11 @@ export default function EodClient({
   const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
 
+  // Day-level execution quality: avg MFE capture and avg MAE burn across all
+  // trades that have the data (entry/stop/direction/high/low present).
+  const captureStats = useMemo(() => avgCaptureRatio(trades), [trades])
+  const burnStats = useMemo(() => avgMaeBurnRatio(trades), [trades])
+
   // --- Trade-selection state (shared by merge + bulk-delete actions) ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [merging, setMerging] = useState(false)
@@ -657,6 +663,25 @@ export default function EodClient({
             <div className="text-xs text-gray-500">PnL</div>
             <div className={`font-mono text-lg ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
               {computedPnl >= 0 ? '+' : ''}{computedPnl.toFixed(2)}
+            </div>
+          </div>
+          <div title={`Avg MFE Capture across ${captureStats.count} trade${captureStats.count === 1 ? '' : 's'} on this day. Higher = took more of the favorable move offered.`}>
+            <div className="text-xs text-gray-500">Capture</div>
+            <div className={`font-mono text-lg ${captureStats.avg == null ? 'text-gray-500'
+              : captureStats.avg >= 0.7 ? 'text-green-400'
+              : captureStats.avg >= 0.4 ? 'text-yellow-400'
+              : captureStats.avg >= 0 ? 'text-orange-400'
+              : 'text-red-400'}`}>
+              {captureStats.avg == null ? '—' : `${(captureStats.avg * 100).toFixed(0)}%`}
+            </div>
+          </div>
+          <div title={`Avg MAE Burn across ${burnStats.count} trade${burnStats.count === 1 ? '' : 's'}. 1.0× = avg trade touched its stop level.`}>
+            <div className="text-xs text-gray-500">Burn</div>
+            <div className={`font-mono text-lg ${burnStats.avg == null ? 'text-gray-500'
+              : burnStats.avg <= 0.5 ? 'text-green-400'
+              : burnStats.avg <= 1.0 ? 'text-yellow-400'
+              : 'text-red-400'}`}>
+              {burnStats.avg == null ? '—' : `${burnStats.avg.toFixed(2)}×`}
             </div>
           </div>
           </div>

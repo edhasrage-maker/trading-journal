@@ -3,7 +3,8 @@ import { format, subDays } from 'date-fns'
 import Link from 'next/link'
 import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
-import { symbolToMultiplier } from '@/lib/sc-importer'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { avgCaptureRatio, avgMaeBurnRatio, type TradeWithExcursion } from '@/lib/analytics'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // Disable static generation so the date is recomputed on every request
@@ -41,13 +42,14 @@ export default async function DashboardPage() {
   // eod_pnl override yet. high_during_position / low_during_position +
   // direction + entry_price + symbol + quantity feed the per-day avg
   // MFE / MAE computed below.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type TradeSlim = {
     trading_day_id: string
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tags_json: any
     pnl: number | null
     direction: 'long' | 'short' | null
     entry_price: number | null
+    stop_price: number | null
     high_during_position: number | null
     low_during_position: number | null
     quantity: number | null
@@ -58,7 +60,7 @@ export default async function DashboardPage() {
     ? await Promise.all([
         supabase
           .from('trades')
-          .select('trading_day_id, tags_json, pnl, direction, entry_price, high_during_position, low_during_position, quantity, symbol')
+          .select('trading_day_id, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol')
           .in('trading_day_id', dayIds),
         // market_context.atr_1m is the user's per-day 1-min ATR-10 (Wilder) entered
         // during prep — drives the optional ATR display unit on Avg MFE/MAE.
@@ -143,6 +145,19 @@ export default async function DashboardPage() {
       avgMaeDollars = maeDollarSum / mfeMaeTrades.length
     }
 
+    // Day-level execution quality: avg MFE capture % and avg MAE burn ×R.
+    // Computed via the shared analytics helpers so the math matches the
+    // intraday per-trade display and the EOD recap header exactly. The
+    // trade rows have the right shape (entry/stop/direction/high/low/symbol
+    // /quantity/pnl) so we can cast through TradeWithExcursion.
+    // The TradeSlim rows have the fields the analytics helpers actually read
+    // (entry/stop/direction/high/low/symbol/quantity/pnl); the helpers ignore
+    // id/trading_day_id/entry_time/tags_json. Cast via unknown so we don't
+    // have to materialize the unused fields.
+    const xcTrades = trades as unknown as TradeWithExcursion[]
+    const captureStats = avgCaptureRatio(xcTrades)
+    const burnStats = avgMaeBurnRatio(xcTrades)
+
     return {
       id: d.id,
       date: d.date,
@@ -157,6 +172,8 @@ export default async function DashboardPage() {
       avg_mae_pts: avgMaePts,
       avg_mfe_dollars: avgMfeDollars,
       avg_mae_dollars: avgMaeDollars,
+      avg_capture: captureStats.avg,    // 0..1 fraction, or null
+      avg_burn: burnStats.avg,          // 0..n× of planned stop, or null
       atr_1m: atrByDay.get(d.id) ?? null,
     }
   })

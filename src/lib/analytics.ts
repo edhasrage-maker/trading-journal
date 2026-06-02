@@ -1,4 +1,5 @@
 import type { Trade, TradeTags, TradingDay, MarketContext } from '@/lib/supabase/types'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
 
 /**
  * Pure aggregation helpers for the Journal + Analytics views.
@@ -8,6 +9,11 @@ import type { Trade, TradeTags, TradingDay, MarketContext } from '@/lib/supabase
 
 export type TradeLike = Pick<Trade,
   'id' | 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'entry_time' | 'tags_json' | 'trading_day_id'
+>
+
+/** Same as TradeLike plus the tick-extreme + symbol fields needed for MFE/MAE math. */
+export type TradeWithExcursion = TradeLike & Pick<Trade,
+  'high_during_position' | 'low_during_position' | 'symbol'
 >
 
 /** Trade with trading_day + market_context fields flattened in for easy filtering. */
@@ -61,6 +67,106 @@ export function rMultiple(t: TradeLike): number | null {
   const risk = Math.abs(ep - sp) * qty
   if (risk === 0) return null
   return pnl / risk
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// MFE / MAE — raw excursions + execution-quality ratios.
+//
+// Both excursions are bounded by entry → final exit (Sierra writes high/low
+// during position on closing fills; the importer aggregates max/min across
+// multi-leg exits). Post-exit moves never appear here — by design.
+//
+// Capture ratio asks "of the favorable move I was offered, did I take it?".
+// MAE burn asks "did I sit through more risk than my plan budgeted?".
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-contract MFE and MAE in price points (positive magnitudes).
+ *   long:  MFE = high − entry,    MAE = entry − low
+ *   short: MFE = entry − low,     MAE = high − entry
+ * Returns null when entry, direction, or high/low is missing.
+ */
+export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number } | null {
+  if (t.entry_price == null || t.direction == null) return null
+  if (t.high_during_position == null || t.low_during_position == null) return null
+  const isLong = t.direction === 'long'
+  const mfe = isLong
+    ? t.high_during_position - t.entry_price
+    : t.entry_price - t.low_during_position
+  const mae = isLong
+    ? t.entry_price - t.low_during_position
+    : t.high_during_position - t.entry_price
+  return { mfe, mae }
+}
+
+/**
+ * Capture ratio = realized PnL / peak favorable excursion in $.
+ *
+ * Both sides scale by the symbol multiplier and quantity, so we can express
+ * directly as pnl / mfeDollars. Bounded [0, 1] in theory (MFE = max favorable
+ * while held; pnl ≤ MFE in $); floating-point may push slightly past 1 on
+ * exits at the exact high.
+ *
+ * Returns null when:
+ *   - pnl, quantity, or any MFE input is missing
+ *   - MFE ≤ 0 (trade never moved favorably — ratio undefined, not 0)
+ *
+ * Display tip: multiply by 100 and render as "%".
+ */
+export function captureRatio(t: TradeWithExcursion): number | null {
+  if (t.pnl == null || t.quantity == null) return null
+  const xc = mfeMaePoints(t)
+  if (!xc) return null
+  if (xc.mfe <= 0) return null
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  const mfeDollars = xc.mfe * mult * t.quantity
+  if (mfeDollars === 0) return null
+  return t.pnl / mfeDollars
+}
+
+/**
+ * MAE burn ratio = peak adverse excursion / planned risk, both in points
+ * per contract (so multiplier and quantity cancel).
+ *
+ *   burn = 0    → trade went green immediately, no heat
+ *   burn = 0.5  → sat through half your stop distance
+ *   burn = 1.0  → MAE touched your stop level exactly
+ *   burn > 1.0  → MAE went past your stop (you moved it, or got slipped)
+ *
+ * Returns null when stop_price, entry_price, or high/low is missing, or when
+ * planned risk is zero (entry == stop).
+ *
+ * Display tip: render as "×R" (e.g. 0.60 → "0.6× R").
+ */
+export function maeBurnRatio(t: TradeWithExcursion): number | null {
+  if (t.entry_price == null || t.stop_price == null) return null
+  const xc = mfeMaePoints(t)
+  if (!xc) return null
+  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  if (plannedRiskPts === 0) return null
+  return xc.mae / plannedRiskPts
+}
+
+/** Aggregate capture across a set of trades. Skips trades whose ratio is null. */
+export function avgCaptureRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
+  let sum = 0
+  let n = 0
+  for (const t of trades) {
+    const r = captureRatio(t)
+    if (r != null) { sum += r; n++ }
+  }
+  return { avg: n > 0 ? sum / n : null, count: n }
+}
+
+/** Aggregate MAE burn across a set of trades. Skips trades whose ratio is null. */
+export function avgMaeBurnRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
+  let sum = 0
+  let n = 0
+  for (const t of trades) {
+    const r = maeBurnRatio(t)
+    if (r != null) { sum += r; n++ }
+  }
+  return { avg: n > 0 ? sum / n : null, count: n }
 }
 
 /** Aggregate a set of trades into performance stats. */

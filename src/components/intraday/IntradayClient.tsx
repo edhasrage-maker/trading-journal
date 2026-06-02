@@ -7,6 +7,7 @@ import { Plus, Edit2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import TradeForm from './TradeForm'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
+import { captureRatio, maeBurnRatio, mfeMaePoints } from '@/lib/analytics'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 interface Props {
@@ -30,6 +31,22 @@ function rMultiple(t: Trade): string | null {
   const risk = Math.abs(t.entry_price - t.stop_price) * (t.quantity ?? 1)
   if (risk === 0) return null
   return (t.pnl / risk).toFixed(1) + 'R'
+}
+
+/** Display-formatted capture % — null when MFE can't be computed or was non-positive. */
+function captureDisplay(t: Trade): string | null {
+  const r = captureRatio(t)
+  if (r == null) return null
+  // Bound display at -999/+999% so a degenerate ratio doesn't blow the layout.
+  const pct = Math.max(-999, Math.min(999, r * 100))
+  return `${pct.toFixed(0)}%`
+}
+
+/** Display-formatted MAE burn — "0.6×R" style. Null when no stop or no MAE. */
+function burnDisplay(t: Trade): string | null {
+  const r = maeBurnRatio(t)
+  if (r == null) return null
+  return `${r.toFixed(2)}×R`
 }
 
 export default function IntradayClient({ date, initialTrades, allTags, initialOpenTradeId, prepDayType }: Props) {
@@ -254,6 +271,51 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                     </div>
                   ))}
                 </div>
+
+                {/* Execution quality: capture % (how much of MFE did I take?) and
+                    MAE burn (did I sit through more than my planned stop?). */}
+                {(captureDisplay(trade) != null || burnDisplay(trade) != null) && (() => {
+                  const xc = mfeMaePoints(trade)
+                  const cap = captureDisplay(trade)
+                  const burn = burnDisplay(trade)
+                  const capRatio = captureRatio(trade)
+                  const burnRatio = maeBurnRatio(trade)
+                  const capColor = capRatio == null
+                    ? 'text-gray-500'
+                    : capRatio >= 0.7 ? 'text-green-400'
+                      : capRatio >= 0.4 ? 'text-yellow-400'
+                      : capRatio >= 0 ? 'text-orange-400'
+                      : 'text-red-400'
+                  const burnColor = burnRatio == null
+                    ? 'text-gray-500'
+                    : burnRatio <= 0.5 ? 'text-green-400'
+                      : burnRatio <= 1.0 ? 'text-yellow-400'
+                      : 'text-red-400'
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div>
+                        <div className="text-xs text-gray-500 mb-0.5" title="Realized PnL / peak favorable excursion. 100% = you took the high.">
+                          MFE Capture
+                        </div>
+                        <div className={`font-medium ${capColor}`}>{cap ?? '—'}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 mb-0.5" title="Peak adverse excursion / planned stop distance. 1.0× = MAE touched your stop level.">
+                          MAE Burn
+                        </div>
+                        <div className={`font-medium ${burnColor}`}>{burn ?? '—'}</div>
+                      </div>
+                      <div className="hidden sm:block">
+                        <div className="text-xs text-gray-500 mb-0.5" title="Raw MFE in points">Peak MFE</div>
+                        <div className="text-gray-300 font-mono">{xc ? `+${xc.mfe.toFixed(2)}` : '—'}</div>
+                      </div>
+                      <div className="hidden sm:block">
+                        <div className="text-xs text-gray-500 mb-0.5" title="Raw MAE in points">Peak MAE</div>
+                        <div className="text-gray-300 font-mono">{xc ? `−${xc.mae.toFixed(2)}` : '—'}</div>
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* Screenshot with pins */}
                 {trade.screenshot_url && (
