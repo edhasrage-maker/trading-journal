@@ -98,6 +98,9 @@ export interface Database {
           category: TagCategory
           label: string
           sort_order: number
+          // Free-text definition. Used by /api/predict-day-type to give the
+          // AI a precise classification rubric per label. Null when unset.
+          description: string | null
           created_at: string
         }
         Insert: Omit<Database['public']['Tables']['trade_tags']['Row'], 'id' | 'created_at'>

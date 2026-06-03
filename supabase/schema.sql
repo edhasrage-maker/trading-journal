@@ -123,6 +123,9 @@ create table if not exists trade_tags (
   )),
   label text not null,
   sort_order integer default 0,
+  -- Free-text definition. Used by /api/predict-day-type to give the AI a
+  -- precise classification rubric per label. Editable via /settings/tags.
+  description text,
   created_at timestamptz default now(),
   unique(category, label)
 );

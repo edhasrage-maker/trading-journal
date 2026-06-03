@@ -12,15 +12,10 @@ interface ReqBody {
   date: string  // YYYY-MM-DD
 }
 
-const DAY_TYPES = [
-  'Trend Day',
-  'Range Day',
-  'Neutral Day',
-  'Gap and Go',
-  'Gap Reversal',
-  'Double Distribution',
-  'Volatile/News Day',
-] as const
+interface DayTypeDef {
+  label: string
+  description: string | null
+}
 
 interface PredictResponse {
   prediction: string
@@ -85,6 +80,37 @@ async function handle(req: Request) {
     .eq('trading_day_id', day.id)
     .single() as { data: MarketContext | null }
 
+  // Pull the active day_type library + descriptions. This replaces the old
+  // hardcoded 7-label list which kept leaking stale labels (Trend Day, Range
+  // Day) into the user's pruned library every time the user accepted a
+  // prediction. Now there's exactly one source of truth.
+  //
+  // Graceful fallback: if the `description` column hasn't been added yet
+  // (migration 2026-06-03-tag-descriptions.sql not run), select without it.
+  let dayTypeDefs: DayTypeDef[] = []
+  const withDesc = await supabase
+    .from('trade_tags')
+    .select('label, description')
+    .eq('category', 'day_type')
+    .order('sort_order') as { data: DayTypeDef[] | null; error: { message: string; code?: string } | null }
+  if (withDesc.error) {
+    // Likely "column does not exist" — retry without description.
+    const labelsOnly = await supabase
+      .from('trade_tags')
+      .select('label')
+      .eq('category', 'day_type')
+      .order('sort_order') as { data: { label: string }[] | null }
+    dayTypeDefs = (labelsOnly.data ?? []).map(r => ({ label: r.label, description: null }))
+  } else {
+    dayTypeDefs = withDesc.data ?? []
+  }
+  if (dayTypeDefs.length === 0) {
+    return NextResponse.json(
+      { error: 'No day types in the trade_tags library. Add some via /settings/tags or the prep page.' },
+      { status: 400 },
+    )
+  }
+
   const notes = day.prep_notes_json ?? {}
   const hasAnyContext = ctx != null && (ctx.rvol != null || ctx.adr != null || ctx.ib_size != null || ctx.atr_1m != null)
   const hasAnyNotes = Object.values(notes).some(v => v != null && (typeof v === 'string' ? v.trim().length > 0 : true))
@@ -95,7 +121,7 @@ async function handle(req: Request) {
     )
   }
 
-  const prompt = buildPrompt(date, ctx, notes)
+  const prompt = buildPrompt(date, ctx, notes, dayTypeDefs)
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -112,8 +138,9 @@ async function handle(req: Request) {
     if (typeof parsed.prediction !== 'string' || typeof parsed.reasoning !== 'string') {
       throw new Error('Response missing prediction or reasoning')
     }
-    if (!DAY_TYPES.includes(parsed.prediction as typeof DAY_TYPES[number])) {
-      throw new Error(`Prediction "${parsed.prediction}" is not one of the allowed day types`)
+    const allowed = new Set(dayTypeDefs.map(d => d.label))
+    if (!allowed.has(parsed.prediction)) {
+      throw new Error(`Prediction "${parsed.prediction}" is not in the day_type library (${[...allowed].join(', ')})`)
     }
     // Confidence is required but tolerate a missing/weird value — default to
     // medium so the UI can still render rather than 500'ing.
@@ -140,7 +167,7 @@ async function handle(req: Request) {
   })
 }
 
-function buildPrompt(date: string, ctx: MarketContext | null, notes: PrepNotes): string {
+function buildPrompt(date: string, ctx: MarketContext | null, notes: PrepNotes, dayTypeDefs: DayTypeDef[]): string {
   const ctxLines: string[] = []
   if (ctx) {
     if (ctx.symbol) ctxLines.push(`- Symbol: ${ctx.symbol}`)
@@ -176,16 +203,20 @@ function buildPrompt(date: string, ctx: MarketContext | null, notes: PrepNotes):
   }
   const notesBlock = noteLines.length > 0 ? noteLines.join('\n') : '  (no pre-market notes filled in yet)'
 
-  return `You are a futures trading coach predicting the SESSION CHARACTER (day type) for ${date} based on the trader's pre-market data. The trader trades NQ futures.
+  // Render the dynamic day-type list with descriptions where available, label
+  // alone otherwise. Definitions live in trade_tags.description — editable via
+  // /settings/tags so the trader can refine without touching code.
+  const dayTypeListBlock = dayTypeDefs.map(d => {
+    const desc = d.description?.trim()
+    return desc
+      ? `- "${d.label}": ${desc}`
+      : `- "${d.label}": (no description yet — infer from the label name)`
+  }).join('\n')
 
-Pick EXACTLY ONE of these 7 day types:
-- "Trend Day": persistent directional move; sustained imbalance; little mean reversion within the session.
-- "Range Day": defined high and low established early; price rotates between them; mean reversion dominates.
-- "Neutral Day": chop with mixed signals; no decisive directional commitment; balanced or rotational profile.
-- "Gap and Go": price gapped open and holds; session extends in the gap direction.
-- "Gap Reversal": price gapped open but the gap fades; session prints the opposite direction.
-- "Double Distribution": two distinct value areas form during the session with a transition between them.
-- "Volatile/News Day": elevated realized volatility driven by a scheduled event or shock.
+  return `You are a futures trading coach predicting the SESSION CHARACTER (day type) for ${date} based on the trader's pre-market data. The trader trades NQ futures using an MGI-based framework.
+
+Pick EXACTLY ONE of these ${dayTypeDefs.length} day type${dayTypeDefs.length === 1 ? '' : 's'} (use the label EXACTLY as written, including capitalization, spaces, parentheses, and special characters):
+${dayTypeListBlock}
 
 ══ INPUTS ══
 
@@ -226,7 +257,7 @@ Set "confidence" honestly:
 
 Respond with ONLY a valid JSON object (no markdown, no code fences, no preamble):
 {
-  "prediction": "<one of the 7 day types EXACTLY as written above, including spaces and capitalization>",
+  "prediction": "<one of the day type labels above EXACTLY as written>",
   "reasoning": "<2-3 sentences. Cite specific numbers or notes from the inputs. If you're overriding any heuristic above, explain why explicitly.>",
   "confidence": "high" | "medium" | "low"
 }`

@@ -29,8 +29,18 @@ const METRICS: Array<{
   { metric: 'DR_ADR', field: 'dr_adr', label: 'DR vs ADR @ 7:30 PT', placeholder: '0.60', hint: '(High-Low since 6:30) / 10d avg cash session range' },
   { metric: 'IB', field: 'ib', label: 'IB vs 10d Avg', placeholder: '0.93', hint: '(IBH-IBL) / 10d avg IB range; IB = 6:30-7:30 PT' },
   { metric: 'ATR_730', field: 'atr_730', label: 'ATR-10 (1m) @ 7:30', placeholder: '18.0', hint: '1-min ATR-10 Wilder, read at 7:30 PT' },
-  { metric: 'ATR_entry', field: 'atr_entry', label: 'ATR-10 (1m) @ entry', placeholder: '12.6', hint: 'Same study, live value at moment of trade entry (optional)' },
+  // ATR_entry retired: the live per-trade ATR-10 (added in a9f6161) renders
+  // the manual-entry field obsolete. Kept the lookup-side bucket inert by
+  // dropping the metric from this list — outcome.buckets no longer includes
+  // it, so the pill row doesn't render the empty ATR_ENTRY chip.
 ]
+
+// The bottom pill row + the bucket lookup still need values for these four
+// metrics. The TOP-row INPUT grid only renders DR_ADR explicitly — the other
+// three (RVOL, IB, ATR_730) auto-fill from Market Context above, which the
+// effectiveInputs fallback below funnels into the lookup. So the user only
+// types DR_ADR here; the rest flow automatically.
+const VISIBLE_INPUTS: ReadonlyArray<typeof METRICS[number]['field']> = ['dr_adr']
 
 interface VintageInfo {
   refreshed_at: string | null
@@ -282,9 +292,12 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
           </div>
         )}
 
-        {/* Input grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-          {METRICS.map(m => {
+        {/* Input grid — only DR_ADR is exposed here. RVOL/IB/ATR_730 auto-fill
+            from Market Context above and flow through `effectiveInputs` to the
+            lookup; the bucket pills below display their results. Showing the
+            inputs as well was just duplicate UI for the user to maintain. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-sm">
+          {METRICS.filter(m => VISIBLE_INPUTS.includes(m.field)).map(m => {
             const isPrefillField = PREFILL_FIELDS.includes(m.field)
             const auto = isAutoFilled(m.field)
             return (
@@ -397,9 +410,13 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BucketReadout({ buckets }: { buckets: BucketAssignment[] }) {
+  // ATR_entry bucket is no longer surfaced — the live per-trade ATR-10 (a9f6161)
+  // replaced the manual-entry input it depended on. Filter it out here rather
+  // than at the API so historical persistence isn't disturbed.
+  const visible = buckets.filter(b => b.metric !== 'ATR_entry')
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
-      {buckets.map(b => (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+      {visible.map(b => (
         <div key={b.metric} className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
           <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">{b.metric}</div>
           <div className="font-mono text-sm text-white">{b.value ?? <span className="text-gray-700">—</span>}</div>
