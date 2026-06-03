@@ -37,6 +37,49 @@ function hashTradeForCommentary(t: Trade, videoFile: string): string {
 }
 const cacheKey = (id: string) => `recording-commentary-${id}`
 
+/**
+ * Extract the AI text from whatever shape the recording_commentary column
+ * holds for this trade. Three forms have shown up in the wild:
+ *
+ *   1. Proper object `{ text, video_file, model, generated_at }` written by
+ *      this PC's /api/video/commentary route. Validates the video_file
+ *      matches the selected recording so switching videos doesn't surface
+ *      mismatched commentary.
+ *   2. JSON-stringified `{ text }` written by the main PC's earlier
+ *      persistence experiment. No video_file present — we display
+ *      unconditionally since the user clearly generated it and wants to
+ *      see it regardless of which recording is loaded now.
+ *   3. Plain text string (no JSON wrapper). Display as-is.
+ *
+ * Returns null when there's no usable text to show.
+ */
+function extractCommentaryText(raw: unknown, selectedVideo: string): string | null {
+  if (raw == null) return null
+  // Form 1: proper object
+  if (typeof raw === 'object') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const obj = raw as any
+    if (typeof obj.text === 'string' && obj.text.length > 0) {
+      // If video_file is recorded, only use when it matches; otherwise display.
+      if (obj.video_file && obj.video_file !== selectedVideo) return null
+      return obj.text
+    }
+    return null
+  }
+  // Form 2 or 3: string — could be JSON-encoded or plain text
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed) as { text?: string }
+        if (typeof parsed.text === 'string' && parsed.text.length > 0) return parsed.text
+      } catch { /* fall through to treat as plain text */ }
+    }
+    return trimmed.length > 0 ? trimmed : null
+  }
+  return null
+}
+
 export default function RecordingCommentary({ trades }: Props) {
   const [files, setFiles] = useState<VideoFile[]>([])
   const [dir, setDir] = useState<string>('')
@@ -61,12 +104,18 @@ export default function RecordingCommentary({ trades }: Props) {
 
   // Hydrate cached commentaries whenever the selected video or trades change.
   // Priority order:
-  //   1. trades[].recording_commentary (Supabase-backed, cross-PC). Stale-only
-  //      check: skip if the stored video_file doesn't match the selected one,
-  //      so switching recordings doesn't surface mismatched commentary.
+  //   1. trades[].recording_commentary (Supabase-backed, cross-PC).
   //   2. localStorage (per-PC speed cache, also hash-checked).
-  // Both fall back gracefully — DB column may be missing if the migration
-  // hasn't been run yet; localStorage may be empty on a fresh browser.
+  //
+  // The DB column has been written by two different code paths over time and
+  // we have to handle both:
+  //   a) New shape: { text, video_file, model, generated_at } — typed object.
+  //      Validates video_file matches the selected recording.
+  //   b) Legacy shape (from the main PC's earlier persistence experiment):
+  //      a JSON-stringified object containing just { text } — typeof string.
+  //      No video_file present, so we display unconditionally (better to
+  //      show the trader the commentary they generated than hide it because
+  //      they're now looking at a different recording).
   useEffect(() => {
     if (!videoFile || trades.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing cached commentaries when no recording is selected
@@ -75,12 +124,8 @@ export default function RecordingCommentary({ trades }: Props) {
     }
     const cached: Record<string, string> = {}
     for (const t of trades) {
-      // Server-persisted first
-      const dbCommentary = t.recording_commentary
-      if (dbCommentary?.text && dbCommentary.video_file === videoFile) {
-        cached[t.id] = dbCommentary.text
-        continue
-      }
+      const text = extractCommentaryText(t.recording_commentary, videoFile)
+      if (text) { cached[t.id] = text; continue }
       // localStorage fallback (legacy path / fresh-DB users)
       try {
         const raw = localStorage.getItem(cacheKey(t.id))
