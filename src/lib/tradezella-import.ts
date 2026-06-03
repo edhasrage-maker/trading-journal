@@ -28,9 +28,30 @@ const CATEGORY_MAP: Array<{ col: string; cat: TagCategory }> = [
 export const TAG_CATEGORIES: TagCategory[] =
   ['setups', 'confluences', 'order_flow', 'trade_management', 'day_type', 'mistakes', 'emotions']
 
-/** Match key: lowercase, strip non-alphanumerics. "IB Hold" == "ib hold" == "ib-hold". */
+/** Match key: lowercase, strip non-alphanumerics. "IB Hold" == "ib hold" == "ib-hold".
+ *  Note: `&` and `and` both collapse to nothing-or-`and` here; `Break & Retest`
+ *  and `Break And Retest` produce the same key, so the dedupe in the resolver
+ *  picks up the existing library entry rather than creating a duplicate. */
 export function tagKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return s.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '')
+}
+
+/**
+ * Map legacy Tradezella emotion values onto the new 3-option vocabulary
+ * (Stable / Compromised / MAXRAGE). Mirrors the SQL migration ran on
+ * 2026-06-02. Applied to ANY raw emotion value coming through the importer
+ * so a re-import won't reintroduce `Calm`, `Pissed Off_angry`, etc.
+ *   Calm                                  → Stable
+ *   Frustrated/Angry, Pissed Off_angry    → MAXRAGE
+ *   Already-canonical values              → unchanged
+ *   Anything else (Rushed, Anxious, etc.) → Compromised
+ */
+export function mapEmotionToCurrentVocab(raw: string): string {
+  const trimmed = raw.trim()
+  if (trimmed === 'Calm') return 'Stable'
+  if (trimmed === 'Frustrated/Angry' || trimmed === 'Pissed Off_angry') return 'MAXRAGE'
+  if (trimmed === 'Stable' || trimmed === 'Compromised' || trimmed === 'MAXRAGE') return trimmed
+  return 'Compromised'
 }
 
 /** Pretty label for a NEW tag: collapse whitespace, Title Case words, keep punctuation. */
@@ -115,11 +136,14 @@ export function emptyTagLookup(): TagLookup {
  */
 export function normalizeRow(row: TZRow, lookup: TagLookup, newTags: Array<{ category: TagCategory; label: string }>): NormalizedHistoricalTrade {
   const resolve = (cat: TagCategory, raw: string): string => {
-    const k = tagKey(raw)
-    if (!k) return prettyLabel(raw)
+    // Emotion category: collapse legacy values onto the 3-option vocabulary
+    // BEFORE library lookup so the user's redesigned library is canonical.
+    const mapped = cat === 'emotions' ? mapEmotionToCurrentVocab(raw) : raw
+    const k = tagKey(mapped)
+    if (!k) return prettyLabel(mapped)
     const existing = lookup[cat].get(k)
     if (existing) return existing
-    const label = prettyLabel(raw)
+    const label = prettyLabel(mapped)
     lookup[cat].set(k, label)
     newTags.push({ category: cat, label })
     return label

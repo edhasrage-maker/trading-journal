@@ -43,3 +43,6 @@ next-env.d.ts
 # trading-journal — machine-specific runtime artifacts
 start-journal.log
 .sc-watcher-state.json
+
+# trading-journal — local scratch dir used for ad-hoc exports/imports
+Transfer/
