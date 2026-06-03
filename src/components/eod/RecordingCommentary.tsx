@@ -8,6 +8,7 @@ import type { Trade } from '@/lib/supabase/types'
 interface VideoFile { name: string; sizeBytes: number; mtimeMs: number }
 interface CommentaryResponse {
   commentary: Record<string, string>
+  suggested_mistakes?: Record<string, string[]>
   skipped: Array<{ id: string; reason: string }>
   framesUsed?: number
   recordingStartIso?: string
@@ -19,6 +20,9 @@ interface CommentaryResponse {
 
 interface Props {
   trades: Trade[]
+  /** Called after a mistake chip is applied so the parent can re-fetch
+   *  (the trade's tags_json changed on the server). */
+  onTradesChanged?: () => void
 }
 
 /**
@@ -36,6 +40,7 @@ function hashTradeForCommentary(t: Trade, videoFile: string): string {
   return (h >>> 0).toString(36)
 }
 const cacheKey = (id: string) => `recording-commentary-${id}`
+const mistakeKey = (id: string) => `recording-mistakes-${id}`
 
 /**
  * Extract the AI text from whatever shape the recording_commentary column
@@ -80,7 +85,7 @@ function extractCommentaryText(raw: unknown, selectedVideo: string): string | nu
   return null
 }
 
-export default function RecordingCommentary({ trades }: Props) {
+export default function RecordingCommentary({ trades, onTradesChanged }: Props) {
   const [files, setFiles] = useState<VideoFile[]>([])
   const [dir, setDir] = useState<string>('')
   const [filesError, setFilesError] = useState<string | null>(null)
@@ -89,6 +94,9 @@ export default function RecordingCommentary({ trades }: Props) {
   const [result, setResult] = useState<CommentaryResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [commentary, setCommentary] = useState<Record<string, string>>({})
+  const [suggestedMistakes, setSuggestedMistakes] = useState<Record<string, string[]>>({})
+  const [applyingFor, setApplyingFor] = useState<string | null>(null)
+  const [dismissed, setDismissed] = useState<Record<string, Set<string>>>({})
 
   // Load available recordings on mount.
   useEffect(() => {
@@ -102,40 +110,46 @@ export default function RecordingCommentary({ trades }: Props) {
       .catch(() => setFilesError('Failed to list recordings.'))
   }, [])
 
-  // Hydrate cached commentaries whenever the selected video or trades change.
-  // Priority order:
-  //   1. trades[].recording_commentary (Supabase-backed, cross-PC).
+  // Hydrate cached commentaries + mistake suggestions whenever the selected
+  // video or trades change. Priority order:
+  //   1. trades[].recording_commentary (Supabase-backed, cross-PC). The
+  //      extractCommentaryText() helper above handles the two known shapes
+  //      (new typed object vs. legacy stringified-JSON from the main PC's
+  //      earlier persistence experiment) so both paths surface.
   //   2. localStorage (per-PC speed cache, also hash-checked).
-  //
-  // The DB column has been written by two different code paths over time and
-  // we have to handle both:
-  //   a) New shape: { text, video_file, model, generated_at } — typed object.
-  //      Validates video_file matches the selected recording.
-  //   b) Legacy shape (from the main PC's earlier persistence experiment):
-  //      a JSON-stringified object containing just { text } — typeof string.
-  //      No video_file present, so we display unconditionally (better to
-  //      show the trader the commentary they generated than hide it because
-  //      they're now looking at a different recording).
+  // Mistake suggestions are localStorage-only for now — they haven't been
+  // migrated into the DB column yet.
   useEffect(() => {
     if (!videoFile || trades.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing cached commentaries when no recording is selected
       setCommentary({})
+      setSuggestedMistakes({})
       return
     }
     const cached: Record<string, string> = {}
+    const cachedMistakes: Record<string, string[]> = {}
     for (const t of trades) {
       const text = extractCommentaryText(t.recording_commentary, videoFile)
       if (text) { cached[t.id] = text; continue }
       // localStorage fallback (legacy path / fresh-DB users)
       try {
         const raw = localStorage.getItem(cacheKey(t.id))
-        if (!raw) continue
-        const c = JSON.parse(raw) as { h: string; s: string }
-        if (c.h === hashTradeForCommentary(t, videoFile) && c.s) cached[t.id] = c.s
+        if (raw) {
+          const c = JSON.parse(raw) as { h: string; s: string }
+          if (c.h === hashTradeForCommentary(t, videoFile) && c.s) cached[t.id] = c.s
+        }
+        const rawM = localStorage.getItem(mistakeKey(t.id))
+        if (rawM) {
+          const m = JSON.parse(rawM) as { h: string; m: string[] }
+          if (m.h === hashTradeForCommentary(t, videoFile) && Array.isArray(m.m) && m.m.length > 0) {
+            cachedMistakes[t.id] = m.m
+          }
+        }
       } catch { /* ignore */ }
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrating commentary cache from server + local sources
     setCommentary(cached)
+    setSuggestedMistakes(cachedMistakes)
   }, [videoFile, trades])
 
   const run = useCallback(async () => {
@@ -163,10 +177,15 @@ export default function RecordingCommentary({ trades }: Props) {
       }
       setResult(data)
       const got = data.commentary ?? {}
+      const gotMistakes = data.suggested_mistakes ?? {}
       setCommentary(prev => ({ ...prev, ...got }))
+      setSuggestedMistakes(prev => ({ ...prev, ...gotMistakes }))
       for (const t of trades) {
         if (got[t.id]) {
           try { localStorage.setItem(cacheKey(t.id), JSON.stringify({ h: hashTradeForCommentary(t, videoFile), s: got[t.id] })) } catch { /* ignore */ }
+        }
+        if (gotMistakes[t.id]?.length) {
+          try { localStorage.setItem(mistakeKey(t.id), JSON.stringify({ h: hashTradeForCommentary(t, videoFile), m: gotMistakes[t.id] })) } catch { /* ignore */ }
         }
       }
     } catch (e) {
@@ -178,6 +197,40 @@ export default function RecordingCommentary({ trades }: Props) {
 
   const canRun = !!videoFile && trades.length > 0 && !running
   const skippedById = new Map((result?.skipped ?? []).map(s => [s.id, s.reason]))
+
+  const applyMistake = async (trade: Trade, label: string) => {
+    const key = `${trade.id}:${label}`
+    setApplyingFor(key)
+    try {
+      const tj = trade.tags_json ?? {}
+      const current: string[] = Array.isArray(tj.mistakes) ? tj.mistakes : []
+      if (current.includes(label)) return // already applied — no-op
+      const nextTags = { ...tj, mistakes: [...current, label] }
+      const res = await fetch(`/api/trades/${trade.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags_json: nextTags }),
+      })
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string }
+        setError(`Apply failed: ${err.error ?? res.statusText}`)
+        return
+      }
+      onTradesChanged?.()
+    } catch (e) {
+      setError(`Apply failed: ${e instanceof Error ? e.message : 'unknown'}`)
+    } finally {
+      setApplyingFor(null)
+    }
+  }
+
+  const dismissMistake = (tradeId: string, label: string) => {
+    setDismissed(prev => {
+      const next = new Set(prev[tradeId] ?? [])
+      next.add(label)
+      return { ...prev, [tradeId]: next }
+    })
+  }
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
@@ -257,6 +310,16 @@ export default function RecordingCommentary({ trades }: Props) {
             const dirTone = t.direction === 'long' ? 'text-green-300 bg-green-900/30 border-green-800'
               : t.direction === 'short' ? 'text-red-300 bg-red-900/30 border-red-800'
                 : 'text-gray-400 bg-gray-800 border-gray-700'
+            // Surface suggestions only if they're not already on the trade and
+            // haven't been dismissed in this session — keeps the UI quiet once
+            // the user has triaged them.
+            const alreadyOnTrade = new Set(
+              Array.isArray(t.tags_json?.mistakes) ? (t.tags_json.mistakes as string[]) : [],
+            )
+            const dismissedForTrade = dismissed[t.id] ?? new Set<string>()
+            const liveSuggestions = (suggestedMistakes[t.id] ?? []).filter(
+              m => !alreadyOnTrade.has(m) && !dismissedForTrade.has(m),
+            )
             return (
               <div key={t.id} className="border border-gray-800 rounded-lg p-3 text-xs">
                 <div className="flex items-center gap-2 mb-1 font-mono text-gray-400">
@@ -273,6 +336,35 @@ export default function RecordingCommentary({ trades }: Props) {
                   <p className="text-gray-200 leading-snug">{c}</p>
                 ) : (
                   <p className="text-gray-600 italic">Skipped: {skip}</p>
+                )}
+                {liveSuggestions.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] uppercase tracking-wider text-gray-500 mr-1">Suggested mistakes:</span>
+                    {liveSuggestions.map(m => {
+                      const isApplying = applyingFor === `${t.id}:${m}`
+                      return (
+                        <span key={m} className="inline-flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            disabled={isApplying || applyingFor !== null}
+                            onClick={() => void applyMistake(t, m)}
+                            className="px-2 py-0.5 rounded-full text-[11px] font-medium border border-dashed border-red-700/70 text-red-300 hover:bg-red-900/30 hover:border-red-500 disabled:opacity-50 transition-colors"
+                            title={`Add "${m}" to this trade's mistakes`}
+                          >
+                            {isApplying ? '…' : `+ ${m}`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => dismissMistake(t.id, m)}
+                            className="text-gray-600 hover:text-gray-400 text-[10px] px-0.5"
+                            title="Dismiss this suggestion (session only)"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
             )

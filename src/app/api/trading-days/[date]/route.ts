@@ -54,6 +54,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
 
   if (dayError) return NextResponse.json({ error: dayError.message }, { status: 500 })
 
+  // Auto-add the day_type to the trade_tags library if it's a new label.
+  // Prep + intraday share the trade_tags.day_type rows as their chip source
+  // (see src/app/(app)/prep/[date]/page.tsx), so a label saved here that
+  // doesn't exist in the library would otherwise disappear from the chips
+  // next time prep loads. Best-effort: failures don't block the save.
+  if (typeof dayType === 'string' && dayType.trim() !== '') {
+    const label = dayType.trim()
+    const { data: existingTag } = await supabase
+      .from('trade_tags')
+      .select('id')
+      .eq('category', 'day_type')
+      .eq('label', label)
+      .maybeSingle() as { data: { id: string } | null }
+    if (!existingTag) {
+      const { data: maxRow } = await supabase
+        .from('trade_tags')
+        .select('sort_order')
+        .eq('category', 'day_type')
+        .order('sort_order', { ascending: false })
+        .limit(1)
+        .maybeSingle() as { data: { sort_order: number | null } | null }
+      const nextSort = (maxRow?.sort_order ?? 0) + 10
+      await supabase
+        .from('trade_tags')
+        .insert({ category: 'day_type', label, sort_order: nextSort })
+      // ignore error — best-effort enrichment
+    }
+  }
+
   if (marketContext && day) {
     const { error: ctxError } = await supabase
       .from('market_context')

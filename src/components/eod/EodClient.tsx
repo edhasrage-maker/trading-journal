@@ -840,7 +840,7 @@ export default function EodClient({
         postExitByTradeId={postExitByTradeId}
       />
 
-      <RecordingCommentary trades={trades} />
+      <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
 
       {/* EOD Notes */}
       <EodNotesForm

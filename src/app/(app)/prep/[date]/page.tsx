@@ -15,5 +15,24 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
     : { data: null }
   const context = contextRaw as MarketContext | null
 
-  return <PrepClient date={date} initialDay={day} initialContext={context} />
+  // Day-type options are now sourced from trade_tags so prep + intraday share
+  // a single canonical list. The old hardcoded set in PrepClient.tsx was
+  // misaligned with the intraday TagSelector — picking "Range Day" in prep
+  // matched no chip on the intraday form because that label didn't exist in
+  // trade_tags. Sourcing both from one table fixes the drift.
+  const { data: dayTypeTags } = await supabase
+    .from('trade_tags')
+    .select('label')
+    .eq('category', 'day_type')
+    .order('sort_order')
+  const dayTypeOptions = ((dayTypeTags ?? []) as { label: string }[]).map(t => t.label)
+
+  return (
+    <PrepClient
+      date={date}
+      initialDay={day}
+      initialContext={context}
+      dayTypeOptions={dayTypeOptions}
+    />
+  )
 }
