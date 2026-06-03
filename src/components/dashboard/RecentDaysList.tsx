@@ -23,7 +23,7 @@ export interface DayRowData {
   /** Day-level MFE Capture %: realized PnL / peak favorable in $. Null when no trades had MFE data. */
   avg_capture: number | null
   /** Day-level MAE Loss ×R: peak adverse / planned risk in points (NOT realized dollar loss). Null when no stops were set. */
-  avg_loss: number | null
+  avg_heat: number | null
   /** 1-min ATR-10 (Wilder) entered during prep — fallback when bars are missing for the live computation. */
   atr_1m: number | null
   /** Avg of per-trade LIVE ATR-10 (Wilder) computed at each trade's entry_time from 1-min bars. Preferred over atr_1m for the "in ATR" display when present. Null when no trades had bar data available. */
@@ -321,7 +321,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                   </div>
                 )}
               </th>
-              <SortableTh label="Cap / Loss" column="capture" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-32 whitespace-nowrap" />
+              <SortableTh label="Cap / Heat" column="capture" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-32 whitespace-nowrap" />
               <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
               <th className="w-10" />
@@ -444,7 +444,7 @@ function DayRowItem({
         <MfeMaeCell day={day} unit={mfeUnit} />
       </td>
       <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-        <CaptureLossCell day={day} />
+        <CaptureHeatCell day={day} />
       </td>
       <td className={`py-2 pr-3 text-center font-mono ${cellBg}`}>
         {day.win_rate === null
@@ -518,27 +518,30 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
 }
 
 /**
- * Capture % / MAE Loss ×R per day. Gray-by-default; only standout values
- * (give-back day average, or heat-exceeded-stop average) get a color so the
- * eye lands on days that need review rather than scanning a wall of color.
+ * Capture % / Heat % per day. Gray-by-default; only standout values
+ * (give-back day average, or sat-past-stop day average) get a color so the
+ * eye lands on days that need review.
+ *
+ * Both shown as percentages for uniformity:
+ *   Capture %  = realized PnL ÷ peak favorable in $ during the position
+ *   Heat %     = peak MAE ÷ planned stop distance in pts (100% = touched stop)
  */
-function CaptureLossCell({ day }: { day: DayRowData }) {
-  if (day.avg_capture == null && day.avg_loss == null) {
+function CaptureHeatCell({ day }: { day: DayRowData }) {
+  if (day.avg_capture == null && day.avg_heat == null) {
     return <span className="text-gray-700">—</span>
   }
   // Standout rules for the day-level aggregate:
-  //   capture < 0  → day averaged give-back trades (red, bold)
-  //   loss > 1.0×R → day averaged past planned stop (red, bold)
-  // Everything else stays gray so you can scan for problems at a glance.
+  //   capture < 0   → day averaged give-back trades (red, bold)
+  //   heat   > 100% → day averaged past planned stop (red, bold)
   const capStandout = day.avg_capture != null && day.avg_capture < 0
-  const lossStandout = day.avg_loss != null && day.avg_loss > 1.0
+  const heatStandout = day.avg_heat != null && day.avg_heat > 1.0
   const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
-  const lossCls = lossStandout ? 'text-red-400 font-bold' : 'text-gray-400'
+  const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
   return (
-    <span className="whitespace-nowrap" title="Capture = avg of (realized PnL / peak favorable $) per trade — DURING the position, not after exit. Loss = avg of (peak adverse / planned risk) per trade — % of stop touched as MAE, not realized dollar PnL. Red bold means the day averaged a give-back (capture < 0) or sat past the planned stop (loss > 1×R).">
+    <span className="whitespace-nowrap" title="Capture = avg realized PnL ÷ peak favorable $ per trade (during position, not after exit). Heat = avg peak MAE ÷ planned stop distance per trade (100% = touched stop level; > 100% = blew past it). Red bold means the day averaged a give-back (capture < 0) or sat past planned stop (heat > 100%).">
       <span className={capCls}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
       <span className="text-gray-600"> / </span>
-      <span className={lossCls}>{day.avg_loss == null ? '—' : `${day.avg_loss.toFixed(2)}×`}</span>
+      <span className={heatCls}>{day.avg_heat == null ? '—' : `${(day.avg_heat * 100).toFixed(0)}%`}</span>
     </span>
   )
 }

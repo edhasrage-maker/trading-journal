@@ -7,7 +7,7 @@ import { Plus, Edit2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import TradeForm from './TradeForm'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
-import { captureRatio, maeLossRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
+import { captureRatio, maeHeatRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
@@ -46,27 +46,24 @@ function captureDisplay(t: Trade): string | null {
   return `${pct.toFixed(0)}%`
 }
 
-/** Display-formatted MAE loss — "0.6×R" style. Null when no stop or no MAE.
- *  Note: "loss" here is % of planned stop touched as MAE, not the realized
- *  dollar loss on the trade (which is the separate PnL field). */
-function lossDisplay(t: Trade): string | null {
-  const r = maeLossRatio(t)
+/** Display-formatted MAE Heat as a percentage. Null when no stop or no MAE.
+ *  100% = MAE touched stop level; >100% = blew past it. */
+function heatDisplay(t: Trade): string | null {
+  const r = maeHeatRatio(t)
   if (r == null) return null
-  return `${r.toFixed(2)}×R`
+  return `${Math.round(r * 100)}%`
 }
 
 /**
- * Inline R · Capture · Loss line shown under the row's PnL in the collapsed
- * trade list. Capture and Loss each render as a small colored chip; cross-case
- * patterns (give-back loser, lucky-escape winner) get bold weight so they
- * stand out from a sea of normal trades when scanning the list. The bold is
- * the only extra signal — color bands match the expanded-detail view to keep
- * the visual language consistent.
+ * Inline R · Capture · Heat line shown under the row's PnL in the collapsed
+ * trade list. Capture and Heat each render as a small chip; gray by default,
+ * red+bold only for the cross-case patterns that need review (give-back
+ * loser, lucky-escape winner, heat past stop).
  */
-function CapLossInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | null }) {
+function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | null }) {
   const cap = captureRatio(trade)
-  const loss = maeLossRatio(trade)
-  if (cap == null && loss == null && !rDisplay) return null
+  const heat = maeHeatRatio(trade)
+  if (cap == null && heat == null && !rDisplay) return null
 
   // Cross-case detection. These are the trades you most want to NOT miss on
   // review — surfaced visibly so they don't blend into the row average.
@@ -79,26 +76,19 @@ function CapLossInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
   // Lucky escape: a winning trade whose MAE exceeded the planned stop. Got
   // bailed out by the trade reversing — a discipline lesson hiding in a W.
   const isGiveBack = isGiveBackTrade(trade)
-  const isLuckyEscape = (trade.pnl ?? 0) > 0 && loss != null && loss > 1.0
+  const isLuckyEscape = (trade.pnl ?? 0) > 0 && heat != null && heat > 1.0
+  // Also flag heat > 100% on losers (you blew through your planned stop).
+  const heatStandout = isLuckyEscape || (heat != null && heat > 1.0)
 
-  const capColor = cap == null
-    ? 'text-gray-500'
-    : cap >= 0.7 ? 'text-green-400'
-      : cap >= 0.4 ? 'text-yellow-400'
-      : cap >= 0 ? 'text-orange-400'
-      : 'text-red-400'
-  const lossColor = loss == null
-    ? 'text-gray-500'
-    : loss <= 0.5 ? 'text-green-400'
-      : loss <= 1.0 ? 'text-yellow-400'
-      : 'text-red-400'
+  const capCls = isGiveBack ? 'text-red-400 font-bold' : 'text-gray-400'
+  const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
 
   return (
     <div className="flex items-center justify-end gap-1.5 text-xs text-gray-500">
       {rDisplay && <span>{rDisplay}</span>}
       {cap != null && (
         <span
-          className={`${capColor} ${isGiveBack ? 'font-bold' : ''}`}
+          className={capCls}
           title={isGiveBack
             ? `Give-back: trade went favorable then closed negative. Capture ${captureDisplay(trade)} of MFE.`
             : `Capture: ${captureDisplay(trade)} of peak favorable excursion realized as PnL.`}
@@ -106,14 +96,14 @@ function CapLossInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
           {captureDisplay(trade)}
         </span>
       )}
-      {loss != null && (
+      {heat != null && (
         <span
-          className={`${lossColor} ${isLuckyEscape ? 'font-bold' : ''}`}
+          className={heatCls}
           title={isLuckyEscape
-            ? `Lucky escape: winner sat through ${lossDisplay(trade)} of planned risk — violated stop level.`
-            : `Loss: ${lossDisplay(trade)} of planned stop distance touched as MAE.`}
+            ? `Lucky escape: winner sat through ${heatDisplay(trade)} of planned risk — violated stop level.`
+            : `Heat: ${heatDisplay(trade)} of planned stop distance touched as MAE.`}
         >
-          {lossDisplay(trade)}
+          {heatDisplay(trade)}
         </span>
       )}
     </div>
@@ -324,7 +314,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                 <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
                   {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
                 </div>
-                <CapLossInline trade={trade} rDisplay={r} />
+                <CapHeatInline trade={trade} rDisplay={r} />
               </div>
 
               {isOpen ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0" />}
@@ -347,38 +337,31 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                   ))}
                 </div>
 
-                {/* Execution quality: capture % (how much of MFE did I take?) and
-                    MAE loss (did I sit through more than my planned stop?). */}
-                {(captureDisplay(trade) != null || lossDisplay(trade) != null) && (() => {
+                {/* Execution quality: Capture % (how much of MFE did I take?) and
+                    Heat % (did I sit through more than my planned stop?). */}
+                {(captureDisplay(trade) != null || heatDisplay(trade) != null) && (() => {
                   const xc = mfeMaePoints(trade)
                   const cap = captureDisplay(trade)
-                  const loss = lossDisplay(trade)
+                  const heat = heatDisplay(trade)
                   const capRatio = captureRatio(trade)
-                  const lossRatio = maeLossRatio(trade)
-                  const capColor = capRatio == null
-                    ? 'text-gray-500'
-                    : capRatio >= 0.7 ? 'text-green-400'
-                      : capRatio >= 0.4 ? 'text-yellow-400'
-                      : capRatio >= 0 ? 'text-orange-400'
-                      : 'text-red-400'
-                  const lossColor = lossRatio == null
-                    ? 'text-gray-500'
-                    : lossRatio <= 0.5 ? 'text-green-400'
-                      : lossRatio <= 1.0 ? 'text-yellow-400'
-                      : 'text-red-400'
+                  const heatRatio = maeHeatRatio(trade)
+                  // Gray default; red+bold only for standout cases (negative
+                  // capture = give-back, heat > 100% = past stop).
+                  const capCls = capRatio != null && capRatio < 0 ? 'text-red-400 font-bold' : 'text-gray-300'
+                  const heatCls = heatRatio != null && heatRatio > 1.0 ? 'text-red-400 font-bold' : 'text-gray-300'
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                       <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="Realized PnL / peak favorable excursion. 100% = you took the high.">
-                          MFE Capture
+                        <div className="text-xs text-gray-500 mb-0.5" title="Realized PnL / peak favorable excursion DURING the position. 100% = you took the high.">
+                          Capture
                         </div>
-                        <div className={`font-medium ${capColor}`}>{cap ?? '—'}</div>
+                        <div className={`font-medium ${capCls}`}>{cap ?? '—'}</div>
                       </div>
                       <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="Peak adverse excursion / planned stop distance. 1.0× = MAE touched your stop level. (% of planned risk used as MAE — separate from realized PnL.)">
-                          MAE Loss
+                        <div className="text-xs text-gray-500 mb-0.5" title="Peak adverse excursion / planned stop distance, as %. 100% = MAE touched your stop level. Red bold means past stop (you blew through or got slipped).">
+                          Heat
                         </div>
-                        <div className={`font-medium ${lossColor}`}>{loss ?? '—'}</div>
+                        <div className={`font-medium ${heatCls}`}>{heat ?? '—'}</div>
                       </div>
                       <div className="hidden sm:block">
                         <div className="text-xs text-gray-500 mb-0.5" title="Raw MFE in points">Peak MFE</div>

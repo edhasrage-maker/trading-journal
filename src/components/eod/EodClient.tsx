@@ -18,7 +18,7 @@ import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import DeleteDayDangerZone from './DeleteDayDangerZone'
 import RecordingCommentary from './RecordingCommentary'
-import { avgCaptureRatio, avgMaeLossRatio } from '@/lib/analytics'
+import { avgCaptureRatio, avgMaeHeatRatio } from '@/lib/analytics'
 import type {
   TradingDay,
   Trade,
@@ -446,7 +446,7 @@ export default function EodClient({
   // Day-level execution quality: avg MFE capture and avg MAE loss across all
   // trades that have the data (entry/stop/direction/high/low present).
   const captureStats = useMemo(() => avgCaptureRatio(trades), [trades])
-  const lossStats = useMemo(() => avgMaeLossRatio(trades), [trades])
+  const heatStats = useMemo(() => avgMaeHeatRatio(trades), [trades])
 
   // --- Trade-selection state (shared by merge + bulk-delete actions) ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -671,23 +671,20 @@ export default function EodClient({
               {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
             </div>
           </div>
-          <div title={`Avg MFE Capture across ${captureStats.count} trade${captureStats.count === 1 ? '' : 's'} on this day. Higher = took more of the favorable move offered.`}>
+          <div title={`Avg MFE Capture across ${captureStats.count} trade${captureStats.count === 1 ? '' : 's'} on this day. Higher = took more of the favorable move offered DURING the position. Red bold means the day averaged a give-back (capture went negative).`}>
             <div className="text-xs text-gray-500">Capture</div>
             <div className={`font-mono text-lg ${captureStats.avg == null ? 'text-gray-500'
-              : captureStats.avg >= 0.7 ? 'text-green-400'
-              : captureStats.avg >= 0.4 ? 'text-yellow-400'
-              : captureStats.avg >= 0 ? 'text-orange-400'
-              : 'text-red-400'}`}>
+              : captureStats.avg < 0 ? 'text-red-400 font-bold'
+              : 'text-gray-400'}`}>
               {captureStats.avg == null ? '—' : `${(captureStats.avg * 100).toFixed(0)}%`}
             </div>
           </div>
-          <div title={`Avg MAE Loss across ${lossStats.count} trade${lossStats.count === 1 ? '' : 's'}. 1.0× = avg trade touched its stop level. (% of planned risk used as MAE — separate from realized PnL.)`}>
-            <div className="text-xs text-gray-500">Loss</div>
-            <div className={`font-mono text-lg ${lossStats.avg == null ? 'text-gray-500'
-              : lossStats.avg <= 0.5 ? 'text-green-400'
-              : lossStats.avg <= 1.0 ? 'text-yellow-400'
-              : 'text-red-400'}`}>
-              {lossStats.avg == null ? '—' : `${lossStats.avg.toFixed(2)}×`}
+          <div title={`Avg MAE Heat across ${heatStats.count} trade${heatStats.count === 1 ? '' : 's'}. 100% = avg trade touched its stop level. (% of planned risk used as MAE — separate from realized PnL.)`}>
+            <div className="text-xs text-gray-500">Heat</div>
+            <div className={`font-mono text-lg ${heatStats.avg == null ? 'text-gray-500'
+              : heatStats.avg > 1.0 ? 'text-red-400 font-bold'
+              : 'text-gray-400'}`}>
+              {heatStats.avg == null ? '—' : `${(heatStats.avg * 100).toFixed(0)}%`}
             </div>
           </div>
           </div>
