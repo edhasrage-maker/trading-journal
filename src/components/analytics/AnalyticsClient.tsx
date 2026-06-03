@@ -126,10 +126,10 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
           positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
         />
         <StatCard
-          label="Avg Loss"
-          value={overall.avg_loss == null ? '—' : `${overall.avg_loss.toFixed(2)}×R`}
-          hint={`${overall.loss_count} of ${overall.count}`}
-          positive={overall.avg_loss != null && overall.avg_loss <= 0.6}
+          label="Avg Heat"
+          value={overall.avg_heat == null ? '—' : `${Math.round(overall.avg_heat * 100)}%`}
+          hint={`${overall.heat_count} of ${overall.count}`}
+          positive={overall.avg_heat != null && overall.avg_heat <= 0.6}
         />
       </div>
 

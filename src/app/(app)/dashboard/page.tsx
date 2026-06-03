@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
-import { avgCaptureRatio, avgMaeLossRatio, type TradeWithExcursion } from '@/lib/analytics'
+import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
 import { liveAtr, fetchAllBars, type AtrBar } from '@/lib/atr'
 import type { TradingDay } from '@/lib/supabase/types'
 
@@ -192,7 +192,7 @@ export default async function DashboardPage() {
     // are unused by the helpers but kept in TradeSlim for other code paths.
     const xcTrades = trades as unknown as TradeWithExcursion[]
     const captureStats = avgCaptureRatio(xcTrades)
-    const lossStats = avgMaeLossRatio(xcTrades)
+    const heatStats = avgMaeHeatRatio(xcTrades)
 
     // Live ATR averaged across the day's trades — replaces prep_atr for the
     // dashboard "in ATR" display. Falls back to prep_atr when bars are
@@ -221,7 +221,7 @@ export default async function DashboardPage() {
       avg_mfe_dollars: avgMfeDollars,
       avg_mae_dollars: avgMaeDollars,
       avg_capture: captureStats.avg,    // 0..1 fraction, or null
-      avg_loss: lossStats.avg,          // 0..n× of planned stop, or null
+      avg_heat: heatStats.avg,          // 0..n× of planned stop (displayed as %), or null
       atr_1m: prepAtrByDay.get(d.id) ?? null,
       avg_live_atr_1m: avgLiveAtr1m,
       live_atr_count: liveAtrCount,

@@ -2,7 +2,7 @@
 
 import { format } from 'date-fns'
 import { Check, Trash2, Loader2 } from 'lucide-react'
-import { captureRatio, maeLossRatio, isGiveBackTrade, rMultiple } from '@/lib/analytics'
+import { captureRatio, maeHeatRatio, isGiveBackTrade, rMultiple } from '@/lib/analytics'
 import type { Trade } from '@/lib/supabase/types'
 
 /** Display capture % per trade — uses the same null-handling as the intraday row. */
@@ -12,11 +12,11 @@ function captureDisplay(t: Trade): string | null {
   return `${Math.max(-999, Math.min(999, r * 100)).toFixed(0)}%`
 }
 
-/** Display MAE loss ×R per trade. */
-function lossDisplay(t: Trade): string | null {
-  const r = maeLossRatio(t)
+/** Display MAE Heat as a percentage per trade. 100% = MAE touched stop level. */
+function heatDisplay(t: Trade): string | null {
+  const r = maeHeatRatio(t)
   if (r == null) return null
-  return `${r.toFixed(2)}×R`
+  return `${Math.round(r * 100)}%`
 }
 
 interface Props {
@@ -83,7 +83,7 @@ export default function TradeList({
               <th className="text-right font-normal pb-2 pr-3">PnL</th>
               <th className="text-right font-normal pb-2 pr-3" title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units).">R</th>
               <th className="text-right font-normal pb-2 pr-3" title="MFE Capture: realized PnL / peak favorable excursion in $. 100% = you took the high. Bolded when the trade was a give-back (MFE >= 1R favorable then closed at a loss).">Cap</th>
-              <th className="text-right font-normal pb-2 pr-3" title="MAE Loss: peak adverse / planned stop distance. 1.0× = MAE touched stop. Bolded on lucky-escape winners (loss > 1×R but trade closed green).">Loss</th>
+              <th className="text-right font-normal pb-2 pr-3" title="MAE Heat: peak adverse / planned stop distance, as %. 100% = MAE touched stop. Red bold on lucky-escape winners (heat > 100% but trade closed green) or on standout heat (>= 100%).">Heat</th>
               <th className="text-right font-normal pb-2 pr-3" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>
               <th className="text-left font-normal pb-2">Overview</th>
               <th className="w-8" />
@@ -183,29 +183,24 @@ export default function TradeList({
                       on review (give-back loser, lucky-escape winner). */}
                   {(() => {
                     const cap = captureRatio(t)
-                    const loss = maeLossRatio(t)
+                    const heat = maeHeatRatio(t)
                     const isGiveBack = isGiveBackTrade(t)
-                    const isLuckyEscape = (t.pnl ?? 0) > 0 && loss != null && loss > 1.0
-                    const capColor = cap == null
-                      ? 'text-gray-700'
-                      : cap >= 0.7 ? 'text-green-400'
-                        : cap >= 0.4 ? 'text-yellow-400'
-                        : cap >= 0 ? 'text-orange-400'
-                        : 'text-red-400'
-                    const lossColor = loss == null
-                      ? 'text-gray-700'
-                      : loss <= 0.5 ? 'text-green-400'
-                        : loss <= 1.0 ? 'text-yellow-400'
-                        : 'text-red-400'
+                    const isLuckyEscape = (t.pnl ?? 0) > 0 && heat != null && heat > 1.0
+                    // Gray default; standout cells (give-back, lucky escape, heat past stop)
+                    // get red+bold so the eye lands on trades that need review.
+                    const capStandout = isGiveBack
+                    const heatStandout = isLuckyEscape || (heat != null && heat > 1.0)
+                    const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
+                    const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
                     return (
                       <>
-                        <td className={`py-1.5 pr-3 text-right ${capColor} ${isGiveBack ? 'font-bold' : ''}`}
+                        <td className={`py-1.5 pr-3 text-right ${capCls}`}
                           title={isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.' : undefined}>
                           {captureDisplay(t) ?? '—'}
                         </td>
-                        <td className={`py-1.5 pr-3 text-right ${lossColor} ${isLuckyEscape ? 'font-bold' : ''}`}
+                        <td className={`py-1.5 pr-3 text-right ${heatCls}`}
                           title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : undefined}>
-                          {lossDisplay(t) ?? '—'}
+                          {heatDisplay(t) ?? '—'}
                         </td>
                       </>
                     )

@@ -52,8 +52,8 @@ export interface PerformanceStats {
   r_count: number           // how many trades had a computable R
   avg_capture: number | null  // mean MFE Capture % (only trades with MFE >= 20% of risk)
   capture_count: number       // how many trades had a computable capture
-  avg_loss: number | null     // mean MAE Loss ×R (peak adverse / planned stop, in points)
-  loss_count: number          // how many trades had a computable loss
+  avg_heat: number | null     // mean MAE Loss ×R (peak adverse / planned stop, in points)
+  heat_count: number          // how many trades had a computable loss
 }
 
 const ZERO_STATS: PerformanceStats = {
@@ -63,7 +63,7 @@ const ZERO_STATS: PerformanceStats = {
   expectancy: 0, profit_factor: 0,
   avg_r: null, r_count: 0,
   avg_capture: null, capture_count: 0,
-  avg_loss: null, loss_count: 0,
+  avg_heat: null, heat_count: 0,
 }
 
 /**
@@ -187,24 +187,28 @@ export function isGiveBackTrade(t: TradeWithExcursion): boolean {
 }
 
 /**
- * MAE loss ratio = peak adverse excursion / planned risk, both in points
+ * MAE heat ratio = peak adverse excursion / planned risk, both in points
  * per contract (so multiplier and quantity cancel).
  *
- *   loss = 0    → trade went green immediately, no adverse pressure
- *   loss = 0.5  → sat through half your stop distance
- *   loss = 1.0  → MAE touched your stop level exactly
- *   loss > 1.0  → MAE went past your stop (you moved it, or got slipped)
+ * Named "Heat" rather than "Loss" because it measures pressure DURING the
+ * position, not realized dollar loss. A winning trade can still have a high
+ * heat reading if it went deep against you first ("lucky escape").
  *
- * Note: "loss" here refers to the % of planned-risk distance touched as MAE,
- * not the realized dollar loss on the trade. A winning trade can still have
- * a high loss ratio if it went deep against you first ("lucky escape").
+ *   heat = 0   → trade went green immediately, no adverse pressure
+ *   heat = 0.5 → sat through half your stop distance
+ *   heat = 1.0 → MAE touched your stop level exactly
+ *   heat > 1.0 → MAE went past your stop (you moved it, or got slipped)
+ *
+ * Display tip: multiply by 100 and render as "%" so it reads alongside
+ * Capture % uniformly. 80% = sat through 80% of planned risk before
+ * reversing.
  *
  * Returns null when stop_price, entry_price, or high/low is missing, or when
  * planned risk is zero (entry == stop).
  *
  * Display tip: render as "×R" (e.g. 0.60 → "0.6× R") to preserve the unit.
  */
-export function maeLossRatio(t: TradeWithExcursion): number | null {
+export function maeHeatRatio(t: TradeWithExcursion): number | null {
   if (t.entry_price == null || t.stop_price == null) return null
   const xc = mfeMaePoints(t)
   if (!xc) return null
@@ -225,11 +229,11 @@ export function avgCaptureRatio(trades: TradeWithExcursion[]): { avg: number | n
 }
 
 /** Aggregate MAE loss across a set of trades. Skips trades whose ratio is null. */
-export function avgMaeLossRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
+export function avgMaeHeatRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
   let sum = 0
   let n = 0
   for (const t of trades) {
-    const r = maeLossRatio(t)
+    const r = maeHeatRatio(t)
     if (r != null) { sum += r; n++ }
   }
   return { avg: n > 0 ? sum / n : null, count: n }
@@ -258,7 +262,7 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     // that don't have the necessary data.
     const cap = captureRatio(t as unknown as TradeWithExcursion)
     if (cap != null) { capSum += cap; capCount++ }
-    const lossR = maeLossRatio(t as unknown as TradeWithExcursion)
+    const lossR = maeHeatRatio(t as unknown as TradeWithExcursion)
     if (lossR != null) { lossSum += lossR; lossCount++ }
   }
   const decided = wins + losses
@@ -285,8 +289,8 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     r_count: rCount,
     avg_capture: capCount > 0 ? capSum / capCount : null,
     capture_count: capCount,
-    avg_loss: lossCount > 0 ? lossSum / lossCount : null,
-    loss_count: lossCount,
+    avg_heat: lossCount > 0 ? lossSum / lossCount : null,
+    heat_count: lossCount,
   }
 }
 
