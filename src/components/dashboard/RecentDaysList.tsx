@@ -321,7 +321,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                   </div>
                 )}
               </th>
-              <SortableTh label="Cap / Loss" column="capture" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-24" />
+              <SortableTh label="Cap / Loss" column="capture" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-32 whitespace-nowrap" />
               <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
               <th className="w-10" />
@@ -518,30 +518,27 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
 }
 
 /**
- * Capture % / MAE Loss ×R per day. Capture = realized PnL / peak favorable in $;
- * Loss = peak adverse / planned stop distance in pts (% of planned risk used as
- * MAE — not realized dollar loss).
+ * Capture % / MAE Loss ×R per day. Gray-by-default; only standout values
+ * (give-back day average, or heat-exceeded-stop average) get a color so the
+ * eye lands on days that need review rather than scanning a wall of color.
  */
 function CaptureLossCell({ day }: { day: DayRowData }) {
   if (day.avg_capture == null && day.avg_loss == null) {
     return <span className="text-gray-700">—</span>
   }
-  const capColor = day.avg_capture == null
-    ? 'text-gray-700'
-    : day.avg_capture >= 0.7 ? 'text-green-400'
-      : day.avg_capture >= 0.4 ? 'text-yellow-400'
-      : day.avg_capture >= 0 ? 'text-orange-400'
-      : 'text-red-400'
-  const lossColor = day.avg_loss == null
-    ? 'text-gray-700'
-    : day.avg_loss <= 0.5 ? 'text-green-400'
-      : day.avg_loss <= 1.0 ? 'text-yellow-400'
-      : 'text-red-400'
+  // Standout rules for the day-level aggregate:
+  //   capture < 0  → day averaged give-back trades (red, bold)
+  //   loss > 1.0×R → day averaged past planned stop (red, bold)
+  // Everything else stays gray so you can scan for problems at a glance.
+  const capStandout = day.avg_capture != null && day.avg_capture < 0
+  const lossStandout = day.avg_loss != null && day.avg_loss > 1.0
+  const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
+  const lossCls = lossStandout ? 'text-red-400 font-bold' : 'text-gray-400'
   return (
-    <span title="Capture = avg of (realized PnL / peak favorable $) per trade. Loss = avg of (peak adverse / planned risk) per trade — % of stop touched as MAE, not the realized dollar PnL.">
-      <span className={capColor}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
+    <span className="whitespace-nowrap" title="Capture = avg of (realized PnL / peak favorable $) per trade — DURING the position, not after exit. Loss = avg of (peak adverse / planned risk) per trade — % of stop touched as MAE, not realized dollar PnL. Red bold means the day averaged a give-back (capture < 0) or sat past the planned stop (loss > 1×R).">
+      <span className={capCls}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
       <span className="text-gray-600"> / </span>
-      <span className={lossColor}>{day.avg_loss == null ? '—' : `${day.avg_loss.toFixed(2)}×`}</span>
+      <span className={lossCls}>{day.avg_loss == null ? '—' : `${day.avg_loss.toFixed(2)}×`}</span>
     </span>
   )
 }
