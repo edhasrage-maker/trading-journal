@@ -93,3 +93,65 @@ export function liveAtr(bars: AtrBar[], at: Date, period = 10): number | null {
   }
   return atr
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Post-Exit Continuation
+//
+// What did the move do AFTER you closed? Computed per-trade from 1-min bars
+// in a window starting at exit_time. Answers questions like:
+//   - "I cut at +1R — did it go to +3R after I was out?"
+//   - "I bailed early at -0.5R — did it stop me out, or recover?"
+//
+// Window default: 30 minutes. Public/future version may make this
+// configurable (see docs/PUBLIC_VERSION.md).
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface PostExitData {
+  /** How much further the market continued in the trade's direction after exit (>= 0, in price points per contract). */
+  continued_favorable_pts: number
+  /** How much the market reversed against the trade direction after exit (>= 0). */
+  continued_against_pts: number
+  /** True when the window covered the full post-exit minutes; false when bars ran out (recent trade or end-of-day). */
+  full_window: boolean
+}
+
+interface PostExitTrade {
+  direction: 'long' | 'short' | null
+  exit_price: number | null
+  exit_time: string | null
+}
+
+/**
+ * Compute post-exit continuation over `windowMinutes` after `trade.exit_time`.
+ * Returns null when the trade is missing exit data or no post-exit bars exist.
+ */
+export function postExitExtension(
+  bars: AtrBar[],
+  trade: PostExitTrade,
+  windowMinutes = 30,
+): PostExitData | null {
+  if (!trade.direction || trade.exit_price == null || !trade.exit_time) return null
+  const exitMs = new Date(trade.exit_time).getTime()
+  const endMs = exitMs + windowMinutes * 60_000
+  const windowBars = bars.filter(b => {
+    const t = new Date(b.ts).getTime()
+    return t > exitMs && t <= endMs
+  })
+  if (windowBars.length === 0) return null
+  let maxHigh = -Infinity
+  let minLow = Infinity
+  for (const b of windowBars) {
+    if (b.high > maxHigh) maxHigh = b.high
+    if (b.low < minLow) minLow = b.low
+  }
+  const isLong = trade.direction === 'long'
+  const continued_favorable_pts = isLong
+    ? Math.max(0, maxHigh - trade.exit_price)
+    : Math.max(0, trade.exit_price - minLow)
+  const continued_against_pts = isLong
+    ? Math.max(0, trade.exit_price - minLow)
+    : Math.max(0, maxHigh - trade.exit_price)
+  const lastBarMs = new Date(windowBars[windowBars.length - 1].ts).getTime()
+  const full_window = lastBarMs >= endMs - 60_000
+  return { continued_favorable_pts, continued_against_pts, full_window }
+}

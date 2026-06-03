@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import EodClient from '@/components/eod/EodClient'
-import { liveAtr, fetchAllBars, type AtrBar } from '@/lib/atr'
+import { liveAtr, fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from '@/lib/atr'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,6 +45,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   // volatile the market actually was when each trade fired (the prep ATR is
   // a single morning snapshot, often stale by trade time).
   const liveAtrByTradeId: Record<string, number> = {}
+  const postExitByTradeId: Record<string, PostExitData> = {}
   if (trades.length > 0) {
     const symbolDatePairs = new Set<string>()
     for (const t of trades) {
@@ -65,6 +66,22 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       const value = liveAtr(bars, new Date(t.entry_time), 10)
       if (value != null) liveAtrByTradeId[t.id] = value
     }
+
+    // Post-Exit Continuation @ 30 min — uses the same bar set we fetched for
+    // live ATR. For each trade with an exit, look at the 30 minutes after
+    // exit_time and record max continuation in trade direction and max
+    // reversal against it. Trade list displays "compared to what you took".
+    for (const t of trades) {
+      if (!t.symbol) continue
+      const bars = barsBySymbolDate.get(`${t.symbol}|${date}`)
+      if (!bars || bars.length === 0) continue
+      const ext = postExitExtension(bars, {
+        direction: t.direction,
+        exit_price: t.exit_price,
+        exit_time: t.exit_time,
+      }, 30)
+      if (ext != null) postExitByTradeId[t.id] = ext
+    }
   }
 
   return (
@@ -75,6 +92,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       initialMarketContext={marketContext}
       allTags={tags ?? []}
       liveAtrByTradeId={liveAtrByTradeId}
+      postExitByTradeId={postExitByTradeId}
     />
   )
 }

@@ -37,6 +37,8 @@ interface Props {
   summariesLoading?: boolean
   /** Per-trade live ATR-10 (Wilder) in points, computed at each trade's entry_time from 1-min bars. Powers an "ATR @ entry" chip. */
   liveAtrByTradeId?: Record<string, number>
+  /** Per-trade post-exit continuation @30m — how much further the market went after the trade closed. Powers the "Post-Exit" column. */
+  postExitByTradeId?: Record<string, import('@/lib/atr').PostExitData>
 }
 
 export default function TradeList({
@@ -53,6 +55,7 @@ export default function TradeList({
   summaries = {},
   summariesLoading = false,
   liveAtrByTradeId,
+  postExitByTradeId,
 }: Props) {
   if (trades.length === 0) {
     return (
@@ -81,6 +84,7 @@ export default function TradeList({
               <th className="text-right font-normal pb-2 pr-3" title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units).">R</th>
               <th className="text-right font-normal pb-2 pr-3" title="MFE Capture: realized PnL / peak favorable excursion in $. 100% = you took the high. Bolded when the trade was a give-back (MFE >= 1R favorable then closed at a loss).">Cap</th>
               <th className="text-right font-normal pb-2 pr-3" title="MAE Loss: peak adverse / planned stop distance. 1.0× = MAE touched stop. Bolded on lucky-escape winners (loss > 1×R but trade closed green).">Loss</th>
+              <th className="text-right font-normal pb-2 pr-3" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>
               <th className="text-left font-normal pb-2">Overview</th>
               <th className="w-8" />
             </tr>
@@ -170,6 +174,10 @@ export default function TradeList({
                       </td>
                     )
                   })()}
+                  {/* Cap and Loss render first, then Post-Exit Continuation. Post-Exit
+                      asks "after I exited, how much further did the move keep going in my
+                      direction?" — compared to what you captured, expressed as a % "extra
+                      leg" you could have taken. */}
                   {/* Cap and Loss: same per-trade math as the intraday row chip.
                       Bold marks high-signal cross-cases that deserve attention
                       on review (give-back loser, lucky-escape winner). */}
@@ -200,6 +208,44 @@ export default function TradeList({
                           {lossDisplay(t) ?? '—'}
                         </td>
                       </>
+                    )
+                  })()}
+                  {(() => {
+                    const ext = postExitByTradeId?.[t.id]
+                    if (!ext) return <td className="py-1.5 pr-3 text-right text-gray-700">—</td>
+                    const isLong = t.direction === 'long'
+                    const capturedPts = (t.entry_price != null && t.exit_price != null)
+                      ? (isLong ? t.exit_price - t.entry_price : t.entry_price - t.exit_price)
+                      : null
+                    const cont = ext.continued_favorable_pts
+                    const against = ext.continued_against_pts
+                    // Color: green if continuation was significant relative to capture,
+                    // yellow if mild, gray if essentially nothing; red signal lives in
+                    // the reversal/against side when it dominated.
+                    const fmt = (n: number) => `${n.toFixed(1)} pts`
+                    let label: string
+                    let cls: string
+                    let title: string
+                    if (cont > against) {
+                      const pct = (capturedPts != null && capturedPts > 0)
+                        ? Math.round((cont / capturedPts) * 100)
+                        : null
+                      label = `+${fmt(cont)}${pct != null ? ` (${pct}%)` : ''}`
+                      cls = cont >= 3 ? 'text-green-400' : 'text-yellow-400'
+                      title = `In the 30 min after exit, market continued +${cont.toFixed(2)} pts in your direction.${pct != null ? ` That's ${pct}% of what you captured.` : ''}${!ext.full_window ? ' (Partial window — bars ran out.)' : ''}`
+                    } else if (against > 0.1) {
+                      label = `−${fmt(against)}`
+                      cls = 'text-red-400'
+                      title = `Market reversed −${against.toFixed(2)} pts against your direction in the 30 min after exit.${!ext.full_window ? ' (Partial window.)' : ''}`
+                    } else {
+                      label = '—'
+                      cls = 'text-gray-600'
+                      title = 'Essentially flat in the 30 min after exit.'
+                    }
+                    return (
+                      <td className={`py-1.5 pr-3 text-right ${cls}`} title={title}>
+                        {label}
+                      </td>
                     )
                   })()}
                   <td className="py-1.5 pr-2 max-w-md">

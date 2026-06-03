@@ -82,6 +82,7 @@ export interface Database {
           notes: string | null
           exit_time: string | null
           exit_price: number | null
+          recording_commentary: RecordingCommentaryData | null
           created_at: string
           updated_at: string
         }
@@ -228,6 +229,15 @@ export interface TradeExit {
   time: string  // ISO-8601
   price: number
   qty: number
+}
+
+/** AI-generated OBS recording commentary saved per-trade so it survives
+ *  reloads and syncs across PCs. Stored as jsonb on trades.recording_commentary. */
+export interface RecordingCommentaryData {
+  text: string                // The Claude-authored 1-3 sentence commentary
+  video_file: string          // Source recording filename — lets the UI flag stale commentary if the user re-runs against a different recording
+  model: string               // Which Claude model produced it (e.g. claude-sonnet-4-6)
+  generated_at: string        // ISO timestamp of when this was saved
 }
 
 export interface TradeTags {

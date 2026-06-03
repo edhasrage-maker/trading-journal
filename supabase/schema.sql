@@ -102,6 +102,8 @@ create table if not exists trades (
   --   emotions: string[]
   -- }
   notes text,
+  recording_commentary jsonb, -- AI-generated OBS frame commentary, persisted so it survives reloads and syncs cross-PC.
+                              -- Shape: { text, video_file, model, generated_at }. See lib/supabase/types.ts → RecordingCommentaryData.
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

@@ -36,6 +36,8 @@ interface Props {
   allTags: TradeTag[]
   /** Map of trade.id → per-trade live ATR-10 (Wilder) at entry_time, in price points. Computed server-side from 1-min bars. Missing entries fall back to no chip. */
   liveAtrByTradeId?: Record<string, number>
+  /** Map of trade.id → post-exit continuation @30m. Computed server-side from bars; powers the trade list's Post-Exit column. */
+  postExitByTradeId?: Record<string, import('@/lib/atr').PostExitData>
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -57,6 +59,7 @@ export default function EodClient({
   initialTrades,
   initialMarketContext,
   liveAtrByTradeId,
+  postExitByTradeId,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -837,6 +840,7 @@ export default function EodClient({
         summaries={summaries}
         summariesLoading={summariesLoading}
         liveAtrByTradeId={liveAtrByTradeId}
+        postExitByTradeId={postExitByTradeId}
       />
 
       <RecordingCommentary trades={trades} />

@@ -4,6 +4,7 @@ import { existsSync } from 'fs'
 import { join, basename } from 'path'
 import { probeVideo, extractFrameJpegBase64 } from '@/lib/video-frames'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
+import { createClient } from '@/lib/supabase/server'
 import { OBS_RECORDINGS_DIR } from '../list/route'
 
 const client = new Anthropic()
@@ -154,8 +155,40 @@ Respond with ONLY valid JSON (no markdown, no code fences), mapping each trade i
       })
     }
     const parsed = JSON.parse(jsonMatch[0]) as { commentary?: Record<string, string> }
+    const commentary = parsed.commentary ?? {}
+
+    // Persist per-trade commentary to Supabase so it survives reload + syncs
+    // across PCs. Silent-fail on missing column (the migration to add
+    // trades.recording_commentary may not have been run yet) so the route
+    // still returns the AI text even if persistence is unavailable.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const supabase: any = await createClient()
+      const generatedAt = new Date().toISOString()
+      const writes = Object.entries(commentary).map(([id, text]) =>
+        supabase
+          .from('trades')
+          .update({
+            recording_commentary: {
+              text,
+              video_file: safeName,
+              model: 'claude-sonnet-4-6',
+              generated_at: generatedAt,
+            },
+          })
+          .eq('id', id),
+      )
+      const results = await Promise.allSettled(writes)
+      const firstReject = results.find(r => r.status === 'rejected')
+      if (firstReject && firstReject.status === 'rejected') {
+        console.warn('[video/commentary] persistence skipped:', firstReject.reason)
+      }
+    } catch (persistErr) {
+      console.warn('[video/commentary] persistence skipped:', persistErr)
+    }
+
     return NextResponse.json({
-      commentary: parsed.commentary ?? {},
+      commentary,
       skipped,
       framesUsed: blocks.length - 1,
       recordingStartIso: new Date(info.creationTimeMs).toISOString(),
