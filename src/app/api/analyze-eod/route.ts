@@ -50,9 +50,22 @@ async function handle(req: Request) {
         const mistakes = t.tags_json?.mistakes?.join(', ') || '—'
         const emotions = t.tags_json?.emotions?.join(', ') || '—'
         const mgmt = t.tags_json?.trade_management?.join(', ') || '—'
+        // Per-trade notes (trader's own typed reflection on this fill) and
+        // recording_commentary (AI frame-grounded read of the same trade) are
+        // BOTH richer than the structured tags. Including them lets the EOD
+        // coach reason about patterns from real per-trade context instead of
+        // just labels. recording_commentary may be the legacy raw-string shape
+        // on a handful of pre-normalization rows — handle both.
+        const notes = t.notes?.trim()
+        const rc = t.recording_commentary
+        const commentaryText = typeof rc === 'string'
+          ? rc.trim()
+          : (rc && typeof rc === 'object' && rc.text) ? rc.text.trim() : ''
+        const notesLine = notes ? `\n       notes: ${notes}` : ''
+        const commentaryLine = commentaryText ? `\n       AI frame commentary: ${commentaryText}` : ''
         return `  ${i + 1}. ${time} ${dir} @ ${t.entry_price ?? '?'} stop ${t.stop_price ?? '?'} qty ${t.quantity ?? '?'} | PnL ${pnl}
        setups: ${setups} | confluences: ${confluences}
-       management: ${mgmt} | mistakes: ${mistakes} | emotions: ${emotions}`
+       management: ${mgmt} | mistakes: ${mistakes} | emotions: ${emotions}${notesLine}${commentaryLine}`
       }).join('\n')
 
   const totalPnl = trades.reduce((s, t) => s + (t.pnl ?? 0), 0)
@@ -103,7 +116,7 @@ Session Summary:
 - Trades: ${trades.length} (W ${wins} / L ${losses})
 - Total PnL: ${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
 
-Trades Taken:
+Trades Taken (each may include the trader's own notes and a frame-grounded AI commentary written earlier from the OBS recording at the moment of entry/exit — treat the commentary as a separate, independent observation from the structured tags and weave its concrete findings into your session-level analysis where they reinforce or contradict the tags):
 ${tradesBlock}
 
 Trader's EOD Reflection:
