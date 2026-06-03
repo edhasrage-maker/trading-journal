@@ -8,7 +8,8 @@ export interface Database {
           id: string
           date: string
           chart_screenshot_url: string | null
-          day_type: string | null
+          day_type: string | null         // Legacy single primary — kept in sync as day_types[0] for backward compat with analytics + predict-day-type
+          day_types: string[] | null      // Multi-select array (post-2026-06-03 migration). New code should read this, falling back to day_type when empty/null.
           prep_notes_json: PrepNotes
           ai_analysis_json: AiAnalysis
           eod_notes: string | null

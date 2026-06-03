@@ -15,10 +15,10 @@ interface Props {
   allTags: TradeTag[]
   trade?: Trade | null
   initialFile?: File | null
-  /** day_type from trading_days for this date — used to pre-fill the
+  /** Day-type label(s) from trading_days for this date — used to pre-fill the
    *  day_type tag on NEW trades. Ignored when editing an existing trade
-   *  (the trade's own tags_json wins). */
-  prepDayType?: string | null
+   *  (the trade's own tags_json wins). Multi-select supported. */
+  prepDayTypes?: string[]
   /** Bubble up custom tags created inline so the parent can append to the
    *  shared `allTags` list (TradeForms across the page all share one list). */
   onTagCreated?: (tag: TradeTag) => void
@@ -97,7 +97,7 @@ function rMultiple(s: FormState, symbol: string | null | undefined): string | nu
   return null
 }
 
-export default function TradeForm({ date, allTags, trade, initialFile, prepDayType, onTagCreated, defaultSymbol, onSave, onCancel }: Props) {
+export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, onSave, onCancel }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
@@ -105,8 +105,8 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       base.screenshot_url = URL.createObjectURL(initialFile)
       base.pendingFile = initialFile
     }
-    if (prepDayType) {
-      base.tags = { ...base.tags, day_type: [prepDayType] }
+    if (prepDayTypes && prepDayTypes.length > 0) {
+      base.tags = { ...base.tags, day_type: [...prepDayTypes] }
     }
     return base
   })

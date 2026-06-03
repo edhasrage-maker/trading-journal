@@ -9,7 +9,14 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
 
   const { data: dayRaw } = await supabase
     .from('trading_days').select('*').eq('date', date).single()
-  const day = dayRaw as TradingDay | null
+  // Normalize day_types: SELECT '*' returns the column when present, missing
+  // otherwise. Coerce to a typed shape so the client always sees an array
+  // (possibly empty) rather than undefined.
+  const dayObj = dayRaw as (Record<string, unknown> & TradingDay) | null
+  const day = dayObj ? {
+    ...dayObj,
+    day_types: Array.isArray(dayObj.day_types) ? dayObj.day_types as string[] : null,
+  } as TradingDay : null
 
   const { data: contextRaw } = day
     ? await supabase.from('market_context').select('*').eq('trading_day_id', day.id).single()

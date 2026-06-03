@@ -20,7 +20,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
   const { date } = await params
   const supabase: AnyClient = await createClient()
   const body = await req.json()
-  const { marketContext, prepNotes, chartScreenshotUrl, dayType, aiAnalysis, prepStartedAt, prepCompletedAt } = body
+  const { marketContext, prepNotes, chartScreenshotUrl, dayType, dayTypes, aiAnalysis, prepStartedAt, prepCompletedAt } = body
 
   // For prep_started_at: only set if not already set on the row (preserve the
   // original first-edit timestamp across subsequent saves). Read the existing
@@ -34,10 +34,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
   const shouldSetStarted =
     prepStartedAt !== undefined && !existing?.prep_started_at
 
+  // dayTypes is the multi-select source of truth (post-2026-06-03 migration).
+  // dayType is the legacy single primary, kept in sync as dayTypes[0] so
+  // analytics + predict-day-type still work until they migrate.
+  const dayTypesArray: string[] | undefined = Array.isArray(dayTypes) ? dayTypes : undefined
+  const primaryFromArray = dayTypesArray && dayTypesArray.length > 0 ? dayTypesArray[0] : undefined
+  // Resolve the legacy column: explicit dayType wins; otherwise mirror the array's primary.
+  const resolvedPrimary = typeof dayType === 'string' ? dayType : primaryFromArray
+
   const payload: Record<string, unknown> = {
     date,
     ...(chartScreenshotUrl !== undefined && { chart_screenshot_url: chartScreenshotUrl }),
-    ...(dayType !== undefined && { day_type: dayType }),
+    ...(resolvedPrimary !== undefined && { day_type: resolvedPrimary }),
+    ...(dayTypesArray !== undefined && { day_types: dayTypesArray }),
     ...(prepNotes !== undefined && { prep_notes_json: prepNotes }),
     ...(aiAnalysis !== undefined && { ai_analysis_json: aiAnalysis }),
     ...(shouldSetStarted && { prep_started_at: prepStartedAt }),
@@ -54,13 +63,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
 
   if (dayError) return NextResponse.json({ error: dayError.message }, { status: 500 })
 
-  // Auto-add the day_type to the trade_tags library if it's a new label.
-  // Prep + intraday share the trade_tags.day_type rows as their chip source
-  // (see src/app/(app)/prep/[date]/page.tsx), so a label saved here that
-  // doesn't exist in the library would otherwise disappear from the chips
-  // next time prep loads. Best-effort: failures don't block the save.
-  if (typeof dayType === 'string' && dayType.trim() !== '') {
-    const label = dayType.trim()
+  // Auto-add each saved day_type to the trade_tags library if it's a new
+  // label. Prep + intraday share the trade_tags.day_type rows as their chip
+  // source, so a label saved here that doesn't exist in the library would
+  // otherwise disappear from the chips next time prep loads. Best-effort:
+  // failures don't block the save. Walks the multi-select array so combo
+  // labels both land in the library.
+  const labelsToEnsure: string[] = []
+  if (dayTypesArray) labelsToEnsure.push(...dayTypesArray)
+  else if (typeof dayType === 'string' && dayType.trim() !== '') labelsToEnsure.push(dayType)
+  const dedupedLabels = [...new Set(labelsToEnsure.map(l => l.trim()).filter(Boolean))]
+  for (const label of dedupedLabels) {
     const { data: existingTag } = await supabase
       .from('trade_tags')
       .select('id')

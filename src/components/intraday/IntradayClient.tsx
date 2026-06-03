@@ -18,7 +18,7 @@ interface Props {
   /** Trade to auto-open + scroll to on mount (deep-link from the EOD trade list). */
   initialOpenTradeId?: string | null
   /** day_type from trading_days for this date — auto-populated on NEW trades only. */
-  prepDayType?: string | null
+  prepDayTypes?: string[]
 }
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
@@ -115,7 +115,7 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
   )
 }
 
-export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayType }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   // Tags are local so newly-created custom tags appear across every TradeForm
@@ -448,7 +448,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
 
       {/* Add trade form */}
       {isAdding && (
-        <TradeForm date={date} allTags={allTags} initialFile={pastedFile} prepDayType={prepDayType}
+        <TradeForm date={date} allTags={allTags} initialFile={pastedFile} prepDayTypes={prepDayTypes}
           onTagCreated={addTag}
           defaultSymbol={chartSymbol}
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />

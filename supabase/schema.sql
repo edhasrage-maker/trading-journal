@@ -11,7 +11,8 @@ create table if not exists trading_days (
   id uuid primary key default uuid_generate_v4(),
   date date not null unique,
   chart_screenshot_url text,
-  day_type text, -- e.g. 'trend', 'range', 'gap-and-go', populated from prep notes
+  day_type text, -- Legacy single primary (= day_types[0]). Kept in sync for backward compat with analytics + predict-day-type.
+  day_types text[] default '{}'::text[], -- Multi-select array. New code reads this; falls back to day_type when empty.
   prep_notes_json jsonb default '{}',
   -- prep_notes_json shape:
   -- {
