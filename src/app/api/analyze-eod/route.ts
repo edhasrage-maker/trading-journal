@@ -39,10 +39,29 @@ async function handle(req: Request) {
     console.warn('[analyze-eod] dropping image — unsupported media type:', imageMediaType)
   }
 
+  // Format trade times in America/Los_Angeles to match the UI display — the AI
+  // was quoting UTC times in its analysis (e.g. "15:48" for an 08:48 PT entry),
+  // which confused the user reviewing the output. PT is the user's wall-clock.
+  const PT_TIME_FMT = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+  const fmtTimePT = (iso: string | null | undefined): string => {
+    if (!iso) return '--:--'
+    const ms = Date.parse(iso)
+    if (!Number.isFinite(ms)) return '--:--'
+    const parts = PT_TIME_FMT.formatToParts(new Date(ms))
+    const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+    return `${get('hour')}:${get('minute')}:${get('second')}`
+  }
+
   const tradesBlock = trades.length === 0
     ? '  No trades taken today.'
     : trades.map((t, i) => {
-        const time = t.entry_time ? new Date(t.entry_time).toISOString().slice(11, 19) : '--:--'
+        const time = fmtTimePT(t.entry_time)
         const dir = t.direction?.toUpperCase() ?? '--'
         const pnl = t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '--'
         const setups = t.tags_json?.setups?.join(', ') || '—'
@@ -112,7 +131,7 @@ Market Context:
 - PDH/PDL: ${marketContext?.pdh ?? 'N/A'} / ${marketContext?.pdl ?? 'N/A'}
 - IBH/IBL: ${marketContext?.ibh ?? 'N/A'} / ${marketContext?.ibl ?? 'N/A'}
 
-Session Summary:
+Session Summary (all timestamps America/Los_Angeles; cite them in PT in your reasoning):
 - Trades: ${trades.length} (W ${wins} / L ${losses})
 - Total PnL: ${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
 

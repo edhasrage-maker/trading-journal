@@ -71,6 +71,22 @@ export async function POST(req: Request) {
   const mediaType = normalizeAnthropicMediaType('image/jpeg')!
   const durationSec = info.durationMs / 1000
 
+  // Format trade times in America/Los_Angeles for the AI prompt. The raw ISO
+  // strings are UTC and the AI was quoting UTC hours in its analysis (e.g.
+  // "15:48" for an 08:48 PT entry), confusing the user.
+  const PT_TIME_FMT = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
+  const fmtPT = (iso: string | null | undefined): string => {
+    if (!iso) return '--:--:--'
+    const ms = Date.parse(iso)
+    if (!Number.isFinite(ms)) return '--:--:--'
+    const parts = PT_TIME_FMT.formatToParts(new Date(ms))
+    const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+    return `${get('hour')}:${get('minute')}:${get('second')} PT`
+  }
+
   // Fetch the current mistakes library — we'll show the AI exactly what
   // labels exist so it suggests from the user's taxonomy instead of free-
   // texting. The client constrains suggestions to this list too (it would
@@ -103,7 +119,7 @@ export async function POST(req: Request) {
     try {
       const entryFrame = await extractFrameJpegBase64(fullPath, entryOffset)
       blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: entryFrame } })
-      labels.push(`Trade ${i + 1} (id=${t.id}) ENTRY @ ${t.entry_time}`)
+      labels.push(`Trade ${i + 1} (id=${t.id}) ENTRY @ ${fmtPT(t.entry_time)}`)
 
       // Only include an exit frame if exit is meaningfully after entry AND within recording.
       const exitMs = t.exit_time ? Date.parse(t.exit_time) : NaN
@@ -111,7 +127,7 @@ export async function POST(req: Request) {
       if (Number.isFinite(exitOffset) && exitOffset > entryOffset + 1 && exitOffset <= durationSec) {
         const exitFrame = await extractFrameJpegBase64(fullPath, exitOffset)
         blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: exitFrame } })
-        labels.push(`Trade ${i + 1} (id=${t.id}) EXIT @ ${t.exit_time}`)
+        labels.push(`Trade ${i + 1} (id=${t.id}) EXIT @ ${fmtPT(t.exit_time)}`)
       }
     } catch (e) {
       skipped.push({ id: t.id, reason: e instanceof Error ? e.message : 'frame extraction failed' })
