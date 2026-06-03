@@ -29,9 +29,19 @@ interface Props {
    *  ohlcv_bars table. Null when bars haven't been imported yet for the date
    *  or market_context.adr is missing — pill falls back to manual entry. */
   drAdrAuto: number | null
+  /** Server-computed Market Context stats. Each field is null when the
+   *  saved context already has a value (we never overwrite the user's typed
+   *  data) or when bar coverage is too sparse. The values seed the form on
+   *  first render so the user can save them like any typed value. */
+  autoStats: {
+    adr: number | null
+    adr_samples: number
+    atr_1m: number | null
+    atr_1m_full_warmup: boolean
+  }
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, autoStats }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -74,10 +84,13 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       ib_size: initialContext.ib_size ?? undefined,
       ib_10d_avg: initialContext.ib_10d_avg ?? undefined,
       ib_vs_10d_avg: initialContext.ib_vs_10d_avg ?? undefined,
-      adr: initialContext.adr ?? undefined,
+      // Seed adr + atr_1m from auto-compute ONLY when the saved row didn't
+      // already have one. Never overwrite a previously-typed/extracted value
+      // — the user may have a reason for the specific number they entered.
+      adr: initialContext.adr ?? autoStats.adr ?? undefined,
       adr_flag: initialContext.adr_flag ?? undefined,
       gbx_pct_adr: initialContext.gbx_pct_adr ?? undefined,
-      atr_1m: initialContext.atr_1m ?? undefined,
+      atr_1m: initialContext.atr_1m ?? autoStats.atr_1m ?? undefined,
       atr_flag: initialContext.atr_flag ?? undefined,
       price_in_pd_range: initialContext.price_in_pd_range ?? undefined,
       price_in_gbx_range: initialContext.price_in_gbx_range ?? undefined,

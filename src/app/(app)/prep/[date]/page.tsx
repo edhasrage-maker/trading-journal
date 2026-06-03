@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import PrepClient from '@/components/prep/PrepClient'
 import { computeDrAdr } from '@/lib/dr-adr'
+import { computeAdr, computeAtr1m } from '@/lib/market-stats'
 import type { TradingDay, MarketContext } from '@/lib/supabase/types'
 
 export default async function PrepPage({ params }: { params: Promise<{ date: string }> }) {
@@ -44,6 +45,21 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
     ? Math.round(drAdrResult.dr_adr * 100) / 100
     : null
 
+  // Auto-compute ADR + ATR-10 (1m) for the Market Context stats block. Only
+  // surface them when the user hasn't already saved a value — never overwrite
+  // a typed/extracted value with a computed one. RVOL is intentionally not
+  // auto-computed here (convention question; see src/lib/market-stats.ts).
+  const [adrResult, atrResult] = await Promise.all([
+    context?.adr == null ? computeAdr(supabase, symbolForBars, date) : Promise.resolve({ adr: null, samples: 0 }),
+    context?.atr_1m == null ? computeAtr1m(supabase, symbolForBars, date) : Promise.resolve({ atr_1m: null, full_warmup: false }),
+  ])
+  const autoStats = {
+    adr: adrResult.adr != null ? Math.round(adrResult.adr * 100) / 100 : null,
+    adr_samples: adrResult.samples,
+    atr_1m: atrResult.atr_1m != null ? Math.round(atrResult.atr_1m * 100) / 100 : null,
+    atr_1m_full_warmup: atrResult.full_warmup,
+  }
+
   return (
     <PrepClient
       date={date}
@@ -51,6 +67,7 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
       initialContext={context}
       dayTypeOptions={dayTypeOptions}
       drAdrAuto={drAdrAuto}
+      autoStats={autoStats}
     />
   )
 }

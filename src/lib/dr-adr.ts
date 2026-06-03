@@ -8,30 +8,7 @@
  * yet available so the UI can render a skeleton instead of stale data.
  */
 
-const PT_FMT = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/Los_Angeles',
-  hourCycle: 'h23',
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', second: '2-digit',
-})
-
-/** Convert "HH:MM:SS PT on YYYY-MM-DD" to UTC milliseconds, DST-aware. We try
- *  both UTC-7 (PDT) and UTC-8 (PST) and pick the one where the round-trip
- *  through Intl returns the same date + seconds-of-day. */
-function ptDateSodToUtcMs(dateStr: string, secondsOfDay: number): number {
-  const candidates = [-7, -8]
-  for (const offsetHrs of candidates) {
-    const ms = Date.parse(`${dateStr}T00:00:00Z`) - offsetHrs * 3_600_000 + secondsOfDay * 1000
-    const parts = PT_FMT.formatToParts(new Date(ms))
-    const m: Record<string, string> = {}
-    for (const p of parts) m[p.type] = p.value
-    const ptDate = `${m.year}-${m.month}-${m.day}`
-    const ptSod = Number(m.hour) * 3600 + Number(m.minute) * 60 + Number(m.second)
-    if (ptDate === dateStr && ptSod === secondsOfDay) return ms
-  }
-  // Fallback to PDT if neither matched (shouldn't happen on real dates).
-  return Date.parse(`${dateStr}T00:00:00Z`) + (7 * 3600 + secondsOfDay) * 1000
-}
+import { ptDateSodToUtcMs } from './pt-time'
 
 export interface DrAdrResult {
   dr: number | null
