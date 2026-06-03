@@ -311,7 +311,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                 {mfeInfoOpen && (
                   <div
                     ref={mfeInfoRef}
-                    className="absolute z-50 top-full mt-2 right-0 w-80 bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
                   >
                     <div className="flex items-start justify-between mb-2">
                       <p className="font-semibold text-white">Avg MFE / MAE</p>
@@ -365,7 +365,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                 {realizedInfoOpen && (
                   <div
                     ref={realizedInfoRef}
-                    className="absolute z-50 top-full mt-2 right-0 w-80 bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
                   >
                     <div className="flex items-start justify-between mb-2">
                       <p className="font-semibold text-white">MFE Realized % / MAE Heat %</p>
