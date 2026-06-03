@@ -83,15 +83,20 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
   const capCls = isGiveBack ? 'text-red-400 font-bold' : 'text-gray-400'
   const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
 
+  // Layout: R inline next to nothing (compact), then MFE Realized % stacked
+  // over MAE Heat % so the pair reads as a vertical unit. Each chip shows
+  // just the number; the labels live in the hover tooltips to keep the row
+  // compact. Gray default, red+bold on standout cases (give-back, lucky
+  // escape, heat past stop).
   return (
-    <div className="flex items-center justify-end gap-1.5 text-xs text-gray-500">
+    <div className="flex flex-col items-end text-xs text-gray-500 leading-tight">
       {rDisplay && <span>{rDisplay}</span>}
       {cap != null && (
         <span
           className={capCls}
           title={isGiveBack
-            ? `Give-back: trade went favorable then closed negative. Capture ${captureDisplay(trade)} of MFE.`
-            : `Capture: ${captureDisplay(trade)} of peak favorable excursion realized as PnL.`}
+            ? `MFE Realized %: ${captureDisplay(trade)} — give-back (trade went favorable then closed negative).`
+            : `MFE Realized %: ${captureDisplay(trade)} of peak favorable excursion realized as PnL.`}
         >
           {captureDisplay(trade)}
         </span>
@@ -100,8 +105,8 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
         <span
           className={heatCls}
           title={isLuckyEscape
-            ? `Lucky escape: winner sat through ${heatDisplay(trade)} of planned risk — violated stop level.`
-            : `Heat: ${heatDisplay(trade)} of planned stop distance touched as MAE.`}
+            ? `MAE Heat %: ${heatDisplay(trade)} — lucky escape (winner that violated planned stop).`
+            : `MAE Heat %: ${heatDisplay(trade)} of planned stop distance touched as MAE.`}
         >
           {heatDisplay(trade)}
         </span>
@@ -352,14 +357,14 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                       <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="Realized PnL / peak favorable excursion DURING the position. 100% = you took the high.">
-                          Capture
+                        <div className="text-xs text-gray-500 mb-0.5" title="MFE Realized %: realized PnL / peak favorable excursion DURING the position. 100% = you took the high.">
+                          MFE Realized %
                         </div>
                         <div className={`font-medium ${capCls}`}>{cap ?? '—'}</div>
                       </div>
                       <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="Peak adverse excursion / planned stop distance, as %. 100% = MAE touched your stop level. Red bold means past stop (you blew through or got slipped).">
-                          Heat
+                        <div className="text-xs text-gray-500 mb-0.5" title="MAE Heat %: peak adverse excursion / planned stop distance. 100% = MAE touched your stop level. Red bold means past stop (you blew through or got slipped).">
+                          MAE Heat %
                         </div>
                         <div className={`font-medium ${heatCls}`}>{heat ?? '—'}</div>
                       </div>
