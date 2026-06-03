@@ -270,9 +270,10 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
         const isEditing = editingId === trade.id
         const r = rMultiple(trade)
         const setupTag = trade.tags_json?.setups?.[0]
+        // Mistakes tag slice removed — category hidden pending new tagging
+        // system. tags_json.mistakes data preserved on historical trades.
         const topTags = [
           ...(trade.tags_json?.confluences ?? []).slice(0, 2),
-          ...(trade.tags_json?.mistakes ?? []).slice(0, 1),
         ]
 
         if (isEditing) {

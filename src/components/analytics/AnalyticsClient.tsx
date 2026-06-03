@@ -52,8 +52,10 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
   const mgmtPerf = useMemo(() => aggregateByTag(filtered, 'trade_management'), [filtered])
   const dayTypePerf = useMemo(() => aggregateByDayType(filtered), [filtered])
 
-  const mistakesImpact = useMemo(() => tagImpact(filtered, 'mistakes'), [filtered])
-  const emotionsImpact = useMemo(() => tagImpact(filtered, 'emotions'), [filtered])
+  // Mistakes + Emotions impact aggregations removed — both categories hidden
+  // from the tagging system pending a redesign. Historical tag data is
+  // preserved in tags_json; restore these two lines and the two
+  // <TagImpactTable> renders below to re-expose without DB changes.
 
   return (
     <div className="space-y-6">
@@ -159,18 +161,8 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
         minCount={2}
       />
 
-      <TagImpactTable
-        title="Mistakes Impact"
-        description="Avg PnL on trades where each mistake was tagged vs. trades without it (most damaging at top)"
-        data={mistakesImpact}
-        variant="mistakes"
-      />
-      <TagImpactTable
-        title="Emotions Impact"
-        description="Avg PnL by emotional state — highlights what mindset costs vs. helps"
-        data={emotionsImpact}
-        variant="emotions"
-      />
+      {/* Mistakes / Emotions Impact tables removed — pending new tagging
+          system. Historical data preserved in tags_json. */}
 
       <ConditionBuckets trades={filtered} />
 
