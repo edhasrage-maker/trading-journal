@@ -70,8 +70,8 @@ export default function TagPerformanceTable({
     { k: 'avg_pnl', label: 'Avg PnL', align: 'right' },
     { k: 'expectancy', label: 'Expectancy', align: 'right' },
     { k: 'avg_r', label: 'Avg R', align: 'right' },
-    { k: 'avg_capture', label: 'Avg Cap', align: 'right' },
-    { k: 'avg_heat', label: 'Avg Heat', align: 'right' },
+    { k: 'avg_capture', label: 'MFE %', align: 'right' },
+    { k: 'avg_heat', label: 'MAE %', align: 'right' },
     { k: 'total_pnl', label: 'Total PnL', align: 'right' },
   ]
 

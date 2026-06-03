@@ -671,16 +671,16 @@ export default function EodClient({
               {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
             </div>
           </div>
-          <div title={`Avg MFE Capture across ${captureStats.count} trade${captureStats.count === 1 ? '' : 's'} on this day. Higher = took more of the favorable move offered DURING the position. Red bold means the day averaged a give-back (capture went negative).`}>
-            <div className="text-xs text-gray-500">Capture</div>
+          <div title={`MFE Realized % across ${captureStats.count} trade${captureStats.count === 1 ? '' : 's'} on this day. Higher = took more of the favorable move offered DURING the position. Red bold means the day averaged a give-back (went negative).`}>
+            <div className="text-xs text-gray-500">MFE Realized %</div>
             <div className={`font-mono text-lg ${captureStats.avg == null ? 'text-gray-500'
               : captureStats.avg < 0 ? 'text-red-400 font-bold'
               : 'text-gray-400'}`}>
               {captureStats.avg == null ? '—' : `${(captureStats.avg * 100).toFixed(0)}%`}
             </div>
           </div>
-          <div title={`Avg MAE Heat across ${heatStats.count} trade${heatStats.count === 1 ? '' : 's'}. 100% = avg trade touched its stop level. (% of planned risk used as MAE — separate from realized PnL.)`}>
-            <div className="text-xs text-gray-500">Heat</div>
+          <div title={`MAE Heat % across ${heatStats.count} trade${heatStats.count === 1 ? '' : 's'}. 100% = avg trade touched its stop level. (% of planned risk used as MAE — separate from realized dollar PnL.)`}>
+            <div className="text-xs text-gray-500">MAE Heat %</div>
             <div className={`font-mono text-lg ${heatStats.avg == null ? 'text-gray-500'
               : heatStats.avg > 1.0 ? 'text-red-400 font-bold'
               : 'text-gray-400'}`}>

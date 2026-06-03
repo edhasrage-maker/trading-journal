@@ -82,8 +82,8 @@ export default function TradeList({
               <th className="text-right font-normal pb-2 pr-3" title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot.">ATR@</th>
               <th className="text-right font-normal pb-2 pr-3">PnL</th>
               <th className="text-right font-normal pb-2 pr-3" title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units).">R</th>
-              <th className="text-right font-normal pb-2 pr-3" title="MFE Capture: realized PnL / peak favorable excursion in $. 100% = you took the high. Bolded when the trade was a give-back (MFE >= 1R favorable then closed at a loss).">Cap</th>
-              <th className="text-right font-normal pb-2 pr-3" title="MAE Heat: peak adverse / planned stop distance, as %. 100% = MAE touched stop. Red bold on lucky-escape winners (heat > 100% but trade closed green) or on standout heat (>= 100%).">Heat</th>
+              <th className="text-right font-normal pb-2 pr-3" title="MFE Realized %: realized PnL / peak favorable excursion in $. 100% = you took the high. Bolded when the trade was a give-back (MFE >= 1R favorable then closed at a loss).">MFE %</th>
+              <th className="text-right font-normal pb-2 pr-3" title="MAE Heat %: peak adverse / planned stop distance. 100% = MAE touched stop. Red bold on lucky-escape winners (heat > 100% but trade closed green) or on standout heat (>= 100%).">MAE %</th>
               <th className="text-right font-normal pb-2 pr-3" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>
               <th className="text-left font-normal pb-2">Overview</th>
               <th className="w-8" />

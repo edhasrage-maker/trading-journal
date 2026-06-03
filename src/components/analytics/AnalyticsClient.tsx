@@ -120,13 +120,13 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
           positive={overall.avg_r != null && overall.avg_r >= 0}
         />
         <StatCard
-          label="Avg Capture"
+          label="MFE Realized %"
           value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
           hint={`${overall.capture_count} of ${overall.count}`}
           positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
         />
         <StatCard
-          label="Avg Heat"
+          label="MAE Heat %"
           value={overall.avg_heat == null ? '—' : `${Math.round(overall.avg_heat * 100)}%`}
           hint={`${overall.heat_count} of ${overall.count}`}
           positive={overall.avg_heat != null && overall.avg_heat <= 0.6}

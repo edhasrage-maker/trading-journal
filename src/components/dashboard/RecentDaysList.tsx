@@ -321,7 +321,20 @@ export default function RecentDaysList({ initialDays }: Props) {
                   </div>
                 )}
               </th>
-              <SortableTh label="Cap / Heat" column="capture" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-32 whitespace-nowrap" />
+              <SortableTh
+                label={
+                  <span className="flex flex-col items-center leading-tight">
+                    <span>MFE Realized %</span>
+                    <span>MAE Heat %</span>
+                  </span>
+                }
+                column="capture"
+                current={sortColumn}
+                direction={sortDirection}
+                onSort={setSort}
+                align="center"
+                className="pr-3 w-32 whitespace-nowrap"
+              />
               <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
               <th className="w-10" />
@@ -355,7 +368,9 @@ function SortableTh({
   align,
   className,
 }: {
-  label: string
+  // Accepts either a plain string or pre-rendered JSX so columns can have
+  // multi-line headers (e.g. "MFE Realized %" / "MAE Heat %" stacked).
+  label: string | React.ReactNode
   column: SortColumn
   current: SortColumn
   direction: SortDirection
@@ -538,9 +553,11 @@ function CaptureHeatCell({ day }: { day: DayRowData }) {
   const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
   const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
   return (
-    <span className="whitespace-nowrap" title="Capture = avg realized PnL ÷ peak favorable $ per trade (during position, not after exit). Heat = avg peak MAE ÷ planned stop distance per trade (100% = touched stop level; > 100% = blew past it). Red bold means the day averaged a give-back (capture < 0) or sat past planned stop (heat > 100%).">
+    <span
+      className="flex flex-col items-center leading-tight whitespace-nowrap"
+      title="MFE Realized % = avg realized PnL ÷ peak favorable $ per trade (during position, not after exit). MAE Heat % = avg peak MAE ÷ planned stop distance per trade (100% = touched stop level; > 100% = blew past it). Red bold means the day averaged a give-back (capture < 0) or sat past planned stop (heat > 100%)."
+    >
       <span className={capCls}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
-      <span className="text-gray-600"> / </span>
       <span className={heatCls}>{day.avg_heat == null ? '—' : `${(day.avg_heat * 100).toFixed(0)}%`}</span>
     </span>
   )
