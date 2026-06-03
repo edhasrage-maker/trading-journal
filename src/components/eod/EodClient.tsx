@@ -18,6 +18,7 @@ import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import DeleteDayDangerZone from './DeleteDayDangerZone'
 import RecordingCommentary from './RecordingCommentary'
+import { avgCaptureRatio, avgMaeHeatRatio } from '@/lib/analytics'
 import type {
   TradingDay,
   Trade,
@@ -33,6 +34,10 @@ interface Props {
   initialTrades: Trade[]
   initialMarketContext: MarketContext | null
   allTags: TradeTag[]
+  /** Map of trade.id → per-trade live ATR-10 (Wilder) at entry_time, in price points. Computed server-side from 1-min bars. Missing entries fall back to no chip. */
+  liveAtrByTradeId?: Record<string, number>
+  /** Map of trade.id → post-exit continuation @30m. Computed server-side from bars; powers the trade list's Post-Exit column. */
+  postExitByTradeId?: Record<string, import('@/lib/atr').PostExitData>
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -53,6 +58,8 @@ export default function EodClient({
   initialDay,
   initialTrades,
   initialMarketContext,
+  liveAtrByTradeId,
+  postExitByTradeId,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -436,6 +443,11 @@ export default function EodClient({
   const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
 
+  // Day-level execution quality: avg MFE capture and avg MAE loss across all
+  // trades that have the data (entry/stop/direction/high/low present).
+  const captureStats = useMemo(() => avgCaptureRatio(trades), [trades])
+  const heatStats = useMemo(() => avgMaeHeatRatio(trades), [trades])
+
   // --- Trade-selection state (shared by merge + bulk-delete actions) ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [merging, setMerging] = useState(false)
@@ -656,7 +668,23 @@ export default function EodClient({
           <div>
             <div className="text-xs text-gray-500">PnL</div>
             <div className={`font-mono text-lg ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-              {computedPnl >= 0 ? '+' : ''}{computedPnl.toFixed(2)}
+              {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
+            </div>
+          </div>
+          <div title={`MFE Realized % across ${captureStats.count} trade${captureStats.count === 1 ? '' : 's'} on this day. Higher = took more of the favorable move offered DURING the position. Red bold means the day averaged a give-back (went negative).`}>
+            <div className="text-xs text-gray-500">MFE Realized %</div>
+            <div className={`font-mono text-lg ${captureStats.avg == null ? 'text-gray-500'
+              : captureStats.avg < 0 ? 'text-red-400 font-bold'
+              : 'text-gray-400'}`}>
+              {captureStats.avg == null ? '—' : `${(captureStats.avg * 100).toFixed(0)}%`}
+            </div>
+          </div>
+          <div title={`MAE Heat % across ${heatStats.count} trade${heatStats.count === 1 ? '' : 's'}. 100% = avg trade touched its stop level. (% of planned risk used as MAE — separate from realized dollar PnL.)`}>
+            <div className="text-xs text-gray-500">MAE Heat %</div>
+            <div className={`font-mono text-lg ${heatStats.avg == null ? 'text-gray-500'
+              : heatStats.avg > 1.0 ? 'text-red-400 font-bold'
+              : 'text-gray-400'}`}>
+              {heatStats.avg == null ? '—' : `${(heatStats.avg * 100).toFixed(0)}%`}
             </div>
           </div>
           </div>
@@ -808,6 +836,8 @@ export default function EodClient({
         onRowOpen={id => router.push(`/intraday/${date}?trade=${id}`)}
         summaries={summaries}
         summariesLoading={summariesLoading}
+        liveAtrByTradeId={liveAtrByTradeId}
+        postExitByTradeId={postExitByTradeId}
       />
 
       <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />

@@ -20,15 +20,23 @@ export interface DayRowData {
   avg_mae_pts: number | null
   avg_mfe_dollars: number | null
   avg_mae_dollars: number | null
-  /** 1-min ATR-10 (Wilder) entered during prep — drives the ATR display unit on MFE/MAE. */
+  /** Day-level MFE Capture %: realized PnL / peak favorable in $. Null when no trades had MFE data. */
+  avg_capture: number | null
+  /** Day-level MAE Loss ×R: peak adverse / planned risk in points (NOT realized dollar loss). Null when no stops were set. */
+  avg_heat: number | null
+  /** 1-min ATR-10 (Wilder) entered during prep — fallback when bars are missing for the live computation. */
   atr_1m: number | null
+  /** Avg of per-trade LIVE ATR-10 (Wilder) computed at each trade's entry_time from 1-min bars. Preferred over atr_1m for the "in ATR" display when present. Null when no trades had bar data available. */
+  avg_live_atr_1m: number | null
+  /** How many of the day's trades fed avg_live_atr_1m. Powers a tooltip noting partial coverage. */
+  live_atr_count: number
 }
 
 interface Props {
   initialDays: DayRowData[]
 }
 
-type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'mfe_mae' | 'win_rate' | 'pnl'
+type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'mfe_mae' | 'capture' | 'win_rate' | 'pnl'
 type SortDirection = 'asc' | 'desc'
 type MfeUnit = 'pts' | 'dollars' | 'atr'
 
@@ -44,6 +52,8 @@ export default function RecentDaysList({ initialDays }: Props) {
   const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
   const [mfeUnit, setMfeUnit] = useState<MfeUnit>('pts')
   const mfeInfoRef = useRef<HTMLDivElement>(null)
+  const [realizedInfoOpen, setRealizedInfoOpen] = useState(false)
+  const realizedInfoRef = useRef<HTMLDivElement>(null)
 
   // Click-outside + Escape dismiss for the MFE/MAE info popover.
   useEffect(() => {
@@ -63,6 +73,25 @@ export default function RecentDaysList({ initialDays }: Props) {
       document.removeEventListener('keydown', handleKey)
     }
   }, [mfeInfoOpen])
+
+  // Click-outside + Escape dismiss for the MFE Realized % / MAE Heat % popover.
+  useEffect(() => {
+    if (!realizedInfoOpen) return
+    const handleMouse = (e: MouseEvent) => {
+      if (realizedInfoRef.current && !realizedInfoRef.current.contains(e.target as Node)) {
+        setRealizedInfoOpen(false)
+      }
+    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRealizedInfoOpen(false)
+    }
+    document.addEventListener('mousedown', handleMouse)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleMouse)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [realizedInfoOpen])
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type })
@@ -101,6 +130,7 @@ export default function RecentDaysList({ initialDays }: Props) {
         case 'process': return d.process_score
         case 'trades': return d.trade_count
         case 'mfe_mae': return d.avg_mfe_pts // unit-agnostic; ordering identical across pts/dollars
+        case 'capture': return d.avg_capture
         case 'win_rate': return d.win_rate
         case 'pnl': return d.eod_pnl
       }
@@ -281,7 +311,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                 {mfeInfoOpen && (
                   <div
                     ref={mfeInfoRef}
-                    className="absolute z-50 top-full mt-2 right-0 w-80 bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
                   >
                     <div className="flex items-start justify-between mb-2">
                       <p className="font-semibold text-white">Avg MFE / MAE</p>
@@ -308,6 +338,81 @@ export default function RecentDaysList({ initialDays }: Props) {
                       <li><strong>$</strong>: points × per-symbol contract multiplier × trade quantity</li>
                       <li><strong>ATR</strong>: 1× ATR-10 (Wilder) units. Uses the day&apos;s prep ATR (market_context.atr_1m); shows — if not entered.</li>
                     </ul>
+                    <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
+                  </div>
+                )}
+              </th>
+              <th className="font-normal py-2 pr-3 text-center w-36 relative whitespace-nowrap">
+                <button
+                  type="button"
+                  onClick={() => setSort('capture')}
+                  className={`inline-flex flex-col items-center leading-tight hover:text-white transition-colors ${sortColumn === 'capture' ? 'text-blue-300' : 'text-gray-500'}`}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    MFE Realized %
+                    {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                  </span>
+                  <span>MAE Heat %</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRealizedInfoOpen(o => !o)}
+                  className={`absolute top-2 right-1 transition-colors ${realizedInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                  title="What are MFE Realized % and MAE Heat %?"
+                >
+                  <HelpCircle className="w-3 h-3" />
+                </button>
+                {realizedInfoOpen && (
+                  <div
+                    ref={realizedInfoRef}
+                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="font-semibold text-white">MFE Realized % / MAE Heat %</p>
+                      <button
+                        type="button"
+                        onClick={() => setRealizedInfoOpen(false)}
+                        className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5"
+                        aria-label="Close"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <p className="mb-2">
+                      Two execution-quality metrics averaged across the day&apos;s trades. Both bounded by <strong>entry → exit</strong> — they measure what happened <em>while you held the position</em>, not after.
+                    </p>
+
+                    <p className="mb-1"><strong className="text-green-300">MFE Realized %</strong></p>
+                    <p className="mb-2 text-gray-400">
+                      = realized PnL ÷ peak favorable excursion in $ — &ldquo;of the move I was offered, how much did I take?&rdquo;
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
+                      <li><strong>100%</strong>: exited at the high — perfect timing</li>
+                      <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
+                      <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — trade went green then closed at a loss</li>
+                    </ul>
+
+                    <p className="mb-1"><strong className="text-red-300">MAE Heat %</strong></p>
+                    <p className="mb-2 text-gray-400">
+                      = peak adverse excursion ÷ planned stop distance — &ldquo;how much of my planned risk did I sit through?&rdquo;
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
+                      <li><strong>0–50%</strong>: clean entry, light pressure</li>
+                      <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
+                      <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — you moved it, slipped, or trade reversed in time to save you</li>
+                    </ul>
+
+                    <p className="mb-2 text-gray-500">
+                      <strong>Color rule:</strong> gray by default; red bold only on standout days — when the day averaged a give-back (capture &lt; 0) or sat past planned stop (heat &gt; 100%). Other days stay gray on purpose so the eye lands on what needs review.
+                    </p>
+
+                    <p className="mb-1 text-gray-500">Trades excluded from the average:</p>
+                    <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-500">
+                      <li>No stop_price recorded (no risk baseline)</li>
+                      <li>MFE &lt; 20% of planned risk (denominator too small — capture ratio is noise)</li>
+                    </ul>
+
                     <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
                   </div>
                 )}
@@ -345,7 +450,9 @@ function SortableTh({
   align,
   className,
 }: {
-  label: string
+  // Accepts either a plain string or pre-rendered JSX so columns can have
+  // multi-line headers (e.g. "MFE Realized %" / "MAE Heat %" stacked).
+  label: string | React.ReactNode
   column: SortColumn
   current: SortColumn
   direction: SortDirection
@@ -433,6 +540,9 @@ function DayRowItem({
       <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
         <MfeMaeCell day={day} unit={mfeUnit} />
       </td>
+      <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
+        <CaptureHeatCell day={day} />
+      </td>
       <td className={`py-2 pr-3 text-center font-mono ${cellBg}`}>
         {day.win_rate === null
           ? <span className="text-gray-700">—</span>
@@ -462,15 +572,25 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
   // express the excursion in "how many ATRs of typical 1m range." Falls back
   // to em-dash when the day's market_context.atr_1m wasn't filled in.
   if (unit === 'atr') {
-    if (day.avg_mfe_pts == null || day.avg_mae_pts == null || !day.atr_1m) {
+    // Prefer live ATR (avg of per-trade ATR computed from 1-min bars at each
+    // trade's entry_time) over the prep snapshot when available. Bar coverage
+    // exists for SCID-imported days, ~since the start of the import; older
+    // days fall back to prep_atr_1m so they don't silently render as em-dash.
+    const atrRef = day.avg_live_atr_1m ?? day.atr_1m
+    const isLive = day.avg_live_atr_1m != null
+    if (day.avg_mfe_pts == null || day.avg_mae_pts == null || !atrRef) {
       return <span className="text-gray-700">—</span>
     }
     const fmt = (v: number) => `${v.toFixed(2)}×`
+    const title = isLive
+      ? `Per-trade live ATR-10 averaged across ${day.live_atr_count} trade${day.live_atr_count === 1 ? '' : 's'} on this day (${atrRef.toFixed(2)} pts).`
+      : `Prep-time ATR-10 (${atrRef.toFixed(2)} pts) — live computation unavailable because bars are missing for this day.`
     return (
-      <span>
-        <span className="text-green-400">+{fmt(day.avg_mfe_pts / day.atr_1m)}</span>
+      <span title={title}>
+        <span className="text-green-400">+{fmt(day.avg_mfe_pts / atrRef)}</span>
         <span className="text-gray-600"> / </span>
-        <span className="text-red-400">-{fmt(day.avg_mae_pts / day.atr_1m)}</span>
+        <span className="text-red-400">-{fmt(day.avg_mae_pts / atrRef)}</span>
+        {!isLive && <span className="text-gray-600 text-[9px] ml-1">prep</span>}
       </span>
     )
   }
@@ -490,6 +610,37 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
       <span className="text-green-400">+{fmt(mfe)}</span>
       <span className="text-gray-600"> / </span>
       <span className="text-red-400">-{fmt(mae)}</span>
+    </span>
+  )
+}
+
+/**
+ * Capture % / Heat % per day. Gray-by-default; only standout values
+ * (give-back day average, or sat-past-stop day average) get a color so the
+ * eye lands on days that need review.
+ *
+ * Both shown as percentages for uniformity:
+ *   Capture %  = realized PnL ÷ peak favorable in $ during the position
+ *   Heat %     = peak MAE ÷ planned stop distance in pts (100% = touched stop)
+ */
+function CaptureHeatCell({ day }: { day: DayRowData }) {
+  if (day.avg_capture == null && day.avg_heat == null) {
+    return <span className="text-gray-700">—</span>
+  }
+  // Standout rules for the day-level aggregate:
+  //   capture < 0   → day averaged give-back trades (red, bold)
+  //   heat   > 100% → day averaged past planned stop (red, bold)
+  const capStandout = day.avg_capture != null && day.avg_capture < 0
+  const heatStandout = day.avg_heat != null && day.avg_heat > 1.0
+  const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
+  const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
+  return (
+    <span
+      className="flex flex-col items-center leading-tight whitespace-nowrap"
+      title="MFE Realized % = avg realized PnL ÷ peak favorable $ per trade (during position, not after exit). MAE Heat % = avg peak MAE ÷ planned stop distance per trade (100% = touched stop level; > 100% = blew past it). Red bold means the day averaged a give-back (capture < 0) or sat past planned stop (heat > 100%)."
+    >
+      <span className={capCls}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
+      <span className={heatCls}>{day.avg_heat == null ? '—' : `${(day.avg_heat * 100).toFixed(0)}%`}</span>
     </span>
   )
 }

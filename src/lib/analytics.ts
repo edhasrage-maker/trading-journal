@@ -1,4 +1,5 @@
 import type { Trade, TradeTags, TradingDay, MarketContext } from '@/lib/supabase/types'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
 
 /**
  * Pure aggregation helpers for the Journal + Analytics views.
@@ -7,7 +8,12 @@ import type { Trade, TradeTags, TradingDay, MarketContext } from '@/lib/supabase
  */
 
 export type TradeLike = Pick<Trade,
-  'id' | 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'entry_time' | 'tags_json' | 'trading_day_id'
+  'id' | 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'entry_time' | 'tags_json' | 'trading_day_id' | 'symbol'
+>
+
+/** Same as TradeLike plus the tick-extreme + symbol fields needed for MFE/MAE math. */
+export type TradeWithExcursion = TradeLike & Pick<Trade,
+  'high_during_position' | 'low_during_position' | 'symbol'
 >
 
 /** Trade with trading_day + market_context fields flattened in for easy filtering. */
@@ -44,6 +50,10 @@ export interface PerformanceStats {
   profit_factor: number     // sum_winners / |sum_losers|; Infinity if no losers
   avg_r: number | null      // mean R-multiple (only counted when computable)
   r_count: number           // how many trades had a computable R
+  avg_capture: number | null  // mean MFE Capture % (only trades with MFE >= 20% of risk)
+  capture_count: number       // how many trades had a computable capture
+  avg_heat: number | null     // mean MAE Loss ×R (peak adverse / planned stop, in points)
+  heat_count: number          // how many trades had a computable loss
 }
 
 const ZERO_STATS: PerformanceStats = {
@@ -52,15 +62,181 @@ const ZERO_STATS: PerformanceStats = {
   avg_winner: 0, avg_loser: 0,
   expectancy: 0, profit_factor: 0,
   avg_r: null, r_count: 0,
+  avg_capture: null, capture_count: 0,
+  avg_heat: null, heat_count: 0,
 }
 
-/** R-multiple for a single trade. Returns null when entry/stop/qty/pnl missing or risk is zero. */
+/**
+ * R-multiple for a single trade.
+ *
+ *   R = pnl / risk_in_dollars
+ *   risk_in_dollars = |entry − stop| × quantity × contract_multiplier
+ *
+ * The contract multiplier is crucial: without it, R is off by the multiplier
+ * factor (2× for MNQ, 20× for NQ, 50× for ES, etc.) Earlier versions of this
+ * helper omitted the multiplier — the previous incorrect formula
+ * `pnl / (|entry − stop| × qty)` produced "dollars per point-contract"
+ * which is not R. Fixed here so Avg R on the analytics page and all
+ * per-row R displays are unit-correct.
+ *
+ * Returns null when entry/stop/qty/pnl are missing or risk is zero.
+ */
 export function rMultiple(t: TradeLike): number | null {
   const ep = t.entry_price, sp = t.stop_price, pnl = t.pnl, qty = t.quantity
   if (ep == null || sp == null || pnl == null || qty == null) return null
-  const risk = Math.abs(ep - sp) * qty
-  if (risk === 0) return null
-  return pnl / risk
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  const riskDollars = Math.abs(ep - sp) * qty * mult
+  if (riskDollars === 0) return null
+  return pnl / riskDollars
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// MFE / MAE — raw excursions + execution-quality ratios.
+//
+// Both excursions are bounded by entry → final exit (Sierra writes high/low
+// during position on closing fills; the importer aggregates max/min across
+// multi-leg exits). Post-exit moves never appear here — by design.
+//
+// Capture ratio asks "of the favorable move I was offered, did I take it?".
+// MAE burn asks "did I sit through more risk than my plan budgeted?".
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-contract MFE and MAE in price points (positive magnitudes).
+ *   long:  MFE = high − entry,    MAE = entry − low
+ *   short: MFE = entry − low,     MAE = high − entry
+ * Returns null when entry, direction, or high/low is missing.
+ */
+export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number } | null {
+  if (t.entry_price == null || t.direction == null) return null
+  if (t.high_during_position == null || t.low_during_position == null) return null
+  const isLong = t.direction === 'long'
+  const mfe = isLong
+    ? t.high_during_position - t.entry_price
+    : t.entry_price - t.low_during_position
+  const mae = isLong
+    ? t.entry_price - t.low_during_position
+    : t.high_during_position - t.entry_price
+  return { mfe, mae }
+}
+
+/**
+ * Capture ratio = realized PnL / peak favorable excursion in $.
+ *
+ * Both sides scale by the symbol multiplier and quantity, so we can express
+ * directly as pnl / mfeDollars. Bounded [0, 1] in theory (MFE = max favorable
+ * while held; pnl ≤ MFE in $); floating-point may push slightly past 1 on
+ * exits at the exact high.
+ *
+ * Returns null when:
+ *   - pnl, quantity, or any MFE input is missing
+ *   - MFE ≤ 0 (trade never moved favorably — ratio undefined, not 0)
+ *
+ * Display tip: multiply by 100 and render as "%".
+ */
+/**
+ * Minimum MFE-to-planned-risk ratio required before captureRatio reports a
+ * value. Below this, the trade barely went favorable and the capture ratio
+ * is dominated by noise — a +$5 MFE on a -$50 loss is a "-1000% capture"
+ * that doesn't mean "gave back a winner," it means "trade went against you
+ * almost immediately." Hide rather than mislead.
+ */
+const MIN_MFE_RATIO_FOR_CAPTURE = 0.2
+
+export function captureRatio(t: TradeWithExcursion): number | null {
+  if (t.pnl == null || t.quantity == null) return null
+  // Stop is required: without a planned-risk baseline we can't tell whether
+  // a small MFE is meaningful ("trade barely tagged green") or significant
+  // ("trade hit my target"). A trade like an unplanned intraday discretionary
+  // exit has no MFE/R baseline, so we don't report a capture for it. (The
+  // alternative — fallback to ATR — would conflate per-trade execution with
+  // the day's volatility regime; cleaner to just require the stop.)
+  if (t.entry_price == null || t.stop_price == null) return null
+  const xc = mfeMaePoints(t)
+  if (!xc) return null
+  if (xc.mfe <= 0) return null
+  // Noise filter: require MFE to be at least 20% of planned risk so we don't
+  // print degenerate ratios on trades that barely tagged green before fading.
+  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  const mfeDollars = xc.mfe * mult * t.quantity
+  if (mfeDollars === 0) return null
+  return t.pnl / mfeDollars
+}
+
+/**
+ * True if the trade is a "real" give-back: closed at a loss AND had MFE of
+ * at least 1.0R favorable before reversing. Used to bold the capture chip in
+ * the row header so the trader sees these on review.
+ *
+ * Why 1.0R: that's the "I had a winner" threshold — the trade reached the
+ * trader's own unit of meaningful profit (1× planned risk) before going red.
+ * A trade that only tagged green by 0.2R isn't a give-back; it's just a small
+ * loss that briefly turned positive. The bold should be reserved for trades
+ * where there was a real winner to give back.
+ */
+export function isGiveBackTrade(t: TradeWithExcursion): boolean {
+  if ((t.pnl ?? 0) >= 0) return false
+  if (t.entry_price == null || t.stop_price == null) return false
+  const xc = mfeMaePoints(t)
+  if (!xc) return false
+  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  if (plannedRiskPts === 0) return false
+  return xc.mfe >= plannedRiskPts // MFE >= 1R favorable
+}
+
+/**
+ * MAE heat ratio = peak adverse excursion / planned risk, both in points
+ * per contract (so multiplier and quantity cancel).
+ *
+ * Named "Heat" rather than "Loss" because it measures pressure DURING the
+ * position, not realized dollar loss. A winning trade can still have a high
+ * heat reading if it went deep against you first ("lucky escape").
+ *
+ *   heat = 0   → trade went green immediately, no adverse pressure
+ *   heat = 0.5 → sat through half your stop distance
+ *   heat = 1.0 → MAE touched your stop level exactly
+ *   heat > 1.0 → MAE went past your stop (you moved it, or got slipped)
+ *
+ * Display tip: multiply by 100 and render as "%" so it reads alongside
+ * Capture % uniformly. 80% = sat through 80% of planned risk before
+ * reversing.
+ *
+ * Returns null when stop_price, entry_price, or high/low is missing, or when
+ * planned risk is zero (entry == stop).
+ *
+ * Display tip: render as "×R" (e.g. 0.60 → "0.6× R") to preserve the unit.
+ */
+export function maeHeatRatio(t: TradeWithExcursion): number | null {
+  if (t.entry_price == null || t.stop_price == null) return null
+  const xc = mfeMaePoints(t)
+  if (!xc) return null
+  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  if (plannedRiskPts === 0) return null
+  return xc.mae / plannedRiskPts
+}
+
+/** Aggregate capture across a set of trades. Skips trades whose ratio is null. */
+export function avgCaptureRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
+  let sum = 0
+  let n = 0
+  for (const t of trades) {
+    const r = captureRatio(t)
+    if (r != null) { sum += r; n++ }
+  }
+  return { avg: n > 0 ? sum / n : null, count: n }
+}
+
+/** Aggregate MAE loss across a set of trades. Skips trades whose ratio is null. */
+export function avgMaeHeatRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
+  let sum = 0
+  let n = 0
+  for (const t of trades) {
+    const r = maeHeatRatio(t)
+    if (r != null) { sum += r; n++ }
+  }
+  return { avg: n > 0 ? sum / n : null, count: n }
 }
 
 /** Aggregate a set of trades into performance stats. */
@@ -69,6 +245,8 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
   let wins = 0, losses = 0, scratches = 0
   let total = 0, sumWinners = 0, sumLosers = 0
   let rSum = 0, rCount = 0
+  let capSum = 0, capCount = 0
+  let lossSum = 0, lossCount = 0
   for (const t of trades) {
     const pnl = t.pnl ?? 0
     total += pnl
@@ -77,6 +255,15 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     else scratches++
     const r = rMultiple(t)
     if (r != null) { rSum += r; rCount++ }
+    // Capture / Loss: trades may or may not have high/low_during_position. The
+    // helpers accept TradeWithExcursion but the relevant fields are optional
+    // on Trade and null-handled internally — cast through unknown so callers
+    // that pass TradeLike still type-check, and the helpers null-out trades
+    // that don't have the necessary data.
+    const cap = captureRatio(t as unknown as TradeWithExcursion)
+    if (cap != null) { capSum += cap; capCount++ }
+    const lossR = maeHeatRatio(t as unknown as TradeWithExcursion)
+    if (lossR != null) { lossSum += lossR; lossCount++ }
   }
   const decided = wins + losses
   const winRate = decided > 0 ? wins / decided : 0
@@ -100,6 +287,10 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     profit_factor: profitFactor,
     avg_r: rCount > 0 ? rSum / rCount : null,
     r_count: rCount,
+    avg_capture: capCount > 0 ? capSum / capCount : null,
+    capture_count: capCount,
+    avg_heat: lossCount > 0 ? lossSum / lossCount : null,
+    heat_count: lossCount,
   }
 }
 

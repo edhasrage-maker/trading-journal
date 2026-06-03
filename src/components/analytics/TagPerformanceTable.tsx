@@ -15,7 +15,7 @@ interface Props {
   emptyMessage?: string
 }
 
-type SortKey = 'label' | 'count' | 'win_rate' | 'avg_pnl' | 'expectancy' | 'avg_r' | 'total_pnl'
+type SortKey = 'label' | 'count' | 'win_rate' | 'avg_pnl' | 'expectancy' | 'avg_r' | 'avg_capture' | 'avg_heat' | 'total_pnl'
 
 export default function TagPerformanceTable({
   title,
@@ -43,6 +43,8 @@ export default function TagPerformanceTable({
         case 'avg_pnl':     av = a.stats.avg_pnl;               bv = b.stats.avg_pnl; break
         case 'expectancy':  av = a.stats.expectancy;            bv = b.stats.expectancy; break
         case 'avg_r':       av = a.stats.avg_r ?? -Infinity;    bv = b.stats.avg_r ?? -Infinity; break
+        case 'avg_capture': av = a.stats.avg_capture ?? -Infinity; bv = b.stats.avg_capture ?? -Infinity; break
+        case 'avg_heat':    av = a.stats.avg_heat ?? Infinity;     bv = b.stats.avg_heat ?? Infinity; break
         case 'total_pnl':   av = a.stats.total_pnl;             bv = b.stats.total_pnl; break
       }
       if (av < bv) return -1 * dir
@@ -68,6 +70,8 @@ export default function TagPerformanceTable({
     { k: 'avg_pnl', label: 'Avg PnL', align: 'right' },
     { k: 'expectancy', label: 'Expectancy', align: 'right' },
     { k: 'avg_r', label: 'Avg R', align: 'right' },
+    { k: 'avg_capture', label: 'MFE %', align: 'right' },
+    { k: 'avg_heat', label: 'MAE %', align: 'right' },
     { k: 'total_pnl', label: 'Total PnL', align: 'right' },
   ]
 
@@ -131,6 +135,26 @@ export default function TagPerformanceTable({
                   </td>
                   <td className="py-1.5 pr-3 text-right text-gray-400">
                     {stats.avg_r == null ? '—' : `${stats.avg_r >= 0 ? '+' : ''}${stats.avg_r.toFixed(2)}R`}
+                  </td>
+                  <td
+                    className={`py-1.5 pr-3 text-right ${
+                      stats.avg_capture == null ? 'text-gray-700'
+                      : stats.avg_capture < 0 ? 'text-red-400 font-bold'
+                      : 'text-gray-400'
+                    }`}
+                    title={stats.avg_capture == null ? 'No native trades with MFE data in this group' : `Avg of (realized PnL / peak favorable in $) across ${stats.capture_count} of ${stats.count} trades. Red bold means trades in this group averaged a give-back (negative capture).`}
+                  >
+                    {stats.avg_capture == null ? '—' : `${(stats.avg_capture * 100).toFixed(0)}%`}
+                  </td>
+                  <td
+                    className={`py-1.5 pr-3 text-right ${
+                      stats.avg_heat == null ? 'text-gray-700'
+                      : stats.avg_heat > 1.0 ? 'text-red-400 font-bold'
+                      : 'text-gray-400'
+                    }`}
+                    title={stats.avg_heat == null ? 'No native trades with stop + MAE data in this group' : `Avg of (peak adverse / planned stop) across ${stats.heat_count} of ${stats.count} trades, as %. 100% = touched stop level. Red bold means trades in this group averaged past their planned stop.`}
+                  >
+                    {stats.avg_heat == null ? '—' : `${Math.round(stats.avg_heat * 100)}%`}
                   </td>
                   <td className={`py-1.5 text-right font-bold ${stats.total_pnl > 0 ? 'text-green-400' : stats.total_pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
                     {stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(0)}

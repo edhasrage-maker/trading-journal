@@ -3,8 +3,11 @@
 import { useState, useCallback } from 'react'
 import { Loader2, Save, X, ScanLine } from 'lucide-react'
 import PinPlacement, { type PinType, type Pin } from './PinPlacement'
+// PinType / Pin still used by the legacy pin-position fields kept in FormState
+// so existing trades load + save their saved pin coordinates without loss.
 import TagSelector from './TagSelector'
 import { deleteBlob } from '@/lib/storage'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
 import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
 
 interface Props {
@@ -19,6 +22,11 @@ interface Props {
   /** Bubble up custom tags created inline so the parent can append to the
    *  shared `allTags` list (TradeForms across the page all share one list). */
   onTagCreated?: (tag: TradeTag) => void
+  /** Symbol to use for the live R-multiple preview when adding a NEW trade
+   *  (no trade.symbol yet). Typically the most-common symbol on the day from
+   *  IntradayClient. Falls back to multiplier=1 when null — better than
+   *  silently showing R values off by the contract multiplier. */
+  defaultSymbol?: string | null
   onSave: (trade: Trade) => void
   onCancel: () => void
 }
@@ -74,17 +82,22 @@ function fromTrade(t: Trade): FormState {
   }
 }
 
-function rMultiple(s: FormState): string | null {
+function rMultiple(s: FormState, symbol: string | null | undefined): string | null {
   const ep = parseFloat(s.entry_price), sp = parseFloat(s.stop_price)
   const pnl = parseFloat(s.pnl), qty = parseFloat(s.quantity)
   if (isNaN(ep) || isNaN(sp) || sp === ep) return null
-  const risk = Math.abs(ep - sp) * (isNaN(qty) ? 1 : qty)
+  // Risk in dollars requires the contract multiplier. Without it, R is off by
+  // the multiplier factor (2× for MNQ, 20× for NQ, 50× for ES). For new trades
+  // (no trade.symbol yet) the caller passes a default symbol — typically the
+  // most-common symbol on the day. Unknown symbol → multiplier=1 fallback.
+  const mult = symbolToMultiplier(symbol ?? '')
+  const risk = Math.abs(ep - sp) * (isNaN(qty) ? 1 : qty) * mult
   if (risk === 0) return null
   if (!isNaN(pnl)) return (pnl / risk).toFixed(2) + 'R'
   return null
 }
 
-export default function TradeForm({ date, allTags, trade, initialFile, prepDayType, onTagCreated, onSave, onCancel }: Props) {
+export default function TradeForm({ date, allTags, trade, initialFile, prepDayType, onTagCreated, defaultSymbol, onSave, onCancel }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
@@ -115,22 +128,10 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   const clearScreenshot = () =>
     setForm(f => ({ ...f, screenshot_url: null, pendingFile: null, activePin: null, entry_pin_x: null, entry_pin_y: null, stop_pin_x: null, stop_pin_y: null, tp1_pin_x: null, tp1_pin_y: null }))
 
-  const activatePin = (type: PinType) =>
-    set('activePin', form.activePin === type ? null : type)
-
-  const clearPin = (type: PinType) => {
-    setForm(f => ({ ...f, [`${type}_pin_x`]: null, [`${type}_pin_y`]: null }))
-  }
-
-  const placePin = (type: PinType, pin: Pin) => {
-    setForm(f => ({
-      ...f,
-      [`${type}_pin_x`]: pin.x,
-      [`${type}_pin_y`]: pin.y,
-      activePin: null,
-    }))
-  }
-
+  // Pin display only — placement UI was removed once /api/extract-trade
+  // started auto-detecting entry/stop/TP1 prices. Legacy pin coordinates on
+  // existing trades still render via the PinPlacement overlay so historical
+  // screenshots keep their visual markers.
   const pins: Partial<Record<PinType, Pin>> = {}
   if (form.entry_pin_x != null && form.entry_pin_y != null) pins.entry = { x: form.entry_pin_x, y: form.entry_pin_y }
   if (form.stop_pin_x != null && form.stop_pin_y != null) pins.stop = { x: form.stop_pin_x, y: form.stop_pin_y }
@@ -278,7 +279,10 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
     }
   }
 
-  const r = rMultiple(form)
+  // Prefer the edited trade's symbol; fall back to the day's default symbol
+  // passed from IntradayClient (most-common symbol on the day); fall back to
+  // null which makes rMultiple use multiplier=1.
+  const r = rMultiple(form, trade?.symbol ?? defaultSymbol ?? null)
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl">
@@ -313,10 +317,6 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               <PinPlacement
                 imageUrl={form.screenshot_url}
                 pins={pins}
-                activePin={form.activePin}
-                onActivate={activatePin}
-                onPlace={placePin}
-                onClear={clearPin}
               />
               <div className="flex items-center gap-4">
                 <button type="button" onClick={readScreenshot} disabled={extracting}

@@ -7,6 +7,8 @@ import { Plus, Edit2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import TradeForm from './TradeForm'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
+import { captureRatio, maeHeatRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 interface Props {
@@ -27,9 +29,90 @@ function fmt(n: number | null) { return n == null ? '—' : n.toFixed(2) }
 
 function rMultiple(t: Trade): string | null {
   if (!t.entry_price || !t.stop_price || !t.pnl) return null
-  const risk = Math.abs(t.entry_price - t.stop_price) * (t.quantity ?? 1)
+  // R = pnl / risk_in_dollars. Risk in dollars requires the contract multiplier;
+  // without it the value is off by 2× for MNQ, 20× for NQ, 50× for ES, etc.
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  const risk = Math.abs(t.entry_price - t.stop_price) * (t.quantity ?? 1) * mult
   if (risk === 0) return null
   return (t.pnl / risk).toFixed(1) + 'R'
+}
+
+/** Display-formatted capture % — null when MFE can't be computed or was non-positive. */
+function captureDisplay(t: Trade): string | null {
+  const r = captureRatio(t)
+  if (r == null) return null
+  // Bound display at -999/+999% so a degenerate ratio doesn't blow the layout.
+  const pct = Math.max(-999, Math.min(999, r * 100))
+  return `${pct.toFixed(0)}%`
+}
+
+/** Display-formatted MAE Heat as a percentage. Null when no stop or no MAE.
+ *  100% = MAE touched stop level; >100% = blew past it. */
+function heatDisplay(t: Trade): string | null {
+  const r = maeHeatRatio(t)
+  if (r == null) return null
+  return `${Math.round(r * 100)}%`
+}
+
+/**
+ * Inline R · Capture · Heat line shown under the row's PnL in the collapsed
+ * trade list. Capture and Heat each render as a small chip; gray by default,
+ * red+bold only for the cross-case patterns that need review (give-back
+ * loser, lucky-escape winner, heat past stop).
+ */
+function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | null }) {
+  const cap = captureRatio(trade)
+  const heat = maeHeatRatio(trade)
+  if (cap == null && heat == null && !rDisplay) return null
+
+  // Cross-case detection. These are the trades you most want to NOT miss on
+  // review — surfaced visibly so they don't blend into the row average.
+  //
+  // Give-back: had MFE >= 1R favorable AND closed at a loss. A negative
+  // capture alone isn't enough — a +0.2R MFE that turned into a small loss is
+  // just a normal small loss, not a "winner I gave back". 1R = the threshold
+  // for what the trader's own R-multiple framework considers a real winner.
+  //
+  // Lucky escape: a winning trade whose MAE exceeded the planned stop. Got
+  // bailed out by the trade reversing — a discipline lesson hiding in a W.
+  const isGiveBack = isGiveBackTrade(trade)
+  const isLuckyEscape = (trade.pnl ?? 0) > 0 && heat != null && heat > 1.0
+  // Also flag heat > 100% on losers (you blew through your planned stop).
+  const heatStandout = isLuckyEscape || (heat != null && heat > 1.0)
+
+  const capCls = isGiveBack ? 'text-red-400 font-bold' : 'text-gray-400'
+  const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
+
+  // Layout: R inline next to nothing (compact), then MFE Realized % stacked
+  // over MAE Heat % so the pair reads as a vertical unit. Each chip shows
+  // just the number; the labels live in the hover tooltips to keep the row
+  // compact. Gray default, red+bold on standout cases (give-back, lucky
+  // escape, heat past stop).
+  return (
+    <div className="flex flex-col items-end text-xs text-gray-500 leading-tight">
+      {rDisplay && <span>{rDisplay}</span>}
+      {cap != null && (
+        <span
+          className={capCls}
+          title={isGiveBack
+            ? `MFE Realized %: ${captureDisplay(trade)} — give-back (trade went favorable then closed negative).`
+            : `MFE Realized %: ${captureDisplay(trade)} of peak favorable excursion realized as PnL.`}
+        >
+          {captureDisplay(trade)}
+        </span>
+      )}
+      {heat != null && (
+        <span
+          className={heatCls}
+          title={isLuckyEscape
+            ? `MAE Heat %: ${heatDisplay(trade)} — lucky escape (winner that violated planned stop).`
+            : `MAE Heat %: ${heatDisplay(trade)} of planned stop distance touched as MAE.`}
+        >
+          {heatDisplay(trade)}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayType }: Props) {
@@ -148,7 +231,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider">Day P&L</div>
             <div className={`text-lg font-bold ${pnlColor(totalPnl)}`}>
-              {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
+              {`${totalPnl >= 0 ? '+' : '−'}$${Math.abs(totalPnl).toFixed(2)}`}
             </div>
           </div>
           <div>
@@ -198,6 +281,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           return (
             <TradeForm key={trade.id} date={date} allTags={allTags} trade={trade}
               onTagCreated={addTag}
+              defaultSymbol={chartSymbol}
               onSave={handleSave} onCancel={() => setMode({ type: 'list' })} />
           )
         }
@@ -235,12 +319,15 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                 ))}
               </div>
 
-              {/* P&L + R */}
+              {/* P&L · R · Capture % · Loss ×R. Capture and loss are bolded when
+                  the trade matches a high-signal cross-case pattern:
+                    - "Give-back" = loser that went green first (negative capture)
+                    - "Lucky escape" = winner that violated the planned stop (loss > 1×R) */}
               <div className="text-right shrink-0">
                 <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
-                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(0)}`}
+                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
                 </div>
-                {r && <div className="text-xs text-gray-500">{r}</div>}
+                <CapHeatInline trade={trade} rDisplay={r} />
               </div>
 
               {isOpen ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0" />}
@@ -262,6 +349,44 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                     </div>
                   ))}
                 </div>
+
+                {/* Execution quality: Capture % (how much of MFE did I take?) and
+                    Heat % (did I sit through more than my planned stop?). */}
+                {(captureDisplay(trade) != null || heatDisplay(trade) != null) && (() => {
+                  const xc = mfeMaePoints(trade)
+                  const cap = captureDisplay(trade)
+                  const heat = heatDisplay(trade)
+                  const capRatio = captureRatio(trade)
+                  const heatRatio = maeHeatRatio(trade)
+                  // Gray default; red+bold only for standout cases (negative
+                  // capture = give-back, heat > 100% = past stop).
+                  const capCls = capRatio != null && capRatio < 0 ? 'text-red-400 font-bold' : 'text-gray-300'
+                  const heatCls = heatRatio != null && heatRatio > 1.0 ? 'text-red-400 font-bold' : 'text-gray-300'
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div>
+                        <div className="text-xs text-gray-500 mb-0.5" title="MFE Realized %: realized PnL / peak favorable excursion DURING the position. 100% = you took the high.">
+                          MFE Realized %
+                        </div>
+                        <div className={`font-medium ${capCls}`}>{cap ?? '—'}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 mb-0.5" title="MAE Heat %: peak adverse excursion / planned stop distance. 100% = MAE touched your stop level. Red bold means past stop (you blew through or got slipped).">
+                          MAE Heat %
+                        </div>
+                        <div className={`font-medium ${heatCls}`}>{heat ?? '—'}</div>
+                      </div>
+                      <div className="hidden sm:block">
+                        <div className="text-xs text-gray-500 mb-0.5" title="Raw MFE in points">Peak MFE</div>
+                        <div className="text-gray-300 font-mono">{xc ? `+${xc.mfe.toFixed(2)}` : '—'}</div>
+                      </div>
+                      <div className="hidden sm:block">
+                        <div className="text-xs text-gray-500 mb-0.5" title="Raw MAE in points">Peak MAE</div>
+                        <div className="text-gray-300 font-mono">{xc ? `−${xc.mae.toFixed(2)}` : '—'}</div>
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* Screenshot with pins */}
                 {trade.screenshot_url && (
@@ -325,6 +450,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
       {isAdding && (
         <TradeForm date={date} allTags={allTags} initialFile={pastedFile} prepDayType={prepDayType}
           onTagCreated={addTag}
+          defaultSymbol={chartSymbol}
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />
       )}
 

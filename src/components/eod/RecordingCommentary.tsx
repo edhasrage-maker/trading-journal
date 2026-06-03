@@ -68,7 +68,15 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
   }, [])
 
   // Hydrate cached commentaries + mistake suggestions whenever the selected
-  // video or trades change.
+  // video or trades change. Priority order:
+  //   1. trades[].recording_commentary (Supabase-backed, cross-PC). Stale-only
+  //      check: skip if the stored video_file doesn't match the selected one,
+  //      so switching recordings doesn't surface mismatched commentary.
+  //   2. localStorage (per-PC speed cache, also hash-checked).
+  // Mistake suggestions are localStorage-only for now — they haven't been
+  // migrated into the DB column yet.
+  // Both fall back gracefully — DB column may be missing if the migration
+  // hasn't been run yet; localStorage may be empty on a fresh browser.
   useEffect(() => {
     if (!videoFile || trades.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing cached commentaries when no recording is selected
@@ -79,6 +87,13 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
     const cached: Record<string, string> = {}
     const cachedMistakes: Record<string, string[]> = {}
     for (const t of trades) {
+      // Server-persisted first
+      const dbCommentary = t.recording_commentary
+      if (dbCommentary?.text && dbCommentary.video_file === videoFile) {
+        cached[t.id] = dbCommentary.text
+        continue
+      }
+      // localStorage fallback (legacy path / fresh-DB users)
       try {
         const raw = localStorage.getItem(cacheKey(t.id))
         if (raw) {
@@ -94,6 +109,7 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
         }
       } catch { /* ignore */ }
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrating commentary cache from server + local sources
     setCommentary(cached)
     setSuggestedMistakes(cachedMistakes)
   }, [videoFile, trades])

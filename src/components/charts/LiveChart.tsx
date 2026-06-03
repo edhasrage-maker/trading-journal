@@ -17,7 +17,7 @@ import {
 } from 'lightweight-charts'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
-import { migrateChartPrefs, schedulePushChartPref } from '@/lib/chart-prefs'
+import { migrateChartPrefs, schedulePushChartPref, pullChartPref } from '@/lib/chart-prefs'
 
 interface Props {
   date: string
@@ -236,6 +236,41 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const restoredKeyRef = useRef<string | null>(null)
   const [hasSavedView, setHasSavedView] = useState(false)
   useEffect(() => { setHasSavedView(!!(symbol && loadView(symbol, date))) }, [symbol, date])
+
+  // Pull-on-mount: the one-shot chart-prefs migration only runs once per PC,
+  // so a view saved on the OTHER PC after this PC migrated would never appear
+  // here. This effect closes that gap — fetches the server's value for this
+  // exact (symbol, date) view key, and if it differs from local, hydrates
+  // localStorage + applies it. 30s cache in pullChartPref prevents repeated
+  // fetches when chartView toggles or the component re-mounts.
+  useEffect(() => {
+    if (!symbol) return
+    let cancelled = false
+    void pullChartPref(viewKey(symbol, date)).then(serverValue => {
+      if (cancelled) return
+      if (!serverValue || typeof serverValue !== 'object') return
+      const range = serverValue as { from: number; to: number }
+      if (typeof range.from !== 'number' || typeof range.to !== 'number') return
+      const local = loadView(symbol, date)
+      if (local && local.from === range.from && local.to === range.to) return
+      // Server differs from local — hydrate localStorage so loadView picks it
+      // up on subsequent restores, then apply directly if the chart is
+      // already past its first-restore for this day.
+      saveView(symbol, date, range)
+      setHasSavedView(true)
+      const sameDay = restoredKeyRef.current === `${symbol}|${date}`
+      const tscale = chartRef.current?.timeScale()
+      if (sameDay && tscale) {
+        tscale.setVisibleLogicalRange(range)
+        requestAnimationFrame(() => {
+          chartRef.current?.timeScale().setVisibleLogicalRange(range)
+        })
+      }
+    })
+    return () => { cancelled = true }
+  }, [symbol, date])
+
+
   const [viewSavedFlash, setViewSavedFlash] = useState(false)
 
   // Explicit "Save chart view" — locks in the current zoom for this day plus
@@ -966,7 +1001,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
                   {(t.direction ?? '').toUpperCase()} {t.quantity ?? ''} @ {t.entry_price ?? '?'}
                 </span>
                 <span className={`font-mono font-bold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-                  {pnl >= 0 ? '+' : ''}{pnl.toFixed(0)}
+                  {`${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl).toFixed(0)}`}
                 </span>
               </div>
               <div className="text-gray-400 space-y-0.5">

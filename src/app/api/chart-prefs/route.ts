@@ -8,17 +8,25 @@ interface PrefRow { key: string; value: unknown; updated_at?: string }
 
 /**
  * GET /api/chart-prefs
+ * GET /api/chart-prefs?key=livechart-view-v3-NQ-2026-06-02
  *
- * Returns all chart-prefs rows. The chart sync layer fetches this once on
- * first-ever mount per PC (gated by the `chart-prefs-migrated-v1` localStorage
- * flag) and hydrates localStorage from whatever Supabase has. After
- * migration, this endpoint isn't called again unless the user wipes the flag.
+ * Without ?key — returns ALL chart-prefs rows. Used by the one-shot
+ * migration on first-ever mount per PC (gated by `chart-prefs-migrated-v1`
+ * in localStorage).
+ *
+ * With ?key — returns just that single entry (or an empty list). Used by
+ * the runtime pull-on-mount in LiveChart so a saved view created on the
+ * OTHER PC after migration ran can be picked up without re-migrating.
+ * Targeted fetch keeps payloads small even as the user accumulates many
+ * livechart-view-v3-* keys over time.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const supabase: AnyClient = await createClient()
-  const { data, error } = await supabase
-    .from('chart_prefs')
-    .select('key, value, updated_at')
+  const url = new URL(req.url)
+  const key = url.searchParams.get('key')
+  let query = supabase.from('chart_prefs').select('key, value, updated_at')
+  if (key) query = query.eq('key', key)
+  const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ entries: data ?? [] })
 }
