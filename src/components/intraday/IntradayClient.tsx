@@ -115,9 +115,16 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
   )
 }
 
-export default function IntradayClient({ date, initialTrades, allTags, initialOpenTradeId, prepDayType }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayType }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
+  // Tags are local so newly-created custom tags appear across every TradeForm
+  // on the page (existing edit-mode forms + the "new" form) without a full
+  // page refresh.
+  const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
+  const addTag = (tag: TradeTag) => {
+    setAllTags(prev => prev.some(t => t.id === tag.id) ? prev : [...prev, tag])
+  }
   const [mode, setMode] = useState<Mode>({ type: 'list' })
   const [expanded, setExpanded] = useState<Set<string>>(
     () => (initialOpenTradeId ? new Set([initialOpenTradeId]) : new Set()),
@@ -273,6 +280,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
         if (isEditing) {
           return (
             <TradeForm key={trade.id} date={date} allTags={allTags} trade={trade}
+              onTagCreated={addTag}
               defaultSymbol={chartSymbol}
               onSave={handleSave} onCancel={() => setMode({ type: 'list' })} />
           )
@@ -441,6 +449,7 @@ export default function IntradayClient({ date, initialTrades, allTags, initialOp
       {/* Add trade form */}
       {isAdding && (
         <TradeForm date={date} allTags={allTags} initialFile={pastedFile} prepDayType={prepDayType}
+          onTagCreated={addTag}
           defaultSymbol={chartSymbol}
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />
       )}

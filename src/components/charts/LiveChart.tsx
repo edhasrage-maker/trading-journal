@@ -786,7 +786,19 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     const timeSec = (Math.floor(new Date(t.entry_time).getTime() / 60000) * 60) as Time
     const price = t.entry_price ?? null
     suppressCrosshairRef.current = true // hold across the synthetic crosshair event
-    if (price != null) chart.setCrosshairPosition(price, timeSec, candle)
+    // setCrosshairPosition throws "Value is null" when the time falls outside
+    // the loaded bar range (which happens whenever the hovered trade's entry
+    // is on a day whose bars haven't been imported, or the chart is still
+    // mounting). Skip the synthetic crosshair in that case — the popup still
+    // renders at the timeToCoordinate-resolved position, just without the
+    // hairline.
+    if (price != null) {
+      try {
+        chart.setCrosshairPosition(price, timeSec, candle)
+      } catch {
+        suppressCrosshairRef.current = false
+      }
+    }
     const x = chart.timeScale().timeToCoordinate(timeSec)
     const y = price != null ? candle.priceToCoordinate(price) : null
     setHover({ trade: t, x: x ?? 8, y: y ?? height / 2 })
