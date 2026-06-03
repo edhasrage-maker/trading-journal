@@ -28,10 +28,6 @@ const CATEGORY_COLORS: Partial<Record<TagCategory, string>> = {
 
 const DEFAULT_SELECTED = 'bg-blue-700 border-blue-600 text-white'
 
-// Mistakes + emotions hidden pending a new tagging system. Historical tag
-// data on existing trades stays in the DB (tags_json.mistakes / .emotions)
-// and is preserved so a future migration can fold it into the replacement.
-// To re-expose them temporarily, re-add 'mistakes' and 'emotions' here.
 const CATEGORY_ORDER: TagCategory[] = [
   'setups',
   'confluences',
@@ -39,6 +35,8 @@ const CATEGORY_ORDER: TagCategory[] = [
   'entry_model',
   'trade_management',
   'day_type',
+  'mistakes',
+  'emotions',
 ]
 
 export default function TagSelector({ tags, selected, suggested, onChange }: Props) {
