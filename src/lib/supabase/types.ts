@@ -82,7 +82,10 @@ export interface Database {
           notes: string | null
           exit_time: string | null
           exit_price: number | null
-          recording_commentary: RecordingCommentaryData | null
+          // `string` is the legacy shape from a few June 1 rows written before
+          // the object format landed — kept in the type so the client can
+          // safely read those rows until the one-shot normalizer cleans them up.
+          recording_commentary: RecordingCommentaryData | string | null
           created_at: string
           updated_at: string
         }

@@ -86,19 +86,47 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
     }
     const cached: Record<string, string> = {}
     const cachedMistakes: Record<string, string[]> = {}
+    // Trades whose commentary we have in localStorage but the DB doesn't —
+    // we'll push them up below so the other PC sees them next time it loads.
+    // This closes the gap where an earlier "Run commentary" hit a route
+    // version that didn't persist (or persisted as a raw string), or hit
+    // before the migration column landed. The PATCH is fire-and-forget so
+    // hydration never blocks on it.
+    const toBackfill: Array<{ id: string; text: string }> = []
     for (const t of trades) {
-      // Server-persisted first
+      // Server-persisted first. Accept both shapes: the current
+      // { text, video_file, ... } object and the legacy raw-string format
+      // that some June 1 rows still have.
       const dbCommentary = t.recording_commentary
-      if (dbCommentary?.text && dbCommentary.video_file === videoFile) {
-        cached[t.id] = dbCommentary.text
+      const dbObj = typeof dbCommentary === 'object' && dbCommentary !== null ? dbCommentary : null
+      if (typeof dbCommentary === 'string' && dbCommentary.trim()) {
+        cached[t.id] = dbCommentary
+      } else if (dbObj?.text && dbObj.video_file === videoFile) {
+        cached[t.id] = dbObj.text
+        // already on the server in the right shape — no backfill needed
+        try {
+          const rawM = localStorage.getItem(mistakeKey(t.id))
+          if (rawM) {
+            const m = JSON.parse(rawM) as { h: string; m: string[] }
+            if (m.h === hashTradeForCommentary(t, videoFile) && Array.isArray(m.m) && m.m.length > 0) {
+              cachedMistakes[t.id] = m.m
+            }
+          }
+        } catch { /* ignore */ }
         continue
       }
-      // localStorage fallback (legacy path / fresh-DB users)
+      // localStorage fallback (legacy path / fresh-DB users).
       try {
         const raw = localStorage.getItem(cacheKey(t.id))
         if (raw) {
           const c = JSON.parse(raw) as { h: string; s: string }
-          if (c.h === hashTradeForCommentary(t, videoFile) && c.s) cached[t.id] = c.s
+          if (c.h === hashTradeForCommentary(t, videoFile) && c.s) {
+            cached[t.id] = c.s
+            // DB is empty / mismatched-shape and localStorage has fresh text —
+            // backfill it so other PCs see this trade's commentary.
+            const dbHasUsableObject = !!(dbObj?.text && dbObj.video_file === videoFile)
+            if (!dbHasUsableObject) toBackfill.push({ id: t.id, text: c.s })
+          }
         }
         const rawM = localStorage.getItem(mistakeKey(t.id))
         if (rawM) {
@@ -109,9 +137,32 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
         }
       } catch { /* ignore */ }
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrating commentary cache from server + local sources
     setCommentary(cached)
     setSuggestedMistakes(cachedMistakes)
+
+    // Fire-and-forget backfill. Stamping with the local generated_at is a
+    // small lie (this was generated whenever Run commentary originally ran)
+    // but the other PC just needs the text + video_file to render.
+    if (toBackfill.length > 0) {
+      const generatedAt = new Date().toISOString()
+      void Promise.allSettled(
+        toBackfill.map(({ id, text }) =>
+          fetch(`/api/trades/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              recording_commentary: {
+                text,
+                video_file: videoFile,
+                model: 'claude-sonnet-4-6',
+                generated_at: generatedAt,
+                backfilled_from_local_cache: true,
+              },
+            }),
+          }),
+        ),
+      )
+    }
   }, [videoFile, trades])
 
   const run = useCallback(async () => {
