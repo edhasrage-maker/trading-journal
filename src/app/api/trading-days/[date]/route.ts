@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { resilientUpsert } from '@/lib/resilient-upsert'
+import { normalizeTagArray, type TradeTags } from '@/lib/supabase/types'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -101,6 +102,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
       .from('market_context')
       .upsert({ trading_day_id: day.id, ...marketContext }, { onConflict: 'trading_day_id' }) as { error: { message: string } | null }
     if (ctxError) return NextResponse.json({ error: ctxError.message }, { status: 500 })
+  }
+
+  // Retroactive auto-fill: any trade for this date whose tags_json.day_type is
+  // EMPTY gets seeded with the prep selection. Trades that already have a
+  // value are left alone — the "Apply to existing trades" button is for the
+  // force-overwrite case. This closes the gap where the user added trades
+  // first and tagged the day later (the per-trade auto-populate only fires
+  // for NEW trades through the form).
+  const fillLabels = dayTypesArray && dayTypesArray.length > 0
+    ? dayTypesArray
+    : (resolvedPrimary ? [resolvedPrimary] : [])
+  if (day && fillLabels.length > 0) {
+    const { data: tradesForDay } = await supabase
+      .from('trades')
+      .select('id, tags_json')
+      .eq('trading_day_id', day.id) as { data: Array<{ id: string; tags_json: TradeTags | null }> | null }
+    for (const t of tradesForDay ?? []) {
+      const current = normalizeTagArray(t.tags_json?.day_type)
+      if (current.length > 0) continue   // never overwrite an existing value
+      const nextTags: TradeTags = { ...(t.tags_json ?? {}), day_type: [...fillLabels] }
+      await supabase.from('trades').update({ tags_json: nextTags }).eq('id', t.id)
+      // best-effort — failures don't block the prep save response
+    }
   }
 
   return NextResponse.json({ day, droppedColumns: droppedColumns.length > 0 ? droppedColumns : undefined })
