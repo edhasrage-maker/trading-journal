@@ -25,9 +25,13 @@ interface Props {
    *  intraday TradeForm — picking one here pre-selects the matching chip on
    *  every NEW trade for the day (via the auto-populate flow). */
   dayTypeOptions: string[]
+  /** Auto-detected DR_ADR (6:30-7:30 PT range ÷ ADR) from 1-min bars in the
+   *  ohlcv_bars table. Null when bars haven't been imported yet for the date
+   *  or market_context.adr is missing — pill falls back to manual entry. */
+  drAdrAuto: number | null
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -718,6 +722,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           rvol: context.rvol ?? null,
           ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
           atr_1m: context.atr_1m ?? null,
+          dr_adr: drAdrAuto,
         }}
       />
 

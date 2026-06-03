@@ -64,6 +64,9 @@ interface MarketContextPrefill {
   rvol?: number | null
   ib_vs_10d_avg?: number | null
   atr_1m?: number | null
+  /** Server-computed DR/ADR from 1-min bars in the 6:30-7:30 PT window.
+   *  When present, fills the dr_adr lookup without the user typing. */
+  dr_adr?: number | null
 }
 
 interface Props {
@@ -77,7 +80,7 @@ interface Props {
 const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '', atr_entry: '' }
 
 // Set of fields that are auto-fillable from Market Context (used for visual hint)
-const PREFILL_FIELDS: Array<keyof InputState> = ['rvol', 'ib', 'atr_730']
+const PREFILL_FIELDS: Array<keyof InputState> = ['rvol', 'ib', 'atr_730', 'dr_adr']
 
 export default function ConditionFilterPanel({ date, marketContext }: Props) {
   const [inputs, setInputs] = useState<InputState>(EMPTY)
@@ -100,7 +103,7 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
     raw != null && Number.isFinite(raw) ? String(raw) : ''
   const effectiveInputs: InputState = {
     rvol: inputs.rvol || fromContext(marketContext?.rvol),
-    dr_adr: inputs.dr_adr,
+    dr_adr: inputs.dr_adr || fromContext(marketContext?.dr_adr),
     ib: inputs.ib || fromContext(marketContext?.ib_vs_10d_avg),
     atr_730: inputs.atr_730 || fromContext(marketContext?.atr_1m),
     atr_entry: inputs.atr_entry,
