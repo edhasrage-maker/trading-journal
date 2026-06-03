@@ -67,6 +67,36 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
       .catch(() => setFilesError('Failed to list recordings.'))
   }, [])
 
+  // Auto-select the recording whose commentary is already saved on the day's
+  // trades. Without this the user re-picks the dropdown every reload even when
+  // the commentary is already visible on screen (read from DB) — annoying.
+  // Pick the most-referenced video_file across trades; if it's in the
+  // available file list, select it. Skip if the user has already chosen one.
+  useEffect(() => {
+    if (videoFile || files.length === 0 || trades.length === 0) return
+    const tally = new Map<string, number>()
+    for (const t of trades) {
+      const rc = t.recording_commentary
+      let vf: string | null = null
+      if (rc && typeof rc === 'object' && typeof rc.video_file === 'string') {
+        vf = rc.video_file
+      } else if (typeof rc === 'string' && rc.trim().startsWith('{')) {
+        try {
+          const parsed = JSON.parse(rc)
+          if (parsed && typeof parsed.video_file === 'string') vf = parsed.video_file
+        } catch { /* ignore */ }
+      }
+      // Skip <unknown> placeholders — they don't tell us which recording to pick.
+      if (vf && vf !== '<unknown>') tally.set(vf, (tally.get(vf) ?? 0) + 1)
+    }
+    if (tally.size === 0) return
+    const best = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0]
+    if (files.some(f => f.name === best)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot init from server-stored commentary
+      setVideoFile(best)
+    }
+  }, [files, trades, videoFile])
+
   // Hydrate cached commentaries + mistake suggestions whenever the selected
   // video or trades change. Priority order:
   //   1. trades[].recording_commentary (Supabase-backed, cross-PC). Stale-only
@@ -94,16 +124,41 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
     // hydration never blocks on it.
     const toBackfill: Array<{ id: string; text: string }> = []
     for (const t of trades) {
-      // Server-persisted first. Accept both shapes: the current
-      // { text, video_file, ... } object and the legacy raw-string format
-      // that some June 1 rows still have.
-      const dbCommentary = t.recording_commentary
-      const dbObj = typeof dbCommentary === 'object' && dbCommentary !== null ? dbCommentary : null
-      if (typeof dbCommentary === 'string' && dbCommentary.trim()) {
-        cached[t.id] = dbCommentary
-      } else if (dbObj?.text && dbObj.video_file === videoFile) {
-        cached[t.id] = dbObj.text
-        // already on the server in the right shape — no backfill needed
+      // The recording_commentary column has had THREE legacy shapes over time;
+      // normalize all of them to { text, video_file? } here:
+      //   1. JS object: { text, video_file, model, generated_at }   ← intended
+      //   2. Raw plain-text string                                  ← oldest writes
+      //   3. JSON-encoded string of (1)                             ← current column quirk: PostgREST stores objects as JSON strings on this column for reasons we haven't tracked down. Parse + recover.
+      const raw = t.recording_commentary
+      let dbText: string | null = null
+      let dbVideoFile: string | null = null
+      if (raw && typeof raw === 'object' && typeof raw.text === 'string') {
+        dbText = raw.text
+        dbVideoFile = typeof raw.video_file === 'string' ? raw.video_file : null
+      } else if (typeof raw === 'string' && raw.trim()) {
+        const trimmed = raw.trim()
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(trimmed)
+            if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
+              dbText = parsed.text
+              dbVideoFile = typeof parsed.video_file === 'string' ? parsed.video_file : null
+            }
+          } catch { /* fall through to raw-string treatment */ }
+        }
+        if (dbText == null) dbText = raw   // shape (2): just plain text
+      }
+      // Use DB if the commentary matches the selected recording OR if the row
+      // is from the legacy path where video_file isn't known (<unknown> /
+      // null) — better to show stale-from-another-recording text than nothing.
+      const dbMatchesVideo = dbVideoFile == null || dbVideoFile === '<unknown>' || dbVideoFile === videoFile
+      if (dbText && dbMatchesVideo) {
+        cached[t.id] = dbText
+        // Heal: if the DB had <unknown>/null video_file and the user has now
+        // picked a real recording, pin the row to that recording so future
+        // auto-select picks it up. Cheap fire-and-forget PATCH.
+        const needsVideoFileHeal = (dbVideoFile == null || dbVideoFile === '<unknown>') && !!videoFile
+        if (needsVideoFileHeal) toBackfill.push({ id: t.id, text: dbText })
         try {
           const rawM = localStorage.getItem(mistakeKey(t.id))
           if (rawM) {
@@ -124,7 +179,7 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
             cached[t.id] = c.s
             // DB is empty / mismatched-shape and localStorage has fresh text —
             // backfill it so other PCs see this trade's commentary.
-            const dbHasUsableObject = !!(dbObj?.text && dbObj.video_file === videoFile)
+            const dbHasUsableObject = !!(dbText && dbMatchesVideo)
             if (!dbHasUsableObject) toBackfill.push({ id: t.id, text: c.s })
           }
         }

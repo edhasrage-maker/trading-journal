@@ -28,8 +28,25 @@ async function main() {
     if (error) throw error
     if (!rows || rows.length === 0) break
     for (const r of rows) {
-      if (typeof r.recording_commentary === 'string' && r.recording_commentary.trim()) {
-        fixes.push({ id: r.id, text: r.recording_commentary, updated_at: r.updated_at })
+      const rc = r.recording_commentary
+      if (typeof rc === 'string' && rc.trim()) {
+        // Two legacy string shapes both end up here:
+        //   1. Plain commentary text: "The entry frame shows ..."
+        //   2. A JSON-stringified object (from a buggy earlier route write):
+        //      '{"text":"The entry frame shows ...","video_file":"<unknown>",...}'
+        // The second case must be parsed so its inner `text` becomes the real
+        // text — otherwise the UI renders the whole JSON blob verbatim.
+        const trimmed = rc.trim()
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(trimmed)
+            if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
+              fixes.push({ id: r.id, text: parsed.text, updated_at: r.updated_at, _carryVideoFile: parsed.video_file })
+              continue
+            }
+          } catch { /* fall through to treating as plain text */ }
+        }
+        fixes.push({ id: r.id, text: rc, updated_at: r.updated_at })
       }
     }
     if (rows.length < 1000) break
@@ -46,7 +63,12 @@ async function main() {
       .update({
         recording_commentary: {
           text: f.text,
-          video_file: '<unknown>',           // recording name not recoverable from legacy rows
+          // Carry the original video_file if it survived in the JSON-stringified
+          // blob; otherwise mark unknown so the UI renders the text regardless
+          // and we don't claim a recording we don't actually know about.
+          video_file: typeof f._carryVideoFile === 'string' && f._carryVideoFile.trim()
+            ? f._carryVideoFile
+            : '<unknown>',
           model: 'claude-sonnet-4-6',
           generated_at: f.updated_at ?? generatedAt,
           normalized_from_legacy_string: true,
