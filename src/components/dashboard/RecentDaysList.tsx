@@ -52,6 +52,8 @@ export default function RecentDaysList({ initialDays }: Props) {
   const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
   const [mfeUnit, setMfeUnit] = useState<MfeUnit>('pts')
   const mfeInfoRef = useRef<HTMLDivElement>(null)
+  const [realizedInfoOpen, setRealizedInfoOpen] = useState(false)
+  const realizedInfoRef = useRef<HTMLDivElement>(null)
 
   // Click-outside + Escape dismiss for the MFE/MAE info popover.
   useEffect(() => {
@@ -71,6 +73,25 @@ export default function RecentDaysList({ initialDays }: Props) {
       document.removeEventListener('keydown', handleKey)
     }
   }, [mfeInfoOpen])
+
+  // Click-outside + Escape dismiss for the MFE Realized % / MAE Heat % popover.
+  useEffect(() => {
+    if (!realizedInfoOpen) return
+    const handleMouse = (e: MouseEvent) => {
+      if (realizedInfoRef.current && !realizedInfoRef.current.contains(e.target as Node)) {
+        setRealizedInfoOpen(false)
+      }
+    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRealizedInfoOpen(false)
+    }
+    document.addEventListener('mousedown', handleMouse)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleMouse)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [realizedInfoOpen])
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type })
@@ -321,20 +342,81 @@ export default function RecentDaysList({ initialDays }: Props) {
                   </div>
                 )}
               </th>
-              <SortableTh
-                label={
-                  <span className="flex flex-col items-center leading-tight">
-                    <span>MFE Realized %</span>
-                    <span>MAE Heat %</span>
+              <th className="font-normal py-2 pr-3 text-center w-36 relative whitespace-nowrap">
+                <button
+                  type="button"
+                  onClick={() => setSort('capture')}
+                  className={`inline-flex flex-col items-center leading-tight hover:text-white transition-colors ${sortColumn === 'capture' ? 'text-blue-300' : 'text-gray-500'}`}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    MFE Realized %
+                    {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
                   </span>
-                }
-                column="capture"
-                current={sortColumn}
-                direction={sortDirection}
-                onSort={setSort}
-                align="center"
-                className="pr-3 w-32 whitespace-nowrap"
-              />
+                  <span>MAE Heat %</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRealizedInfoOpen(o => !o)}
+                  className={`absolute top-2 right-1 transition-colors ${realizedInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                  title="What are MFE Realized % and MAE Heat %?"
+                >
+                  <HelpCircle className="w-3 h-3" />
+                </button>
+                {realizedInfoOpen && (
+                  <div
+                    ref={realizedInfoRef}
+                    className="absolute z-50 top-full mt-2 right-0 w-80 bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="font-semibold text-white">MFE Realized % / MAE Heat %</p>
+                      <button
+                        type="button"
+                        onClick={() => setRealizedInfoOpen(false)}
+                        className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5"
+                        aria-label="Close"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <p className="mb-2">
+                      Two execution-quality metrics averaged across the day&apos;s trades. Both bounded by <strong>entry → exit</strong> — they measure what happened <em>while you held the position</em>, not after.
+                    </p>
+
+                    <p className="mb-1"><strong className="text-green-300">MFE Realized %</strong></p>
+                    <p className="mb-2 text-gray-400">
+                      = realized PnL ÷ peak favorable excursion in $ — &ldquo;of the move I was offered, how much did I take?&rdquo;
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
+                      <li><strong>100%</strong>: exited at the high — perfect timing</li>
+                      <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
+                      <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — trade went green then closed at a loss</li>
+                    </ul>
+
+                    <p className="mb-1"><strong className="text-red-300">MAE Heat %</strong></p>
+                    <p className="mb-2 text-gray-400">
+                      = peak adverse excursion ÷ planned stop distance — &ldquo;how much of my planned risk did I sit through?&rdquo;
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
+                      <li><strong>0–50%</strong>: clean entry, light pressure</li>
+                      <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
+                      <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — you moved it, slipped, or trade reversed in time to save you</li>
+                    </ul>
+
+                    <p className="mb-2 text-gray-500">
+                      <strong>Color rule:</strong> gray by default; red bold only on standout days — when the day averaged a give-back (capture &lt; 0) or sat past planned stop (heat &gt; 100%). Other days stay gray on purpose so the eye lands on what needs review.
+                    </p>
+
+                    <p className="mb-1 text-gray-500">Trades excluded from the average:</p>
+                    <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-500">
+                      <li>No stop_price recorded (no risk baseline)</li>
+                      <li>MFE &lt; 20% of planned risk (denominator too small — capture ratio is noise)</li>
+                    </ul>
+
+                    <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
+                  </div>
+                )}
+              </th>
               <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
               <th className="w-10" />
