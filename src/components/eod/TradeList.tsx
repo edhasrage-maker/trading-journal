@@ -2,7 +2,7 @@
 
 import { format } from 'date-fns'
 import { Check, Trash2, Loader2 } from 'lucide-react'
-import { captureRatio, maeLossRatio, isGiveBackTrade } from '@/lib/analytics'
+import { captureRatio, maeLossRatio, isGiveBackTrade, rMultiple } from '@/lib/analytics'
 import type { Trade } from '@/lib/supabase/types'
 
 /** Display capture % per trade — uses the same null-handling as the intraday row. */
@@ -78,6 +78,7 @@ export default function TradeList({
               <th className="text-right font-normal pb-2 pr-3">Qty</th>
               <th className="text-right font-normal pb-2 pr-3" title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot.">ATR@</th>
               <th className="text-right font-normal pb-2 pr-3">PnL</th>
+              <th className="text-right font-normal pb-2 pr-3" title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units).">R</th>
               <th className="text-right font-normal pb-2 pr-3" title="MFE Capture: realized PnL / peak favorable excursion in $. 100% = you took the high. Bolded when the trade was a give-back (MFE >= 1R favorable then closed at a loss).">Cap</th>
               <th className="text-right font-normal pb-2 pr-3" title="MAE Loss: peak adverse / planned stop distance. 1.0× = MAE touched stop. Bolded on lucky-escape winners (loss > 1×R but trade closed green).">Loss</th>
               <th className="text-left font-normal pb-2">Overview</th>
@@ -155,6 +156,20 @@ export default function TradeList({
                     {pnl >= 0 ? '+' : ''}
                     {pnl.toFixed(2)}
                   </td>
+                  {(() => {
+                    const r = rMultiple(t)
+                    return (
+                      <td className={`py-1.5 pr-3 text-right ${
+                        r == null ? 'text-gray-700'
+                        : r >= 1 ? 'text-green-400'
+                        : r >= 0 ? 'text-green-500'
+                        : r >= -0.5 ? 'text-orange-400'
+                        : 'text-red-400'
+                      }`} title="R = pnl / (|entry-stop| * qty * multiplier).">
+                        {r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`}
+                      </td>
+                    )
+                  })()}
                   {/* Cap and Loss: same per-trade math as the intraday row chip.
                       Bold marks high-signal cross-cases that deserve attention
                       on review (give-back loser, lucky-escape winner). */}
