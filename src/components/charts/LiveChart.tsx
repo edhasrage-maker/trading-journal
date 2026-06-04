@@ -162,7 +162,7 @@ function clearView(symbol: string, date: string, tfMins: number) {
 // Diagnostic flag — flip to true to see the chart's range-decision log in
 // the browser console. Filter by "[livechart]" to follow. Off in normal
 // operation; turn on when debugging TF-switch / zoom / saved-view issues.
-const LIVECHART_DEBUG = false
+const LIVECHART_DEBUG = true
 
 /**
  * Native chart (lightweight-charts v5) shared by the EOD + Intraday pages.
@@ -655,20 +655,63 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // must not move the chart). Null on the first non-empty render (no data yet).
     const prevRange = chartRef.current?.timeScale().getVisibleLogicalRange() ?? null
 
-    // Lightweight-charts infers a base time interval from the FIRST setData,
-    // then treats later setData calls as more bars on that same grid. Switching
-    // 1m → 5m without clearing means the chart sees 5m bars as "1m bars spaced
-    // 5 minutes apart" — rendering each 5m candle every 5 slots with 4 empty
-    // 1m slots between them (exactly what the user was seeing). Clearing the
-    // candle series first forces the chart to re-detect the interval from the
-    // new bars' time deltas.
+    // Lightweight-charts infers a base time interval from the FIRST setData
+    // and caches it internally — subsequent setData calls (even with empty
+    // arrays) don't reset that grid. The only way to make the chart re-detect
+    // the interval is to destroy the series and re-create it. Below: when TF
+    // just changed, remove + re-add all four series with their original
+    // options. Markers/level-lines/trade-lines are recreated downstream in the
+    // same effect, so we just need to re-add the series themselves here.
     const tfWasJustChanged = lastRenderedTfRef.current !== null && lastRenderedTfRef.current !== chartTfMins
-    if (tfWasJustChanged) {
-      if (LIVECHART_DEBUG) console.log('[livechart] clearing series before TF-switch setData (force interval re-detection)')
-      candleRef.current.setData([])
-      vwapRef.current?.setData([])
-      ema9Ref.current?.setData([])
-      ema20Ref.current?.setData([])
+    if (tfWasJustChanged && chartRef.current) {
+      if (LIVECHART_DEBUG) console.log('[livechart] recreating series for TF switch (force interval re-detection)')
+      const chart = chartRef.current
+      // Remove existing series. priceLines on the candle series die with it,
+      // which is fine — they're recreated later in this same effect from the
+      // levels data.
+      try { chart.removeSeries(candleRef.current) } catch { /* ignore */ }
+      if (vwapRef.current) { try { chart.removeSeries(vwapRef.current) } catch { /* ignore */ } }
+      if (ema9Ref.current) { try { chart.removeSeries(ema9Ref.current) } catch { /* ignore */ } }
+      if (ema20Ref.current) { try { chart.removeSeries(ema20Ref.current) } catch { /* ignore */ } }
+      // Recreate with the same options used at chart init. autoscaleInfoProvider
+      // closes over candleDataRef which is updated just below, so it'll work
+      // for the new data immediately.
+      candleRef.current = chart.addSeries(CandlestickSeries, {
+        upColor: prefs.upColor,
+        downColor: prefs.downColor,
+        borderUpColor: prefs.upColor,
+        borderDownColor: prefs.downColor,
+        wickUpColor: prefs.upColor,
+        wickDownColor: prefs.downColor,
+        autoscaleInfoProvider: (baseImpl: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+          const data = candleDataRef.current
+          const lr = chartRef.current?.timeScale().getVisibleLogicalRange()
+          if (!data.length || !lr) return baseImpl()
+          const from = Math.max(0, Math.floor(lr.from))
+          const to = Math.min(data.length - 1, Math.ceil(lr.to))
+          let min = Infinity, max = -Infinity
+          for (let i = from; i <= to; i++) {
+            const b = data[i]
+            if (!b) continue
+            if (b.low < min) min = b.low
+            if (b.high > max) max = b.high
+          }
+          if (!isFinite(min) || !isFinite(max)) return baseImpl()
+          const pad = (max - min) * 0.12 || 1
+          return { priceRange: { minValue: min - pad, maxValue: max + pad } }
+        },
+      })
+      const noAutoscale = { autoscaleInfoProvider: () => null }
+      vwapRef.current = chart.addSeries(LineSeries, { color: prefs.vwapColor, lineWidth: 2, ...noAutoscale })
+      ema9Ref.current = chart.addSeries(LineSeries, { color: prefs.ema9Color, lineWidth: 1, lineStyle: 2, ...noAutoscale })
+      ema20Ref.current = chart.addSeries(LineSeries, { color: prefs.ema20Color, lineWidth: 1, lineStyle: 2, ...noAutoscale })
+      // Marker primitive was attached to the OLD candle series — drop the ref
+      // so the markers effect re-attaches it to the new one on next pass.
+      markersRef.current = null
+      // Old trade lines were attached to the chart but their series refs are
+      // still in tradeLinesRef; they're recreated below from the trades array,
+      // so just clear the ref list. (The actual removeSeries for these is
+      // handled in the trade-lines block further down.)
     }
 
     const candleData = displayBars.map(b => ({
