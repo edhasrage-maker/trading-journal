@@ -861,10 +861,18 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     if (tscale) {
       const tfChanged = lastRenderedTfRef.current !== null && lastRenderedTfRef.current !== chartTfMins
       lastRenderedTfRef.current = chartTfMins
-      // Sensible default range: last ~75 bars (gives ~12px slot width on a
-      // typical ~900px chart pane — fat candles, readable density).
+      // Per-TF default visible count. Higher TFs show fewer-but-fatter candles
+      // (matches how TradingView/Sierra behave when switching resolutions —
+      // the candle WIDTH stays roughly consistent across TFs by showing less
+      // time at higher granularity). 1m stays at 75 (you want density to read
+      // micro-action); 5m+ ramps down so each candle is more readable.
       const total = displayBars.length
-      const TARGET_VISIBLE = 75
+      const TARGET_VISIBLE =
+        chartTfMins <= 1   ? 75 :   // ~12px each (1.25h of data)
+        chartTfMins <= 5   ? 40 :   // ~22px each (~3.5h of data)
+        chartTfMins <= 15  ? 25 :   // ~36px each (~6h of data)
+        chartTfMins <= 30  ? 20 :   // ~45px each (~10h of data)
+                             15     // 1h: ~60px each (~15h); 4h: ~60d
       const defaultRange = {
         from: Math.max(0, total - TARGET_VISIBLE) - 0.5,
         to: total - 0.5,
@@ -903,8 +911,10 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // logical range we set, but drawing fewer bars based on a separate
         // time-based visible range. Switching to setVisibleRange (time-based)
         // which is what actually drives rendering. Compute the time bounds
-        // of the last N bars from the data directly.
-        const TARGET_VISIBLE = 75
+        // of the last N bars from the data directly. Reuses the per-TF
+        // TARGET_VISIBLE from the default-range block above so 5m/15m/etc.
+        // get appropriately fewer-but-fatter candles instead of cramming 75
+        // skinny ones into the pane.
         const startIdx = Math.max(0, total - TARGET_VISIBLE)
         const fromBar = displayBars[startIdx]
         const toBar = displayBars[total - 1]
