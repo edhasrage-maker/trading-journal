@@ -799,12 +799,15 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // chart's auto-fit, which is why the saved zoom never stuck.
         requestAnimationFrame(applyView)
       } else if (tfChanged) {
-        // TF change: discard the prior logical range (was sized for a different
-        // candle resolution) and fit the new bar set. The user can re-zoom on
-        // the new TF; saving the view per TF is a future enhancement.
-        const fit = () => chartRef.current?.timeScale().fitContent()
-        fit()
-        requestAnimationFrame(fit)
+        // TF change: don't fit-all-bars (would shrink candles to a few px on
+        // big bar counts like 5m showing 248 bars of ETH+RTH). Instead, set
+        // an explicit barSpacing so each candle gets a consistent pixel width
+        // regardless of TF. Lightweight-charts then auto-derives the visible
+        // range to whatever fits the chart width at that bar size — matches
+        // how TradingView and Sierra behave on TF switches.
+        const applyBarSpacing = () => chartRef.current?.timeScale().applyOptions({ barSpacing: 8 })
+        applyBarSpacing()
+        requestAnimationFrame(applyBarSpacing)
       } else if (prevRange) {
         // Already restored: a data update (watcher refresh, levels/trades load).
         // Re-apply the pre-setData view both now AND after the layout pass —
