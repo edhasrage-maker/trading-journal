@@ -838,6 +838,15 @@ function SaveStatus({
     return () => clearInterval(id)
   }, [])
 
+  // Hydration-safe relative time: SSR renders the page at time T, the client
+  // hydrates a second or two later, and formatDistanceToNowStrict returns a
+  // different string for the same lastSavedAt — React aborts hydration with a
+  // mismatch. Gate the relative-time render on a `mounted` flag so the server
+  // outputs a stable placeholder and the client computes the real value only
+  // after mount.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
   if (saving) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-blue-400 font-medium">
@@ -862,11 +871,10 @@ function SaveStatus({
     )
   }
   if (lastSavedAt) {
-    const ago = formatDistanceToNowStrict(new Date(lastSavedAt))
     return (
       <span className="flex items-center gap-1.5 text-xs text-gray-500 font-medium" title={new Date(lastSavedAt).toLocaleString()}>
         <Check className="w-3 h-3 text-green-500" />
-        Saved {ago} ago
+        {mounted ? `Saved ${formatDistanceToNowStrict(new Date(lastSavedAt))} ago` : 'Saved'}
       </span>
     )
   }

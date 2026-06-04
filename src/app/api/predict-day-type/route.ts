@@ -228,25 +228,39 @@ ${notesBlock}
 
 ══ HEURISTICS TO APPLY ══
 
-These are well-established structural rules. Treat them as priors that should weight your call — not absolutes, but the trader's own bias notes and structural context must JUSTIFY overriding them, not just compete with them.
+These are signal-driven priors. Treat them as weighted inputs — not absolutes. Read each label's description in the list above and match the signals below to whichever label best fits.
 
-1. **GBX % of ADR ≥ 80 BEFORE RTH opens**: the expected daily range is mostly spent overnight. The statistical base rate strongly favors mean reversion — Range Day, Neutral Day, or Double Distribution. Trend Day requires a fresh expansion narrative (scheduled news, decisive IB break, regime shift) that has NOT already been played out overnight. Sustained continuation from an already-extended overnight is the LESS common outcome.
+1. **GBX % of ADR ≥ 80 BEFORE RTH opens**: overnight has consumed most or all of the expected daily range. Two distinct outcomes — they look different and map to different labels:
 
-2. **Failure to take out PDH (for longs) or PDL (for shorts) despite a strong overnight extension**: rotation / distribution risk. Don't predict Trend Day in the direction of the prior overnight move without a CONFIRMED level break. "If price breaks the IB high" is conditional — the breakout has not happened yet.
+   a) **Reversal setup** — RTH opens AT or NEAR the overnight high/low AND there's reversal structure: long-tail at the extreme, profile imbalance, failed retest, trapped-buyers/sellers node, OR price has visibly bounced/reversed off the extreme already. Look for a label whose description specifically names overnight reversal (e.g. "GBX Reversal"). This is the CORRECT call when the chart shows a clear pivot away from the overnight extreme — do NOT default to a generic range label when reversal structure is present.
 
-3. **Inside prior day's value with no level break**: leans Neutral Day or Range Day. Inside-day rotation is the default; Trend Days usually require leaving the prior session's value area early and not coming back.
+   b) **Compression / range setup** — RTH stays inside the overnight envelope, no breakout, no reversal pivot, no decisive directional commitment. Look for a label that emphasizes rotation, balance, or indecision.
 
-4. **IB size ≥ 100% of 10-day avg with location inside prior day's value**: Double Distribution risk — the IB expansion may be one distribution that pulls back to value before a second one forms. Not auto-Trend.
+   Distinguishing (a) from (b) is critical. The KEY test: is there a visible pivot AWAY from the overnight extreme, or is price just chopping inside the overnight envelope?
 
-5. **P-shape profile at session highs**: ambiguous on its own. Confirms continuation ONLY when paired with a long-tail at the lows AND the IBL holding firm on retest. P-shape with stalling at the highs and NO confirming long-tail can equally mean distribution / topping action.
+2. **High participation regime** — RVOL ≥ 1.3 COMBINED with elevated ATR-1m vs typical OR an IB expansion. Signals expansion, fast structure, sustained imbalance. Look for a label whose description emphasizes high action, expansion, or directional pressure. This signal can CO-EXIST with #1 — a session can be both "GBX Reversal" AND "High Action Market" when the reversal is happening with heavy participation. In your reasoning, name both signals if both fit; the trader can multi-tag.
 
-6. **Weight current state over conditional state**: phrases like "if it breaks IB highs" or "once it clears PDH" describe a future event that has not happened. The most likely outcome must reflect what the inputs say RIGHT NOW, not what they say AFTER a hypothetical breakout.
+3. **Low participation regime** — RVOL < 0.8 with tight ATR and IB narrow vs 10-day avg. Signals compression, slow tape, contracted range. Look for a label describing low participation or compression.
 
-7. **The trader's bias notes are inputs, not conclusions**: a "bullish bias" from the trader does not by itself elevate Trend Day. If structural data (heuristics 1-6) conflict with the bias, the structural data wins and the reasoning should flag the conflict.
+4. **Double-inside structure** — RTH opens INSIDE both prior day's range (PDL ≤ price ≤ PDH) AND overnight range (ONL ≤ price ≤ ONH). Strongly favors a "Double Inside" labeled day — fully contained inside both envelopes means rotation/compression until one envelope breaks. Trend-type labels require breaking one envelope first.
+
+5. **Middle-of-the-road regime** — RVOL ~0.8-1.2, ATR near 10-day average, no decisive structural break. Default to a label describing balanced / indecisive / mush behavior.
+
+6. **Failure to take out PDH (for longs) or PDL (for shorts) despite a strong overnight extension**: rotation / distribution risk. Strongly reinforces a reversal or range call over any trend label. Don't predict trend continuation without a CONFIRMED level break — "if it breaks IB highs" is conditional and doesn't count.
+
+7. **P-shape profile at session highs**: ambiguous on its own. Confirms continuation ONLY when paired with a long-tail at the lows AND the IBL holding firm on retest. P-shape with stalling at the highs and NO confirming long-tail can equally mean distribution / topping action.
+
+8. **Weight current state over conditional state**: phrases like "if it breaks IB highs" or "once it clears PDH" describe a future event that has not happened. The most likely outcome must reflect what the inputs say RIGHT NOW, not what they say AFTER a hypothetical breakout.
+
+9. **The trader's bias notes are inputs, not conclusions**: if structural data (heuristics 1-8) conflict with the bias, structure wins. Flag the conflict explicitly in the reasoning.
+
+══ MAPPING SIGNALS TO LABELS ══
+
+Read each label's description above carefully. Match the strongest active signal to the label that names that signal MOST specifically. When two signals point at two different labels (e.g. big GBX + high participation), prefer whichever label's description matches the most specific structural pattern in today's data. Don't fall back to a generic "rotation / range" label when a more specific one (GBX Reversal, Double Inside, High Action Market) fits the actual signals.
 
 ══ HOW TO ANSWER ══
 
-Apply the heuristics above to today's specific inputs. Cite the actual metric values that drive your call — don't speak generically. When heuristics conflict (e.g., a high IB with a fresh news driver), call out the conflict explicitly in the reasoning.
+Apply the heuristics above to today's specific inputs. Cite the actual metric values that drive your call — don't speak generically. When heuristics conflict OR multiple labels fit, name the conflict explicitly. If today fits two labels equally well (e.g. GBX Reversal + High Action Market), pick the one whose definition is more specific to the strongest signal and mention that a co-tag is reasonable.
 
 Set "confidence" honestly:
 - **high**: heuristics align, structural inputs are unambiguous, and the trader's bias matches.
