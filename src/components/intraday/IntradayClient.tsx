@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { Plus, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2 } from 'lucide-react'
@@ -21,6 +21,9 @@ interface Props {
   initialOpenTradeId?: string | null
   /** day_type from trading_days for this date — auto-populated on NEW trades only. */
   prepDayTypes?: string[]
+  /** trading_days.eod_notes — shared with the EOD page so the trader can write
+   *  during the session and the same text is there waiting at EOD. */
+  initialSessionNotes?: string
 }
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
@@ -117,7 +120,7 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
   )
 }
 
-export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '' }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   // Tags are local so newly-created custom tags appear across every TradeForm
@@ -145,6 +148,36 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const [deleting, setDeleting] = useState<string | null>(null)
   const [pastedFile, setPastedFile] = useState<File | null>(null)
   const [showChart, setShowChart] = useState(true)
+
+  // Session journal — shared with EOD recap via trading_days.eod_notes.
+  // The trader writes during the session; the same text is there waiting at
+  // EOD time. Debounced auto-save (1.5s) to keep the wire quiet while typing.
+  const [sessionNotes, setSessionNotes] = useState(initialSessionNotes)
+  const [notesSaveStatus, setNotesSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const lastSavedNotesRef = useRef(initialSessionNotes)
+  const notesSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (sessionNotes === lastSavedNotesRef.current) return
+    if (notesSaveTimerRef.current) clearTimeout(notesSaveTimerRef.current)
+    notesSaveTimerRef.current = setTimeout(async () => {
+      setNotesSaveStatus('saving')
+      try {
+        const res = await fetch(`/api/trading-days/${date}/eod`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eod_notes: sessionNotes }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        lastSavedNotesRef.current = sessionNotes
+        setNotesSaveStatus('saved')
+      } catch {
+        setNotesSaveStatus('error')
+      }
+    }, 1500)
+    return () => {
+      if (notesSaveTimerRef.current) clearTimeout(notesSaveTimerRef.current)
+    }
+  }, [sessionNotes, date])
 
   // Bulk multi-select for tag-apply. Checkbox per row toggles membership;
   // a floating bar appears when 1+ trades are selected. Selecting trades
@@ -506,6 +539,32 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           dayTrades={trades}
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />
       )}
+
+      {/* Session journal — shared with the EOD recap. This is the same
+          trading_days.eod_notes field both pages read/write, so anything the
+          trader jots down here is waiting in the EOD recap textarea later. */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Session journal
+          </label>
+          <span className="text-[10px] text-gray-600">
+            {notesSaveStatus === 'saving' && 'Saving…'}
+            {notesSaveStatus === 'saved' && 'Saved · syncs with EOD recap'}
+            {notesSaveStatus === 'error' && <span className="text-red-400">Save failed — will retry on next edit</span>}
+            {notesSaveStatus === 'idle' && 'Syncs with EOD recap'}
+          </span>
+        </div>
+        <textarea
+          rows={3}
+          spellCheck
+          autoCorrect="on"
+          placeholder="Jot down what you're seeing — emotions, level reactions, plan deviations. Shows up in the EOD recap automatically."
+          value={sessionNotes}
+          onChange={e => setSessionNotes(e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-y"
+        />
+      </div>
 
       {/* Add button */}
       {!isAdding && !editingId && (
