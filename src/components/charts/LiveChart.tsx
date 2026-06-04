@@ -159,11 +159,10 @@ function clearView(symbol: string, date: string, tfMins: number) {
   } catch { /* ignore */ }
 }
 
-// Diagnostic flag — set to true to see the chart's range-decision log in the
-// browser console. Left in for now while we shake out the TF-spacing issue.
-// Filter the console by "[livechart]" to follow the trail. Set back to false
-// before shipping a clean build.
-const LIVECHART_DEBUG = true
+// Diagnostic flag — flip to true to see the chart's range-decision log in
+// the browser console. Filter by "[livechart]" to follow. Off in normal
+// operation; turn on when debugging TF-switch / zoom / saved-view issues.
+const LIVECHART_DEBUG = false
 
 /**
  * Native chart (lightweight-charts v5) shared by the EOD + Intraday pages.
