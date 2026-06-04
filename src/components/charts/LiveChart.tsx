@@ -568,7 +568,16 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       ema9Ref.current = null
       ema20Ref.current = null
     }
-  }, [height])
+  }, [height, chartTfMins])
+
+  // When TF changes, force the saved-view restore path to fire again on the
+  // fresh chart instance (the chart-creation effect just above this depends
+  // on chartTfMins now, so it tears down and rebuilds). Without resetting
+  // this ref, the data effect would think the day was already restored on
+  // the new chart and skip applying the visible range entirely.
+  useEffect(() => {
+    restoredKeyRef.current = null
+  }, [chartTfMins])
 
   // Apply appearance prefs to the live chart (runs on mount after localStorage
   // load, and on every pref change). Session-level line colors are applied in
