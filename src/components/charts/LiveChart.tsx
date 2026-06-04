@@ -612,7 +612,11 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     vwapRef.current?.applyOptions({ color: prefs.vwapColor })
     ema9Ref.current?.applyOptions({ color: prefs.ema9Color })
     ema20Ref.current?.applyOptions({ color: prefs.ema20Color })
-  }, [prefs])
+    // chartTfMins is in the deps so this re-runs after a TF-change destroys
+    // and recreates the chart — without it, the fresh chart stays on the
+    // hardcoded init-time defaults and the trader sees their customized
+    // background/candle/EMA/VWAP colors revert every TF switch.
+  }, [prefs, chartTfMins])
 
   // Aggregate the stored 1-min bars into the selected timeframe. Bucket
   // boundary uses floor(ms / bucketMs) so the same UTC second always falls
