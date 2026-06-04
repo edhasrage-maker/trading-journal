@@ -238,6 +238,13 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   // Tracks the symbol|date we've already restored the saved view for, so the
   // restore runs once per day-open instead of on every data/prefs change.
   const restoredKeyRef = useRef<string | null>(null)
+  // Tracks the TF that's currently displayed so we can fit-content on the
+  // FIRST data render after a TF change. The saved logical range is in bar-
+  // index units, not time units — at 1m a range of [0, 200] is 200 minutes;
+  // at 5m the same indices span 1000 minutes worth of time slots, and the
+  // candles end up spread thin across the visible width. Fitting on TF
+  // change snaps the view back to the actual data extent.
+  const lastRenderedTfRef = useRef<number | null>(null)
   const [hasSavedView, setHasSavedView] = useState(false)
   useEffect(() => { setHasSavedView(!!(symbol && loadView(symbol, date))) }, [symbol, date])
 
@@ -776,6 +783,8 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     const tscale = chartRef.current?.timeScale()
     const dayKey = `${symbol ?? ''}|${date}`
     if (tscale) {
+      const tfChanged = lastRenderedTfRef.current !== null && lastRenderedTfRef.current !== chartTfMins
+      lastRenderedTfRef.current = chartTfMins
       if (restoredKeyRef.current !== dayKey) {
         // First open of this day: restore the saved view (or fit if none).
         restoredKeyRef.current = dayKey
@@ -789,6 +798,13 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // range set on the FIRST data load is otherwise overridden by the
         // chart's auto-fit, which is why the saved zoom never stuck.
         requestAnimationFrame(applyView)
+      } else if (tfChanged) {
+        // TF change: discard the prior logical range (was sized for a different
+        // candle resolution) and fit the new bar set. The user can re-zoom on
+        // the new TF; saving the view per TF is a future enhancement.
+        const fit = () => chartRef.current?.timeScale().fitContent()
+        fit()
+        requestAnimationFrame(fit)
       } else if (prevRange) {
         // Already restored: a data update (watcher refresh, levels/trades load).
         // Re-apply the pre-setData view both now AND after the layout pass —
