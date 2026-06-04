@@ -214,6 +214,38 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     setPastedFile(null)
   }
 
+  // Inline-remove a single tag from the expanded trade view. Saves the user
+  // a round-trip into the full edit form when they just want to drop one
+  // label. Optimistic update — flip the UI first, PATCH after; revert on
+  // failure. Strips empty categories so the tag block doesn't render a
+  // ghost section with no labels.
+  const removeTagFromTrade = async (trade: Trade, category: string, label: string) => {
+    const currentTags = (trade.tags_json ?? {}) as Record<string, unknown>
+    const currentArr = Array.isArray(currentTags[category])
+      ? (currentTags[category] as string[])
+      : typeof currentTags[category] === 'string'
+        ? [currentTags[category] as string]
+        : []
+    const nextArr = currentArr.filter(t => t !== label)
+    const nextTags: Record<string, unknown> = { ...currentTags }
+    if (nextArr.length > 0) nextTags[category] = nextArr
+    else delete nextTags[category]
+
+    const prevTrades = trades
+    setTrades(ts => ts.map(t => t.id === trade.id ? { ...t, tags_json: nextTags as Trade['tags_json'] } : t))
+    try {
+      const res = await fetch(`/api/trades/${trade.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags_json: nextTags }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    } catch {
+      // Revert on failure so the UI doesn't lie about persistence.
+      setTrades(prevTrades)
+    }
+  }
+
   // Bulk-apply tags: for each selected trade, PATCH /api/trades/[id] with the
   // merged tags_json (additive — never replaces existing tags). Updates local
   // state in place so the UI reflects the change without a full reload.
@@ -493,19 +525,30 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                   </div>
                 )}
 
-                {/* All tags */}
+                {/* All tags — clickable to remove. Hover reveals an "×"
+                    so the user can drop tags inline without opening the
+                    full edit form. Color preserved per category. */}
                 {Object.keys(trade.tags_json ?? {}).length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(trade.tags_json ?? {}).flatMap(([cat, val]) => {
                       const items = Array.isArray(val) ? val : val ? [val] : []
-                      return items.map((tag: string) => (
-                        <span key={`${cat}-${tag}`}
-                          className={`text-xs px-2 py-0.5 rounded-full border ${
-                            cat === 'mistakes' ? 'bg-red-900/30 border-red-700 text-red-400'
-                            : cat === 'emotions' ? 'bg-purple-900/30 border-purple-700 text-purple-400'
-                            : 'bg-gray-800 border-gray-700 text-gray-300'
-                          }`}>{tag}</span>
-                      ))
+                      return items.map((tag: string) => {
+                        const colorCls = cat === 'mistakes' ? 'bg-red-900/30 border-red-700 text-red-400 hover:bg-red-900/60 hover:border-red-500'
+                          : cat === 'emotions' ? 'bg-purple-900/30 border-purple-700 text-purple-400 hover:bg-purple-900/60 hover:border-purple-500'
+                          : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:border-gray-500'
+                        return (
+                          <button
+                            key={`${cat}-${tag}`}
+                            type="button"
+                            onClick={e => { e.stopPropagation(); void removeTagFromTrade(trade, cat, tag) }}
+                            title={`Click to remove "${tag}" from this trade`}
+                            className={`group text-xs px-2 py-0.5 rounded-full border transition-colors inline-flex items-center gap-1 ${colorCls}`}
+                          >
+                            <span>{tag}</span>
+                            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px]">×</span>
+                          </button>
+                        )
+                      })
                     })}
                   </div>
                 )}
