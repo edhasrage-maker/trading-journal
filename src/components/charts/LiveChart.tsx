@@ -162,7 +162,7 @@ function clearView(symbol: string, date: string, tfMins: number) {
 // Diagnostic flag — flip to true to see the chart's range-decision log in
 // the browser console. Filter by "[livechart]" to follow. Off in normal
 // operation; turn on when debugging TF-switch / zoom / saved-view issues.
-const LIVECHART_DEBUG = false
+const LIVECHART_DEBUG = true
 
 /**
  * Native chart (lightweight-charts v5) shared by the EOD + Intraday pages.
@@ -440,6 +440,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   // Initialize chart once
   useEffect(() => {
     if (!containerRef.current) return
+    if (LIVECHART_DEBUG) console.log('[livechart] CHART-CREATE', { tf: chartTfMins, height })
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
       height,
@@ -556,6 +557,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // bars shifting the range on the live day) can never silently overwrite it.
 
     return () => {
+      if (LIVECHART_DEBUG) console.log('[livechart] CHART-DESTROY', { tf: chartTfMins })
       obs.disconnect()
       markersRef.current = null
       priceLinesRef.current = []
