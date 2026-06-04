@@ -16,7 +16,12 @@ export default async function IntradayPage({
   const { trade: openTradeId } = await searchParams
   const supabase: AnyClient = await createClient()
 
-  const { data: day } = await supabase.from('trading_days').select('id, day_type').eq('date', date).single()
+  // Use `*` instead of an explicit select that names `day_types` — the
+  // 2026-06-03 day-types-array migration may not have been run yet, and a
+  // named-column select would error the entire query out (and the page would
+  // render empty even though the trading_day + trades exist). `*` returns
+  // whatever columns exist; missing day_types just comes through as undefined.
+  const { data: day } = await supabase.from('trading_days').select('*').eq('date', date).single()
 
   let trades: Trade[] = []
   if (day) {
@@ -34,7 +39,15 @@ export default async function IntradayPage({
         initialTrades={trades}
         allTags={(tags ?? []) as TradeTag[]}
         initialOpenTradeId={openTradeId ?? null}
-        prepDayType={(day?.day_type as string | null) ?? null}
+        prepDayTypes={
+          // Multi-select array if available, else legacy single primary as a
+          // one-element array. Either form seeds the new trade's day_type tag.
+          (day?.day_types as string[] | null)?.filter(Boolean).length
+            ? (day!.day_types as string[])
+            : day?.day_type
+              ? [day.day_type as string]
+              : []
+        }
       />
     </div>
   )

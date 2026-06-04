@@ -110,6 +110,36 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
       .catch(() => setFilesError('Failed to list recordings.'))
   }, [])
 
+  // Auto-select the recording whose commentary is already saved on the day's
+  // trades. Without this the user re-picks the dropdown every reload even when
+  // the commentary is already visible on screen (read from DB) — annoying.
+  // Pick the most-referenced video_file across trades; if it's in the
+  // available file list, select it. Skip if the user has already chosen one.
+  useEffect(() => {
+    if (videoFile || files.length === 0 || trades.length === 0) return
+    const tally = new Map<string, number>()
+    for (const t of trades) {
+      const rc = t.recording_commentary
+      let vf: string | null = null
+      if (rc && typeof rc === 'object' && typeof rc.video_file === 'string') {
+        vf = rc.video_file
+      } else if (typeof rc === 'string' && rc.trim().startsWith('{')) {
+        try {
+          const parsed = JSON.parse(rc)
+          if (parsed && typeof parsed.video_file === 'string') vf = parsed.video_file
+        } catch { /* ignore */ }
+      }
+      // Skip <unknown> placeholders — they don't tell us which recording to pick.
+      if (vf && vf !== '<unknown>') tally.set(vf, (tally.get(vf) ?? 0) + 1)
+    }
+    if (tally.size === 0) return
+    const best = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0]
+    if (files.some(f => f.name === best)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot init from server-stored commentary
+      setVideoFile(best)
+    }
+  }, [files, trades, videoFile])
+
   // Hydrate cached commentaries + mistake suggestions whenever the selected
   // video or trades change. Priority order:
   //   1. trades[].recording_commentary (Supabase-backed, cross-PC). The
@@ -128,15 +158,62 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
     }
     const cached: Record<string, string> = {}
     const cachedMistakes: Record<string, string[]> = {}
+    // Trades whose commentary we have in localStorage but the DB doesn't —
+    // we'll push them up below so the other PC sees them next time it loads.
+    // This closes the gap where an earlier "Run commentary" hit a route
+    // version that didn't persist (or persisted as a raw string), or hit
+    // before the migration column landed. The PATCH is fire-and-forget so
+    // hydration never blocks on it.
+    const toBackfill: Array<{ id: string; text: string }> = []
     for (const t of trades) {
+      // DB-first via the extractCommentaryText helper (handles all known
+      // shapes: object, JSON-stringified object, plain string, <unknown>
+      // video_file). If it returns text we're done — load mistakes + heal
+      // the row's video_file when needed, then move on.
       const text = extractCommentaryText(t.recording_commentary, videoFile)
-      if (text) { cached[t.id] = text; continue }
-      // localStorage fallback (legacy path / fresh-DB users)
+      if (text) {
+        cached[t.id] = text
+        // Heal: if the stored row has no video_file or "<unknown>", pin it
+        // to the currently-selected recording so the auto-select effect
+        // picks it up on next mount. The helper would have returned null
+        // if there was a real video_file that didn't match the selection,
+        // so reaching here means we should heal.
+        const raw = t.recording_commentary
+        let rowVideoFile: string | null = null
+        if (raw && typeof raw === 'object' && typeof (raw as { video_file?: unknown }).video_file === 'string') {
+          rowVideoFile = (raw as { video_file: string }).video_file
+        } else if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(raw) as { video_file?: string }
+            if (typeof parsed.video_file === 'string') rowVideoFile = parsed.video_file
+          } catch { /* ignore */ }
+        }
+        const needsHeal = (rowVideoFile == null || rowVideoFile === '<unknown>') && !!videoFile
+        if (needsHeal) toBackfill.push({ id: t.id, text })
+        try {
+          const rawM = localStorage.getItem(mistakeKey(t.id))
+          if (rawM) {
+            const m = JSON.parse(rawM) as { h: string; m: string[] }
+            if (m.h === hashTradeForCommentary(t, videoFile) && Array.isArray(m.m) && m.m.length > 0) {
+              cachedMistakes[t.id] = m.m
+            }
+          }
+        } catch { /* ignore */ }
+        continue
+      }
+      // localStorage fallback (legacy path / fresh-DB users).
       try {
         const raw = localStorage.getItem(cacheKey(t.id))
         if (raw) {
           const c = JSON.parse(raw) as { h: string; s: string }
-          if (c.h === hashTradeForCommentary(t, videoFile) && c.s) cached[t.id] = c.s
+          if (c.h === hashTradeForCommentary(t, videoFile) && c.s) {
+            cached[t.id] = c.s
+            // Reaching this branch means extractCommentaryText returned null
+            // for the DB row — i.e. DB has no usable text for this trade.
+            // localStorage has fresh text, so push it up so the other PC sees
+            // this trade's commentary on next load.
+            toBackfill.push({ id: t.id, text: c.s })
+          }
         }
         const rawM = localStorage.getItem(mistakeKey(t.id))
         if (rawM) {
@@ -147,9 +224,32 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
         }
       } catch { /* ignore */ }
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrating commentary cache from server + local sources
     setCommentary(cached)
     setSuggestedMistakes(cachedMistakes)
+
+    // Fire-and-forget backfill. Stamping with the local generated_at is a
+    // small lie (this was generated whenever Run commentary originally ran)
+    // but the other PC just needs the text + video_file to render.
+    if (toBackfill.length > 0) {
+      const generatedAt = new Date().toISOString()
+      void Promise.allSettled(
+        toBackfill.map(({ id, text }) =>
+          fetch(`/api/trades/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              recording_commentary: {
+                text,
+                video_file: videoFile,
+                model: 'claude-sonnet-4-6',
+                generated_at: generatedAt,
+                backfilled_from_local_cache: true,
+              },
+            }),
+          }),
+        ),
+      )
+    }
   }, [videoFile, trades])
 
   const run = useCallback(async () => {

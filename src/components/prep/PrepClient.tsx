@@ -25,9 +25,13 @@ interface Props {
    *  intraday TradeForm — picking one here pre-selects the matching chip on
    *  every NEW trade for the day (via the auto-populate flow). */
   dayTypeOptions: string[]
+  /** Auto-detected DR_ADR (6:30-7:30 PT range ÷ ADR) from 1-min bars in the
+   *  ohlcv_bars table. Null when bars haven't been imported yet for the date
+   *  or market_context.adr is missing — pill falls back to manual entry. */
+  drAdrAuto: number | null
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -54,7 +58,19 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
   const [savedChartUrl, setSavedChartUrl] = useState<string | null>(initialDay?.chart_screenshot_url ?? null)
   const [chartUrl, setChartUrl] = useState<string | null>(initialDay?.chart_screenshot_url ?? null)
-  const [dayType, setDayType] = useState<string>(initialDay?.day_type ?? '')
+  // Multi-select: prep can tag combo sessions like "High Action + Double Inside".
+  // Source of truth is the array. The legacy single `day_type` is derived as
+  // dayTypes[0] (or '') when saving, so analytics/predict-day-type that still
+  // read the single column keep working until they migrate.
+  const [dayTypes, setDayTypes] = useState<string[]>(() => {
+    if (initialDay?.day_types && initialDay.day_types.length > 0) return initialDay.day_types
+    if (initialDay?.day_type) return [initialDay.day_type]
+    return []
+  })
+  const dayType = dayTypes[0] ?? ''  // legacy alias for places that still read a single primary
+  const toggleDayType = (label: string) => {
+    setDayTypes(prev => prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label])
+  }
   const [backfilling, setBackfilling] = useState(false)
   const [context, setContext] = useState<Partial<Omit<MarketContext, 'id' | 'trading_day_id' | 'stat_performance_json' | 'created_at'>>>(
     initialContext ? {
@@ -72,6 +88,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       ib_vs_10d_avg: initialContext.ib_vs_10d_avg ?? undefined,
       adr: initialContext.adr ?? undefined,
       adr_flag: initialContext.adr_flag ?? undefined,
+      day_range: initialContext.day_range ?? undefined,
       gbx_pct_adr: initialContext.gbx_pct_adr ?? undefined,
       atr_1m: initialContext.atr_1m ?? undefined,
       atr_flag: initialContext.atr_flag ?? undefined,
@@ -121,13 +138,13 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     try {
       const payload = {
         savedAt: new Date().toISOString(),
-        data: { context, prepNotes, dayType, chartUrl, aiAnalysis },
+        data: { context, prepNotes, dayType, dayTypes, chartUrl, aiAnalysis },
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
     } catch {
       // localStorage full / disabled — silent fallback to server-only save
     }
-  }, [context, prepNotes, dayType, chartUrl, aiAnalysis, isDirty, STORAGE_KEY])
+  }, [context, prepNotes, dayType, dayTypes, chartUrl, aiAnalysis, isDirty, STORAGE_KEY])
 
   const uploadScreenshot = async (file: File): Promise<string | null> => {
     const formData = new FormData()
@@ -145,13 +162,13 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   }
 
   // One-shot button under the day-type grid: overwrites every existing trade's
-  // tags_json.day_type for this date with the currently-selected dayType. Trades
-  // already tagged the same value are skipped server-side.
+  // tags_json.day_type for this date with the currently-selected dayTypes
+  // array. Trades already tagged with the same set are skipped server-side.
   const backfillDayType = async () => {
-    if (!dayType) return
+    if (dayTypes.length === 0) return
+    const label = dayTypes.length === 1 ? `"${dayTypes[0]}"` : `[${dayTypes.join(', ')}]`
     if (!confirm(
-      `Apply day type "${dayType}" to all existing trades on ${date}?\n\n` +
-      `Trades already tagged "${dayType}" will be skipped. ` +
+      `Apply day type ${label} to all existing trades on ${date}?\n\n` +
       `Each updated trade's other tags are preserved.`
     )) return
     setBackfilling(true)
@@ -159,7 +176,9 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       const res = await fetch('/api/trades/backfill-day-type', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, dayType }),
+        // Send both for backward compat with the route until it's updated to
+        // accept dayTypes natively. Route currently reads dayType only.
+        body: JSON.stringify({ date, dayType, dayTypes }),
       })
       const data = await res.json() as { updated?: number; total?: number; skipped?: number; error?: string }
       if (!res.ok) {
@@ -170,10 +189,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       if (total === 0) {
         showToast(`No trades logged for ${date} yet`, 'success')
       } else if (updated === 0) {
-        showToast(`All ${total} trade${total === 1 ? '' : 's'} already tagged "${dayType}"`, 'success')
+        showToast(`All ${total} trade${total === 1 ? '' : 's'} already tagged ${label}`, 'success')
       } else {
         const skipNote = skipped > 0 ? ` (${skipped} already tagged)` : ''
-        showToast(`Updated ${updated} of ${total} trade${total === 1 ? '' : 's'} → "${dayType}"${skipNote}`, 'success')
+        showToast(`Updated ${updated} of ${total} trade${total === 1 ? '' : 's'} → ${label}${skipNote}`, 'success')
       }
     } catch (e) {
       showToast(`Backfill failed: ${e instanceof Error ? e.message : 'unknown error'}`, 'error')
@@ -219,7 +238,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           marketContext: context,
           prepNotes,
           chartScreenshotUrl: uploadedUrl,
-          dayType,
+          dayType,        // legacy single primary — kept in sync as dayTypes[0]
+          dayTypes,       // multi-select array — written to trading_days.day_types
           aiAnalysis: aiAnalysis ?? {},
           ...(isToday && prepStartedAt ? { prepStartedAt } : {}),
           ...(isToday && completedNow ? { prepCompletedAt: completedNow } : {}),
@@ -277,6 +297,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           context?: typeof context
           prepNotes?: PrepNotes
           dayType?: string
+          dayTypes?: string[]
           chartUrl?: string | null
           aiAnalysis?: AiAnalysis | null
         }
@@ -289,8 +310,15 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         if (backup.data.context) setContext(backup.data.context)
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (backup.data.prepNotes) setPrepNotes(backup.data.prepNotes)
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (backup.data.dayType !== undefined) setDayType(backup.data.dayType)
+        // Restore multi-select dayTypes from the newer schema; fall back to
+        // the legacy single dayType for backups saved before this change.
+        if (Array.isArray(backup.data.dayTypes)) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setDayTypes(backup.data.dayTypes)
+        } else if (typeof backup.data.dayType === 'string') {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setDayTypes(backup.data.dayType ? [backup.data.dayType] : [])
+        }
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (backup.data.chartUrl !== undefined) setChartUrl(backup.data.chartUrl)
         // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -318,7 +346,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         autoSaveTimerRef.current = null
       }
     }
-  }, [isDirty, context, prepNotes, dayType, chartUrl, aiAnalysis])
+  }, [isDirty, context, prepNotes, dayType, dayTypes, chartUrl, aiAnalysis])
 
   const toBase64 = async (source: File | string): Promise<{ data: string; mediaType: string } | null> => {
     try {
@@ -674,40 +702,47 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           </p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {dayTypeOptions.map(t => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setDayType(dayType === t ? '' : t)}
-                className={`px-3 py-1.5 rounded-lg text-sm transition-colors border ${
-                  dayType === t
-                    ? 'bg-blue-600 border-blue-500 text-white'
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
-                }`}
-              >
-                {t}
-              </button>
-            ))}
+            {dayTypeOptions.map(t => {
+              const isSelected = dayTypes.includes(t)
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => toggleDayType(t)}
+                  className={`px-3 py-1.5 rounded-lg text-sm transition-colors border ${
+                    isSelected
+                      ? 'bg-blue-600 border-blue-500 text-white'
+                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                  }`}
+                >
+                  {t}
+                </button>
+              )
+            })}
           </div>
         )}
-        {dayType && (
+        {dayTypes.length > 0 && (
           <button
             type="button"
             onClick={backfillDayType}
             disabled={backfilling}
             className="mt-3 flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
-            title={`Set day_type tag = "${dayType}" on every existing trade for ${date}`}
+            title={`Set day_type tag = [${dayTypes.join(', ')}] on every existing trade for ${date}`}
           >
             {backfilling
               ? <Loader2 className="w-3 h-3 animate-spin" />
               : <Layers className="w-3 h-3" />}
-            {backfilling ? 'Applying…' : `Apply "${dayType}" to existing trades for this day`}
+            {backfilling
+              ? 'Applying…'
+              : `Apply ${dayTypes.length === 1 ? `"${dayTypes[0]}"` : `${dayTypes.length} day types`} to existing trades for this day`}
           </button>
         )}
         <DayTypePredictor
           date={date}
           currentDayType={dayType}
-          onAccept={setDayType}
+          // The predictor still returns a single label — append it (or replace
+          // the existing one) to the multi-select rather than overwriting all.
+          onAccept={label => setDayTypes(prev => prev.includes(label) ? prev : [...prev, label])}
         />
       </div>
 
@@ -718,6 +753,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           rvol: context.rvol ?? null,
           ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
           atr_1m: context.atr_1m ?? null,
+          dr_adr: drAdrAuto,
         }}
       />
 

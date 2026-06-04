@@ -61,19 +61,33 @@ export async function GET() {
   const dayIds = days.map(d => d.id)
 
   // Batch the joined queries. Market context for metric values, trades for
-  // fallback PnL when eod_pnl is null.
-  const [{ data: ctxRaw, error: ctxErr }, { data: tradesRaw, error: tradesErr }] = await Promise.all([
-    supabase
-      .from('market_context')
-      .select('trading_day_id, rvol, adr, ib_size, atr_1m')
-      .in('trading_day_id', dayIds),
-    supabase
-      .from('trades')
-      .select('trading_day_id, pnl')
-      .in('trading_day_id', dayIds),
-  ])
-  if (ctxErr) return NextResponse.json({ error: ctxErr.message }, { status: 500 })
-  if (tradesErr) return NextResponse.json({ error: tradesErr.message }, { status: 500 })
+  // fallback PnL when eod_pnl is null. Each ID is 36 chars and PostgREST
+  // serializes .in() into the URL query string — 500+ UUIDs blows past
+  // HTTP URL length limits and the request just hangs until it errors with
+  // "fetch failed" at ~8s. Chunk to keep each request under ~2KB of IDs.
+  const CHUNK = 50  // 50 * 36 chars = ~1.8KB worst-case
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function fetchChunked<T>(table: string, select: string): Promise<T[]> {
+    const out: T[] = []
+    for (let i = 0; i < dayIds.length; i += CHUNK) {
+      const slice = dayIds.slice(i, i + CHUNK)
+      const { data, error } = await supabase.from(table).select(select).in('trading_day_id', slice)
+      if (error) throw new Error(`${table}: ${error.message}`)
+      out.push(...((data ?? []) as T[]))
+    }
+    return out
+  }
+
+  let ctxRaw: Array<{ trading_day_id: string; rvol: number | null; adr: number | null; ib_size: number | null; atr_1m: number | null }>
+  let tradesRaw: Array<{ trading_day_id: string; pnl: number | null }>
+  try {
+    [ctxRaw, tradesRaw] = await Promise.all([
+      fetchChunked<typeof ctxRaw[number]>('market_context', 'trading_day_id, rvol, adr, ib_size, atr_1m'),
+      fetchChunked<typeof tradesRaw[number]>('trades', 'trading_day_id, pnl'),
+    ])
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : 'fetch failed' }, { status: 500 })
+  }
 
   interface MarketCtxSlim {
     trading_day_id: string
@@ -83,11 +97,9 @@ export async function GET() {
     atr_1m: number | null
   }
   const ctxByDay = new Map<string, MarketCtxSlim>()
-  for (const c of (ctxRaw ?? []) as MarketCtxSlim[]) {
-    ctxByDay.set(c.trading_day_id, c)
-  }
+  for (const c of ctxRaw) ctxByDay.set(c.trading_day_id, c)
   const tradePnlByDay = new Map<string, number>()
-  for (const t of (tradesRaw ?? []) as Array<{ trading_day_id: string; pnl: number | null }>) {
+  for (const t of tradesRaw) {
     if (t.pnl == null) continue
     tradePnlByDay.set(t.trading_day_id, (tradePnlByDay.get(t.trading_day_id) ?? 0) + t.pnl)
   }

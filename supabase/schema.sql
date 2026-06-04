@@ -11,7 +11,8 @@ create table if not exists trading_days (
   id uuid primary key default uuid_generate_v4(),
   date date not null unique,
   chart_screenshot_url text,
-  day_type text, -- e.g. 'trend', 'range', 'gap-and-go', populated from prep notes
+  day_type text, -- Legacy single primary (= day_types[0]). Kept in sync for backward compat with analytics + predict-day-type.
+  day_types text[] default '{}'::text[], -- Multi-select array. New code reads this; falls back to day_type when empty.
   prep_notes_json jsonb default '{}',
   -- prep_notes_json shape:
   -- {
@@ -51,6 +52,8 @@ create table if not exists market_context (
   ib_size numeric(10,2),
   ib_vs_10d_avg numeric(6,2), -- ratio, e.g. 1.2 = 20% above avg
   adr numeric(10,2),
+  -- Day's Range from Sierra stats overlay (points). Source of truth for DR_ADR.
+  day_range numeric(10,2),
   atr_1m numeric(10,2),
   stat_performance_json jsonb default '{}',
   -- stat_performance_json shape:
@@ -123,6 +126,9 @@ create table if not exists trade_tags (
   )),
   label text not null,
   sort_order integer default 0,
+  -- Free-text definition. Used by /api/predict-day-type to give the AI a
+  -- precise classification rubric per label. Editable via /settings/tags.
+  description text,
   created_at timestamptz default now(),
   unique(category, label)
 );

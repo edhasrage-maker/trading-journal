@@ -8,7 +8,8 @@ export interface Database {
           id: string
           date: string
           chart_screenshot_url: string | null
-          day_type: string | null
+          day_type: string | null         // Legacy single primary — kept in sync as day_types[0] for backward compat with analytics + predict-day-type
+          day_types: string[] | null      // Multi-select array (post-2026-06-03 migration). New code should read this, falling back to day_type when empty/null.
           prep_notes_json: PrepNotes
           ai_analysis_json: AiAnalysis
           eod_notes: string | null
@@ -44,6 +45,9 @@ export interface Database {
           ib_vs_10d_avg: number | null
           adr: number | null
           adr_flag: 'red' | 'yellow' | 'green' | null
+          // Day's Range from Sierra Chart stats overlay (points). Used to
+          // compute DR_ADR = day_range / adr without needing 1-min bars.
+          day_range: number | null
           gbx_pct_adr: number | null
           atr_1m: number | null
           atr_flag: 'red' | 'yellow' | 'green' | null
@@ -82,7 +86,10 @@ export interface Database {
           notes: string | null
           exit_time: string | null
           exit_price: number | null
-          recording_commentary: RecordingCommentaryData | null
+          // `string` is the legacy shape from a few June 1 rows written before
+          // the object format landed — kept in the type so the client can
+          // safely read those rows until the one-shot normalizer cleans them up.
+          recording_commentary: RecordingCommentaryData | string | null
           created_at: string
           updated_at: string
         }
@@ -95,6 +102,9 @@ export interface Database {
           category: TagCategory
           label: string
           sort_order: number
+          // Free-text definition. Used by /api/predict-day-type to give the
+          // AI a precise classification rubric per label. Null when unset.
+          description: string | null
           created_at: string
         }
         Insert: Omit<Database['public']['Tables']['trade_tags']['Row'], 'id' | 'created_at'>

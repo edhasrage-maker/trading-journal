@@ -3,13 +3,15 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Plus, Edit2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2 } from 'lucide-react'
 import TradeForm from './TradeForm'
+import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
 import { captureRatio, maeHeatRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
-import type { Trade, TradeTag } from '@/lib/supabase/types'
+import { mergeTradeTags } from '@/lib/suggest-tags'
+import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
 
 interface Props {
   date: string
@@ -18,7 +20,7 @@ interface Props {
   /** Trade to auto-open + scroll to on mount (deep-link from the EOD trade list). */
   initialOpenTradeId?: string | null
   /** day_type from trading_days for this date — auto-populated on NEW trades only. */
-  prepDayType?: string | null
+  prepDayTypes?: string[]
 }
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
@@ -115,7 +117,7 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
   )
 }
 
-export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayType }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   // Tags are local so newly-created custom tags appear across every TradeForm
@@ -144,6 +146,17 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const [pastedFile, setPastedFile] = useState<File | null>(null)
   const [showChart, setShowChart] = useState(true)
 
+  // Bulk multi-select for tag-apply. Checkbox per row toggles membership;
+  // a floating bar appears when 1+ trades are selected. Selecting trades
+  // does NOT change `expanded` / `mode`, so the user can keep editing one
+  // trade while also bulk-tagging others.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkTagOpen, setBulkTagOpen] = useState(false)
+  const [bulkApplying, setBulkApplying] = useState(false)
+  const toggleSelected = (id: string) =>
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+  const clearSelection = () => setSelectedIds(new Set())
+
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       if (mode.type !== 'list') return
@@ -166,6 +179,35 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     })
     setMode({ type: 'list' })
     setPastedFile(null)
+  }
+
+  // Bulk-apply tags: for each selected trade, PATCH /api/trades/[id] with the
+  // merged tags_json (additive — never replaces existing tags). Updates local
+  // state in place so the UI reflects the change without a full reload.
+  const handleBulkApplyTags = async (toAdd: TradeTags) => {
+    if (selectedIds.size === 0) return
+    setBulkApplying(true)
+    const targetTrades = trades.filter(t => selectedIds.has(t.id))
+    const updated: Trade[] = []
+    for (const t of targetTrades) {
+      const next = mergeTradeTags(t.tags_json as TradeTags | undefined, toAdd)
+      const res = await fetch(`/api/trades/${t.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags_json: next }),
+      })
+      if (res.ok) {
+        const saved = await res.json() as Trade
+        updated.push(saved)
+      }
+    }
+    if (updated.length > 0) {
+      const byId = new Map(updated.map(t => [t.id, t]))
+      setTrades(prev => prev.map(t => byId.get(t.id) ?? t))
+    }
+    setBulkApplying(false)
+    setBulkTagOpen(false)
+    clearSelection()
   }
 
   const handleDelete = async (id: string) => {
@@ -282,6 +324,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             <TradeForm key={trade.id} date={date} allTags={allTags} trade={trade}
               onTagCreated={addTag}
               defaultSymbol={chartSymbol}
+              dayTrades={trades}
               onSave={handleSave} onCancel={() => setMode({ type: 'list' })} />
           )
         }
@@ -297,6 +340,15 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             {/* Trade header row */}
             <div className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-800/40 transition-colors select-none"
               onClick={() => toggle(trade.id)}>
+              {/* Multi-select checkbox — clicking it doesn't toggle the row open */}
+              <input
+                type="checkbox"
+                checked={selectedIds.has(trade.id)}
+                onChange={() => toggleSelected(trade.id)}
+                onClick={e => e.stopPropagation()}
+                className="accent-blue-600 cursor-pointer shrink-0"
+                title="Select for bulk tag-apply"
+              />
               {/* Direction badge */}
               <span className={`text-xs font-bold px-2 py-0.5 rounded border shrink-0 ${
                 trade.direction === 'long' ? 'bg-green-900/40 border-green-700 text-green-400' : 'bg-red-900/40 border-red-700 text-red-400'
@@ -448,9 +500,10 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
 
       {/* Add trade form */}
       {isAdding && (
-        <TradeForm date={date} allTags={allTags} initialFile={pastedFile} prepDayType={prepDayType}
+        <TradeForm date={date} allTags={allTags} initialFile={pastedFile} prepDayTypes={prepDayTypes}
           onTagCreated={addTag}
           defaultSymbol={chartSymbol}
+          dayTrades={trades}
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />
       )}
 
@@ -463,6 +516,101 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
         </button>
       )}
 
+      {/* Floating bulk-action bar — appears when 1+ trades are selected. */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-gray-900 border border-gray-700 rounded-full shadow-2xl px-4 py-2 flex items-center gap-3 text-sm">
+          <span className="text-gray-300 font-medium">
+            <strong>{selectedIds.size}</strong> trade{selectedIds.size === 1 ? '' : 's'} selected
+          </span>
+          <span className="text-gray-700">·</span>
+          <button
+            type="button"
+            onClick={() => setBulkTagOpen(true)}
+            className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-full text-xs font-medium transition-colors"
+          >
+            <Tag className="w-3 h-3" /> Add tags
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="text-gray-500 hover:text-white transition-colors"
+            title="Clear selection"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Bulk tag-apply modal */}
+      {bulkTagOpen && (
+        <BulkTagModal
+          count={selectedIds.size}
+          allTags={allTags}
+          applying={bulkApplying}
+          onCancel={() => setBulkTagOpen(false)}
+          onApply={handleBulkApplyTags}
+        />
+      )}
+
+    </div>
+  )
+}
+
+/**
+ * Modal for applying tags to N selected trades at once. Starts with empty
+ * selection (we don't know which tags are shared across the picked trades —
+ * keeping it empty makes the action explicitly "add THESE tags"). Disabled
+ * until at least one tag is chosen. Always additive — never replaces tags
+ * already on the target trades.
+ */
+function BulkTagModal({
+  count, allTags, applying, onCancel, onApply,
+}: {
+  count: number
+  allTags: TradeTag[]
+  applying: boolean
+  onCancel: () => void
+  onApply: (tags: TradeTags) => void
+}) {
+  const [picked, setPicked] = useState<TradeTags>({})
+  const tagCount = Object.values(picked).reduce(
+    (n, v) => n + (Array.isArray(v) ? v.length : v ? 1 : 0),
+    0,
+  )
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
+      <div
+        className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-4 border-b border-gray-800">
+          <div>
+            <h2 className="font-semibold text-white">Add tags to {count} trade{count === 1 ? '' : 's'}</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Pick the tags to add. Existing tags on each trade are preserved.</p>
+          </div>
+          <button type="button" onClick={onCancel} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="overflow-y-auto p-4 flex-1">
+          <TagSelector tags={allTags} selected={picked} onChange={setPicked} />
+        </div>
+        <div className="flex items-center justify-between p-4 border-t border-gray-800 gap-3">
+          <span className="text-xs text-gray-500">{tagCount} tag{tagCount === 1 ? '' : 's'} picked</span>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onCancel} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white">
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => onApply(picked)}
+              disabled={tagCount === 0 || applying}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded transition-colors"
+            >
+              {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Tag className="w-3.5 h-3.5" />}
+              {applying ? 'Applying…' : `Apply to ${count}`}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

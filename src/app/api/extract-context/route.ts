@@ -47,10 +47,10 @@ async function handle(req: Request) {
         {
           type: 'text',
           text: `You are reading a Sierra Chart trading screenshot. Extract ALL visible market data values. Look carefully at:
-- Text overlays/stats panel (usually top-left) for: RVOL/Relative Volume, ADR, IB Range, IB AVG/Average, ATR values
+- Text overlays/stats panel (usually top-left) for: RVOL/Relative Volume, Day's Range, ADR, IB Range, IB AVG/Average, ATR values
 - Price level labels on the right side or drawn horizontal lines for: PDH, PDL, IBH, IBL, ONH, ONL
 - The current symbol/instrument name
-- The current price: look for a dotted horizontal line with a price label, a highlighted/flashing price on the right axis, or the price shown next to "Trade:" in the stats overlay
+- The current/live market price (NOT a trade marker — see rules below)
 
 Return ONLY a JSON object with these exact keys (use null if not visible):
 {
@@ -62,6 +62,7 @@ Return ONLY a JSON object with these exact keys (use null if not visible):
   "onh": number or null,
   "onl": number or null,
   "rvol": number or null,
+  "day_range": number or null,
   "ib_size": number or null,
   "ib_10d_avg": number or null,
   "ib_vs_10d_avg": number or null,
@@ -73,7 +74,13 @@ Return ONLY a JSON object with these exact keys (use null if not visible):
 For ib_10d_avg: extract the raw "IB AVG" value directly (e.g. if you see "IB AVG: 100.50", set ib_10d_avg to 100.50).
 For ib_vs_10d_avg: if you see "IB Range" and "IB AVG", compute IB Range / IB AVG as a ratio (e.g. 105 / 100.50 = 1.04).
 For atr_1m: prefer ATR-10--1m value if multiple ATR values exist.
-For current_price: the active market price shown as a dotted line, the price after "Trade: Qty@PRICE", or a highlighted box on the right price axis.
+For day_range: the "Day's Range" value from the stats overlay (e.g. if you see "Day's Range: 213.50", set day_range to 213.50). Skip if not labeled.
+For current_price: the LIVE market price right now. Pick in this order:
+  1. A highlighted/colored price label on the right Y-axis (the "current price" highlight box) — this is the most reliable source.
+  2. The latest candle close — i.e. the close price of the rightmost bar in the chart area.
+  STRICTLY DO NOT extract from "Trade: Qty@PRICE" labels — those are STATIC trade-entry markers from prior fills and are NEVER the current price.
+  STRICTLY DO NOT extract from "Trade Activity" lists or any historical trade labels.
+  If neither (1) nor (2) is clearly visible, return null. A wrong current_price is worse than a missing one — it causes downstream price_in_pd_range mis-detection.
 Return ONLY the JSON, no other text.`,
         },
       ],

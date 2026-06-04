@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Loader2, Save, X, ScanLine } from 'lucide-react'
 import PinPlacement, { type PinType, type Pin } from './PinPlacement'
 // PinType / Pin still used by the legacy pin-position fields kept in FormState
@@ -8,17 +8,19 @@ import PinPlacement, { type PinType, type Pin } from './PinPlacement'
 import TagSelector from './TagSelector'
 import { deleteBlob } from '@/lib/storage'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
-import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
+import type { Trade, TradeTag, TradeTags, TagCategory } from '@/lib/supabase/types'
+import { normalizeTagArray } from '@/lib/supabase/types'
+import { suggestTagsFromText, mergeTradeTags } from '@/lib/suggest-tags'
 
 interface Props {
   date: string
   allTags: TradeTag[]
   trade?: Trade | null
   initialFile?: File | null
-  /** day_type from trading_days for this date — used to pre-fill the
+  /** Day-type label(s) from trading_days for this date — used to pre-fill the
    *  day_type tag on NEW trades. Ignored when editing an existing trade
-   *  (the trade's own tags_json wins). */
-  prepDayType?: string | null
+   *  (the trade's own tags_json wins). Multi-select supported. */
+  prepDayTypes?: string[]
   /** Bubble up custom tags created inline so the parent can append to the
    *  shared `allTags` list (TradeForms across the page all share one list). */
   onTagCreated?: (tag: TradeTag) => void
@@ -27,6 +29,8 @@ interface Props {
    *  IntradayClient. Falls back to multiplier=1 when null — better than
    *  silently showing R values off by the contract multiplier. */
   defaultSymbol?: string | null
+  /** Other trades on the same day — used for the "Copy tags from..." dropdown. */
+  dayTrades?: Trade[]
   onSave: (trade: Trade) => void
   onCancel: () => void
 }
@@ -97,7 +101,7 @@ function rMultiple(s: FormState, symbol: string | null | undefined): string | nu
   return null
 }
 
-export default function TradeForm({ date, allTags, trade, initialFile, prepDayType, onTagCreated, defaultSymbol, onSave, onCancel }: Props) {
+export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, onSave, onCancel }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
@@ -105,8 +109,8 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       base.screenshot_url = URL.createObjectURL(initialFile)
       base.pendingFile = initialFile
     }
-    if (prepDayType) {
-      base.tags = { ...base.tags, day_type: [prepDayType] }
+    if (prepDayTypes && prepDayTypes.length > 0) {
+      base.tags = { ...base.tags, day_type: [...prepDayTypes] }
     }
     return base
   })
@@ -119,6 +123,32 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
 
   const set = <K extends keyof FormState>(key: K, val: FormState[K]) =>
     setForm(f => ({ ...f, [key]: val }))
+
+  // Derive tag matches live from the notes field. Each new match is AUTO-ADDED
+  // to form.tags exactly once — tracked in `autoAddedRef` so removing a tag
+  // manually won't re-add it on the next keystroke (user has final say).
+  // Screenshot-OCR suggestions still flow via form.suggestedTags → the yellow
+  // highlight treatment, separately from notes auto-add.
+  const notesSuggestions = useMemo(
+    () => suggestTagsFromText(form.notes, allTags),
+    [form.notes, allTags],
+  )
+  const autoAddedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const additions: Partial<Record<TagCategory, string[]>> = {}
+    for (const cat of Object.keys(notesSuggestions) as TagCategory[]) {
+      for (const label of normalizeTagArray(notesSuggestions[cat])) {
+        const key = `${cat}|${label}`
+        if (autoAddedRef.current.has(key)) continue
+        autoAddedRef.current.add(key)
+        ;(additions[cat] ??= []).push(label)
+      }
+    }
+    if (Object.keys(additions).length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- merging newly-detected tag matches into form.tags; gated by autoAddedRef so it runs exactly once per match
+      setForm(f => ({ ...f, tags: mergeTradeTags(f.tags, additions as TradeTags) }))
+    }
+  }, [notesSuggestions])
 
   const handleFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
@@ -386,9 +416,47 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
 
         {/* Tags — render even when allTags is empty so the user can add the
             first one inline. TagSelector itself handles the empty-category
-            case with "+ Add tag" affordances. */}
+            case with "+ Add tag" affordances. The header shows a "Copy tags
+            from…" dropdown when other tagged trades exist on the same day. */}
         <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Tags</label>
+          <div className="flex items-center justify-between mb-3 gap-3">
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</label>
+            {(() => {
+              // "Copy tags from..." — list other trades on the same day,
+              // ordered by entry_time, so the user can clone a prior trade's
+              // tagging into this one in a single click. Merges with current
+              // tags (deduped), never replaces.
+              const others = (dayTrades ?? [])
+                .filter(t => t.id !== trade?.id && Object.keys(t.tags_json ?? {}).length > 0)
+                .sort((a, b) => (a.entry_time ?? '').localeCompare(b.entry_time ?? ''))
+              if (others.length === 0) return null
+              return (
+                <select
+                  value=""
+                  onChange={e => {
+                    const src = others.find(t => t.id === e.target.value)
+                    if (!src) return
+                    set('tags', mergeTradeTags(form.tags, src.tags_json as TradeTags))
+                    e.target.value = '' // reset so the same option can be re-picked later
+                  }}
+                  className="bg-gray-800 border border-gray-700 text-gray-300 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500"
+                  title="Copy tags from another trade on this day (additive — won't replace existing tags)"
+                >
+                  <option value="">Copy tags from…</option>
+                  {others.map(t => {
+                    const time = t.entry_time ? new Date(t.entry_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
+                    const setup = (t.tags_json as TradeTags | null)?.setups?.[0] ?? 'untagged'
+                    const dir = t.direction === 'long' ? 'L' : t.direction === 'short' ? 'S' : '—'
+                    return (
+                      <option key={t.id} value={t.id}>
+                        {time} · {dir} · {setup}
+                      </option>
+                    )
+                  })}
+                </select>
+              )
+            })()}
+          </div>
           <TagSelector
             tags={allTags}
             selected={form.tags}

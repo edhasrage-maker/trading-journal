@@ -182,30 +182,22 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
         </div>
       </div>
 
-      {/* Bias */}
+      {/* Bias — direction buttons. The "Bias reasoning" textarea moved BELOW
+          the HTF MGI section so the trader fills it in after touching levels. */}
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Bias</h3>
-        <div className="space-y-3">
-          <div className="flex gap-2">
-            {biasOptions.map(b => (
-              <button key={b} type="button" onClick={() => set('bias', b)}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-colors border ${
-                  value.bias === b
-                    ? b === 'bullish' ? 'bg-green-600 border-green-500 text-white'
-                    : b === 'bearish' ? 'bg-red-600 border-red-500 text-white'
-                    : 'bg-gray-600 border-gray-500 text-white'
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
-                }`}
-              >{b}</button>
-            ))}
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Bias reasoning</label>
-            <textarea rows={2} spellCheck autoCorrect="on" placeholder="Why are you biased this way? What would change your bias?"
-              value={value.bias_notes ?? ''} onChange={e => set('bias_notes', e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
-            />
-          </div>
+        <div className="flex gap-2">
+          {biasOptions.map(b => (
+            <button key={b} type="button" onClick={() => set('bias', b)}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium capitalize transition-colors border ${
+                value.bias === b
+                  ? b === 'bullish' ? 'bg-green-600 border-green-500 text-white'
+                  : b === 'bearish' ? 'bg-red-600 border-red-500 text-white'
+                  : 'bg-gray-600 border-gray-500 text-white'
+                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+              }`}
+            >{b}</button>
+          ))}
         </div>
       </div>
 
@@ -291,6 +283,17 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
             })}
           </div>
         )}
+      </div>
+
+      {/* Bias reasoning — moved BELOW HTF MGI so the trader writes it after
+          working through the levels above. Reasoning often references which
+          MGI levels the bias is built on. */}
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Bias reasoning</label>
+        <textarea rows={2} spellCheck autoCorrect="on" placeholder="Why are you biased this way? What would change your bias?"
+          value={value.bias_notes ?? ''} onChange={e => set('bias_notes', e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
+        />
       </div>
 
       {/* Mood & Clarity */}
