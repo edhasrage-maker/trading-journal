@@ -879,6 +879,27 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         requestAnimationFrame(apply)
         setTimeout(apply, 50)
         setTimeout(apply, 200)
+        // Post-apply diagnostic: snapshot the actual visible range + chart
+        // width after the chart has finished its layout pass. If the chart's
+        // visible range no longer matches what we set, something else is
+        // overriding. If chart width is smaller than expected, that's why
+        // the candles look squeezed despite 75 bars in the logical range.
+        if (LIVECHART_DEBUG) {
+          setTimeout(() => {
+            const ts = chartRef.current?.timeScale()
+            const actual = ts?.getVisibleLogicalRange()
+            const paneW = containerRef.current?.getBoundingClientRect().width ?? 0
+            const visibleBars = actual ? (actual.to - actual.from) : 0
+            const slotPx = visibleBars > 0 ? paneW / visibleBars : 0
+            console.log('[livechart] POST-APPLY snapshot', {
+              requestedRange: range,
+              actualRange: actual,
+              chartPaneWidth: paneW,
+              visibleBars: visibleBars.toFixed(1),
+              slotPxPerBar: slotPx.toFixed(1),
+            })
+          }, 300)
+        }
       } else if (prevRange) {
         // Watcher refresh / levels load / trades load (data update on same TF).
         // Re-apply the pre-setData view both now AND after the layout pass —
