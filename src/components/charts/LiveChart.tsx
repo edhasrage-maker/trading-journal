@@ -172,6 +172,10 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const [bars, setBars] = useState<ApiBar[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Display timeframe in minutes. Stored 1-min bars get aggregated client-side
+  // when this is > 1. VWAP/EMA series from /api/bars/levels are 1-min-derived
+  // and hidden at higher TFs (their values wouldn't match the candles).
+  const [chartTfMins, setChartTfMins] = useState<number>(1)
 
   // Chart appearance prefs — persisted to localStorage, applied live.
   const [prefs, setPrefs] = useState<ChartPrefs>(DEFAULT_PREFS)
@@ -546,10 +550,38 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     ema20Ref.current?.applyOptions({ color: prefs.ema20Color })
   }, [prefs])
 
+  // Aggregate the stored 1-min bars into the selected timeframe. Bucket
+  // boundary uses floor(ms / bucketMs) so the same UTC second always falls
+  // into the same bucket regardless of TF — keeps the candle alignment
+  // stable when switching back and forth. tfMins === 1 short-circuits to
+  // the raw array (zero copy, zero work).
+  const displayBars: ApiBar[] | null = useMemo(() => {
+    if (!bars) return null
+    if (chartTfMins === 1) return bars
+    const bucketMs = chartTfMins * 60_000
+    const out: ApiBar[] = []
+    for (const b of bars) {
+      const ms = Date.parse(b.ts)
+      if (!Number.isFinite(ms)) continue
+      const bucketStartMs = Math.floor(ms / bucketMs) * bucketMs
+      const bucketIso = new Date(bucketStartMs).toISOString()
+      const last = out[out.length - 1]
+      if (last && last.ts === bucketIso) {
+        if (b.high > last.high) last.high = b.high
+        if (b.low < last.low) last.low = b.low
+        last.close = b.close
+        last.volume = (last.volume ?? 0) + (b.volume ?? 0)
+      } else {
+        out.push({ ts: bucketIso, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume })
+      }
+    }
+    return out
+  }, [bars, chartTfMins])
+
   // Push data + markers whenever bars or trades change
   useEffect(() => {
     if (!candleRef.current || !vwapRef.current || !ema9Ref.current || !ema20Ref.current) return
-    if (!bars || bars.length === 0) {
+    if (!displayBars || displayBars.length === 0) {
       candleRef.current.setData([])
       candleDataRef.current = []
       vwapRef.current.setData([])
@@ -570,7 +602,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // must not move the chart). Null on the first non-empty render (no data yet).
     const prevRange = chartRef.current?.timeScale().getVisibleLogicalRange() ?? null
 
-    const candleData = bars.map(b => ({
+    const candleData = displayBars.map(b => ({
       time: (new Date(b.ts).getTime() / 1000) as Time,
       open: b.open,
       high: b.high,
@@ -582,8 +614,9 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
 
     // Study-matched VWAP / EMA9 / EMA20 series from /api/bars/levels (replaces
     // the previous simple client-side calc). Falls back to empty until levels
-    // load.
-    const ser = levels?.series ?? []
+    // load. Hide these at higher timeframes — they're computed on 1-min bars
+    // and the values wouldn't line up with the aggregated candles.
+    const ser = chartTfMins === 1 ? (levels?.series ?? []) : []
     const toLine = (key: 'vwap' | 'ema9' | 'ema20') =>
       ser
         .filter(p => p[key] != null)
@@ -764,7 +797,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(pr) })
       }
     }
-  }, [bars, trades, levels, prefs, symbol, date])
+  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins])
 
   // Row-hover ↔ chart link: when a trade is hovered in the EOD list, drop the
   // crosshair on its entry (highlight where it was) and show the same
@@ -810,9 +843,36 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-3 text-gray-400">
           <span className="font-mono">{symbol ?? '—'}</span>
-          {bars && bars.length > 0 && (
-            <span className="text-gray-600">· {bars.length.toLocaleString()} bars</span>
+          {displayBars && displayBars.length > 0 && (
+            <span className="text-gray-600">· {displayBars.length.toLocaleString()} bars</span>
           )}
+          {/* Timeframe selector. Aggregates the stored 1-min bars client-side
+              into the chosen TF. VWAP/EMA hide above 1m because their values
+              are derived from 1-min bars and wouldn't line up. */}
+          <div className="flex items-center gap-0.5 ml-1">
+            {([
+              { mins: 1, label: '1m' },
+              { mins: 5, label: '5m' },
+              { mins: 15, label: '15m' },
+              { mins: 30, label: '30m' },
+              { mins: 60, label: '1h' },
+              { mins: 240, label: '4h' },
+            ] as const).map(tf => (
+              <button
+                key={tf.mins}
+                type="button"
+                onClick={() => setChartTfMins(tf.mins)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                  chartTfMins === tf.mins
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800'
+                }`}
+                title={`Show ${tf.label} candles`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-3 text-[10px]">
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.vwapColor }} />VWAP</span>
