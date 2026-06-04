@@ -614,9 +614,11 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
 
     // Study-matched VWAP / EMA9 / EMA20 series from /api/bars/levels (replaces
     // the previous simple client-side calc). Falls back to empty until levels
-    // load. Hide these at higher timeframes — they're computed on 1-min bars
-    // and the values wouldn't line up with the aggregated candles.
-    const ser = chartTfMins === 1 ? (levels?.series ?? []) : []
+    // load. These stay visible at every display TF: EMA series come from the
+    // user-configured EMA timeframe (default 5m, via prefs.emaTimeframeMins),
+    // and VWAP is session-anchored — both are wall-clock keyed, not display-
+    // candle keyed, so they overlay correctly on any aggregated candle TF.
+    const ser = levels?.series ?? []
     const toLine = (key: 'vwap' | 'ema9' | 'ema20') =>
       ser
         .filter(p => p[key] != null)
