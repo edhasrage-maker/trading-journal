@@ -84,7 +84,22 @@ Now read the trader's notes below and evaluate their prep quality. Cross-referen
 
   const prompt = `You are an objective trading coach reviewing a trader's daily prep${hasImage ? ' and chart screenshot' : ''}.
 
+══ TRADER'S FRAMEWORK (read this before judging anything) ══
+
 The trader uses an MGI-based approach (Market Generated Information). Setups use structural levels (PDH, PDL, IBH, IBL, ONH, ONL, HTF supply/demand). Entry triggers are order-flow based in real time — do NOT penalize absent entry prices.
+
+CRITICAL framing rules — get these wrong and your analysis will be unhelpful:
+
+1. **IBH/IBL are levels, not directions.** When the trader plans LONG from demand at the lows (e.g. ONL bounce, 5m demand zone), IBH is the upside TARGET, not a "lid" or "resistance preventing the trade from working." A clean R/R to IBH is the WHOLE POINT of the setup. Only call IBH a problem when the trader plans to go LONG from JUST BELOW IBH on a continuation — that's the scenario where IBH overhead is structurally meaningful resistance. Do not flag "IBH overhead" when longs are from a level well below it.
+
+2. **Chop is an environment, not a verdict.** "L3 CHOP" or a low-clarity read does NOT contradict laying out trade plans. Plans are CONDITIONAL — they trigger when the level reacts. In chop the trader knows to size down, wait for confluence, scratch faster. Plans laid out + chop environment = mature prep, not contradiction. Only flag chop when the plans show NO awareness of it (e.g. full size, no scaling, no invalidation).
+
+3. **"Scary factors" field on a plan is a STRENGTH.** It's the trader proactively naming the failure scenario before they take the trade — exactly the discipline you should reward. Don't list "scary factor X is a real risk" as a flag — the trader already flagged it themselves.
+
+4. **Emotional self-reporting + reduced-size commitment = strength, not flag.** When the trader writes "feeling tilted from yesterday, will trade smaller," that's the self-awareness most traders lack. Don't flag it as "easy to break the rule under pressure" — that's a truism that applies to every trader. Only flag if the mood note describes an emotion AND the plans show no behavioural adjustment.
+
+5. **Day-type context shapes everything.** If GBX is ≥ 80% of ADR with reversal structure, IBH-as-resistance is the WRONG frame — the day's character is rotation/reversal, not trend continuation. Match your analysis to what's actually unfolding.
+
 ${chartInstructions}
 
 Market Context:
@@ -121,7 +136,33 @@ Respond with ONLY valid JSON in this exact structure (no markdown, no code fence
   "plan_assessments": [{"plan_id": "<exact id>", "ai_quality": <1-5>, "note": "<1-2 sentences, be direct if you disagree with trader rating>"}]
 }
 
-For plan_assessments: rate on structural clarity, invalidation precision, target reasonableness, risk awareness. Never penalize missing entry price.`
+For plan_assessments: rate on structural clarity, invalidation precision, target reasonableness, risk awareness. Never penalize missing entry price.
+
+══ SCORING RUBRIC FOR "score" ══
+
+This is the overall PREP QUALITY score, not a market-conditions score. Don't penalize the trader for unclear market structure — that's the market's job, not the prep's. Use these anchors:
+
+- **9-10**: All plans have specific invalidation + targets + named scary factors. Bias is justified by structural context (not gut). Mood + clarity addressed honestly. Multiple plans covering both directions when warranted. HTF MGI tagged. Volume profile shape called out.
+- **7-8**: Plans have invalidation + targets. Scary factors named on at least one plan. Bias reasoning present. Mood mentioned. Some structural depth but maybe one plan thinner than another.
+- **5-6**: Plans exist but some lack invalidation OR targets OR scary factors. Bias stated without much reasoning. Or thorough plans but no mood/clarity self-check.
+- **3-4**: Plans are vague — "watch IBH" without specifics. No invalidation. Bias asserted with no structural anchor.
+- **1-2**: Effectively no prep — directional bias with no plan, no levels, no risk awareness.
+
+DO NOT downgrade for:
+- Market being choppy / uncertain (that's environment)
+- The trader being long below IBH (that's a normal R/R to a level)
+- Self-reported tilt + reduced-size commitment (that's self-awareness)
+- Named scary factors (those are the trader catching their own risk)
+- Plans being "lower probability" — probability is a market call, not a prep grade
+
+DO downgrade for:
+- Missing invalidation
+- Missing targets
+- No mood/clarity self-check
+- Bias asserted without structural reasoning
+- Plans that contradict each other without acknowledgment
+
+Cite the rubric tier in "summary" so the trader can sanity-check the score.`
 
   const userContent: Anthropic.MessageParam['content'] = hasImage
     ? [
