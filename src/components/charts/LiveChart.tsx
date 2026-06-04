@@ -870,11 +870,25 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         setTimeout(apply, 100)
       } else if (tfChanged) {
         // TF change: use this TF's saved view if it fits; otherwise reset to
-        // default last-75. Aggressive retry stack to overcome any racing
-        // effect that might try to restore a stale range in between.
+        // default last-75. We do TWO things on each apply attempt:
+        //   1. setVisibleLogicalRange — sets which bar indices to show.
+        //   2. applyOptions({ barSpacing }) — sets the slot width in px.
+        // Either alone has been unreliable; doing both belt-and-suspenders
+        // forces the chart into the layout we want. Bar-spacing target is
+        // chart-width / 75 so ~75 bars fit in view at ~12-13px each.
         const range = savedFits ? { from: savedThisTf!.from, to: savedThisTf!.to } : defaultRange
+        const visibleBars = range.to - range.from
         if (LIVECHART_DEBUG) console.log('[livechart] TF-CHANGE apply', range, 'usingSaved=', savedFits)
-        const apply = () => chartRef.current?.timeScale().setVisibleLogicalRange(range)
+        const apply = () => {
+          const ts = chartRef.current?.timeScale()
+          if (!ts) return
+          const paneW = containerRef.current?.getBoundingClientRect().width ?? 900
+          // Reserve ~70px for the right price-scale axis labels.
+          const usableW = Math.max(200, paneW - 70)
+          const targetSlot = usableW / visibleBars
+          ts.applyOptions({ barSpacing: targetSlot })
+          ts.setVisibleLogicalRange(range)
+        }
         apply()
         requestAnimationFrame(apply)
         setTimeout(apply, 50)
