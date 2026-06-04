@@ -885,45 +885,55 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         requestAnimationFrame(apply)
         setTimeout(apply, 100)
       } else if (tfChanged) {
-        // TF change: use this TF's saved view if it fits; otherwise reset to
-        // default last-75. We do TWO things on each apply attempt:
-        //   1. setVisibleLogicalRange — sets which bar indices to show.
-        //   2. applyOptions({ barSpacing }) — sets the slot width in px.
-        // Either alone has been unreliable; doing both belt-and-suspenders
-        // forces the chart into the layout we want. Bar-spacing target is
-        // chart-width / 75 so ~75 bars fit in view at ~12-13px each.
-        const range = savedFits ? { from: savedThisTf!.from, to: savedThisTf!.to } : defaultRange
-        const visibleBars = range.to - range.from
-        if (LIVECHART_DEBUG) console.log('[livechart] TF-CHANGE apply', range, 'usingSaved=', savedFits)
+        // TF change. Logs proved setVisibleLogicalRange + barSpacing weren't
+        // moving the actual rendering — lightweight-charts was reporting the
+        // logical range we set, but drawing fewer bars based on a separate
+        // time-based visible range. Switching to setVisibleRange (time-based)
+        // which is what actually drives rendering. Compute the time bounds
+        // of the last N bars from the data directly.
+        const TARGET_VISIBLE = 75
+        const startIdx = Math.max(0, total - TARGET_VISIBLE)
+        const fromBar = displayBars[startIdx]
+        const toBar = displayBars[total - 1]
+        const fromSec = fromBar ? Date.parse(fromBar.ts) / 1000 : 0
+        const toSec = toBar ? Date.parse(toBar.ts) / 1000 : 0
+        if (LIVECHART_DEBUG) {
+          console.log('[livechart] TF-CHANGE apply (time-based)', {
+            startIdx, fromTs: fromBar?.ts, toTs: toBar?.ts, fromSec, toSec,
+          })
+        }
         const apply = () => {
           const ts = chartRef.current?.timeScale()
-          if (!ts) return
+          if (!ts || !fromBar || !toBar) return
           const paneW = containerRef.current?.getBoundingClientRect().width ?? 900
-          // Reserve ~70px for the right price-scale axis labels.
           const usableW = Math.max(200, paneW - 70)
-          const targetSlot = usableW / visibleBars
+          const targetSlot = usableW / TARGET_VISIBLE
           ts.applyOptions({ barSpacing: targetSlot })
-          ts.setVisibleLogicalRange(range)
+          // setVisibleRange uses time values directly — drives the actual
+          // visible-time window, which the chart uses for rendering.
+          ts.setVisibleRange({
+            from: fromSec as Time,
+            to: toSec as Time,
+          })
         }
         apply()
         requestAnimationFrame(apply)
         setTimeout(apply, 50)
         setTimeout(apply, 200)
-        // Post-apply diagnostic: snapshot the actual visible range + chart
-        // width after the chart has finished its layout pass. If the chart's
-        // visible range no longer matches what we set, something else is
-        // overriding. If chart width is smaller than expected, that's why
-        // the candles look squeezed despite 75 bars in the logical range.
+        // Post-apply diagnostic: dump BOTH the logical and time ranges +
+        // chart width so we can spot any disconnect between them.
         if (LIVECHART_DEBUG) {
           setTimeout(() => {
             const ts = chartRef.current?.timeScale()
-            const actual = ts?.getVisibleLogicalRange()
+            const actualLogical = ts?.getVisibleLogicalRange()
+            const actualTime = ts?.getVisibleRange()
             const paneW = containerRef.current?.getBoundingClientRect().width ?? 0
-            const visibleBars = actual ? (actual.to - actual.from) : 0
+            const visibleBars = actualLogical ? (actualLogical.to - actualLogical.from) : 0
             const slotPx = visibleBars > 0 ? paneW / visibleBars : 0
             console.log('[livechart] POST-APPLY snapshot', {
-              requestedRange: range,
-              actualRange: actual,
+              requestedTimeRange: { fromSec, toSec },
+              actualLogicalRange: actualLogical,
+              actualTimeRange: actualTime,
               chartPaneWidth: paneW,
               visibleBars: visibleBars.toFixed(1),
               slotPxPerBar: slotPx.toFixed(1),
