@@ -785,42 +785,57 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     if (tscale) {
       const tfChanged = lastRenderedTfRef.current !== null && lastRenderedTfRef.current !== chartTfMins
       lastRenderedTfRef.current = chartTfMins
+      // Sensible default range: last ~75 bars (gives ~12px slot width on a
+      // typical ~900px chart pane — fat candles, readable density).
+      const total = displayBars.length
+      const TARGET_VISIBLE = 75
+      const defaultRange = {
+        from: Math.max(0, total - TARGET_VISIBLE) - 0.5,
+        to: total - 0.5,
+      }
+
       if (restoredKeyRef.current !== dayKey) {
-        // First open of this day: restore the saved view (or fit if none).
+        // First open of this day. Restore the saved view ONLY if it fits
+        // within the current TF's bar count (saved views are stored under
+        // (symbol, date) without TF, so a 1m-saved range like {600,700}
+        // points at non-existent bars on a 5m view of the same day). When
+        // the saved view doesn't fit, fall through to the default last-75.
         restoredKeyRef.current = dayKey
         const saved = symbol ? loadView(symbol, date) : null
-        const applyView = () => {
-          if (saved) tscale.setVisibleLogicalRange({ from: saved.from, to: saved.to })
-          else tscale.fitContent()
-        }
-        applyView()
-        // Re-apply after the library's post-setData layout pass — a synchronous
-        // range set on the FIRST data load is otherwise overridden by the
-        // chart's auto-fit, which is why the saved zoom never stuck.
-        requestAnimationFrame(applyView)
+        const savedFits = saved && saved.to <= total && saved.from >= 0
+        const range = savedFits ? { from: saved!.from, to: saved!.to } : defaultRange
+        const apply = () => chartRef.current?.timeScale().setVisibleLogicalRange(range)
+        apply()
+        requestAnimationFrame(apply)
+        // Belt-and-suspenders: a third attempt after the library's full
+        // layout cycle, defending against any prefs-pull or sibling effect
+        // that might re-set the range in the same frame.
+        setTimeout(apply, 100)
       } else if (tfChanged) {
-        // TF change: set visible logical range explicitly to the last N bars
-        // (or all bars if fewer available). N chosen for ~12-15px candle
-        // width on a typical chart pane — fat enough to read OHLC, dense
-        // enough to see the day's shape. applyOptions({ barSpacing }) alone
-        // was unreliable: setData()'s auto-fit overrode it post-frame, and
-        // lightweight-charts doesn't always honor the static option once a
-        // logical range has been derived. Setting the range directly works.
-        const total = displayBars.length
-        const TARGET_VISIBLE = 75 // ~12px per slot on a ~900px chart
-        const to = total - 0.5
-        const from = Math.max(0, total - TARGET_VISIBLE) - 0.5
-        const applyRange = () => chartRef.current?.timeScale().setVisibleLogicalRange({ from, to })
-        applyRange()
-        requestAnimationFrame(applyRange)
+        // TF change: ALWAYS reset to default (last 75 bars). Saved views
+        // are TF-agnostic and don't reliably translate across timeframes.
+        // Multiple delayed re-applies to overcome any racing effect that
+        // might try to restore a stale range in between (chart-prefs
+        // pull-on-mount, levels load, watcher refresh, etc.).
+        const apply = () => chartRef.current?.timeScale().setVisibleLogicalRange(defaultRange)
+        apply()
+        requestAnimationFrame(apply)
+        setTimeout(apply, 50)
+        setTimeout(apply, 200)
       } else if (prevRange) {
-        // Already restored: a data update (watcher refresh, levels/trades load).
+        // Watcher refresh / levels load / trades load (data update on same TF).
         // Re-apply the pre-setData view both now AND after the layout pass —
-        // setData re-fits a frame later, which was widening the locked zoom on
-        // every live-day bar-watcher refresh.
-        const pr = { from: prevRange.from, to: prevRange.to }
-        tscale.setVisibleLogicalRange(pr)
-        requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(pr) })
+        // setData re-fits a frame later, which was widening the locked zoom
+        // on every live-day bar-watcher refresh. Clamp to bounds in case the
+        // prevRange got recorded on a TF with more bars than the current.
+        const pr = {
+          from: Math.max(0, Math.min(prevRange.from, total - 0.5)),
+          to: Math.min(prevRange.to, total - 0.5),
+        }
+        if (pr.to > pr.from) {
+          tscale.setVisibleLogicalRange(pr)
+          requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(pr) })
+        }
       }
     }
   }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins])
