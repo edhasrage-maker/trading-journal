@@ -127,16 +127,43 @@ interface HoverInfo {
 // post-setData layout, so the zoom never locked. Index ranges are stable across
 // reloads (same bars) and on the live day (appended bars don't shift earlier
 // indices). v3 key: prior keys stored a different range type — ignore them.
-const viewKey = (symbol: string, date: string) => `livechart-view-v3-${symbol}-${date}`
-function loadView(symbol: string, date: string): { from: number; to: number } | null {
-  try { const r = localStorage.getItem(viewKey(symbol, date)); return r ? JSON.parse(r) : null } catch { return null }
+// Saved-view storage keyed per (symbol, date, tf). Separating by TF lets each
+// timeframe remember its own zoom independently — switching 1m → 5m → 1m
+// restores the exact 1m zoom even after the 5m view scrolled. Legacy v3 keys
+// (no TF) are read as 1m so existing saves don't get lost on the migration.
+const viewKey = (symbol: string, date: string, tfMins: number) =>
+  `livechart-view-v4-${symbol}-${date}-${tfMins}m`
+const legacyViewKey = (symbol: string, date: string) => `livechart-view-v3-${symbol}-${date}`
+
+function loadView(symbol: string, date: string, tfMins: number): { from: number; to: number } | null {
+  try {
+    const r = localStorage.getItem(viewKey(symbol, date, tfMins))
+    if (r) return JSON.parse(r)
+    // Legacy fallback: pre-multi-TF saves were always 1m, so honor them only
+    // when the caller is asking about 1m.
+    if (tfMins === 1) {
+      const legacy = localStorage.getItem(legacyViewKey(symbol, date))
+      return legacy ? JSON.parse(legacy) : null
+    }
+    return null
+  } catch { return null }
 }
-function saveView(symbol: string, date: string, range: { from: number; to: number }) {
-  try { localStorage.setItem(viewKey(symbol, date), JSON.stringify(range)) } catch { /* ignore */ }
+function saveView(symbol: string, date: string, tfMins: number, range: { from: number; to: number }) {
+  try { localStorage.setItem(viewKey(symbol, date, tfMins), JSON.stringify(range)) } catch { /* ignore */ }
 }
-function clearView(symbol: string, date: string) {
-  try { localStorage.removeItem(viewKey(symbol, date)) } catch { /* ignore */ }
+function clearView(symbol: string, date: string, tfMins: number) {
+  try {
+    localStorage.removeItem(viewKey(symbol, date, tfMins))
+    // Also clear the legacy v3 key for 1m so reverting to default fully resets.
+    if (tfMins === 1) localStorage.removeItem(legacyViewKey(symbol, date))
+  } catch { /* ignore */ }
 }
+
+// Diagnostic flag — set to true to see the chart's range-decision log in the
+// browser console. Left in for now while we shake out the TF-spacing issue.
+// Filter the console by "[livechart]" to follow the trail. Set back to false
+// before shipping a clean build.
+const LIVECHART_DEBUG = true
 
 /**
  * Native chart (lightweight-charts v5) shared by the EOD + Intraday pages.
@@ -246,7 +273,12 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   // change snaps the view back to the actual data extent.
   const lastRenderedTfRef = useRef<number | null>(null)
   const [hasSavedView, setHasSavedView] = useState(false)
-  useEffect(() => { setHasSavedView(!!(symbol && loadView(symbol, date))) }, [symbol, date])
+  // hasSavedView reflects whether the CURRENT TF has a saved view. Refetches
+  // when symbol/date/TF changes so the "Save chart view" indicator updates
+  // when you flip TFs.
+  useEffect(() => {
+    setHasSavedView(!!(symbol && loadView(symbol, date, chartTfMins)))
+  }, [symbol, date, chartTfMins])
 
   // Pull-on-mount: the one-shot chart-prefs migration only runs once per PC,
   // so a view saved on the OTHER PC after this PC migrated would never appear
@@ -257,17 +289,21 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   useEffect(() => {
     if (!symbol) return
     let cancelled = false
-    void pullChartPref(viewKey(symbol, date)).then(serverValue => {
+    // Cross-PC sync is per-(symbol, date) on the server (no TF dimension yet).
+    // Treat the server value as a 1m view, since that's the implicit TF the
+    // legacy save key was recorded under.
+    void pullChartPref(viewKey(symbol, date, 1)).then(serverValue => {
       if (cancelled) return
       if (!serverValue || typeof serverValue !== 'object') return
       const range = serverValue as { from: number; to: number }
       if (typeof range.from !== 'number' || typeof range.to !== 'number') return
-      const local = loadView(symbol, date)
+      const local = loadView(symbol, date, 1)
       if (local && local.from === range.from && local.to === range.to) return
       // Server differs from local — hydrate localStorage so loadView picks it
       // up on subsequent restores, then apply directly if the chart is
       // already past its first-restore for this day.
-      saveView(symbol, date, range)
+      saveView(symbol, date, 1, range)
+      if (LIVECHART_DEBUG) console.log('[livechart] pullChartPref hydrated 1m view', range)
       setHasSavedView(true)
       const sameDay = restoredKeyRef.current === `${symbol}|${date}`
       const tscale = chartRef.current?.timeScale()
@@ -300,14 +336,19 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // effect already debounces these, but this button is explicit "lock in".)
     schedulePushChartPref(PREFS_KEY, prefs)
     // Capture the visible logical (bar-index) range — current zoom + position.
+    // Saved per-TF so each timeframe remembers its own zoom independently.
     const r = chartRef.current?.timeScale().getVisibleLogicalRange()
     if (r && symbol) {
       const range = { from: r.from, to: r.to }
-      saveView(symbol, date, range)
-      // Push the per-day view to Supabase so opening the same day on the
-      // other PC restores the same zoom.
-      schedulePushChartPref(viewKey(symbol, date), range)
+      saveView(symbol, date, chartTfMins, range)
+      // Push to Supabase only when saving the default 1m TF — cross-PC sync
+      // is per-(symbol, date) without TF dimension on the server. Higher TFs
+      // stay local-only until we add a TF column to chart_prefs.
+      if (chartTfMins === 1) {
+        schedulePushChartPref(viewKey(symbol, date, 1), range)
+      }
       setHasSavedView(true)
+      if (LIVECHART_DEBUG) console.log('[livechart] saveChartView', { tf: chartTfMins, range })
     }
     setViewSavedFlash(true)
     setTimeout(() => setViewSavedFlash(false), 1500)
@@ -800,30 +841,40 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         to: total - 0.5,
       }
 
+      // Per-TF saved view, falling back to default last-75 when none exists.
+      const savedThisTf = symbol ? loadView(symbol, date, chartTfMins) : null
+      const savedFits = !!(savedThisTf && savedThisTf.to <= total && savedThisTf.from >= 0)
+
+      if (LIVECHART_DEBUG) {
+        console.log('[livechart] data effect', {
+          symbol, date, tf: chartTfMins, total,
+          restored: restoredKeyRef.current === dayKey,
+          tfChanged,
+          prevRange,
+          savedThisTf,
+          savedFits,
+          defaultRange,
+        })
+      }
+
       if (restoredKeyRef.current !== dayKey) {
-        // First open of this day. Restore the saved view ONLY if it fits
-        // within the current TF's bar count (saved views are stored under
-        // (symbol, date) without TF, so a 1m-saved range like {600,700}
-        // points at non-existent bars on a 5m view of the same day). When
-        // the saved view doesn't fit, fall through to the default last-75.
+        // First open of this day. Restore the per-TF saved view if available
+        // and fits; otherwise default to last-75. Three apply attempts
+        // (sync + rAF + 100ms) to beat the post-setData auto-fit pass.
         restoredKeyRef.current = dayKey
-        const saved = symbol ? loadView(symbol, date) : null
-        const savedFits = saved && saved.to <= total && saved.from >= 0
-        const range = savedFits ? { from: saved!.from, to: saved!.to } : defaultRange
+        const range = savedFits ? { from: savedThisTf!.from, to: savedThisTf!.to } : defaultRange
+        if (LIVECHART_DEBUG) console.log('[livechart] FIRST-OPEN apply', range, 'usingSaved=', savedFits)
         const apply = () => chartRef.current?.timeScale().setVisibleLogicalRange(range)
         apply()
         requestAnimationFrame(apply)
-        // Belt-and-suspenders: a third attempt after the library's full
-        // layout cycle, defending against any prefs-pull or sibling effect
-        // that might re-set the range in the same frame.
         setTimeout(apply, 100)
       } else if (tfChanged) {
-        // TF change: ALWAYS reset to default (last 75 bars). Saved views
-        // are TF-agnostic and don't reliably translate across timeframes.
-        // Multiple delayed re-applies to overcome any racing effect that
-        // might try to restore a stale range in between (chart-prefs
-        // pull-on-mount, levels load, watcher refresh, etc.).
-        const apply = () => chartRef.current?.timeScale().setVisibleLogicalRange(defaultRange)
+        // TF change: use this TF's saved view if it fits; otherwise reset to
+        // default last-75. Aggressive retry stack to overcome any racing
+        // effect that might try to restore a stale range in between.
+        const range = savedFits ? { from: savedThisTf!.from, to: savedThisTf!.to } : defaultRange
+        if (LIVECHART_DEBUG) console.log('[livechart] TF-CHANGE apply', range, 'usingSaved=', savedFits)
+        const apply = () => chartRef.current?.timeScale().setVisibleLogicalRange(range)
         apply()
         requestAnimationFrame(apply)
         setTimeout(apply, 50)
@@ -832,13 +883,13 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // Watcher refresh / levels load / trades load (data update on same TF).
         // Re-apply the pre-setData view both now AND after the layout pass —
         // setData re-fits a frame later, which was widening the locked zoom
-        // on every live-day bar-watcher refresh. Clamp to bounds in case the
-        // prevRange got recorded on a TF with more bars than the current.
+        // on every live-day bar-watcher refresh.
         const pr = {
           from: Math.max(0, Math.min(prevRange.from, total - 0.5)),
           to: Math.min(prevRange.to, total - 0.5),
         }
         if (pr.to > pr.from) {
+          if (LIVECHART_DEBUG) console.log('[livechart] PREV-RANGE re-apply', pr)
           tscale.setVisibleLogicalRange(pr)
           requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(pr) })
         }
@@ -1059,7 +1110,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
                     <button
                       type="button"
                       onClick={() => {
-                        if (symbol) clearView(symbol, date)
+                        if (symbol) clearView(symbol, date, chartTfMins)
                         setHasSavedView(false)
                         chartRef.current?.timeScale().fitContent()
                       }}
