@@ -656,6 +656,22 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // must not move the chart). Null on the first non-empty render (no data yet).
     const prevRange = chartRef.current?.timeScale().getVisibleLogicalRange() ?? null
 
+    // Lightweight-charts infers a base time interval from the FIRST setData,
+    // then treats later setData calls as more bars on that same grid. Switching
+    // 1m → 5m without clearing means the chart sees 5m bars as "1m bars spaced
+    // 5 minutes apart" — rendering each 5m candle every 5 slots with 4 empty
+    // 1m slots between them (exactly what the user was seeing). Clearing the
+    // candle series first forces the chart to re-detect the interval from the
+    // new bars' time deltas.
+    const tfWasJustChanged = lastRenderedTfRef.current !== null && lastRenderedTfRef.current !== chartTfMins
+    if (tfWasJustChanged) {
+      if (LIVECHART_DEBUG) console.log('[livechart] clearing series before TF-switch setData (force interval re-detection)')
+      candleRef.current.setData([])
+      vwapRef.current?.setData([])
+      ema9Ref.current?.setData([])
+      ema20Ref.current?.setData([])
+    }
+
     const candleData = displayBars.map(b => ({
       time: (new Date(b.ts).getTime() / 1000) as Time,
       open: b.open,
