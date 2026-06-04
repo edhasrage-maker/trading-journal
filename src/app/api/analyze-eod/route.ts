@@ -113,7 +113,26 @@ Now read the trade list and trader's notes. Compare:
 
   const prompt = `You are an objective trading coach reviewing a trader's completed session${hasImage ? ' and the day\'s chart' : ''}.
 
+══ TRADER'S FRAMEWORK (read this before judging anything) ══
+
 The trader uses an MGI-based approach (Market Generated Information). Setups use structural levels (PDH, PDL, IBH, IBL, ONH, ONL, HTF supply/demand). Entry triggers are order-flow based.
+
+CRITICAL weighting rules — get these wrong and your analysis will be unhelpful:
+
+1. **Realized behavior outweighs opportunity cost.** A missed setup is a maybe. A taken FOMO trade is a definite loss of money and discipline. Do NOT treat 2 missed trades as equal-weight to 1 actual bad entry. When listing mistakes, the realized ones come first; missed setups belong in patterns/next-session-focus, not as primary mistakes that drag the score.
+
+2. **Patience ≠ paralysis.** Sitting out for 2+ hours in chop or unclear structure THEN taking one high-conviction trade is GOOD process, not "decision paralysis." Only call it paralysis when the trader (a) had a CLEAR setup with all their criteria met, (b) hesitated, and (c) the hesitation was driven by emotion/uncertainty rather than waiting for confirmation. Journal entries showing real-time deliberation ARE the criteria being checked — that's the discipline working.
+
+3. **Journal compliance is a MAJOR strength.** Frequent intraday notes ("DO NOT START IMAGINING SHORTS LOOK GOOD," real-time bias updates, level-reaction observations) are exactly the discipline most traders lack. Always call this out explicitly in what_worked. It's worth a full bullet point on its own — don't bury it.
+
+4. **Near-TP exits aren't meaningful leaks.** Exiting 2-3 points shy of TP1 on a $30k+ instrument is normal risk management, not "leaving money on the table." Only flag early exits as a real mistake when (a) the exit was significantly early (e.g. <50% to TP) AND (b) price ran clean to or past the target AND (c) the pattern repeats. A 90% capture is not a management leak.
+
+5. **Tags like 'Early Exit' / 'TP1 Early Exit' are descriptive, not pejorative.** They mean the trader exited before TP1, full stop. They do NOT automatically indicate a mistake — context matters (chop signal? near-target? structural reason?). Check the realized capture % and the chart context before flagging.
+
+6. **FOMO entries are real mistakes — name them clearly.** If the trader admits 'I haven't traded in X hours' or 'don't want to miss' in notes, that's a self-flagged FOMO entry and should be the dominant mistake of the day. Don't dilute it by listing 4 other "mistakes" of equal weight.
+
+7. **Bias instability across the morning IS a process item** — but only flag it as a primary mistake if it caused realized damage (a bad entry). If the bias flipping caused only missed trades (no losses), it's a process note for next session, not a mistake hurting the score.
+
 ${chartInstructions}
 
 Day Prep Summary:
@@ -151,7 +170,33 @@ Respond with ONLY valid JSON in this exact structure (no markdown, no code fence
   "score": <integer 1-10>
 }
 
-Be direct. If the day was poor, say so. If a trade should not have been taken, name it. The trader is paying you to be honest, not encouraging.`
+══ SCORING RUBRIC FOR "score" ══
+
+This is a PROCESS quality score, not a PnL score. A losing day with clean process scores higher than a winning day full of FOMO entries. Use these anchors:
+
+- **9-10**: Every taken trade had a documented setup + structural reasoning. No FOMO/revenge entries. Active intraday journal showing real-time decision logic. Risk sized appropriately. Exits matched setup quality (don't penalize near-TP exits in chop). Bias clearly committed and held until invalidated.
+- **7-8**: Mostly clean process. ≤1 marginal entry (e.g. one FOMO/chase admission). Intraday notes present. Setup criteria mostly applied consistently. Some bias adjustment but acted on a clear setup when it came.
+- **5-6**: Process leaks visible. 1 clear FOMO/revenge entry + 1 hesitation that cost a setup, OR multiple marginal entries. Journal entries sparse or only post-hoc. Bias flipped repeatedly without acting on any of them.
+- **3-4**: Multiple FOMO/revenge entries. Sizing inconsistent. No discernible intraday process. Trading off-bias multiple times without acknowledgment.
+- **1-2**: Tilt session. Chasing, sizing up after losses, no plan referenced, no journaling.
+
+DO NOT downgrade for:
+- Missed setups (opportunity cost ≠ realized damage; mention in patterns, not mistakes)
+- Near-TP exits (2-3 points shy of TP is normal management)
+- Patience that turned into one high-conviction trade
+- Bias adjustments that DIDN'T cause a bad entry (process note only)
+- Journal entries that show self-awareness even mid-mistake — that's the system working
+
+DO downgrade for:
+- Realized FOMO entries (self-admitted in notes)
+- Revenge / chase entries
+- Sizing up emotionally
+- Trading without referencing prep
+- Exit panic well before TP with no chop signal
+
+Cite the rubric tier in "summary" so the trader can sanity-check the score. Today's example mental model: if there are 2 winners + 1 FOMO entry admission + frequent intraday journal entries + good selectivity, that's a 7-8, not a 6.
+
+Be direct. If the day was poor, say so. If a trade should not have been taken, name it. The trader is paying you to be honest, not encouraging — but honesty includes correctly weighting realized vs hypothetical damage.`
 
   const userContent: Anthropic.MessageParam['content'] = hasImage
     ? [
