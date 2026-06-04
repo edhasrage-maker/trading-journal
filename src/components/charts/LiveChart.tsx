@@ -608,12 +608,26 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   // into the same bucket regardless of TF — keeps the candle alignment
   // stable when switching back and forth. tfMins === 1 short-circuits to
   // the raw array (zero copy, zero work).
-  const displayBars: ApiBar[] | null = useMemo(() => {
+  // Filter out corrupt bars where all OHLC = 0. Comes from edge cases in the
+  // SCID importer (maintenance-window ticks, malformed records) — even one
+  // such bar at the end of the data crushes the chart's price autoscale
+  // (last close = 0 → axis range expands to include 0, candles at 30000s
+  // get squashed into invisibility against a -8000..30807 scale).
+  const validBars = useMemo(() => {
     if (!bars) return null
-    if (chartTfMins === 1) return bars
+    return bars.filter(b =>
+      Number.isFinite(b.open) && Number.isFinite(b.high) &&
+      Number.isFinite(b.low) && Number.isFinite(b.close) &&
+      !(b.open === 0 && b.high === 0 && b.low === 0 && b.close === 0)
+    )
+  }, [bars])
+
+  const displayBars: ApiBar[] | null = useMemo(() => {
+    if (!validBars) return null
+    if (chartTfMins === 1) return validBars
     const bucketMs = chartTfMins * 60_000
     const out: ApiBar[] = []
-    for (const b of bars) {
+    for (const b of validBars) {
       const ms = Date.parse(b.ts)
       if (!Number.isFinite(ms)) continue
       const bucketStartMs = Math.floor(ms / bucketMs) * bucketMs
@@ -629,7 +643,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       }
     }
     return out
-  }, [bars, chartTfMins])
+  }, [validBars, chartTfMins])
 
   // Push data + markers whenever bars or trades change
   useEffect(() => {
