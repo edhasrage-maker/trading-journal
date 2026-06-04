@@ -12,7 +12,6 @@ import TradeArrowOverlay from './TradeArrowOverlay'
 import LiveChart from '@/components/charts/LiveChart'
 import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
-import HoverPopup from './HoverPopup'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
@@ -69,8 +68,11 @@ export default function EodClient({
   const [calibMode, setCalibMode] = useState<{ step: CalibStep; draft: CalibDraft } | null>(null)
   const [savingCalib, setSavingCalib] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  // Hovered-row tracking. The chart picks this up via `hoverTradeId` and
+  // drops its crosshair + marker popup on that trade — that's the single
+  // hover-feedback surface (the old cursor-following HoverPopup duplicated it
+  // and was removed). TradeList also uses it for row-highlight styling.
   const [hoveredTradeId, setHoveredTradeId] = useState<string | null>(null)
-  const [hoverCursor, setHoverCursor] = useState<{ clientX: number; clientY: number } | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [aiAnalysis, setAiAnalysis] = useState<EodAiAnalysis | null>(() => {
     const a = initialDay?.eod_ai_analysis_json
@@ -162,15 +164,16 @@ export default function EodClient({
     return () => { cancelled = true }
   }, [trades])
 
-  const handleHoverEnter = (tradeId: string, e: React.MouseEvent) => {
+  // The mouse-event arg is still accepted by TradeList (it passed e for the
+  // cursor coords) but we no longer use it now that the popup-on-cursor was
+  // removed. Left the signature compatible to avoid touching TradeList.
+  const handleHoverEnter = (tradeId: string, _e: React.MouseEvent) => {
+    void _e
     setHoveredTradeId(tradeId)
-    setHoverCursor({ clientX: e.clientX, clientY: e.clientY })
   }
   const handleHoverLeave = () => {
     setHoveredTradeId(null)
-    setHoverCursor(null)
   }
-  const hoveredTrade = hoveredTradeId ? trades.find(t => t.id === hoveredTradeId) ?? null : null
 
   const refreshTrades = async () => {
     try {
@@ -871,8 +874,10 @@ export default function EodClient({
         onError={msg => showToast(msg, 'error')}
       />
 
-      {/* Floating hover popup — body-level fixed positioning */}
-      <HoverPopup trade={hoveredTrade} cursor={hoverCursor} />
+      {/* Cursor-following hover popup removed — the live chart already pops
+          up the same trade details (+ screenshot, + tags) on the chart
+          itself via hoverTradeId, so this duplicated the info next to the
+          cursor while the trade log row was hovered. One popup, one spot. */}
     </div>
   )
 }
