@@ -271,9 +271,15 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       setHasSavedView(true)
       const sameDay = restoredKeyRef.current === `${symbol}|${date}`
       const tscale = chartRef.current?.timeScale()
-      if (sameDay && tscale) {
+      // Only apply the server-saved range if the user is still on the default
+      // 1m timeframe. Saved views are stored without TF info, so a 1m-saved
+      // range applied on a 5m/30m/etc. view would clobber whatever the
+      // TF-change setter just put down. The 1m gate keeps the saved view
+      // behavior intact for the default case where it was saved from.
+      if (sameDay && tscale && lastRenderedTfRef.current === 1) {
         tscale.setVisibleLogicalRange(range)
         requestAnimationFrame(() => {
+          if (lastRenderedTfRef.current !== 1) return
           chartRef.current?.timeScale().setVisibleLogicalRange(range)
         })
       }
