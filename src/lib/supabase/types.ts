@@ -45,6 +45,9 @@ export interface Database {
           ib_vs_10d_avg: number | null
           adr: number | null
           adr_flag: 'red' | 'yellow' | 'green' | null
+          // Day's Range from Sierra Chart stats overlay (points). Used to
+          // compute DR_ADR = day_range / adr without needing 1-min bars.
+          day_range: number | null
           gbx_pct_adr: number | null
           atr_1m: number | null
           atr_flag: 'red' | 'yellow' | 'green' | null

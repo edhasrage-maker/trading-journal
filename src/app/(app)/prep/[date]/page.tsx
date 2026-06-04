@@ -35,27 +35,26 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
     .order('sort_order')
   const dayTypeOptions = ((dayTypeTags ?? []) as { label: string }[]).map(t => t.label)
 
-  // Auto-detect DR_ADR from 1-min bars in the 6:30-7:30 PT window. Falls back
-  // to null when bars haven't been imported yet for the date — pill renders
-  // empty and a hard-reload after BarWatcher syncs will populate it.
-  // market_context.symbol is sometimes garbled from screenshot extraction
-  // (e.g. "S@30678.00") — fall back to the journal's default chart symbol.
+  // DR_ADR auto-detect. Priority:
+  //   1. market_context.day_range / market_context.adr — extract-context AI
+  //      reads "Day's Range" directly from Sierra's stats overlay. This is
+  //      the user-canonical value and works even before bars are imported.
+  //   2. Bar-based fallback (computeDrAdr) — high-low of 1-min bars in the
+  //      6:30-7:30 PT window. Useful for historical days or when the user
+  //      hasn't extracted today's screenshot yet.
   const FALLBACK_SYMBOL = 'MNQM6.CME'
   const symbolForBars = context?.symbol && /^[A-Z]+\d+\.[A-Z]+$/.test(context.symbol)
     ? context.symbol
     : FALLBACK_SYMBOL
-  const drAdrResult = await computeDrAdr(supabase, date, symbolForBars, context?.adr ?? null)
-  // Round to 2dp for display — the underlying ratio carries more precision
-  // than is meaningful for the lookup buckets (which are coarse percentiles).
-  const drAdrAuto = drAdrResult.dr_adr != null
-    ? Math.round(drAdrResult.dr_adr * 100) / 100
-    : null
-
-  // NOTE: RVOL / ADR / ATR-10 in market_context come from /api/extract-context
-  // (the Sierra Chart screenshot AI). They are NOT auto-computed from bars —
-  // the screenshot is the source of truth, since Sierra Chart shows the
-  // user-canonical formula values directly. DR_ADR above is the exception
-  // because Sierra doesn't show that derived ratio directly.
+  let drAdrAuto: number | null = null
+  if (context?.day_range != null && context.adr != null && context.adr > 0) {
+    drAdrAuto = Math.round((context.day_range / context.adr) * 100) / 100
+  } else {
+    const drAdrResult = await computeDrAdr(supabase, date, symbolForBars, context?.adr ?? null)
+    drAdrAuto = drAdrResult.dr_adr != null
+      ? Math.round(drAdrResult.dr_adr * 100) / 100
+      : null
+  }
 
   return (
     <PrepClient

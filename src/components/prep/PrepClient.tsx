@@ -88,6 +88,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       ib_vs_10d_avg: initialContext.ib_vs_10d_avg ?? undefined,
       adr: initialContext.adr ?? undefined,
       adr_flag: initialContext.adr_flag ?? undefined,
+      day_range: initialContext.day_range ?? undefined,
       gbx_pct_adr: initialContext.gbx_pct_adr ?? undefined,
       atr_1m: initialContext.atr_1m ?? undefined,
       atr_flag: initialContext.atr_flag ?? undefined,

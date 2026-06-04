@@ -52,6 +52,8 @@ create table if not exists market_context (
   ib_size numeric(10,2),
   ib_vs_10d_avg numeric(6,2), -- ratio, e.g. 1.2 = 20% above avg
   adr numeric(10,2),
+  -- Day's Range from Sierra stats overlay (points). Source of truth for DR_ADR.
+  day_range numeric(10,2),
   atr_1m numeric(10,2),
   stat_performance_json jsonb default '{}',
   -- stat_performance_json shape:

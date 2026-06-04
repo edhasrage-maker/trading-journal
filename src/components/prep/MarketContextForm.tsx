@@ -141,6 +141,28 @@ export default function MarketContextForm({ value, onChange }: Props) {
   const adrSuggestion = buckets ? suggestFlag(value.adr == null ? null : Number(value.adr), buckets.adr) : null
   const atrSuggestion = buckets ? suggestFlag(value.atr_1m == null ? null : Number(value.atr_1m), buckets.atr_1m) : null
 
+  // Auto-apply Bad/Mid/Good flags once buckets load. The original design
+  // showed a blue ring around the suggested button and waited for the user
+  // to click — but the user expects the bucket lookup to actually FILL the
+  // value, not just hint at it. Trigger once per metric, only when:
+  //   - buckets are loaded
+  //   - the metric value is set (so suggestFlag has something to bucket)
+  //   - the user hasn't already explicitly set a flag (don't overwrite)
+  // The user can still manually change the flag — toggling off/on goes
+  // through setDirect below and doesn't re-trigger this effect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally derives from buckets/suggestions/values; setDirect is stable
+  useEffect(() => {
+    if (!buckets) return
+    const updates: Partial<ContextFields> = {}
+    if (rvolSuggestion?.flag && value.rvol_flag == null) updates.rvol_flag = rvolSuggestion.flag
+    if (adrSuggestion?.flag && value.adr_flag == null) updates.adr_flag = adrSuggestion.flag
+    if (atrSuggestion?.flag && value.atr_flag == null) updates.atr_flag = atrSuggestion.flag
+    if (Object.keys(updates).length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot bucket-driven flag apply; gated by null-check above
+      onChange({ ...value, ...updates })
+    }
+  }, [buckets, rvolSuggestion?.flag, adrSuggestion?.flag, atrSuggestion?.flag, value.rvol, value.adr, value.atr_1m])
+
   const set = (key: keyof ContextFields, raw: string) => {
     const num = parseFloat(raw)
     const parsed = raw === '' ? undefined : isNaN(num) ? raw : num
