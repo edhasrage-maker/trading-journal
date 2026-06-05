@@ -13,7 +13,7 @@ import DiscordDashboard from './DiscordDashboard'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
-import LiveChart from '@/components/charts/LiveChart'
+import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import BarWatcher from '@/components/charts/BarWatcher'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
@@ -47,6 +47,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   // Bumped by BarWatcher when new bars import; forces LiveChart to re-fetch.
   const [barsVersion, setBarsVersion] = useState(0)
+  // Ref to the LiveChart so analyze() can snapshot its canvas as a PNG when
+  // the user hasn't pasted a Sierra screenshot. Falls back to text-only
+  // analysis if the chart isn't ready (no bars / pre-mount / screenshot view).
+  const liveChartRef = useRef<LiveChartHandle>(null)
   // Chart view toggle — same pattern as EodClient. Defaults to LIVE so
   // session levels (PDH/PDL/IBH/IBL/ONH/ONL + extensions, VWAP, EMA9/20) are
   // visible immediately on page open — those compute from the .scid bars, no
@@ -389,11 +393,20 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const analyze = async () => {
     setAnalyzing(true)
     try {
+      // Image priority for the AI's Step-1 chart read:
+      //   1. Newly-selected file (not yet uploaded) → user just pasted Sierra
+      //   2. Already-saved Sierra screenshot URL → user pasted earlier
+      //   3. LiveChart canvas snapshot → auto-fallback when no screenshot
+      //      uploaded but the live chart is rendered (default view). Eliminates
+      //      the "I forgot to paste" friction — AI still gets a chart image.
+      // If all three miss, the analyze route runs text-only (no Step 1).
       let image: { data: string; mediaType: string } | null = null
       if (pendingFile) {
         image = await toBase64(pendingFile)
       } else if (chartUrl && !chartUrl.startsWith('blob:')) {
         image = await toBase64(chartUrl)
+      } else if (chartView === 'live' && liveChartRef.current) {
+        image = await liveChartRef.current.takeScreenshotPng()
       }
 
       const res = await fetch('/api/analyze-prep', {
@@ -749,6 +762,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           </>
         ) : (
           <LiveChart
+            ref={liveChartRef}
             date={date}
             symbol={chartSymbol}
             trades={initialTrades}

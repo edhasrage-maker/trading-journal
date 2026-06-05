@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Loader2, AlertCircle, Database, Settings2, X } from 'lucide-react'
 import {
   createChart,
@@ -180,6 +180,14 @@ function clearView(symbol: string, date: string, tfMins: number) {
 // operation; turn on when debugging TF-switch / zoom / saved-view issues.
 const LIVECHART_DEBUG = false
 
+/** Imperative handle exposed via ref so parents (e.g. PrepClient) can grab a
+ *  PNG of the live chart canvas. Used as a fallback chart-read image for AI
+ *  prep when the user hasn't pasted a Sierra screenshot. Returns null when
+ *  the chart isn't ready (no symbol / no bars / pre-mount). */
+export interface LiveChartHandle {
+  takeScreenshotPng(): Promise<{ data: string; mediaType: 'image/png' } | null>
+}
+
 /**
  * Native chart (lightweight-charts v5) shared by the EOD + Intraday pages.
  * Renders the day's 1m bars with VWAP + EMA(9) + EMA(20) overlays, plus
@@ -191,7 +199,10 @@ const LIVECHART_DEBUG = false
  *   - Bars not found for that symbol+date → "Import bars" hint with link
  *     to /settings/bars
  */
-export default function LiveChart({ date, symbol, trades, height = 480, refreshKey = 0, hoverTradeId = null }: Props) {
+const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
+  { date, symbol, trades, height = 480, refreshKey = 0, hoverTradeId = null },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -210,6 +221,30 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const levelLinesRef = useRef<Array<{ key: string; price: number }>>([])
   // Per-trade entry→exit connector lines (2-point dashed line series each).
   const tradeLinesRef = useRef<ISeriesApi<'Line'>[]>([])
+
+  // Imperative handle: lets parents (PrepClient) snapshot the chart as a PNG
+  // for AI analysis when the user hasn't pasted a Sierra screenshot.
+  // lightweight-charts' takeScreenshot() returns an HTMLCanvasElement; we
+  // convert to a base64 PNG (stripped of the data: prefix) since that's what
+  // /api/analyze-prep accepts. Returns null when the chart isn't ready (no
+  // candles drawn yet) so the caller can fall back to text-only analysis.
+  useImperativeHandle(ref, () => ({
+    async takeScreenshotPng() {
+      const chart = chartRef.current
+      const candleSeries = candleRef.current
+      if (!chart || !candleSeries || candleDataRef.current.length === 0) return null
+      try {
+        const canvas = chart.takeScreenshot()
+        const dataUrl = canvas.toDataURL('image/png')
+        const base64 = dataUrl.split(',')[1] ?? null
+        if (!base64) return null
+        return { data: base64, mediaType: 'image/png' }
+      } catch (e) {
+        console.warn('[livechart] takeScreenshotPng failed:', e)
+        return null
+      }
+    },
+  }), [])
 
   const [bars, setBars] = useState<ApiBar[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1401,4 +1436,8 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       </div>
     </div>
   )
-}
+})
+
+LiveChart.displayName = 'LiveChart'
+
+export default LiveChart
