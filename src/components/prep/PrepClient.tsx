@@ -47,11 +47,14 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   // Bumped by BarWatcher when new bars import; forces LiveChart to re-fetch.
   const [barsVersion, setBarsVersion] = useState(0)
-  // Chart view toggle — same pattern as EodClient. Defaults to screenshot for
-  // prep since the morning workflow centers on the SC screenshot upload; the
-  // user can flip to live to see today's bars without leaving the page. State
-  // is per-mount (resets on navigation between days).
-  const [chartView, setChartView] = useState<'screenshot' | 'live'>('screenshot')
+  // Chart view toggle — same pattern as EodClient. Defaults to LIVE so
+  // session levels (PDH/PDL/IBH/IBL/ONH/ONL + extensions, VWAP, EMA9/20) are
+  // visible immediately on page open — those compute from the .scid bars, no
+  // screenshot required. User can flip to Screenshot when they want to paste
+  // a Sierra view + run Auto-fill (which still owns the RVOL/ADR/ATR numerical
+  // extraction + the AI prep-analysis vision step). State is per-mount
+  // (resets on navigation between days).
+  const [chartView, setChartView] = useState<'screenshot' | 'live'>('live')
   const isFirstRender = useRef(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [extracting, setExtracting] = useState(false)
