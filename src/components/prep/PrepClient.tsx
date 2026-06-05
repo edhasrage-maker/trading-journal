@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
-import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle, Layers } from 'lucide-react'
+import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle, Layers, Image as ImageIcon, CandlestickChart } from 'lucide-react'
 import ScreenshotUpload from './ScreenshotUpload'
 import ConditionFilterPanel from '@/components/condition/ConditionFilterPanel'
 import MarketContextForm from './MarketContextForm'
@@ -47,6 +47,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   // Bumped by BarWatcher when new bars import; forces LiveChart to re-fetch.
   const [barsVersion, setBarsVersion] = useState(0)
+  // Chart view toggle — same pattern as EodClient. Defaults to screenshot for
+  // prep since the morning workflow centers on the SC screenshot upload; the
+  // user can flip to live to see today's bars without leaving the page. State
+  // is per-mount (resets on navigation between days).
+  const [chartView, setChartView] = useState<'screenshot' | 'live'>('screenshot')
   const isFirstRender = useRef(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -684,42 +689,69 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         onClose={() => setSpellCheckOpen(false)}
       />
 
-      {/* Chart Screenshot */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-        <ScreenshotUpload
-          value={chartUrl}
-          onChange={handleScreenshotChange}
-          label="Chart Screenshot (with MGI levels marked)"
-        />
-        {(pendingFile || chartUrl) && (
-          <button
-            onClick={extractContext}
-            disabled={extracting}
-            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-          >
-            {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            {extracting ? 'Reading chart...' : 'Auto-fill from chart'}
-          </button>
-        )}
-      </div>
-
-      {/* Live Chart — same component the EOD page uses. Mirrored here so prep
-          can see today's price action alongside the screenshot. BarWatcher
-          auto-imports today's .scid bars every ~3 min during the session. */}
+      {/* Chart — toggle between the morning Sierra Chart screenshot (with
+          MGI levels marked, used for AI auto-fill) and the in-app LiveChart
+          (live bars from .scid + session levels). Same pattern as EodClient. */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-white">Live Chart</h2>
-          <BarWatcher
-            activeDate={date}
-            onRefresh={() => setBarsVersion(v => v + 1)}
-          />
+          <h2 className="font-semibold text-white">
+            {chartView === 'screenshot' ? 'Chart Screenshot (with MGI levels marked)' : 'Live Chart'}
+          </h2>
+          <div className="flex items-center gap-3">
+            {chartView === 'live' && (
+              <BarWatcher
+                activeDate={date}
+                onRefresh={() => setBarsVersion(v => v + 1)}
+              />
+            )}
+            <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
+              <button
+                type="button"
+                onClick={() => setChartView('screenshot')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                  chartView === 'screenshot' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+              >
+                <ImageIcon className="w-3.5 h-3.5" /> Screenshot
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartView('live')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                  chartView === 'live' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+              >
+                <CandlestickChart className="w-3.5 h-3.5" /> Live chart
+              </button>
+            </div>
+          </div>
         </div>
-        <LiveChart
-          date={date}
-          symbol={chartSymbol}
-          trades={initialTrades}
-          refreshKey={barsVersion}
-        />
+        {chartView === 'screenshot' ? (
+          <>
+            <ScreenshotUpload
+              value={chartUrl}
+              onChange={handleScreenshotChange}
+              label=""
+            />
+            {(pendingFile || chartUrl) && (
+              <button
+                onClick={extractContext}
+                disabled={extracting}
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+              >
+                {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {extracting ? 'Reading chart...' : 'Auto-fill from chart'}
+              </button>
+            )}
+          </>
+        ) : (
+          <LiveChart
+            date={date}
+            symbol={chartSymbol}
+            trades={initialTrades}
+            refreshKey={barsVersion}
+          />
+        )}
       </div>
 
       {/* Day Type — chips sourced from trade_tags.day_type so prep + intraday

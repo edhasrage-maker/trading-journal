@@ -44,7 +44,7 @@ export default function ScreenshotUpload({ value, onChange, label = 'Chart Scree
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-300">{label}</label>
+      {label && <label className="block text-sm font-medium text-gray-300">{label}</label>}
 
       {preview ? (
         <div className="relative rounded-xl overflow-hidden border border-gray-700 group">

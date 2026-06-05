@@ -1,7 +1,8 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
-import { Check, Trash2, Loader2 } from 'lucide-react'
+import { Check, Trash2, Loader2, HelpCircle, X } from 'lucide-react'
 import { captureRatio, maeHeatRatio, isGiveBackTrade, rMultiple } from '@/lib/analytics'
 import type { Trade } from '@/lib/supabase/types'
 
@@ -57,6 +58,28 @@ export default function TradeList({
   liveAtrByTradeId,
   postExitByTradeId,
 }: Props) {
+  // Click-to-toggle popups for the MFE % / MAE % column definitions. Same
+  // dashboard-style popup pattern as the EOD header — click outside / Esc to
+  // dismiss. Pinned top-right of the viewport so they don't push the table.
+  const [mfeOpen, setMfeOpen] = useState(false)
+  const [maeOpen, setMaeOpen] = useState(false)
+  const mfeRef = useRef<HTMLDivElement>(null)
+  const maeRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!mfeOpen && !maeOpen) return
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (mfeOpen && mfeRef.current && !mfeRef.current.contains(t)) setMfeOpen(false)
+      if (maeOpen && maeRef.current && !maeRef.current.contains(t)) setMaeOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setMfeOpen(false); setMaeOpen(false) }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [mfeOpen, maeOpen])
+
   if (trades.length === 0) {
     return (
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500 text-sm">
@@ -73,19 +96,93 @@ export default function TradeList({
           <thead>
             <tr className="text-gray-500 border-b border-gray-800">
               <th className="font-normal pb-2 pr-2 w-8" />
-              <th className="text-left font-normal pb-2 pr-3">Time</th>
-              <th className="text-left font-normal pb-2 pr-3">Dir</th>
-              <th className="text-right font-normal pb-2 pr-3">Entry</th>
-              <th className="text-right font-normal pb-2 pr-3">Stop</th>
-              <th className="text-right font-normal pb-2 pr-3">TP1</th>
-              <th className="text-right font-normal pb-2 pr-3">Qty</th>
-              <th className="text-right font-normal pb-2 pr-3" title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot.">ATR@</th>
-              <th className="text-right font-normal pb-2 pr-3">PnL</th>
-              <th className="text-right font-normal pb-2 pr-3" title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units).">R</th>
-              <th className="text-right font-normal pb-2 pr-3" title="MFE Realized %: realized PnL / peak favorable excursion in $. 100% = you took the high. Bolded when the trade was a give-back (MFE >= 1R favorable then closed at a loss).">MFE %</th>
-              <th className="text-right font-normal pb-2 pr-3" title="MAE Heat %: peak adverse / planned stop distance. 100% = MAE touched stop. Red bold on lucky-escape winners (heat > 100% but trade closed green) or on standout heat (>= 100%).">MAE %</th>
-              <th className="text-right font-normal pb-2 pr-3" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>
-              <th className="text-left font-normal pb-2">Overview</th>
+              <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Time</th>
+              <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Dir</th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Entry</th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Stop</th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">TP1</th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Qty</th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot.">ATR@</th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">PnL</th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units).">R</th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
+                <span className="inline-flex items-center gap-1 justify-end">
+                  MFE %
+                  <button
+                    type="button"
+                    onClick={() => { setMfeOpen(o => !o); setMaeOpen(false) }}
+                    className={`transition-colors ${mfeOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                    title="What is MFE %?"
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                  </button>
+                </span>
+                {mfeOpen && (
+                  <div
+                    ref={mfeRef}
+                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="font-semibold text-white">MFE % (per-trade)</p>
+                      <button type="button" onClick={() => setMfeOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <p className="mb-2 text-gray-300">
+                      <em>How much of the favorable move did you actually book on this trade?</em>
+                    </p>
+                    <p className="mb-2 text-gray-400">
+                      = realized PnL ÷ peak favorable excursion (in $) — bounded by entry → exit, so it measures execution <em>while you held</em>.
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
+                      <li><strong>100%</strong>: exited at the high — perfect timing</li>
+                      <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
+                      <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — went green then closed at a loss</li>
+                    </ul>
+                    <p className="text-gray-500">Bolded when the trade was a give-back (MFE ≥ 1R favorable then closed red).</p>
+                  </div>
+                )}
+              </th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
+                <span className="inline-flex items-center gap-1 justify-end">
+                  MAE %
+                  <button
+                    type="button"
+                    onClick={() => { setMaeOpen(o => !o); setMfeOpen(false) }}
+                    className={`transition-colors ${maeOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                    title="What is MAE %?"
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                  </button>
+                </span>
+                {maeOpen && (
+                  <div
+                    ref={maeRef}
+                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="font-semibold text-white">MAE % (per-trade)</p>
+                      <button type="button" onClick={() => setMaeOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <p className="mb-2 text-gray-300">
+                      <em>How much of your planned risk did you sit through on this trade before exiting?</em>
+                    </p>
+                    <p className="mb-2 text-gray-400">
+                      = peak adverse excursion ÷ planned stop distance (entry − stop_price) — separate from realized $ PnL.
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
+                      <li><strong>0–50%</strong>: clean entry, light pressure</li>
+                      <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
+                      <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — moved, slipped, or reversed in time to save you</li>
+                    </ul>
+                    <p className="text-gray-500">Red bold on lucky-escape winners (heat &gt; 100% but trade closed green) or on standout heat (≥ 100%).</p>
+                  </div>
+                )}
+              </th>
+              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>
+              <th className="text-left font-normal pb-2 whitespace-nowrap">Overview</th>
               <th className="w-8" />
             </tr>
           </thead>
