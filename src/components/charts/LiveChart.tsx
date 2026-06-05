@@ -72,11 +72,13 @@ const DEFAULT_PREFS: ChartPrefs = {
   hiddenLevels: [],
 }
 const PREFS_KEY = 'livechart-prefs-v2'
-// Global active-TF persistence. Single key across all symbols/days because the
-// user's mental model is "I want to be in 5m mode" — not "this day on 5m, that
-// day on 1m." Saved zoom ranges stay keyed per-(symbol,date,tf).
-const TF_KEY = 'livechart-active-tf-v1'
+// Per-(symbol, date) active-TF persistence. Each calendar day remembers its own
+// chosen timeframe — opening 06/04 lands on 5m if that's what you saved there,
+// and 06/05 lands on 1m independently. Aligns with the saved-zoom keying.
 const TF_VALID = new Set<number>([1, 5, 15, 30, 60, 240])
+function tfKey(symbol: string | null, date: string): string {
+  return `livechart-tf-${symbol ?? 'unknown'}-${date}`
+}
 
 const FONT_OPTIONS: { label: string; value: string }[] = [
   { label: 'Sans', value: `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif` },
@@ -250,14 +252,14 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // Display timeframe in minutes. Stored 1-min bars get aggregated client-side
-  // when this is > 1. Persisted globally so re-opening any day starts on the
-  // last-used TF. Saved logical-range views are still keyed per-(symbol, date,
-  // tf) — so a 5m saved view restores correctly when TF persistence lands you
-  // on 5m on open.
+  // when this is > 1. Persisted PER (symbol, date) so each day remembers its
+  // own TF — 5m on 06/04 stays 5m, 1m on 06/05 stays 1m. Saved logical-range
+  // zoom keys remain (symbol, date, tf) so a 5m saved view restores correctly
+  // when the per-day TF persistence opens you on 5m.
   const [chartTfMins, setChartTfMins] = useState<number>(() => {
-    if (typeof window === 'undefined') return 1
+    if (typeof window === 'undefined' || !symbol) return 1
     try {
-      const raw = localStorage.getItem(TF_KEY)
+      const raw = localStorage.getItem(tfKey(symbol, date))
       if (raw) {
         const n = parseInt(raw, 10)
         if (TF_VALID.has(n)) return n
@@ -265,9 +267,27 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     } catch { /* ignore */ }
     return 1
   })
+  // Day-switch handling: when (symbol, date) changes WITHOUT remount (e.g.
+  // App-Router soft nav between dates), reload the saved TF for the new day
+  // INSTEAD of writing the old day's TF into the new day's slot.
+  // tfInitKeyRef tracks the last key we initialized; mismatch = day switched.
+  const tfInitKeyRef = useRef<string>(symbol ? tfKey(symbol, date) : '')
   useEffect(() => {
-    try { localStorage.setItem(TF_KEY, String(chartTfMins)) } catch { /* ignore */ }
-  }, [chartTfMins])
+    if (typeof window === 'undefined' || !symbol) return
+    const key = tfKey(symbol, date)
+    if (tfInitKeyRef.current !== key) {
+      tfInitKeyRef.current = key
+      try {
+        const raw = localStorage.getItem(key)
+        const n = raw ? parseInt(raw, 10) : NaN
+        const saved = TF_VALID.has(n) ? n : 1
+        if (saved !== chartTfMins) setChartTfMins(saved)
+      } catch { /* ignore */ }
+    } else {
+      // Same day, TF changed by user → persist.
+      try { localStorage.setItem(key, String(chartTfMins)) } catch { /* ignore */ }
+    }
+  }, [chartTfMins, symbol, date])
 
   // Chart appearance prefs — persisted to localStorage, applied live.
   const [prefs, setPrefs] = useState<ChartPrefs>(DEFAULT_PREFS)
@@ -849,24 +869,24 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       L.iblExt.forEach((v, i) => addLine(v, `IBL-${pcts[i]}%`, dim, true))
     }
 
-    // Trade markers — entries are direction-shaped arrows; exits are one
-    // circle PER partial-fill (from exits_json) so multi-leg scale-outs
+    // Trade markers — entries are direction-shaped arrows; exits are now
+    // OPPOSITE-direction arrows (LONG exits show arrowDown above the bar — a
+    // sell; SHORT exits show arrowUp below the bar — a buy-to-cover). One
+    // marker PER partial-fill (from exits_json) so multi-leg scale-outs
     // render distinctly. Falls back to the aggregated exit_time/exit_price
     // single marker for old trades that pre-date exits_json.
     //
-    // Label strategy (reduces overlap when trades cluster):
-    //   - Entry text default: just the qty (the arrow shape encodes direction,
-    //     the bar y-position the price).
-    //   - Exit text: NEVER drawn on-chart. The hover popup already lists every
-    //     fill cleanly ("Exits: 1@29456.5, 2@29456.75, 1@29447.75, 1@29448"),
-    //     so duplicating those labels on the chart just produces a stack of
-    //     overlapping text when multi-leg scale-outs land in close time
-    //     buckets. Exits stay as colored dots only; the popup is the source
-    //     of truth for fill details.
-    //   - HOVERED trade gets the FULL entry label ("SHORT 5@29489") AND a
-    //     size bump (1 → 2) on both the entry arrow and the exit dots so the
-    //     trade visually pops out of a cluster. Exit DOTS get bigger; their
-    //     LABELS still stay off (per above).
+    // Label strategy:
+    //   - Entry default: qty only. Direction is encoded by arrow shape, price
+    //     by the bar y-position. Hover swaps in the full "SHORT 5@29489" form.
+    //   - Exit default: qty only (e.g. "2" for a 2-contract scale-out). Short
+    //     enough that even multi-fill clusters stay readable.
+    //   - Exit on hover: qty@price (e.g. "2@29456.75"). Adds the per-fill
+    //     price so a glance at the chart shows where each leg came off without
+    //     opening the popup. Risk of overlap when fills cluster tightly in
+    //     time, but the user accepts that — the info value outweighs.
+    //   - Size bump (1 → 2) on entry + exits of the hovered trade so the
+    //     full ribbon visually pops out of any cluster.
     type Marker = {
       time: Time
       position: 'belowBar' | 'aboveBar'
@@ -912,8 +932,11 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           time: displayTimeFromMs(new Date(e.time).getTime(), chartTfMins),
           position: isLong ? 'aboveBar' : 'belowBar',
           color: exitColor,
-          shape: 'circle',
-          text: '', // see note above: popup owns the exit-fill details
+          // Opposite-direction arrow vs entry: LONG exits sell (arrowDown
+          // pointing into the bar from above); SHORT exits cover (arrowUp
+          // pointing into the bar from below).
+          shape: isLong ? 'arrowDown' : 'arrowUp',
+          text: isHovered ? `${e.qty}@${e.price}` : String(e.qty),
           size: isHovered ? 2 : 1,
         })
       }
