@@ -570,7 +570,11 @@ function DayRowItem({
           : <span className={day.win_rate >= 50 ? 'text-green-400' : 'text-gray-400'}>{day.win_rate.toFixed(0)}%</span>}
       </td>
       <td className={`py-2 pr-3 text-right font-mono font-medium ${pnlColor} ${cellBg}`}>
-        {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${pnl.toLocaleString()}`}
+        {/* Whole-dollar PnL — the narrow Recent Days column was clipping
+            ".50" off "$368.50" and showing a dangling "$368." period. The
+            day-level summary doesn't need cent precision; per-trade rows
+            still keep decimals where they matter. */}
+        {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}`}
       </td>
       <td className={`py-2 pr-2 text-right ${cellBg}`}>
         <button
