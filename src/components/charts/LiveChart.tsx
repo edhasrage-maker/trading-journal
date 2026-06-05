@@ -114,6 +114,17 @@ function makeTimeFormatters(timeZone: string) {
   }
 }
 
+const MS_PER_MINUTE = 60_000
+
+function displayBucketStartMs(ms: number, tfMins: number) {
+  const bucketMs = Math.max(1, tfMins) * MS_PER_MINUTE
+  return Math.floor(ms / bucketMs) * bucketMs
+}
+
+function displayTimeFromMs(ms: number, tfMins: number): Time {
+  return (displayBucketStartMs(ms, tfMins) / 1000) as Time
+}
+
 interface HoverInfo {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   trade: any
@@ -162,7 +173,7 @@ function clearView(symbol: string, date: string, tfMins: number) {
 // Diagnostic flag — flip to true to see the chart's range-decision log in
 // the browser console. Filter by "[livechart]" to follow. Off in normal
 // operation; turn on when debugging TF-switch / zoom / saved-view issues.
-const LIVECHART_DEBUG = true
+const LIVECHART_DEBUG = false
 
 /**
  * Native chart (lightweight-charts v5) shared by the EOD + Intraday pages.
@@ -544,11 +555,11 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       let bestDelta = Infinity
       for (const t of tradesRef.current) {
         if (!t.entry_time) continue
-        const ts = new Date(t.entry_time).getTime() / 1000
+        const ts = displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins) as number
         const d = Math.abs(ts - timeSec)
         if (d < bestDelta) { bestDelta = d; best = t }
       }
-      if (best && bestDelta <= 90) setHover({ trade: best, x: param.point.x, y: param.point.y })
+      if (best && bestDelta <= Math.max(90, chartTfMins * 60)) setHover({ trade: best, x: param.point.x, y: param.point.y })
       else setHover(null)
     })
 
@@ -640,13 +651,11 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const displayBars: ApiBar[] | null = useMemo(() => {
     if (!validBars) return null
     if (chartTfMins === 1) return validBars
-    const bucketMs = chartTfMins * 60_000
     const out: ApiBar[] = []
     for (const b of validBars) {
       const ms = Date.parse(b.ts)
       if (!Number.isFinite(ms)) continue
-      const bucketStartMs = Math.floor(ms / bucketMs) * bucketMs
-      const bucketIso = new Date(bucketStartMs).toISOString()
+      const bucketIso = new Date(displayBucketStartMs(ms, chartTfMins)).toISOString()
       const last = out[out.length - 1]
       if (last && last.ts === bucketIso) {
         if (b.high > last.high) last.high = b.high
@@ -707,20 +716,32 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       low: b.low,
       close: b.close,
     }))
+    const candleTimes = candleData.map(p => p.time as number)
+    const candleTimeSet = new Set(candleTimes)
     candleRef.current.setData(candleData)
     candleDataRef.current = candleData // for the price-scale autoscale provider
 
     // Study-matched VWAP / EMA9 / EMA20 series from /api/bars/levels (replaces
     // the previous simple client-side calc). Falls back to empty until levels
-    // load. These stay visible at every display TF: EMA series come from the
-    // user-configured EMA timeframe (default 5m, via prefs.emaTimeframeMins),
-    // and VWAP is session-anchored — both are wall-clock keyed, not display-
-    // candle keyed, so they overlay correctly on any aggregated candle TF.
+    // load. Keep these points on the candle grid. lightweight-charts merges
+    // all series timestamps into one shared scale; feeding 1m VWAP points into
+    // a 5m candle chart inserts empty x-slots between the candles.
     const ser = levels?.series ?? []
-    const toLine = (key: 'vwap' | 'ema9' | 'ema20') =>
-      ser
-        .filter(p => p[key] != null)
-        .map(p => ({ time: (new Date(p.ts).getTime() / 1000) as Time, value: p[key] as number }))
+    const toLine = (key: 'vwap' | 'ema9' | 'ema20') => {
+      const byDisplayTime = new Map<number, number>()
+      for (const p of ser) {
+        const value = p[key]
+        if (value == null || !Number.isFinite(value)) continue
+        const ms = Date.parse(p.ts)
+        if (!Number.isFinite(ms)) continue
+        const time = displayBucketStartMs(ms, chartTfMins) / 1000
+        if (candleTimeSet.has(time)) byDisplayTime.set(time, value)
+      }
+      return candleTimes.flatMap(time => {
+        const value = byDisplayTime.get(time)
+        return value == null ? [] : [{ time: time as Time, value }]
+      })
+    }
     vwapRef.current.setData(toLine('vwap'))
     ema9Ref.current.setData(toLine('ema9'))
     ema20Ref.current.setData(toLine('ema20'))
@@ -785,7 +806,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       const entryColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#6b7280'
       // Entry
       markers.push({
-        time: (new Date(t.entry_time).getTime() / 1000) as Time,
+        time: displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins),
         position: isLong ? 'belowBar' : 'aboveBar',
         color: entryColor,
         shape: isLong ? 'arrowUp' : 'arrowDown',
@@ -805,7 +826,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
           : true
         const exitColor = favorable ? '#22c55e' : '#ef4444'
         markers.push({
-          time: (new Date(e.time).getTime() / 1000) as Time,
+          time: displayTimeFromMs(new Date(e.time).getTime(), chartTfMins),
           position: isLong ? 'aboveBar' : 'belowBar',
           color: exitColor,
           shape: 'circle',
@@ -825,19 +846,18 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     }
 
     // Entry→exit connector lines: a 2-point dashed line series per trade leg.
-    // Endpoints snapped to the minute so they sit on the candle time scale;
-    // legs whose entry and exit fall in the same minute are skipped (a line
+    // Endpoints snapped to the display timeframe so they sit on the candle grid;
+    // legs whose entry and exit fall in the same display bucket are skipped (a line
     // would collapse to a point). Color matches the exit marker (green if the
     // partial beat entry, red if not).
     const chart = chartRef.current
     if (chart) {
       for (const s of tradeLinesRef.current) chart.removeSeries(s)
       tradeLinesRef.current = []
-      const snapMin = (ms: number) => (Math.floor(ms / 60000) * 60) as Time
       for (const t of trades) {
         if (!t.entry_time || !t.direction || t.entry_price == null) continue
         const isLong = t.direction === 'long'
-        const entryMin = snapMin(new Date(t.entry_time).getTime())
+        const entryMin = displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins)
         const exitList: Array<{ time: string; price: number }> =
           Array.isArray(t.exits_json) && t.exits_json.length > 0
             ? t.exits_json
@@ -845,8 +865,8 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
               ? [{ time: t.exit_time, price: t.exit_price }]
               : []
         for (const e of exitList) {
-          const exitMin = snapMin(new Date(e.time).getTime())
-          if ((exitMin as number) <= (entryMin as number)) continue // same/earlier minute → skip
+          const exitMin = displayTimeFromMs(new Date(e.time).getTime(), chartTfMins)
+          if ((exitMin as number) <= (entryMin as number)) continue // same/earlier bucket -> skip
           const favorable = isLong ? e.price > t.entry_price : e.price < t.entry_price
           const line = chart.addSeries(LineSeries, {
             color: favorable ? '#22c55e' : '#ef4444',
@@ -876,24 +896,20 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     if (tscale) {
       const tfChanged = lastRenderedTfRef.current !== null && lastRenderedTfRef.current !== chartTfMins
       lastRenderedTfRef.current = chartTfMins
-      // Per-TF default visible count. Higher TFs show fewer-but-fatter candles
-      // (matches how TradingView/Sierra behave when switching resolutions —
-      // the candle WIDTH stays roughly consistent across TFs by showing less
-      // time at higher granularity). 1m stays at 75 (you want density to read
-      // micro-action); 5m+ ramps down so each candle is more readable.
+      // Per-TF default visible count. Keep 5m/15m/30m compact by targeting
+      // roughly the same candle density as 1m instead of deliberately widening
+      // higher timeframes.
       const total = displayBars.length
       const TARGET_VISIBLE =
-        chartTfMins <= 1   ? 75 :   // ~12px each (1.25h of data)
-        chartTfMins <= 5   ? 40 :   // ~22px each (~3.5h of data)
-        chartTfMins <= 15  ? 25 :   // ~36px each (~6h of data)
-        chartTfMins <= 30  ? 20 :   // ~45px each (~10h of data)
-                             15     // 1h: ~60px each (~15h); 4h: ~60d
+        chartTfMins <= 30  ? 75 :
+        chartTfMins <= 60  ? 60 :
+                             50
       const defaultRange = {
         from: Math.max(0, total - TARGET_VISIBLE) - 0.5,
         to: total - 0.5,
       }
 
-      // Per-TF saved view, falling back to default last-75 when none exists.
+      // Per-TF saved view, falling back to the compact default when none exists.
       const savedThisTf = symbol ? loadView(symbol, date, chartTfMins) : null
       const savedFits = !!(savedThisTf && savedThisTf.to <= total && savedThisTf.from >= 0)
 
@@ -911,7 +927,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
 
       if (restoredKeyRef.current !== dayKey) {
         // First open of this day. Restore the per-TF saved view if available
-        // and fits; otherwise default to last-75. Three apply attempts
+        // and fits; otherwise default to the compact target range. Three apply attempts
         // (sync + rAF + 100ms) to beat the post-setData auto-fit pass.
         restoredKeyRef.current = dayKey
         const range = savedFits ? { from: savedThisTf!.from, to: savedThisTf!.to } : defaultRange
@@ -927,9 +943,8 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         // time-based visible range. Switching to setVisibleRange (time-based)
         // which is what actually drives rendering. Compute the time bounds
         // of the last N bars from the data directly. Reuses the per-TF
-        // TARGET_VISIBLE from the default-range block above so 5m/15m/etc.
-        // get appropriately fewer-but-fatter candles instead of cramming 75
-        // skinny ones into the pane.
+        // TARGET_VISIBLE from the default-range block above so TF changes use
+        // the same compact density as first render.
         const startIdx = Math.max(0, total - TARGET_VISIBLE)
         const fromBar = displayBars[startIdx]
         const toBar = displayBars[total - 1]
@@ -1013,7 +1028,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     }
     const t = trades.find(x => x.id === hoverTradeId)
     if (!t || !t.entry_time) return
-    const timeSec = (Math.floor(new Date(t.entry_time).getTime() / 60000) * 60) as Time
+    const timeSec = displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins)
     const price = t.entry_price ?? null
     suppressCrosshairRef.current = true // hold across the synthetic crosshair event
     // setCrosshairPosition throws "Value is null" when the time falls outside
@@ -1032,7 +1047,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     const x = chart.timeScale().timeToCoordinate(timeSec)
     const y = price != null ? candle.priceToCoordinate(price) : null
     setHover({ trade: t, x: x ?? 8, y: y ?? height / 2 })
-  }, [hoverTradeId, trades, bars, levels, height])
+  }, [hoverTradeId, trades, bars, levels, height, chartTfMins])
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-2">
