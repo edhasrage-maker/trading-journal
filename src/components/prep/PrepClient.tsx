@@ -747,13 +747,20 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       </div>
 
       {/* Condition Filter (Morning Conditions) */}
+      {/* dr_adr is reactive: compute from live context.day_range / context.adr
+          first so screenshot re-extraction updates the pill immediately.
+          drAdrAuto (server-computed, may be bar-based) is the fallback for
+          days where the screenshot hasn't been extracted yet. */}
       <ConditionFilterPanel
         date={date}
         marketContext={{
           rvol: context.rvol ?? null,
           ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
           atr_1m: context.atr_1m ?? null,
-          dr_adr: drAdrAuto,
+          dr_adr:
+            context.day_range != null && context.adr != null && context.adr > 0
+              ? Math.round((context.day_range / context.adr) * 100) / 100
+              : drAdrAuto,
         }}
       />
 
