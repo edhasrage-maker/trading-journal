@@ -873,19 +873,17 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // OPPOSITE-direction arrows (LONG exits show arrowDown above the bar — a
     // sell; SHORT exits show arrowUp below the bar — a buy-to-cover). Exits
     // are GROUPED by display-TF time bucket so multiple fills landing in the
-    // same bucket render as ONE marker — was producing stacks of overlapping
-    // text labels at tight scale-outs like 1@29456.5 + 2@29456.75 in the
-    // same minute. Falls back to the aggregated exit_time/exit_price single
-    // marker for old trades that pre-date exits_json.
+    // same bucket render as ONE marker.
     //
-    // Label strategy:
+    // Label strategy (kept minimal — lightweight-charts can't lay out
+    // multi-marker labels cleanly when they cluster, so we don't try):
     //   - Entry default: qty only. Direction is encoded by arrow shape, price
     //     by the bar y-position. Hover swaps in the full "SHORT 5@29489" form.
-    //   - Exit default: total qty across all fills in that bucket (e.g. "3"
-    //     for a 1+2 scale-out in the same minute).
-    //   - Exit on hover: comma-joined per-fill detail (e.g.
-    //     "1@29456.5, 2@29456.75") in a SINGLE label — no more vertical
-    //     stacking of separate markers.
+    //   - Exit (always): total qty across all fills in that bucket. NO
+    //     qty@price swap on hover — the full per-fill list lives in the hover
+    //     popup, stacked vertically where there's room. Trying to render
+    //     "1@29456.5, 2@29456.75" labels on adjacent markers at similar
+    //     prices was producing stacks that the user couldn't read.
     //   - Size bump (1 → 2) on entry + exits of the hovered trade so the
     //     full ribbon visually pops out of any cluster.
     type Marker = {
@@ -937,7 +935,9 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       for (const [bucketSec, fills] of exitsByBucket) {
         const totalQty = fills.reduce((s, f) => s + f.qty, 0)
         // Volume-weighted avg price drives the bucket's favorability classification
-        // (and its arrow color). Per-fill prices remain visible in the hover label.
+        // (and its arrow color). Per-fill prices live in the hover popup, where
+        // they're rendered as a vertical stack instead of fighting for label
+        // space on the chart canvas.
         const avgPrice = totalQty > 0
           ? fills.reduce((s, f) => s + f.price * f.qty, 0) / totalQty
           : fills[0]?.price ?? 0
@@ -945,9 +945,6 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           ? (isLong ? avgPrice > entryPrice : avgPrice < entryPrice)
           : true
         const exitColor = favorable ? '#22c55e' : '#ef4444'
-        const hoverText = fills.length === 1
-          ? `${fills[0].qty}@${fills[0].price}`
-          : fills.map(f => `${f.qty}@${f.price}`).join(', ')
         markers.push({
           time: bucketSec as Time,
           position: isLong ? 'aboveBar' : 'belowBar',
@@ -956,7 +953,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           // pointing into the bar from above); SHORT exits cover (arrowUp
           // pointing into the bar from below).
           shape: isLong ? 'arrowDown' : 'arrowUp',
-          text: isHovered ? hoverText : String(totalQty),
+          text: String(totalQty), // always just qty — per-fill prices live in the hover popup
           size: isHovered ? 2 : 1,
         })
       }
@@ -1420,7 +1417,17 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
               </div>
               <div className="text-gray-400 space-y-0.5">
                 {exits.length > 0 && (
-                  <div>Exits: {exits.map((e: { qty: number; price: number }) => `${e.qty}@${e.price}`).join(', ')}</div>
+                  <div>
+                    <div className="text-gray-500">Exits</div>
+                    {/* Per-fill list stacked vertically so multi-leg
+                        scale-outs are readable at a glance — was a single
+                        comma-joined line that ran wide for 3+ fills. */}
+                    <ul className="ml-2 font-mono text-[11px] leading-tight">
+                      {exits.map((e: { qty: number; price: number }, i: number) => (
+                        <li key={i}>{e.qty} @ {e.price}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
                 {setups.length > 0 && <div className="text-blue-300">{setups.join(' · ')}</div>}
                 {mistakes.length > 0 && <div className="text-red-300">{mistakes.join(' · ')}</div>}
