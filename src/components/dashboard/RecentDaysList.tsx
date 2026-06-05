@@ -10,7 +10,12 @@ export interface DayRowData {
   id: string
   date: string
   eod_pnl: number | null
+  /** Legacy single-tag column — kept for backward compat with code paths that
+   *  haven't migrated yet (analytics filter, predict-day-type). */
   day_type: string | null
+  /** Multi-select array. Render this in the UI; falls back to [day_type] for
+   *  legacy days (filled server-side in dashboard/page.tsx). */
+  day_types: string[]
   trade_count: number
   setups: string[] // all setups used that day, sorted by frequency desc
   process_score: number | null
@@ -527,8 +532,17 @@ function DayRowItem({
           <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium">
             {format(new Date(day.date + 'T12:00:00'), 'EEE, MMM d')}
           </Link>
-          {day.day_type && (
-            <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{day.day_type}</span>
+          {/* Combo-day chip (Option C): join multiple day_types into a single
+              comma-separated chip so a 2-tag day doesn't stretch the column or
+              push to a second row. Full list also available on hover via the
+              title attribute. */}
+          {day.day_types.length > 0 && (
+            <span
+              className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap"
+              title={day.day_types.join(', ')}
+            >
+              {day.day_types.join(', ')}
+            </span>
           )}
         </div>
       </td>

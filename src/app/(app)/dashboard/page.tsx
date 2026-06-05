@@ -31,11 +31,20 @@ export default async function DashboardPage() {
   const past180Start = format(subDays(new Date(), 180), 'yyyy-MM-dd')
   const { data: recentDaysRaw } = await supabase
     .from('trading_days')
-    .select('id, date, eod_pnl, day_type, ai_analysis_json, eod_ai_analysis_json')
+    .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
     .gte('date', past180Start)
     .order('date', { ascending: false })
     .limit(200)
-  const recentDaysBase = (recentDaysRaw ?? []) as Array<Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>>
+  // SELECT '*' would give us day_types automatically; we list columns explicitly,
+  // so we also need to coerce day_types to a typed array (it's a Postgres text[]
+  // but the supabase-js type only surfaces it when the column exists).
+  const recentDaysBase = (recentDaysRaw ?? []).map(d => {
+    const row = d as Record<string, unknown> & Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>
+    return {
+      ...row,
+      day_types: Array.isArray(row.day_types) ? (row.day_types as string[]) : null,
+    }
+  })
 
   // Trade stats per day (count + setup tags + summed pnl + MFE/MAE inputs) —
   // one batched query, grouped in code. PnL is needed so the dashboard can
@@ -211,6 +220,12 @@ export default async function DashboardPage() {
       date: d.date,
       eod_pnl: displayedPnl,
       day_type: d.day_type,
+      // Multi-select array (Option C in the dashboard layout discussion).
+      // Falls back to [day_type] when the array is empty/null so legacy days
+      // (saved before the array column landed) still render their chip.
+      day_types: (d.day_types && d.day_types.length > 0)
+        ? d.day_types
+        : (d.day_type ? [d.day_type] : []),
       trade_count: trades.length,
       setups: setupsAll,
       process_score: d.ai_analysis_json?.score ?? null,
@@ -229,10 +244,11 @@ export default async function DashboardPage() {
   })
 
   // Global filter dropdown values — distinct setups and day types across the
-  // 30-day window. Empty strings filtered out.
+  // 180-day window. Empty strings filtered out. day_types is the array
+  // column so combo-tag days contribute every label to the filter list.
   const allSetups = Array.from(new Set(recentDays.flatMap(d => d.setups))).sort()
   const allDayTypes = Array.from(
-    new Set(recentDays.map(d => (d.day_type ?? '').trim()).filter(Boolean)),
+    new Set(recentDays.flatMap(d => d.day_types).map(s => s.trim()).filter(Boolean)),
   ).sort()
   const windowStart = past180Start
   const windowEnd = today

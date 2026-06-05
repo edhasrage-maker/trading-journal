@@ -48,7 +48,9 @@ export default function RecentDaysSection({
   // there but the date-range narrowing doesn't.
   const filteredByTags = useMemo(() => {
     return initialDays.filter(d => {
-      if (dayTypeFilter && (d.day_type ?? '').trim() !== dayTypeFilter) return false
+      // Match against the full day_types array so combo days (e.g. "High
+      // Action + Trend Day") show up under either filter, not just the primary.
+      if (dayTypeFilter && !d.day_types.some(t => t.trim() === dayTypeFilter)) return false
       if (setupFilter && !d.setups.includes(setupFilter)) return false
       return true
     })
