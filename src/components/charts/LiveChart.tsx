@@ -869,22 +869,23 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       L.iblExt.forEach((v, i) => addLine(v, `IBL-${pcts[i]}%`, dim, true))
     }
 
-    // Trade markers — entries are direction-shaped arrows; exits are now
+    // Trade markers — entries are direction-shaped arrows; exits are
     // OPPOSITE-direction arrows (LONG exits show arrowDown above the bar — a
-    // sell; SHORT exits show arrowUp below the bar — a buy-to-cover). One
-    // marker PER partial-fill (from exits_json) so multi-leg scale-outs
-    // render distinctly. Falls back to the aggregated exit_time/exit_price
-    // single marker for old trades that pre-date exits_json.
+    // sell; SHORT exits show arrowUp below the bar — a buy-to-cover). Exits
+    // are GROUPED by display-TF time bucket so multiple fills landing in the
+    // same bucket render as ONE marker — was producing stacks of overlapping
+    // text labels at tight scale-outs like 1@29456.5 + 2@29456.75 in the
+    // same minute. Falls back to the aggregated exit_time/exit_price single
+    // marker for old trades that pre-date exits_json.
     //
     // Label strategy:
     //   - Entry default: qty only. Direction is encoded by arrow shape, price
     //     by the bar y-position. Hover swaps in the full "SHORT 5@29489" form.
-    //   - Exit default: qty only (e.g. "2" for a 2-contract scale-out). Short
-    //     enough that even multi-fill clusters stay readable.
-    //   - Exit on hover: qty@price (e.g. "2@29456.75"). Adds the per-fill
-    //     price so a glance at the chart shows where each leg came off without
-    //     opening the popup. Risk of overlap when fills cluster tightly in
-    //     time, but the user accepts that — the info value outweighs.
+    //   - Exit default: total qty across all fills in that bucket (e.g. "3"
+    //     for a 1+2 scale-out in the same minute).
+    //   - Exit on hover: comma-joined per-fill detail (e.g.
+    //     "1@29456.5, 2@29456.75") in a SINGLE label — no more vertical
+    //     stacking of separate markers.
     //   - Size bump (1 → 2) on entry + exits of the hovered trade so the
     //     full ribbon visually pops out of any cluster.
     type Marker = {
@@ -922,21 +923,40 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           : t.exit_time && t.exit_price != null
             ? [{ time: t.exit_time, price: t.exit_price, qty: t.quantity ?? 0 }]
             : []
+      // Group exits by display-TF time bucket — every fill in the same bucket
+      // becomes ONE marker so labels don't stack. Each bucket carries the
+      // total qty for the default label and the comma-joined per-fill detail
+      // for the hover label.
+      const exitsByBucket = new Map<number, Array<{ price: number; qty: number }>>()
       for (const e of exitList) {
-        // Per-exit color based on whether THIS partial was favorable
+        const bucketSec = displayTimeFromMs(new Date(e.time).getTime(), chartTfMins) as number
+        const arr = exitsByBucket.get(bucketSec) ?? []
+        arr.push({ price: e.price, qty: e.qty })
+        exitsByBucket.set(bucketSec, arr)
+      }
+      for (const [bucketSec, fills] of exitsByBucket) {
+        const totalQty = fills.reduce((s, f) => s + f.qty, 0)
+        // Volume-weighted avg price drives the bucket's favorability classification
+        // (and its arrow color). Per-fill prices remain visible in the hover label.
+        const avgPrice = totalQty > 0
+          ? fills.reduce((s, f) => s + f.price * f.qty, 0) / totalQty
+          : fills[0]?.price ?? 0
         const favorable = entryPrice != null
-          ? (isLong ? e.price > entryPrice : e.price < entryPrice)
+          ? (isLong ? avgPrice > entryPrice : avgPrice < entryPrice)
           : true
         const exitColor = favorable ? '#22c55e' : '#ef4444'
+        const hoverText = fills.length === 1
+          ? `${fills[0].qty}@${fills[0].price}`
+          : fills.map(f => `${f.qty}@${f.price}`).join(', ')
         markers.push({
-          time: displayTimeFromMs(new Date(e.time).getTime(), chartTfMins),
+          time: bucketSec as Time,
           position: isLong ? 'aboveBar' : 'belowBar',
           color: exitColor,
           // Opposite-direction arrow vs entry: LONG exits sell (arrowDown
           // pointing into the bar from above); SHORT exits cover (arrowUp
           // pointing into the bar from below).
           shape: isLong ? 'arrowDown' : 'arrowUp',
-          text: isHovered ? `${e.qty}@${e.price}` : String(e.qty),
+          text: isHovered ? hoverText : String(totalQty),
           size: isHovered ? 2 : 1,
         })
       }
