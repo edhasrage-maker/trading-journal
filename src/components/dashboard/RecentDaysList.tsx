@@ -272,7 +272,11 @@ export default function RecentDaysList({ initialDays }: Props) {
         </div>
       )}
 
-      <div className="overflow-x-auto">
+      {/* overflow-x stays auto in case a combo-day chip stretches the row past
+          the container, but the scrollbar itself is hidden — content can still
+          scroll via trackpad / shift-wheel if needed, but doesn't reserve a
+          chunky bar at the bottom of the dashboard for no reason. */}
+      <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-500 border-b border-gray-800">
