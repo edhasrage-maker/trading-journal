@@ -1,0 +1,252 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
+
+/**
+ * Period-selectable stat cards for the dashboard header.
+ *
+ * Receives the full server-fetched day stats (start-of-last-year → today) and
+ * filters client-side on the chosen period. Period is persisted to
+ * localStorage so refreshes don't reset to "30d".
+ *
+ * Stat cards:
+ *   1. P&L                — sum of eod_pnl over period
+ *   2. Day Win Rate       — % of days with eod_pnl > 0 (only counts days that
+ *                            traded; zero-trade days are excluded)
+ *   3. Trade Win Rate     — sum(trade_wins) / sum(trades_with_pnl_count)
+ *   4. Avg MFE/MAE        — averaged across days that have those stats
+ *   5. Median Process     — median of ai_analysis_json.score (process_score)
+ */
+
+/** Minimal day-stat shape needed for the cards. Avoids depending on the full
+ *  DayRowData (which carries ATR + bars-derived stuff irrelevant here). */
+export interface DayStat {
+  date: string                       // YYYY-MM-DD
+  eod_pnl: number | null
+  trade_wins: number
+  trades_with_pnl_count: number
+  avg_mfe_pts: number | null
+  avg_mae_pts: number | null
+  process_score: number | null
+}
+
+type Period = 'week' | 'month' | '30d' | 'ytd' | 'last_year'
+const PERIOD_KEY = 'dashboard-stat-period-v1'
+
+const PERIOD_LABELS: Record<Period, string> = {
+  week: 'This Week',
+  month: 'This Month',
+  '30d': 'Last 30 Days',
+  ytd: 'Year to Date',
+  last_year: 'Last Year',
+}
+
+/** Inclusive date bounds (YYYY-MM-DD strings) for each period, computed
+ *  relative to "today" on the client (cheap; no need for server input). */
+function periodBounds(period: Period): { start: string; end: string } {
+  const now = new Date()
+  const today = ymd(now)
+  switch (period) {
+    case 'week': {
+      // Monday → today (matches ISO week start; most traders think Mon-Fri).
+      const day = now.getDay() // 0=Sun .. 6=Sat
+      const daysSinceMon = (day + 6) % 7
+      const start = new Date(now)
+      start.setDate(now.getDate() - daysSinceMon)
+      return { start: ymd(start), end: today }
+    }
+    case 'month': {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      return { start: ymd(start), end: today }
+    }
+    case '30d': {
+      const start = new Date(now)
+      start.setDate(now.getDate() - 30)
+      return { start: ymd(start), end: today }
+    }
+    case 'ytd': {
+      const start = new Date(now.getFullYear(), 0, 1)
+      return { start: ymd(start), end: today }
+    }
+    case 'last_year': {
+      const year = now.getFullYear() - 1
+      return { start: `${year}-01-01`, end: `${year}-12-31` }
+    }
+  }
+}
+
+function ymd(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+
+function median(nums: number[]): number | null {
+  if (nums.length === 0) return null
+  const s = [...nums].sort((a, b) => a - b)
+  const m = Math.floor(s.length / 2)
+  return s.length % 2 === 0 ? (s[m - 1] + s[m]) / 2 : s[m]
+}
+
+interface Props {
+  /** Server-fetched DayStat list spanning start-of-last-year → today. */
+  days: DayStat[]
+}
+
+export default function DashboardStats({ days }: Props) {
+  const [period, setPeriod] = useState<Period>('30d')
+  // Hydrate from localStorage after mount so SSR matches initial render.
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PERIOD_KEY) as Period | null
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
+      if (raw && raw in PERIOD_LABELS) setPeriod(raw)
+    } catch { /* ignore */ }
+    setHydrated(true)
+  }, [])
+  useEffect(() => {
+    if (!hydrated) return
+    try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
+  }, [period, hydrated])
+
+  const stats = useMemo(() => {
+    const { start, end } = periodBounds(period)
+    const inPeriod = days.filter(d => d.date >= start && d.date <= end)
+
+    // P&L sum (skip null PnL days = no trades + no override)
+    const pnl = inPeriod.reduce((s, d) => s + (d.eod_pnl ?? 0), 0)
+
+    // Day win rate: % of TRADED days where pnl > 0. Days with no trades and no
+    // explicit eod_pnl override are excluded so the denominator reflects
+    // actual sessions.
+    const tradedDays = inPeriod.filter(d => d.eod_pnl != null)
+    const winDays = tradedDays.filter(d => (d.eod_pnl ?? 0) > 0).length
+    const dayWinRate = tradedDays.length > 0 ? winDays / tradedDays.length : null
+
+    // Trade win rate: pooled across the period.
+    const totalTradeWins = inPeriod.reduce((s, d) => s + d.trade_wins, 0)
+    const totalTradesWithPnl = inPeriod.reduce((s, d) => s + d.trades_with_pnl_count, 0)
+    const tradeWinRate = totalTradesWithPnl > 0 ? totalTradeWins / totalTradesWithPnl : null
+
+    // Avg MFE/MAE: averaged across days that have stats. Each day's value is
+    // already a per-day average across that day's trades — averaging across
+    // days gives equal weight per day (matches "what's a typical day look
+    // like for me" framing).
+    const mfeVals = inPeriod.map(d => d.avg_mfe_pts).filter((v): v is number => v != null)
+    const maeVals = inPeriod.map(d => d.avg_mae_pts).filter((v): v is number => v != null)
+    const avgMfe = mfeVals.length > 0 ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length : null
+    const avgMae = maeVals.length > 0 ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length : null
+
+    // Median Process: across all days that have a process score (i.e. prep
+    // was analyzed). Median preferred over mean to suppress outliers.
+    const procScores = inPeriod.map(d => d.process_score).filter((v): v is number => v != null)
+    const medianProcess = median(procScores)
+
+    return {
+      pnl,
+      dayWinRate,
+      tradeWinRate,
+      avgMfe,
+      avgMae,
+      medianProcess,
+      tradedDaysCount: tradedDays.length,
+      totalTradesWithPnl,
+      procCount: procScores.length,
+    }
+  }, [days, period])
+
+  return (
+    <div className="mb-6">
+      {/* Period selector */}
+      <div className="flex items-center gap-2 mb-3">
+        <label className="text-xs text-gray-500">Period:</label>
+        <div className="relative">
+          <select
+            value={period}
+            onChange={e => setPeriod(e.target.value as Period)}
+            className="appearance-none bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md pl-2 pr-7 py-1 focus:outline-none focus:border-blue-500 cursor-pointer"
+          >
+            {Object.entries(PERIOD_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>{v}</option>
+            ))}
+          </select>
+          <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+        </div>
+      </div>
+
+      {/* Stat cards. Order: P&L → Day Win % → Trade Win % → Avg MFE/MAE →
+          Median Process. 5 columns fit fine on the standard >1100px dashboard
+          width. */}
+      <div className="grid grid-cols-5 gap-4">
+        <StatCard
+          label={`${PERIOD_LABELS[period]} P&L`}
+          value={`$${stats.pnl >= 0 ? '+' : ''}${stats.pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+          tone={stats.pnl > 0 ? 'positive' : stats.pnl < 0 ? 'negative' : 'neutral'}
+          sub={`${stats.tradedDaysCount} trading day${stats.tradedDaysCount === 1 ? '' : 's'}`}
+        />
+        <StatCard
+          label="Day Win %"
+          value={stats.dayWinRate == null ? '—' : `${(stats.dayWinRate * 100).toFixed(0)}%`}
+          tone={stats.dayWinRate == null ? 'neutral' : stats.dayWinRate >= 0.5 ? 'positive' : 'negative'}
+          sub="% of days green"
+        />
+        <StatCard
+          label="Trade Win %"
+          value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
+          tone={stats.tradeWinRate == null ? 'neutral' : stats.tradeWinRate >= 0.5 ? 'positive' : 'negative'}
+          sub={`${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
+        />
+        <StatCard
+          label="Avg MFE / MAE"
+          value={
+            stats.avgMfe == null || stats.avgMae == null
+              ? '—'
+              : `+${stats.avgMfe.toFixed(1)} / -${stats.avgMae.toFixed(1)}`
+          }
+          tone="neutral"
+          sub="pts per trade"
+          valueClass="text-base"
+        />
+        <StatCard
+          label="Median Process"
+          value={stats.medianProcess == null ? '—' : `${stats.medianProcess.toFixed(1)}/10`}
+          tone={
+            stats.medianProcess == null
+              ? 'neutral'
+              : stats.medianProcess >= 7
+                ? 'positive'
+                : stats.medianProcess >= 5
+                  ? 'neutral'
+                  : 'negative'
+          }
+          sub={`${stats.procCount} prep${stats.procCount === 1 ? '' : 's'} scored`}
+        />
+      </div>
+    </div>
+  )
+}
+
+function StatCard({
+  label, value, tone, sub, valueClass,
+}: {
+  label: string
+  value: string
+  tone: 'positive' | 'negative' | 'neutral'
+  sub?: string
+  valueClass?: string
+}) {
+  const valueColor =
+    tone === 'positive' ? 'text-green-400'
+    : tone === 'negative' ? 'text-red-400'
+    : 'text-gray-300'
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
+      <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
+      {sub && <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">{sub}</p>}
+    </div>
+  )
+}

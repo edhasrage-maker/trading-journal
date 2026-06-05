@@ -17,6 +17,11 @@ export interface DayRowData {
    *  legacy days (filled server-side in dashboard/page.tsx). */
   day_types: string[]
   trade_count: number
+  /** Wins among the day's trades (pnl > 0). Powers the per-trade win rate
+   *  aggregate in DashboardStats. */
+  trade_wins: number
+  /** Trades that have a recorded pnl. Denominator for trade_wins. */
+  trades_with_pnl_count: number
   setups: string[] // all setups used that day, sorted by frequency desc
   process_score: number | null
   overall_grade: number | null
@@ -528,8 +533,10 @@ function DayRowItem({
       </td>
       <td className={`py-2 pr-3 cursor-pointer ${cellBg}`} onClick={navigate}>
         <div className="flex items-center gap-2">
-          <Icon className={`w-4 h-4 ${pnlColor}`} />
-          <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium">
+          <Icon className={`w-4 h-4 shrink-0 ${pnlColor}`} />
+          {/* whitespace-nowrap keeps "Thu, Jun 4" inline — without it, a wide
+              combo-tag chip pushes the date to wrap into "Thu," / "Jun 4". */}
+          <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium whitespace-nowrap">
             {format(new Date(day.date + 'T12:00:00'), 'EEE, MMM d')}
           </Link>
           {/* Combo-day chip (Option C): join multiple day_types into a single
