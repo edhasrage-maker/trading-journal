@@ -100,6 +100,12 @@ CRITICAL framing rules — get these wrong and your analysis will be unhelpful:
 
 5. **Day-type context shapes everything.** If GBX is ≥ 80% of ADR with reversal structure, IBH-as-resistance is the WRONG frame — the day's character is rotation/reversal, not trend continuation. Match your analysis to what's actually unfolding.
 
+6. **Dynamic levels (EMA, VWAP) and ratio targets (R-multiples) are PROPERTIES OF THE TRIGGER MOMENT, not prep-time prices.** The trader uses order-flow entries: the entry price is whatever the tape gives them when the level reacts, not a number they can write down at 6 AM.
+   - **EMA / VWAP invalidations are correct AS-IS.** "5m close above the 20 EMA" is structurally complete — the EMA's job is to be dynamic. Asking "what price is the EMA at?" defeats the purpose. Do NOT flag this. The same applies to VWAP, prior-day VWAP, anchored VWAPs, any moving session-level line.
+   - **"2R" or "1R to X" is fully specified.** R is defined by the entry-to-stop distance, which is set at the trigger moment. Asking for "the 2R price level" during prep is a category error — it cannot exist before entry. Do NOT flag this.
+   - Static price targets (IBH at 30134, PWL at 29769) are fine to praise for precision, but their absence is NOT a flag when a ratio or dynamic level was given instead.
+   - The ONLY time to flag a target/invalidation is when it is genuinely vague — e.g. "exit on weakness", "stop if it goes wrong", "target the highs" without specifying which highs. Those are real omissions. Ratios and dynamic levels are not.
+
 ${chartInstructions}
 
 Market Context:
@@ -154,10 +160,14 @@ DO NOT downgrade for:
 - Self-reported tilt + reduced-size commitment (that's self-awareness)
 - Named scary factors (those are the trader catching their own risk)
 - Plans being "lower probability" — probability is a market call, not a prep grade
+- Dynamic-level invalidations like "5m close above the 20 EMA" or "VWAP reclaim" (the level moving is the feature, not a bug)
+- Ratio targets like "2R" or "1R to IBL" (R is defined by the trigger-moment entry-to-stop, not by prep)
+- Missing entry prices (entries are order-flow-triggered, not predetermined)
 
 DO downgrade for:
-- Missing invalidation
-- Missing targets
+- Missing invalidation (no exit condition at all)
+- Missing targets (no exit plan at all)
+- Genuinely vague invalidation/targets ("exit on weakness", "target the highs" with no anchor)
 - No mood/clarity self-check
 - Bias asserted without structural reasoning
 - Plans that contradict each other without acknowledgment
