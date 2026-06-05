@@ -820,12 +820,18 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // single marker for old trades that pre-date exits_json.
     //
     // Label strategy (reduces overlap when trades cluster):
-    //   - Entry text: just the qty (e.g. "5"). Direction is already encoded by
-    //     the arrow shape; price is visible from the bar y-position.
-    //   - Exit text: empty by default; the dot itself communicates "exit here".
-    //   - HOVERED trade gets its full labels back ("LONG 5@30862.50" / "Exit
-    //     3@30875") AND a bigger size so it visually pops out of clusters.
-    // Full per-fill details are always available in the hover popup.
+    //   - Entry text default: just the qty (the arrow shape encodes direction,
+    //     the bar y-position the price).
+    //   - Exit text: NEVER drawn on-chart. The hover popup already lists every
+    //     fill cleanly ("Exits: 1@29456.5, 2@29456.75, 1@29447.75, 1@29448"),
+    //     so duplicating those labels on the chart just produces a stack of
+    //     overlapping text when multi-leg scale-outs land in close time
+    //     buckets. Exits stay as colored dots only; the popup is the source
+    //     of truth for fill details.
+    //   - HOVERED trade gets the FULL entry label ("SHORT 5@29489") AND a
+    //     size bump (1 → 2) on both the entry arrow and the exit dots so the
+    //     trade visually pops out of a cluster. Exit DOTS get bigger; their
+    //     LABELS still stay off (per above).
     type Marker = {
       time: Time
       position: 'belowBar' | 'aboveBar'
@@ -872,7 +878,7 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
           position: isLong ? 'aboveBar' : 'belowBar',
           color: exitColor,
           shape: 'circle',
-          text: isHovered ? `Exit ${e.qty}@${e.price}` : '',
+          text: '', // see note above: popup owns the exit-fill details
           size: isHovered ? 2 : 1,
         })
       }
@@ -893,6 +899,11 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // legs whose entry and exit fall in the same display bucket are skipped (a line
     // would collapse to a point). Color matches the exit marker (green if the
     // partial beat entry, red if not).
+    //
+    // HOVER HIGHLIGHT: the hovered trade's connectors render solid (not dashed),
+    // thicker (3px vs 1px), and in a brighter color — so when you mouse over an
+    // entry the matching exit "ribbons" pop out, making multi-fill scale-outs
+    // unambiguous in a cluster.
     const chart = chartRef.current
     if (chart) {
       for (const s of tradeLinesRef.current) chart.removeSeries(s)
@@ -907,14 +918,21 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
             : t.exit_time && t.exit_price != null
               ? [{ time: t.exit_time, price: t.exit_price }]
               : []
+        const isHovered = hoveredId != null && t.id === hoveredId
         for (const e of exitList) {
           const exitMin = displayTimeFromMs(new Date(e.time).getTime(), chartTfMins)
           if ((exitMin as number) <= (entryMin as number)) continue // same/earlier bucket -> skip
           const favorable = isLong ? e.price > t.entry_price : e.price < t.entry_price
+          const baseColor = favorable ? '#22c55e' : '#ef4444'
+          // Brighter, fully-opaque highlight color when hovered; default keeps
+          // the standard green/red palette.
+          const lineColor = isHovered
+            ? (favorable ? '#4ade80' : '#f87171')
+            : baseColor
           const line = chart.addSeries(LineSeries, {
-            color: favorable ? '#22c55e' : '#ef4444',
-            lineWidth: 1,
-            lineStyle: 2, // dashed
+            color: lineColor,
+            lineWidth: isHovered ? 3 : 1,
+            lineStyle: isHovered ? 0 : 2, // 0 = solid, 2 = dashed
             lastValueVisible: false,
             priceLineVisible: false,
             crosshairMarkerVisible: false,
