@@ -13,8 +13,10 @@ import DiscordDashboard from './DiscordDashboard'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
+import LiveChart from '@/components/charts/LiveChart'
+import BarWatcher from '@/components/charts/BarWatcher'
 import { deleteBlob } from '@/lib/storage'
-import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan } from '@/lib/supabase/types'
+import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
 import type { SpellCheckCorrection } from '@/app/api/spell-check/route'
 
 interface Props {
@@ -29,13 +31,22 @@ interface Props {
    *  ohlcv_bars table. Null when bars haven't been imported yet for the date
    *  or market_context.adr is missing — pill falls back to manual entry. */
   drAdrAuto: number | null
+  /** Symbol fed to the LiveChart — derived server-side from the day's trades,
+   *  falling back to MNQM6.CME on days with no trades yet so the chart still
+   *  renders the current session's price action. */
+  chartSymbol: string | null
+  /** Trades already taken on this date (may be empty during morning prep).
+   *  Powers the chart's entry/exit markers. */
+  initialTrades: Trade[]
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  // Bumped by BarWatcher when new bars import; forces LiveChart to re-fetch.
+  const [barsVersion, setBarsVersion] = useState(0)
   const isFirstRender = useRef(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -690,6 +701,25 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             {extracting ? 'Reading chart...' : 'Auto-fill from chart'}
           </button>
         )}
+      </div>
+
+      {/* Live Chart — same component the EOD page uses. Mirrored here so prep
+          can see today's price action alongside the screenshot. BarWatcher
+          auto-imports today's .scid bars every ~3 min during the session. */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-white">Live Chart</h2>
+          <BarWatcher
+            activeDate={date}
+            onRefresh={() => setBarsVersion(v => v + 1)}
+          />
+        </div>
+        <LiveChart
+          date={date}
+          symbol={chartSymbol}
+          trades={initialTrades}
+          refreshKey={barsVersion}
+        />
       </div>
 
       {/* Day Type — chips sourced from trade_tags.day_type so prep + intraday

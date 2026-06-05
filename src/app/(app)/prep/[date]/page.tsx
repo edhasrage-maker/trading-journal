@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import PrepClient from '@/components/prep/PrepClient'
 import { computeDrAdr } from '@/lib/dr-adr'
-import type { TradingDay, MarketContext } from '@/lib/supabase/types'
+import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 export default async function PrepPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params
@@ -56,6 +56,32 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
       : null
   }
 
+  // Trades already taken on this date — feeds the LiveChart so prep shows
+  // any trades that have happened so far today (overlap with the EOD chart).
+  // Most prep is done before any trades fire, but mid-session re-prep should
+  // see what's been done.
+  const { data: tradesRaw } = day
+    ? await supabase
+        .from('trades')
+        .select('*')
+        .eq('trading_day_id', day.id)
+        .order('entry_time', { ascending: true })
+    : { data: [] as Trade[] }
+  const trades = (tradesRaw ?? []) as Trade[]
+
+  // Pick the chart symbol the same way EodClient does: most-common symbol on
+  // the day's trades. Fallback to the symbolForBars derived above (MNQM6.CME)
+  // so the chart can render even on days with no trades yet — the user can
+  // still see today's price action.
+  const symbolCounts = new Map<string, number>()
+  for (const t of trades) {
+    if (t.symbol) symbolCounts.set(t.symbol, (symbolCounts.get(t.symbol) ?? 0) + 1)
+  }
+  let chartSymbol: string | null = null
+  let best = 0
+  for (const [sym, c] of symbolCounts) if (c > best) { chartSymbol = sym; best = c }
+  if (!chartSymbol) chartSymbol = symbolForBars
+
   return (
     <PrepClient
       date={date}
@@ -63,6 +89,8 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
       initialContext={context}
       dayTypeOptions={dayTypeOptions}
       drAdrAuto={drAdrAuto}
+      chartSymbol={chartSymbol}
+      initialTrades={trades}
     />
   )
 }

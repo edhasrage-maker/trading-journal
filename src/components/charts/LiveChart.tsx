@@ -72,6 +72,11 @@ const DEFAULT_PREFS: ChartPrefs = {
   hiddenLevels: [],
 }
 const PREFS_KEY = 'livechart-prefs-v2'
+// Global active-TF persistence. Single key across all symbols/days because the
+// user's mental model is "I want to be in 5m mode" — not "this day on 5m, that
+// day on 1m." Saved zoom ranges stay keyed per-(symbol,date,tf).
+const TF_KEY = 'livechart-active-tf-v1'
+const TF_VALID = new Set<number>([1, 5, 15, 30, 60, 240])
 
 const FONT_OPTIONS: { label: string; value: string }[] = [
   { label: 'Sans', value: `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif` },
@@ -210,9 +215,24 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // Display timeframe in minutes. Stored 1-min bars get aggregated client-side
-  // when this is > 1. VWAP/EMA series from /api/bars/levels are 1-min-derived
-  // and hidden at higher TFs (their values wouldn't match the candles).
-  const [chartTfMins, setChartTfMins] = useState<number>(1)
+  // when this is > 1. Persisted globally so re-opening any day starts on the
+  // last-used TF. Saved logical-range views are still keyed per-(symbol, date,
+  // tf) — so a 5m saved view restores correctly when TF persistence lands you
+  // on 5m on open.
+  const [chartTfMins, setChartTfMins] = useState<number>(() => {
+    if (typeof window === 'undefined') return 1
+    try {
+      const raw = localStorage.getItem(TF_KEY)
+      if (raw) {
+        const n = parseInt(raw, 10)
+        if (TF_VALID.has(n)) return n
+      }
+    } catch { /* ignore */ }
+    return 1
+  })
+  useEffect(() => {
+    try { localStorage.setItem(TF_KEY, String(chartTfMins)) } catch { /* ignore */ }
+  }, [chartTfMins])
 
   // Chart appearance prefs — persisted to localStorage, applied live.
   const [prefs, setPrefs] = useState<ChartPrefs>(DEFAULT_PREFS)
@@ -515,28 +535,36 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // session-anchored VWAP sits far from the candles and would blow out the
     // vertical scale (squashing the candles). Returning null keeps the price
     // axis fit to the candles only; these lines clip if they fall off-screen.
-    const noAutoscale = { autoscaleInfoProvider: () => null }
+    //
+    // crosshairMarkerVisible: false on the overlay series so the crosshair
+    // tooltip dot snaps ONLY to candles, not to VWAP/EMA. Without this the
+    // crosshair jumps to whichever series is closest in price at the hovered
+    // x — confusing when scrubbing candles near a VWAP that's many points away.
+    const overlayOpts = {
+      autoscaleInfoProvider: () => null,
+      crosshairMarkerVisible: false,
+    }
     vwapRef.current = chart.addSeries(LineSeries, {
       color: '#3b82f6',
       lineWidth: 2,
       lineStyle: 2, // dashed
       priceLineVisible: false,
       lastValueVisible: false,
-      ...noAutoscale,
+      ...overlayOpts,
     })
     ema9Ref.current = chart.addSeries(LineSeries, {
       color: '#eab308',
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
-      ...noAutoscale,
+      ...overlayOpts,
     })
     ema20Ref.current = chart.addSeries(LineSeries, {
       color: '#a855f7',
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
-      ...noAutoscale,
+      ...overlayOpts,
     })
 
     const obs = new ResizeObserver(([entry]) => {
@@ -790,13 +818,23 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
     // circle PER partial-fill (from exits_json) so multi-leg scale-outs
     // render distinctly. Falls back to the aggregated exit_time/exit_price
     // single marker for old trades that pre-date exits_json.
+    //
+    // Label strategy (reduces overlap when trades cluster):
+    //   - Entry text: just the qty (e.g. "5"). Direction is already encoded by
+    //     the arrow shape; price is visible from the bar y-position.
+    //   - Exit text: empty by default; the dot itself communicates "exit here".
+    //   - HOVERED trade gets its full labels back ("LONG 5@30862.50" / "Exit
+    //     3@30875") AND a bigger size so it visually pops out of clusters.
+    // Full per-fill details are always available in the hover popup.
     type Marker = {
       time: Time
       position: 'belowBar' | 'aboveBar'
       color: string
       shape: 'arrowUp' | 'arrowDown' | 'circle'
       text: string
+      size?: number
     }
+    const hoveredId = hover?.trade?.id ?? hoverTradeId ?? null
     const markers: Marker[] = []
     for (const t of trades) {
       if (!t.entry_time || !t.direction) continue
@@ -804,13 +842,17 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
       const entryPrice = t.entry_price ?? null
       const pnl = t.pnl ?? 0
       const entryColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#6b7280'
+      const isHovered = hoveredId != null && t.id === hoveredId
       // Entry
       markers.push({
         time: displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins),
         position: isLong ? 'belowBar' : 'aboveBar',
         color: entryColor,
         shape: isLong ? 'arrowUp' : 'arrowDown',
-        text: `${t.direction.toUpperCase()} ${t.quantity ?? ''}@${entryPrice ?? '?'}`,
+        text: isHovered
+          ? `${t.direction.toUpperCase()} ${t.quantity ?? ''}@${entryPrice ?? '?'}`
+          : String(t.quantity ?? ''),
+        size: isHovered ? 2 : 1,
       })
       // Exits: prefer per-fill array, fall back to aggregated single exit
       const exitList: Array<{ time: string; price: number; qty: number }> =
@@ -830,7 +872,8 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
           position: isLong ? 'aboveBar' : 'belowBar',
           color: exitColor,
           shape: 'circle',
-          text: `Exit ${e.qty}@${e.price}`,
+          text: isHovered ? `Exit ${e.qty}@${e.price}` : '',
+          size: isHovered ? 2 : 1,
         })
       }
     }
@@ -1009,7 +1052,10 @@ export default function LiveChart({ date, symbol, trades, height = 480, refreshK
         }
       }
     }
-  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins])
+    // hover.trade?.id and hoverTradeId are in the dep list: when the user
+    // hovers a marker (or the EOD row), markers re-render with the hovered
+    // trade's labels back + size bump so it pops out of a cluster.
+  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId])
 
   // Row-hover ↔ chart link: when a trade is hovered in the EOD list, drop the
   // crosshair on its entry (highlight where it was) and show the same
