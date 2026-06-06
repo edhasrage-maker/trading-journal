@@ -310,6 +310,10 @@ export default async function DashboardPage() {
     trades_with_pnl_count: d.trades_with_pnl_count,
     avg_mfe_pts: d.avg_mfe_pts,
     avg_mae_pts: d.avg_mae_pts,
+    avg_mfe_dollars: d.avg_mfe_dollars,
+    avg_mae_dollars: d.avg_mae_dollars,
+    atr_1m: d.atr_1m,
+    avg_live_atr_1m: d.avg_live_atr_1m,
     process_score: d.process_score,
   }))
 

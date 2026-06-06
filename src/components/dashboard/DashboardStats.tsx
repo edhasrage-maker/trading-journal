@@ -20,7 +20,7 @@ import { ChevronDown } from 'lucide-react'
  */
 
 /** Minimal day-stat shape needed for the cards. Avoids depending on the full
- *  DayRowData (which carries ATR + bars-derived stuff irrelevant here). */
+ *  DayRowData (which carries the unused setups list / bars-derived stuff). */
 export interface DayStat {
   date: string                       // YYYY-MM-DD
   eod_pnl: number | null
@@ -28,8 +28,19 @@ export interface DayStat {
   trades_with_pnl_count: number
   avg_mfe_pts: number | null
   avg_mae_pts: number | null
+  avg_mfe_dollars: number | null
+  avg_mae_dollars: number | null
+  /** Prep-time ATR (market_context.atr_1m) — fallback ATR ref when live bars
+   *  are missing for the day. */
+  atr_1m: number | null
+  /** Per-trade live ATR-10 averaged across the day's trades. Preferred ATR
+   *  ref over prep_atr when present. */
+  avg_live_atr_1m: number | null
   process_score: number | null
 }
+
+type MfeUnit = 'pts' | 'dollars' | 'atr'
+const UNIT_KEY = 'dashboard-stat-mfe-unit-v1'
 
 type Period = 'week' | 'month' | '30d' | 'ytd' | 'last_year'
 const PERIOD_KEY = 'dashboard-stat-period-v1'
@@ -97,13 +108,18 @@ interface Props {
 
 export default function DashboardStats({ days }: Props) {
   const [period, setPeriod] = useState<Period>('30d')
+  // Default unit is ATR — it's the user's preferred ATR-normalized reading
+  // for the MFE/MAE roll-up. localStorage hydration may overwrite below.
+  const [mfeUnit, setMfeUnit] = useState<MfeUnit>('atr')
   // Hydrate from localStorage after mount so SSR matches initial render.
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(PERIOD_KEY) as Period | null
+      const rawPeriod = localStorage.getItem(PERIOD_KEY) as Period | null
       // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
-      if (raw && raw in PERIOD_LABELS) setPeriod(raw)
+      if (rawPeriod && rawPeriod in PERIOD_LABELS) setPeriod(rawPeriod)
+      const rawUnit = localStorage.getItem(UNIT_KEY) as MfeUnit | null
+      if (rawUnit === 'pts' || rawUnit === 'dollars' || rawUnit === 'atr') setMfeUnit(rawUnit)
     } catch { /* ignore */ }
     setHydrated(true)
   }, [])
@@ -111,6 +127,10 @@ export default function DashboardStats({ days }: Props) {
     if (!hydrated) return
     try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
   }, [period, hydrated])
+  useEffect(() => {
+    if (!hydrated) return
+    try { localStorage.setItem(UNIT_KEY, mfeUnit) } catch { /* ignore */ }
+  }, [mfeUnit, hydrated])
 
   const stats = useMemo(() => {
     const { start, end } = periodBounds(period)
@@ -135,10 +155,39 @@ export default function DashboardStats({ days }: Props) {
     // already a per-day average across that day's trades — averaging across
     // days gives equal weight per day (matches "what's a typical day look
     // like for me" framing).
-    const mfeVals = inPeriod.map(d => d.avg_mfe_pts).filter((v): v is number => v != null)
-    const maeVals = inPeriod.map(d => d.avg_mae_pts).filter((v): v is number => v != null)
-    const avgMfe = mfeVals.length > 0 ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length : null
-    const avgMae = maeVals.length > 0 ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length : null
+    //
+    // Per-unit computation:
+    //   - pts: average of avg_mfe_pts / avg_mae_pts directly
+    //   - dollars: average of avg_mfe_dollars / avg_mae_dollars (computed
+    //     server-side with the contract multiplier × qty applied per trade)
+    //   - atr: divide each day's pts MFE/MAE by that day's ATR ref
+    //     (avg_live_atr_1m ?? atr_1m) then average — matches the Recent Days
+    //     table's MfeMaeCell behavior so the dashboard rollup is consistent.
+    let avgMfe: number | null = null
+    let avgMae: number | null = null
+    if (mfeUnit === 'pts') {
+      const mfeVals = inPeriod.map(d => d.avg_mfe_pts).filter((v): v is number => v != null)
+      const maeVals = inPeriod.map(d => d.avg_mae_pts).filter((v): v is number => v != null)
+      avgMfe = mfeVals.length > 0 ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length : null
+      avgMae = maeVals.length > 0 ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length : null
+    } else if (mfeUnit === 'dollars') {
+      const mfeVals = inPeriod.map(d => d.avg_mfe_dollars).filter((v): v is number => v != null)
+      const maeVals = inPeriod.map(d => d.avg_mae_dollars).filter((v): v is number => v != null)
+      avgMfe = mfeVals.length > 0 ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length : null
+      avgMae = maeVals.length > 0 ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length : null
+    } else {
+      // atr
+      const mfeAtr: number[] = []
+      const maeAtr: number[] = []
+      for (const d of inPeriod) {
+        const atrRef = d.avg_live_atr_1m ?? d.atr_1m
+        if (!atrRef || atrRef <= 0) continue
+        if (d.avg_mfe_pts != null) mfeAtr.push(d.avg_mfe_pts / atrRef)
+        if (d.avg_mae_pts != null) maeAtr.push(d.avg_mae_pts / atrRef)
+      }
+      avgMfe = mfeAtr.length > 0 ? mfeAtr.reduce((a, b) => a + b, 0) / mfeAtr.length : null
+      avgMae = maeAtr.length > 0 ? maeAtr.reduce((a, b) => a + b, 0) / maeAtr.length : null
+    }
 
     // Median Process: across all days that have a process score (i.e. prep
     // was analyzed). Median preferred over mean to suppress outliers.
@@ -156,7 +205,7 @@ export default function DashboardStats({ days }: Props) {
       totalTradesWithPnl,
       procCount: procScores.length,
     }
-  }, [days, period])
+  }, [days, period, mfeUnit])
 
   return (
     <div className="mb-6">
@@ -204,10 +253,28 @@ export default function DashboardStats({ days }: Props) {
           value={
             stats.avgMfe == null || stats.avgMae == null
               ? '—'
-              : `+${stats.avgMfe.toFixed(1)} / -${stats.avgMae.toFixed(1)}`
+              : mfeUnit === 'dollars'
+                ? `+$${Math.round(stats.avgMfe)} / -$${Math.round(stats.avgMae)}`
+                : mfeUnit === 'atr'
+                  ? `+${stats.avgMfe.toFixed(2)}× / -${stats.avgMae.toFixed(2)}×`
+                  : `+${stats.avgMfe.toFixed(1)} / -${stats.avgMae.toFixed(1)}`
           }
           tone="neutral"
-          sub="pts per trade"
+          // Sub becomes the unit selector itself. Compact inline dropdown
+          // replaces the static "pts per trade" string so the card surfaces
+          // the choice in the same visual slot.
+          subNode={
+            <select
+              value={mfeUnit}
+              onChange={e => setMfeUnit(e.target.value as MfeUnit)}
+              className="bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight"
+              title="Display unit for Avg MFE / MAE"
+            >
+              <option value="pts">pts per trade</option>
+              <option value="dollars">$ per trade</option>
+              <option value="atr">× ATR per trade</option>
+            </select>
+          }
           valueClass="text-base"
         />
         <StatCard
@@ -230,12 +297,14 @@ export default function DashboardStats({ days }: Props) {
 }
 
 function StatCard({
-  label, value, tone, sub, valueClass,
+  label, value, tone, sub, subNode, valueClass,
 }: {
   label: string
   value: string
   tone: 'positive' | 'negative' | 'neutral'
   sub?: string
+  /** Rich subline (e.g. an inline <select>). Wins over `sub` when both set. */
+  subNode?: React.ReactNode
   valueClass?: string
 }) {
   const valueColor =
@@ -246,7 +315,7 @@ function StatCard({
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
-      {sub && <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">{sub}</p>}
+      {subNode ? <div className="mt-1">{subNode}</div> : sub ? <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">{sub}</p> : null}
     </div>
   )
 }
