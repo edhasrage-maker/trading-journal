@@ -6,6 +6,7 @@ import TagPerformanceTable from './TagPerformanceTable'
 import TagImpactTable from './TagImpactTable'
 import ConditionBuckets from './ConditionBuckets'
 import RollingPerformance from './RollingPerformance'
+import PeriodComparison from './PeriodComparison'
 import JournalThemes from './JournalThemes'
 import CsvExportButton from './CsvExportButton'
 import {
@@ -18,6 +19,10 @@ import {
 
 interface Props {
   trades: TradeWithContext[]
+  /** Per-day stats fed to PeriodComparison: date, eod_pnl override, and the
+   *  prep AI's process score. Separate from `trades` so the comparison can
+   *  pull day-level metrics without re-aggregating per-trade. */
+  dayStats: Array<{ date: string; eod_pnl: number | null; process_score: number | null }>
   defaultStartDate: string
   defaultEndDate: string
 }
@@ -30,7 +35,7 @@ const RANGE_OPTIONS: { label: string; months: number }[] = [
   { label: 'All', months: 0 },
 ]
 
-export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDate }: Props) {
+export default function AnalyticsClient({ trades, dayStats, defaultStartDate, defaultEndDate }: Props) {
   const [rangeMonths, setRangeMonths] = useState(3)
 
   const today = format(new Date(), 'yyyy-MM-dd')
@@ -43,6 +48,11 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
   const filtered = useMemo(() => {
     return trades.filter(t => t.date >= startDate && t.date <= endDate)
   }, [trades, startDate, endDate])
+  // Day stats filtered to the same range so the period-comparison table
+  // honors the global range selector at the top of the page.
+  const filteredDayStats = useMemo(() => {
+    return dayStats.filter(d => d.date >= startDate && d.date <= endDate)
+  }, [dayStats, startDate, endDate])
 
   const overall = useMemo(() => computeStats(filtered), [filtered])
 
@@ -167,6 +177,8 @@ export default function AnalyticsClient({ trades, defaultStartDate, defaultEndDa
       <ConditionBuckets trades={filtered} />
 
       <RollingPerformance trades={filtered} />
+
+      <PeriodComparison trades={filtered} dayStats={filteredDayStats} />
 
       <JournalThemes from={startDate} to={endDate} />
     </div>

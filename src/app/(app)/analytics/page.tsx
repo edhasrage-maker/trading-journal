@@ -6,7 +6,7 @@ import type { TradingDay, Trade, MarketContext } from '@/lib/supabase/types'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
-type DayRow = Pick<TradingDay, 'id' | 'date' | 'day_type'>
+type DayRow = Pick<TradingDay, 'id' | 'date' | 'day_type' | 'eod_pnl' | 'ai_analysis_json'>
 type ContextRow = Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>
 
 interface HistRow {
@@ -65,7 +65,7 @@ export default async function AnalyticsPage() {
   const [{ data: daysRaw }, { data: contextsRaw }] = await Promise.all([
     supabase
       .from('trading_days')
-      .select('id, date, day_type') as Promise<{ data: DayRow[] | null }>,
+      .select('id, date, day_type, eod_pnl, ai_analysis_json') as Promise<{ data: DayRow[] | null }>,
     supabase
       .from('market_context')
       .select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m') as Promise<{ data: ContextRow[] | null }>,
@@ -116,10 +116,21 @@ export default async function AnalyticsPage() {
   const defaultStartDate = allDates[0] ?? new Date().toISOString().slice(0, 10)
   const defaultEndDate = allDates[allDates.length - 1] ?? new Date().toISOString().slice(0, 10)
 
+  // Per-day stats for the period-comparison view: date, eod_pnl override,
+  // process score from the prep AI analysis. Per-trade win rate / count is
+  // computed client-side from the trades array — keeps this projection
+  // small and avoids re-querying.
+  const dayStats = days.map(d => ({
+    date: d.date,
+    eod_pnl: d.eod_pnl ?? null,
+    process_score: (d.ai_analysis_json?.score as number | undefined) ?? null,
+  }))
+
   return (
     <div className="max-w-6xl mx-auto">
       <AnalyticsClient
         trades={merged}
+        dayStats={dayStats}
         defaultStartDate={defaultStartDate}
         defaultEndDate={defaultEndDate}
       />
