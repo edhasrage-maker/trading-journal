@@ -10,8 +10,18 @@ export interface DayRowData {
   id: string
   date: string
   eod_pnl: number | null
+  /** Legacy single-tag column — kept for backward compat with code paths that
+   *  haven't migrated yet (analytics filter, predict-day-type). */
   day_type: string | null
+  /** Multi-select array. Render this in the UI; falls back to [day_type] for
+   *  legacy days (filled server-side in dashboard/page.tsx). */
+  day_types: string[]
   trade_count: number
+  /** Wins among the day's trades (pnl > 0). Powers the per-trade win rate
+   *  aggregate in DashboardStats. */
+  trade_wins: number
+  /** Trades that have a recorded pnl. Denominator for trade_wins. */
+  trades_with_pnl_count: number
   setups: string[] // all setups used that day, sorted by frequency desc
   process_score: number | null
   overall_grade: number | null
@@ -262,7 +272,11 @@ export default function RecentDaysList({ initialDays }: Props) {
         </div>
       )}
 
-      <div className="overflow-x-auto">
+      {/* overflow-x stays auto in case a combo-day chip stretches the row past
+          the container, but the scrollbar itself is hidden — content can still
+          scroll via trackpad / shift-wheel if needed, but doesn't reserve a
+          chunky bar at the bottom of the dashboard for no reason. */}
+      <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-500 border-b border-gray-800">
@@ -273,6 +287,16 @@ export default function RecentDaysList({ initialDays }: Props) {
               <SortableTh label="Trades" column="trades" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <th className="font-normal py-2 pr-3 text-center w-28 relative">
                 <div className="flex flex-col items-center gap-0.5">
+                  {/* Help icon parked on its own row above the title so it
+                      doesn't crowd the centered column heading. */}
+                  <button
+                    type="button"
+                    onClick={() => setMfeInfoOpen(o => !o)}
+                    className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                    title="What is MFE/MAE?"
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => setSort('mfe_mae')}
@@ -299,15 +323,6 @@ export default function RecentDaysList({ initialDays }: Props) {
                     <option value="atr">ATR</option>
                   </select>
                 </div>
-                {/* Help icon parked absolute so it doesn't push the centered title/select off-axis */}
-                <button
-                  type="button"
-                  onClick={() => setMfeInfoOpen(o => !o)}
-                  className={`absolute top-2 right-1 transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                  title="What is MFE/MAE?"
-                >
-                  <HelpCircle className="w-3 h-3" />
-                </button>
                 {mfeInfoOpen && (
                   <div
                     ref={mfeInfoRef}
@@ -343,25 +358,30 @@ export default function RecentDaysList({ initialDays }: Props) {
                 )}
               </th>
               <th className="font-normal py-2 pr-3 text-center w-36 relative whitespace-nowrap">
-                <button
-                  type="button"
-                  onClick={() => setSort('capture')}
-                  className={`inline-flex flex-col items-center leading-tight hover:text-white transition-colors ${sortColumn === 'capture' ? 'text-blue-300' : 'text-gray-500'}`}
-                >
-                  <span className="inline-flex items-center gap-1">
-                    MFE Realized %
-                    {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-                  </span>
-                  <span>MAE Heat %</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRealizedInfoOpen(o => !o)}
-                  className={`absolute top-2 right-1 transition-colors ${realizedInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                  title="What are MFE Realized % and MAE Heat %?"
-                >
-                  <HelpCircle className="w-3 h-3" />
-                </button>
+                <div className="flex flex-col items-center gap-0.5">
+                  {/* Help icon parked on its own row above the title — matches
+                      the Avg MFE/MAE column's layout so the two help icons
+                      sit at the same vertical level across the row. */}
+                  <button
+                    type="button"
+                    onClick={() => setRealizedInfoOpen(o => !o)}
+                    className={`transition-colors ${realizedInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                    title="What are MFE Realized % and MAE Heat %?"
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSort('capture')}
+                    className={`inline-flex flex-col items-center leading-tight hover:text-white transition-colors ${sortColumn === 'capture' ? 'text-blue-300' : 'text-gray-500'}`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      MFE Realized %
+                      {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+                    </span>
+                    <span>MAE Heat %</span>
+                  </button>
+                </div>
                 {realizedInfoOpen && (
                   <div
                     ref={realizedInfoRef}
@@ -417,8 +437,8 @@ export default function RecentDaysList({ initialDays }: Props) {
                   </div>
                 )}
               </th>
-              <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
-              <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24" />
+              <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16 whitespace-nowrap" />
+              <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24 whitespace-nowrap" />
               <th className="w-10" />
             </tr>
           </thead>
@@ -523,12 +543,23 @@ function DayRowItem({
       </td>
       <td className={`py-2 pr-3 cursor-pointer ${cellBg}`} onClick={navigate}>
         <div className="flex items-center gap-2">
-          <Icon className={`w-4 h-4 ${pnlColor}`} />
-          <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium">
+          <Icon className={`w-4 h-4 shrink-0 ${pnlColor}`} />
+          {/* whitespace-nowrap keeps "Thu, Jun 4" inline — without it, a wide
+              combo-tag chip pushes the date to wrap into "Thu," / "Jun 4". */}
+          <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium whitespace-nowrap">
             {format(new Date(day.date + 'T12:00:00'), 'EEE, MMM d')}
           </Link>
-          {day.day_type && (
-            <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap">{day.day_type}</span>
+          {/* Combo-day chip (Option C): join multiple day_types into a single
+              comma-separated chip so a 2-tag day doesn't stretch the column or
+              push to a second row. Full list also available on hover via the
+              title attribute. */}
+          {day.day_types.length > 0 && (
+            <span
+              className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap"
+              title={day.day_types.join(', ')}
+            >
+              {day.day_types.join(', ')}
+            </span>
           )}
         </div>
       </td>
@@ -543,13 +574,20 @@ function DayRowItem({
       <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
         <CaptureHeatCell day={day} />
       </td>
-      <td className={`py-2 pr-3 text-center font-mono ${cellBg}`}>
+      {/* Win % and PnL rendered at text-xs (one size down from the table
+          default text-sm) — keeps the columns readable but visually
+          de-emphasizes vs the more central Grade/Process/MFE columns. */}
+      <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
         {day.win_rate === null
           ? <span className="text-gray-700">—</span>
           : <span className={day.win_rate >= 50 ? 'text-green-400' : 'text-gray-400'}>{day.win_rate.toFixed(0)}%</span>}
       </td>
-      <td className={`py-2 pr-3 text-right font-mono font-medium ${pnlColor} ${cellBg}`}>
-        {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${pnl.toLocaleString()}`}
+      <td className={`py-2 pr-3 text-right font-mono font-medium text-xs ${pnlColor} ${cellBg}`}>
+        {/* Whole-dollar PnL — the narrow Recent Days column was clipping
+            ".50" off "$368.50" and showing a dangling "$368." period. The
+            day-level summary doesn't need cent precision; per-trade rows
+            still keep decimals where they matter. */}
+        {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}`}
       </td>
       <td className={`py-2 pr-2 text-right ${cellBg}`}>
         <button

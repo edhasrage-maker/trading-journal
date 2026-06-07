@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
-import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle, Layers } from 'lucide-react'
+import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle, Layers, Image as ImageIcon, CandlestickChart } from 'lucide-react'
 import ScreenshotUpload from './ScreenshotUpload'
 import ConditionFilterPanel from '@/components/condition/ConditionFilterPanel'
 import MarketContextForm from './MarketContextForm'
@@ -13,8 +13,10 @@ import DiscordDashboard from './DiscordDashboard'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
+import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
+import BarWatcher from '@/components/charts/BarWatcher'
 import { deleteBlob } from '@/lib/storage'
-import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan } from '@/lib/supabase/types'
+import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
 import type { SpellCheckCorrection } from '@/app/api/spell-check/route'
 
 interface Props {
@@ -29,13 +31,34 @@ interface Props {
    *  ohlcv_bars table. Null when bars haven't been imported yet for the date
    *  or market_context.adr is missing — pill falls back to manual entry. */
   drAdrAuto: number | null
+  /** Symbol fed to the LiveChart — derived server-side from the day's trades,
+   *  falling back to MNQM6.CME on days with no trades yet so the chart still
+   *  renders the current session's price action. */
+  chartSymbol: string | null
+  /** Trades already taken on this date (may be empty during morning prep).
+   *  Powers the chart's entry/exit markers. */
+  initialTrades: Trade[]
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  // Bumped by BarWatcher when new bars import; forces LiveChart to re-fetch.
+  const [barsVersion, setBarsVersion] = useState(0)
+  // Ref to the LiveChart so analyze() can snapshot its canvas as a PNG when
+  // the user hasn't pasted a Sierra screenshot. Falls back to text-only
+  // analysis if the chart isn't ready (no bars / pre-mount / screenshot view).
+  const liveChartRef = useRef<LiveChartHandle>(null)
+  // Chart view toggle — same pattern as EodClient. Defaults to LIVE so
+  // session levels (PDH/PDL/IBH/IBL/ONH/ONL + extensions, VWAP, EMA9/20) are
+  // visible immediately on page open — those compute from the .scid bars, no
+  // screenshot required. User can flip to Screenshot when they want to paste
+  // a Sierra view + run Auto-fill (which still owns the RVOL/ADR/ATR numerical
+  // extraction + the AI prep-analysis vision step). State is per-mount
+  // (resets on navigation between days).
+  const [chartView, setChartView] = useState<'screenshot' | 'live'>('live')
   const isFirstRender = useRef(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -370,11 +393,20 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const analyze = async () => {
     setAnalyzing(true)
     try {
+      // Image priority for the AI's Step-1 chart read:
+      //   1. Newly-selected file (not yet uploaded) → user just pasted Sierra
+      //   2. Already-saved Sierra screenshot URL → user pasted earlier
+      //   3. LiveChart canvas snapshot → auto-fallback when no screenshot
+      //      uploaded but the live chart is rendered (default view). Eliminates
+      //      the "I forgot to paste" friction — AI still gets a chart image.
+      // If all three miss, the analyze route runs text-only (no Step 1).
       let image: { data: string; mediaType: string } | null = null
       if (pendingFile) {
         image = await toBase64(pendingFile)
       } else if (chartUrl && !chartUrl.startsWith('blob:')) {
         image = await toBase64(chartUrl)
+      } else if (chartView === 'live' && liveChartRef.current) {
+        image = await liveChartRef.current.takeScreenshotPng()
       }
 
       const res = await fetch('/api/analyze-prep', {
@@ -673,22 +705,69 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         onClose={() => setSpellCheckOpen(false)}
       />
 
-      {/* Chart Screenshot */}
+      {/* Chart — toggle between the morning Sierra Chart screenshot (with
+          MGI levels marked, used for AI auto-fill) and the in-app LiveChart
+          (live bars from .scid + session levels). Same pattern as EodClient. */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-        <ScreenshotUpload
-          value={chartUrl}
-          onChange={handleScreenshotChange}
-          label="Chart Screenshot (with MGI levels marked)"
-        />
-        {(pendingFile || chartUrl) && (
-          <button
-            onClick={extractContext}
-            disabled={extracting}
-            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-          >
-            {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            {extracting ? 'Reading chart...' : 'Auto-fill from chart'}
-          </button>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-white">
+            {chartView === 'screenshot' ? 'Chart Screenshot (with MGI levels marked)' : 'Live Chart'}
+          </h2>
+          <div className="flex items-center gap-3">
+            {chartView === 'live' && (
+              <BarWatcher
+                activeDate={date}
+                onRefresh={() => setBarsVersion(v => v + 1)}
+              />
+            )}
+            <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
+              <button
+                type="button"
+                onClick={() => setChartView('screenshot')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                  chartView === 'screenshot' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+              >
+                <ImageIcon className="w-3.5 h-3.5" /> Screenshot
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartView('live')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                  chartView === 'live' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+              >
+                <CandlestickChart className="w-3.5 h-3.5" /> Live chart
+              </button>
+            </div>
+          </div>
+        </div>
+        {chartView === 'screenshot' ? (
+          <>
+            <ScreenshotUpload
+              value={chartUrl}
+              onChange={handleScreenshotChange}
+              label=""
+            />
+            {(pendingFile || chartUrl) && (
+              <button
+                onClick={extractContext}
+                disabled={extracting}
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+              >
+                {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {extracting ? 'Reading chart...' : 'Auto-fill from chart'}
+              </button>
+            )}
+          </>
+        ) : (
+          <LiveChart
+            ref={liveChartRef}
+            date={date}
+            symbol={chartSymbol}
+            trades={initialTrades}
+            refreshKey={barsVersion}
+          />
         )}
       </div>
 
@@ -747,13 +826,20 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       </div>
 
       {/* Condition Filter (Morning Conditions) */}
+      {/* dr_adr is reactive: compute from live context.day_range / context.adr
+          first so screenshot re-extraction updates the pill immediately.
+          drAdrAuto (server-computed, may be bar-based) is the fallback for
+          days where the screenshot hasn't been extracted yet. */}
       <ConditionFilterPanel
         date={date}
         marketContext={{
           rvol: context.rvol ?? null,
           ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
           atr_1m: context.atr_1m ?? null,
-          dr_adr: drAdrAuto,
+          dr_adr:
+            context.day_range != null && context.adr != null && context.adr > 0
+              ? Math.round((context.day_range / context.adr) * 100) / 100
+              : drAdrAuto,
         }}
       />
 
@@ -838,6 +924,15 @@ function SaveStatus({
     return () => clearInterval(id)
   }, [])
 
+  // Hydration-safe relative time: SSR renders the page at time T, the client
+  // hydrates a second or two later, and formatDistanceToNowStrict returns a
+  // different string for the same lastSavedAt — React aborts hydration with a
+  // mismatch. Gate the relative-time render on a `mounted` flag so the server
+  // outputs a stable placeholder and the client computes the real value only
+  // after mount.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
   if (saving) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-blue-400 font-medium">
@@ -862,11 +957,10 @@ function SaveStatus({
     )
   }
   if (lastSavedAt) {
-    const ago = formatDistanceToNowStrict(new Date(lastSavedAt))
     return (
       <span className="flex items-center gap-1.5 text-xs text-gray-500 font-medium" title={new Date(lastSavedAt).toLocaleString()}>
         <Check className="w-3 h-3 text-green-500" />
-        Saved {ago} ago
+        {mounted ? `Saved ${formatDistanceToNowStrict(new Date(lastSavedAt))} ago` : 'Saved'}
       </span>
     )
   }

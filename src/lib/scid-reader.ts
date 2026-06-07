@@ -123,6 +123,13 @@ export function readScidBars(
         if (tMs >= endMs) break outer
         const close = chunkBuf.readFloatLE(off + 20) / priceDivisor
         const vol = chunkBuf.readUInt32LE(off + 28)
+        // Skip ticks where the trade price is 0, negative, or non-finite.
+        // SCID files include session-boundary marker records (notably at the
+        // daily maintenance window start, ~21:45:00 UTC for CME futures) with
+        // no real price data — they showed up as all-zero OHLC bars that
+        // crushed the chart's price autoscale. A legitimate tick will never
+        // have price 0 on NQ/MNQ/ES.
+        if (!Number.isFinite(close) || close <= 0) continue
         const bucket = Math.floor(tMs / bucketMs) * bucketMs
         const bar = bars.get(bucket)
         if (!bar) {

@@ -39,6 +39,7 @@ export default async function IntradayPage({
         initialTrades={trades}
         allTags={(tags ?? []) as TradeTag[]}
         initialOpenTradeId={openTradeId ?? null}
+        initialSessionNotes={(day?.eod_notes as string | null) ?? ''}
         prepDayTypes={
           // Multi-select array if available, else legacy single primary as a
           // one-element array. Either form seeds the new trade's day_type tag.

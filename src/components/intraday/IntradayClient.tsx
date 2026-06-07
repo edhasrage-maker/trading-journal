@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { Plus, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2 } from 'lucide-react'
@@ -21,6 +21,9 @@ interface Props {
   initialOpenTradeId?: string | null
   /** day_type from trading_days for this date — auto-populated on NEW trades only. */
   prepDayTypes?: string[]
+  /** trading_days.eod_notes — shared with the EOD page so the trader can write
+   *  during the session and the same text is there waiting at EOD. */
+  initialSessionNotes?: string
 }
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
@@ -117,7 +120,7 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
   )
 }
 
-export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '' }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   // Tags are local so newly-created custom tags appear across every TradeForm
@@ -145,6 +148,36 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const [deleting, setDeleting] = useState<string | null>(null)
   const [pastedFile, setPastedFile] = useState<File | null>(null)
   const [showChart, setShowChart] = useState(true)
+
+  // Session journal — shared with EOD recap via trading_days.eod_notes.
+  // The trader writes during the session; the same text is there waiting at
+  // EOD time. Debounced auto-save (1.5s) to keep the wire quiet while typing.
+  const [sessionNotes, setSessionNotes] = useState(initialSessionNotes)
+  const [notesSaveStatus, setNotesSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const lastSavedNotesRef = useRef(initialSessionNotes)
+  const notesSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (sessionNotes === lastSavedNotesRef.current) return
+    if (notesSaveTimerRef.current) clearTimeout(notesSaveTimerRef.current)
+    notesSaveTimerRef.current = setTimeout(async () => {
+      setNotesSaveStatus('saving')
+      try {
+        const res = await fetch(`/api/trading-days/${date}/eod`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eod_notes: sessionNotes }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        lastSavedNotesRef.current = sessionNotes
+        setNotesSaveStatus('saved')
+      } catch {
+        setNotesSaveStatus('error')
+      }
+    }, 1500)
+    return () => {
+      if (notesSaveTimerRef.current) clearTimeout(notesSaveTimerRef.current)
+    }
+  }, [sessionNotes, date])
 
   // Bulk multi-select for tag-apply. Checkbox per row toggles membership;
   // a floating bar appears when 1+ trades are selected. Selecting trades
@@ -179,6 +212,38 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     })
     setMode({ type: 'list' })
     setPastedFile(null)
+  }
+
+  // Inline-remove a single tag from the expanded trade view. Saves the user
+  // a round-trip into the full edit form when they just want to drop one
+  // label. Optimistic update — flip the UI first, PATCH after; revert on
+  // failure. Strips empty categories so the tag block doesn't render a
+  // ghost section with no labels.
+  const removeTagFromTrade = async (trade: Trade, category: string, label: string) => {
+    const currentTags = (trade.tags_json ?? {}) as Record<string, unknown>
+    const currentArr = Array.isArray(currentTags[category])
+      ? (currentTags[category] as string[])
+      : typeof currentTags[category] === 'string'
+        ? [currentTags[category] as string]
+        : []
+    const nextArr = currentArr.filter(t => t !== label)
+    const nextTags: Record<string, unknown> = { ...currentTags }
+    if (nextArr.length > 0) nextTags[category] = nextArr
+    else delete nextTags[category]
+
+    const prevTrades = trades
+    setTrades(ts => ts.map(t => t.id === trade.id ? { ...t, tags_json: nextTags as Trade['tags_json'] } : t))
+    try {
+      const res = await fetch(`/api/trades/${trade.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags_json: nextTags }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    } catch {
+      // Revert on failure so the UI doesn't lie about persistence.
+      setTrades(prevTrades)
+    }
   }
 
   // Bulk-apply tags: for each selected trade, PATCH /api/trades/[id] with the
@@ -460,19 +525,30 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                   </div>
                 )}
 
-                {/* All tags */}
+                {/* All tags — clickable to remove. Hover reveals an "×"
+                    so the user can drop tags inline without opening the
+                    full edit form. Color preserved per category. */}
                 {Object.keys(trade.tags_json ?? {}).length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(trade.tags_json ?? {}).flatMap(([cat, val]) => {
                       const items = Array.isArray(val) ? val : val ? [val] : []
-                      return items.map((tag: string) => (
-                        <span key={`${cat}-${tag}`}
-                          className={`text-xs px-2 py-0.5 rounded-full border ${
-                            cat === 'mistakes' ? 'bg-red-900/30 border-red-700 text-red-400'
-                            : cat === 'emotions' ? 'bg-purple-900/30 border-purple-700 text-purple-400'
-                            : 'bg-gray-800 border-gray-700 text-gray-300'
-                          }`}>{tag}</span>
-                      ))
+                      return items.map((tag: string) => {
+                        const colorCls = cat === 'mistakes' ? 'bg-red-900/30 border-red-700 text-red-400 hover:bg-red-900/60 hover:border-red-500'
+                          : cat === 'emotions' ? 'bg-purple-900/30 border-purple-700 text-purple-400 hover:bg-purple-900/60 hover:border-purple-500'
+                          : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:border-gray-500'
+                        return (
+                          <button
+                            key={`${cat}-${tag}`}
+                            type="button"
+                            onClick={e => { e.stopPropagation(); void removeTagFromTrade(trade, cat, tag) }}
+                            title={`Click to remove "${tag}" from this trade`}
+                            className={`group text-xs px-2 py-0.5 rounded-full border transition-colors inline-flex items-center gap-1 ${colorCls}`}
+                          >
+                            <span>{tag}</span>
+                            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px]">×</span>
+                          </button>
+                        )
+                      })
                     })}
                   </div>
                 )}
@@ -506,6 +582,32 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           dayTrades={trades}
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />
       )}
+
+      {/* Session journal — shared with the EOD recap. This is the same
+          trading_days.eod_notes field both pages read/write, so anything the
+          trader jots down here is waiting in the EOD recap textarea later. */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Session journal
+          </label>
+          <span className="text-[10px] text-gray-600">
+            {notesSaveStatus === 'saving' && 'Saving…'}
+            {notesSaveStatus === 'saved' && 'Saved · syncs with EOD recap'}
+            {notesSaveStatus === 'error' && <span className="text-red-400">Save failed — will retry on next edit</span>}
+            {notesSaveStatus === 'idle' && 'Syncs with EOD recap'}
+          </span>
+        </div>
+        <textarea
+          rows={3}
+          spellCheck
+          autoCorrect="on"
+          placeholder="Jot down what you're seeing — emotions, level reactions, plan deviations. Shows up in the EOD recap automatically."
+          value={sessionNotes}
+          onChange={e => setSessionNotes(e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-y"
+        />
+      </div>
 
       {/* Add button */}
       {!isAdding && !editingId && (

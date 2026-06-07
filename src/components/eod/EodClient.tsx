@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Crosshair, Image as ImageIcon, CandlestickChart } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
@@ -12,7 +12,6 @@ import TradeArrowOverlay from './TradeArrowOverlay'
 import LiveChart from '@/components/charts/LiveChart'
 import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
-import HoverPopup from './HoverPopup'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
@@ -69,8 +68,11 @@ export default function EodClient({
   const [calibMode, setCalibMode] = useState<{ step: CalibStep; draft: CalibDraft } | null>(null)
   const [savingCalib, setSavingCalib] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  // Hovered-row tracking. The chart picks this up via `hoverTradeId` and
+  // drops its crosshair + marker popup on that trade — that's the single
+  // hover-feedback surface (the old cursor-following HoverPopup duplicated it
+  // and was removed). TradeList also uses it for row-highlight styling.
   const [hoveredTradeId, setHoveredTradeId] = useState<string | null>(null)
-  const [hoverCursor, setHoverCursor] = useState<{ clientX: number; clientY: number } | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [aiAnalysis, setAiAnalysis] = useState<EodAiAnalysis | null>(() => {
     const a = initialDay?.eod_ai_analysis_json
@@ -93,6 +95,27 @@ export default function EodClient({
   // tags/notes/fills change.
   const [summaries, setSummaries] = useState<Record<string, string>>({})
   const [summariesLoading, setSummariesLoading] = useState(false)
+
+  // Help-popup state for the header MFE/MAE definitions. Same pattern as the
+  // dashboard RecentDaysList — click to toggle, click outside to dismiss.
+  const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
+  const [maeInfoOpen, setMaeInfoOpen] = useState(false)
+  const mfeInfoRef = useRef<HTMLDivElement>(null)
+  const maeInfoRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!mfeInfoOpen && !maeInfoOpen) return
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (mfeInfoOpen && mfeInfoRef.current && !mfeInfoRef.current.contains(t)) setMfeInfoOpen(false)
+      if (maeInfoOpen && maeInfoRef.current && !maeInfoRef.current.contains(t)) setMaeInfoOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setMfeInfoOpen(false); setMaeInfoOpen(false) }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [mfeInfoOpen, maeInfoOpen])
 
   // Most-common trade symbol on this day — feeds LiveChart's bars query.
   // Days with no trades return null; LiveChart shows a "no symbol" message.
@@ -162,15 +185,16 @@ export default function EodClient({
     return () => { cancelled = true }
   }, [trades])
 
-  const handleHoverEnter = (tradeId: string, e: React.MouseEvent) => {
+  // The mouse-event arg is still accepted by TradeList (it passed e for the
+  // cursor coords) but we no longer use it now that the popup-on-cursor was
+  // removed. Left the signature compatible to avoid touching TradeList.
+  const handleHoverEnter = (tradeId: string, _e: React.MouseEvent) => {
+    void _e
     setHoveredTradeId(tradeId)
-    setHoverCursor({ clientX: e.clientX, clientY: e.clientY })
   }
   const handleHoverLeave = () => {
     setHoveredTradeId(null)
-    setHoverCursor(null)
   }
-  const hoveredTrade = hoveredTradeId ? trades.find(t => t.id === hoveredTradeId) ?? null : null
 
   const refreshTrades = async () => {
     try {
@@ -633,7 +657,7 @@ export default function EodClient({
             <span className="text-gray-400 text-sm">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</span>
           </div>
         </div>
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex items-center gap-3 text-sm">
           <SCFolderWatcher
             onActivity={(msg, type) => showToast(msg, type)}
             onImported={refreshTrades}
@@ -648,44 +672,117 @@ export default function EodClient({
             onError={msg => showToast(msg, 'error')}
           />
           <div className="border-l border-gray-700 h-10" />
-          <div className="flex items-center gap-6">
+          {/* Stats strip: tightened font + gap so the row fits on one line.
+              All labels carry `whitespace-nowrap` so "W/L" and "MAE Heat %"
+              never wrap onto two lines when the viewport narrows. */}
+          <div className="flex items-center gap-4">
           <div>
-            <div className="text-xs text-gray-500">Trades</div>
-            <div className="font-mono text-white text-lg">{trades.length}</div>
+            <div className="text-[11px] text-gray-500 whitespace-nowrap">Trades</div>
+            <div className="font-mono text-white text-base">{trades.length}</div>
           </div>
           <div>
-            <div className="text-xs text-gray-500">Win Rate</div>
-            <div className="font-mono text-white text-lg">{winRate.toFixed(0)}%</div>
+            <div className="text-[11px] text-gray-500 whitespace-nowrap">Win Rate</div>
+            <div className="font-mono text-white text-base">{winRate.toFixed(0)}%</div>
           </div>
           <div>
-            <div className="text-xs text-gray-500">W / L</div>
-            <div className="font-mono text-lg">
+            <div className="text-[11px] text-gray-500 whitespace-nowrap">W / L</div>
+            <div className="font-mono text-base whitespace-nowrap">
               <span className="text-green-400">{winCount}</span>
-              <span className="text-gray-600"> / </span>
+              <span className="text-gray-600">/</span>
               <span className="text-red-400">{lossCount}</span>
             </div>
           </div>
           <div>
-            <div className="text-xs text-gray-500">PnL</div>
-            <div className={`font-mono text-lg ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+            <div className="text-[11px] text-gray-500 whitespace-nowrap">PnL</div>
+            <div className={`font-mono text-base whitespace-nowrap ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
               {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
             </div>
           </div>
-          <div title={`MFE Realized % across ${captureStats.count} trade${captureStats.count === 1 ? '' : 's'} on this day. Higher = took more of the favorable move offered DURING the position. Red bold means the day averaged a give-back (went negative).`}>
-            <div className="text-xs text-gray-500">MFE Realized %</div>
-            <div className={`font-mono text-lg ${captureStats.avg == null ? 'text-gray-500'
+          <div className="relative">
+            <div className="text-[11px] text-gray-500 whitespace-nowrap flex items-center gap-1">
+              MFE Realized %
+              <button
+                type="button"
+                onClick={() => { setMfeInfoOpen(o => !o); setMaeInfoOpen(false) }}
+                className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                title="What is MFE Realized %?"
+              >
+                <HelpCircle className="w-3 h-3" />
+              </button>
+            </div>
+            <div className={`font-mono text-base ${captureStats.avg == null ? 'text-gray-500'
               : captureStats.avg < 0 ? 'text-red-400 font-bold'
               : 'text-gray-400'}`}>
               {captureStats.avg == null ? '—' : `${(captureStats.avg * 100).toFixed(0)}%`}
             </div>
+            {mfeInfoOpen && (
+              <div
+                ref={mfeInfoRef}
+                className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <p className="font-semibold text-white">MFE Realized %</p>
+                  <button type="button" onClick={() => setMfeInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <p className="mb-2">
+                  Averaged across <strong>{captureStats.count}</strong> trade{captureStats.count === 1 ? '' : 's'} on this day. <em>How much of the favorable move did you actually book?</em>
+                </p>
+                <p className="mb-2 text-gray-400">
+                  = realized PnL ÷ peak favorable excursion (in $) — bounded by entry → exit, so it measures execution <em>while you held</em>.
+                </p>
+                <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
+                  <li><strong>100%</strong>: exited at the high — perfect timing</li>
+                  <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
+                  <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — trade went green then closed at a loss</li>
+                </ul>
+                <p className="text-gray-500">Red bold appears only when the day averaged a give-back.</p>
+              </div>
+            )}
           </div>
-          <div title={`MAE Heat % across ${heatStats.count} trade${heatStats.count === 1 ? '' : 's'}. 100% = avg trade touched its stop level. (% of planned risk used as MAE — separate from realized dollar PnL.)`}>
-            <div className="text-xs text-gray-500">MAE Heat %</div>
-            <div className={`font-mono text-lg ${heatStats.avg == null ? 'text-gray-500'
+          <div className="relative">
+            <div className="text-[11px] text-gray-500 whitespace-nowrap flex items-center gap-1">
+              MAE Heat %
+              <button
+                type="button"
+                onClick={() => { setMaeInfoOpen(o => !o); setMfeInfoOpen(false) }}
+                className={`transition-colors ${maeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                title="What is MAE Heat %?"
+              >
+                <HelpCircle className="w-3 h-3" />
+              </button>
+            </div>
+            <div className={`font-mono text-base ${heatStats.avg == null ? 'text-gray-500'
               : heatStats.avg > 1.0 ? 'text-red-400 font-bold'
               : 'text-gray-400'}`}>
               {heatStats.avg == null ? '—' : `${(heatStats.avg * 100).toFixed(0)}%`}
             </div>
+            {maeInfoOpen && (
+              <div
+                ref={maeInfoRef}
+                className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <p className="font-semibold text-white">MAE Heat %</p>
+                  <button type="button" onClick={() => setMaeInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <p className="mb-2">
+                  Averaged across <strong>{heatStats.count}</strong> trade{heatStats.count === 1 ? '' : 's'} on this day. <em>How much of your planned risk did you sit through before exiting?</em>
+                </p>
+                <p className="mb-2 text-gray-400">
+                  = peak adverse excursion ÷ planned stop distance (entry − stop_price) — separate from realized $ PnL.
+                </p>
+                <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
+                  <li><strong>0–50%</strong>: clean entry, light pressure</li>
+                  <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
+                  <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — moved, slipped, or reversed in time to save you</li>
+                </ul>
+                <p className="text-gray-500">Red bold appears only when the day averaged &gt; 100%.</p>
+              </div>
+            )}
           </div>
           </div>
         </div>
@@ -871,8 +968,10 @@ export default function EodClient({
         onError={msg => showToast(msg, 'error')}
       />
 
-      {/* Floating hover popup — body-level fixed positioning */}
-      <HoverPopup trade={hoveredTrade} cursor={hoverCursor} />
+      {/* Cursor-following hover popup removed — the live chart already pops
+          up the same trade details (+ screenshot, + tags) on the chart
+          itself via hoverTradeId, so this duplicated the info next to the
+          cursor while the trade log row was hovered. One popup, one spot. */}
     </div>
   )
 }

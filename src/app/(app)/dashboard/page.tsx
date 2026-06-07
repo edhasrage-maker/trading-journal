@@ -3,10 +3,13 @@ import { format, subDays } from 'date-fns'
 import Link from 'next/link'
 import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
+import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
 import { liveAtr, fetchAllBars, type AtrBar } from '@/lib/atr'
 import type { TradingDay } from '@/lib/supabase/types'
+
+const PAGE_SIZE = 1000
 
 // Disable static generation so the date is recomputed on every request
 // (otherwise this page caches and shows stale "today" across midnight).
@@ -24,18 +27,32 @@ export default async function DashboardPage() {
     .single()
   const todayRecord = todayRecordRaw as TradingDay | null
 
-  // Wider fetch (180 days) so the new monthly-calendar view in Recent Days
-  // can navigate ~6 months back. The 30d stat cards below filter down to
-  // last-30 explicitly so their semantics are unchanged.
-  const past30Start = format(subDays(new Date(), 30), 'yyyy-MM-dd')
-  const past180Start = format(subDays(new Date(), 180), 'yyyy-MM-dd')
+  // Two windows:
+  //   - past180Start: drives the Recent Days table + the expensive per-trade
+  //     ATR/bars loop. Unchanged from before — keeps the table snappy.
+  //   - statsWindowStart: drives the period-selectable stat cards (Week /
+  //     Month / 30d / YTD / Last Year). Walks back to the start of LAST year
+  //     so "Last Year" has the full ~365-day window even on Dec 31.
+  const todayDate = new Date()
+  const past30Start = format(subDays(todayDate, 30), 'yyyy-MM-dd')
+  const past180Start = format(subDays(todayDate, 180), 'yyyy-MM-dd')
+  const statsWindowStart = `${todayDate.getFullYear() - 1}-01-01`
   const { data: recentDaysRaw } = await supabase
     .from('trading_days')
-    .select('id, date, eod_pnl, day_type, ai_analysis_json, eod_ai_analysis_json')
-    .gte('date', past180Start)
+    .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
+    .gte('date', statsWindowStart)
     .order('date', { ascending: false })
-    .limit(200)
-  const recentDaysBase = (recentDaysRaw ?? []) as Array<Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>>
+    .limit(PAGE_SIZE)
+  // SELECT '*' would give us day_types automatically; we list columns explicitly,
+  // so we also need to coerce day_types to a typed array (it's a Postgres text[]
+  // but the supabase-js type only surfaces it when the column exists).
+  const recentDaysBase = (recentDaysRaw ?? []).map(d => {
+    const row = d as Record<string, unknown> & Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>
+    return {
+      ...row,
+      day_types: Array.isArray(row.day_types) ? (row.day_types as string[]) : null,
+    }
+  })
 
   // Trade stats per day (count + setup tags + summed pnl + MFE/MAE inputs) —
   // one batched query, grouped in code. PnL is needed so the dashboard can
@@ -60,20 +77,47 @@ export default async function DashboardPage() {
   }
   const dayIds = recentDaysBase.map(d => d.id)
   const dayDateById = new Map<string, string>(recentDaysBase.map(d => [d.id, d.date]))
-  const [{ data: tradesRaw }, { data: contextsRaw }] = dayIds.length > 0
-    ? await Promise.all([
-        supabase
+  // Chunk trading_day_ids for the .in() — 50 UUIDs per chunk to stay under
+  // PostgREST URL-length limits (same pattern as /api/metric-buckets).
+  // Trades pagination per chunk: range() up to PAGE_SIZE per loop because a
+  // busy 6-month chunk could exceed the 1000-row Supabase cap.
+  async function fetchTradesAll(): Promise<TradeSlim[]> {
+    if (dayIds.length === 0) return []
+    const CHUNK = 50
+    const out: TradeSlim[] = []
+    for (let i = 0; i < dayIds.length; i += CHUNK) {
+      const slice = dayIds.slice(i, i + CHUNK)
+      for (let p = 0; p < 50; p++) {
+        const { data, error } = await supabase
           .from('trades')
           .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol')
-          .in('trading_day_id', dayIds),
-        // market_context.atr_1m is the user's per-day 1-min ATR-10 (Wilder) entered
-        // during prep — kept as a fallback when bars are missing.
-        supabase
-          .from('market_context')
-          .select('trading_day_id, atr_1m')
-          .in('trading_day_id', dayIds),
-      ])
-    : [{ data: [] as TradeSlim[] }, { data: [] as { trading_day_id: string; atr_1m: number | null }[] }]
+          .in('trading_day_id', slice)
+          .order('id', { ascending: true })
+          .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
+        if (error) throw new Error(`trades: ${error.message}`)
+        const batch = (data ?? []) as TradeSlim[]
+        out.push(...batch)
+        if (batch.length < PAGE_SIZE) break
+      }
+    }
+    return out
+  }
+  async function fetchContexts(): Promise<{ trading_day_id: string; atr_1m: number | null }[]> {
+    if (dayIds.length === 0) return []
+    const CHUNK = 50
+    const out: { trading_day_id: string; atr_1m: number | null }[] = []
+    for (let i = 0; i < dayIds.length; i += CHUNK) {
+      const slice = dayIds.slice(i, i + CHUNK)
+      const { data } = await supabase
+        .from('market_context')
+        .select('trading_day_id, atr_1m')
+        .in('trading_day_id', slice)
+      if (data) out.push(...(data as { trading_day_id: string; atr_1m: number | null }[]))
+    }
+    return out
+  }
+  const [tradesAll, contextsRaw] = await Promise.all([fetchTradesAll(), fetchContexts()])
+  const tradesRaw: TradeSlim[] = tradesAll
   const tradesByDay = new Map<string, TradeSlim[]>()
   for (const t of (tradesRaw ?? []) as TradeSlim[]) {
     const arr = tradesByDay.get(t.trading_day_id) ?? []
@@ -102,6 +146,10 @@ export default async function DashboardPage() {
     if (!t.symbol || !t.entry_time) continue
     const date = dayDateById.get(t.trading_day_id)
     if (!date) continue
+    // Skip ATR for days outside the Recent Days window — the older days
+    // only feed the stats cards, which don't use ATR. Avoids dozens of
+    // wasted bars/ATR fetches for the YTD/Last-Year period.
+    if (date < past180Start) continue
     symbolDatePairs.add(`${t.symbol}|${date}`)
     tradesNeedingAtr.push(t)
   }
@@ -211,7 +259,19 @@ export default async function DashboardPage() {
       date: d.date,
       eod_pnl: displayedPnl,
       day_type: d.day_type,
+      // Multi-select array (Option C in the dashboard layout discussion).
+      // Falls back to [day_type] when the array is empty/null so legacy days
+      // (saved before the array column landed) still render their chip.
+      day_types: (d.day_types && d.day_types.length > 0)
+        ? d.day_types
+        : (d.day_type ? [d.day_type] : []),
       trade_count: trades.length,
+      // Trade-level win counts — feeds the per-trade win rate stat card
+      // (distinct from `win_rate` which is the same value but per-day, used
+      // for the table row's own column). Stored as raw counts so the client
+      // can sum across a period and divide once for the aggregate rate.
+      trade_wins: winsOnDay,
+      trades_with_pnl_count: tradesWithPnl.length,
       setups: setupsAll,
       process_score: d.ai_analysis_json?.score ?? null,
       overall_grade: d.eod_ai_analysis_json?.score ?? null,
@@ -229,23 +289,37 @@ export default async function DashboardPage() {
   })
 
   // Global filter dropdown values — distinct setups and day types across the
-  // 30-day window. Empty strings filtered out.
+  // 180-day window. Empty strings filtered out. day_types is the array
+  // column so combo-tag days contribute every label to the filter list.
   const allSetups = Array.from(new Set(recentDays.flatMap(d => d.setups))).sort()
   const allDayTypes = Array.from(
-    new Set(recentDays.map(d => (d.day_type ?? '').trim()).filter(Boolean)),
+    new Set(recentDays.flatMap(d => d.day_types).map(s => s.trim()).filter(Boolean)),
   ).sort()
   const windowStart = past180Start
   const windowEnd = today
   const defaultFilterStart = past30Start // list view defaults to "last 30 days"; calendar view defaults to current month
 
-  // 30d stat cards: explicitly compute from the last-30-day subset of the
-  // 180-day fetched data, so labels stay accurate as we widened the fetch.
-  const last30Days = recentDays.filter(d => d.date >= past30Start)
-  const totalPnl = last30Days.reduce((sum, d) => sum + (d.eod_pnl ?? 0), 0)
-  const winDays = last30Days.filter(d => (d.eod_pnl ?? 0) > 0).length
-  const lossDays = last30Days.filter(d => (d.eod_pnl ?? 0) < 0).length
-  const tradedDays = last30Days.filter(d => d.eod_pnl !== null).length
-  const winRate = tradedDays > 0 ? winDays / tradedDays : 0
+  // Stats dataset: lightweight projection of recentDays for the
+  // period-selectable DashboardStats component. Includes all days fetched
+  // (start-of-last-year → today) so the client can switch among Week / Month /
+  // 30d / YTD / Last Year without another round trip.
+  const statsDays: DayStat[] = recentDays.map(d => ({
+    date: d.date,
+    eod_pnl: d.eod_pnl,
+    trade_wins: d.trade_wins,
+    trades_with_pnl_count: d.trades_with_pnl_count,
+    avg_mfe_pts: d.avg_mfe_pts,
+    avg_mae_pts: d.avg_mae_pts,
+    avg_mfe_dollars: d.avg_mfe_dollars,
+    avg_mae_dollars: d.avg_mae_dollars,
+    atr_1m: d.atr_1m,
+    avg_live_atr_1m: d.avg_live_atr_1m,
+    process_score: d.process_score,
+  }))
+
+  // Recent Days table still scopes to the 180d window — keeps the table fast
+  // and matches the user's "recent" expectation.
+  const recentDaysForTable = recentDays.filter(d => d.date >= past180Start)
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -273,7 +347,10 @@ export default async function DashboardPage() {
             href={`/intraday/${today}`}
             icon={<Activity className="w-5 h-5" />}
             label="Intraday"
-            status={todayRecord?.id ? 'available' : 'locked'}
+            // Cascade: once the day is wrapped (EOD notes saved), intraday is
+            // implicitly done — you can't be in the session anymore. Tile flips
+            // green so the Today row visually reads "fully closed out".
+            status={todayRecord?.eod_notes ? 'done' : todayRecord?.id ? 'available' : 'locked'}
           />
           <TodayAction
             href={`/eod/${today}`}
@@ -284,18 +361,14 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* 30-day stats */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <StatCard label="30d P&L" value={`$${totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString()}`} positive={totalPnl >= 0} />
-        <StatCard label="Win Rate" value={`${(winRate * 100).toFixed(0)}%`} positive={winRate >= 0.5} />
-        <StatCard label="Win Days" value={winDays.toString()} positive={true} />
-        <StatCard label="Loss Days" value={lossDays.toString()} positive={false} />
-      </div>
+      {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,
+          Median Process. Filters by Week / Month / 30d / YTD / Last Year. */}
+      <DashboardStats days={statsDays} />
 
       {/* Recent days */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <RecentDaysSection
-          initialDays={recentDays}
+          initialDays={recentDaysForTable}
           allSetups={allSetups}
           allDayTypes={allDayTypes}
           windowStart={windowStart}
@@ -339,11 +412,3 @@ function TodayAction({ href, icon, label, status }: {
   )
 }
 
-function StatCard({ label, value, positive }: { label: string; value: string; positive: boolean }) {
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className={`text-xl font-bold ${positive ? 'text-green-400' : 'text-red-400'}`}>{value}</p>
-    </div>
-  )
-}
