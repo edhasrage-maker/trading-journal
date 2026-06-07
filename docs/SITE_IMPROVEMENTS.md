@@ -33,4 +33,20 @@ tasks. Newest considerations near the top of each section.
   same grid as Win Rate / Profit Factor — easy to scan past. Consider clearer
   labeling/grouping or a short tooltip-by-default so the differentiator stands out.
 
+## App / mobile conversion (post-validation, not now)
+
+- [ ] **Turn the site into an app.** Lift assessment: the wrapper is trivial; the real
+  work is mobile-responsive UI (currently desktop-only — only ~22 responsive-class
+  usages across the whole app, no PWA/Capacitor/Tauri). Reframe: journaling/prep/EOD
+  is a desk activity; mobile's job is *review + quick capture*, so scope to read
+  surfaces (dashboard, analytics, equity curve, calendar, day list), not full
+  journaling parity. Effort ladder at ~5–10h/wk:
+  - PWA shell only (installable): ~1 week — low value until UI is responsive
+  - + responsive review surfaces (genuinely usable on phone): ~1–1.5 months total
+  - + Capacitor wrapper for app stores: +2–3 weeks + store accounts/upkeep
+    (Apple $99/yr, Google $25 one-time)
+  - Full mobile journaling parity: 3+ months — not recommended
+  - *Separate fork:* a Tauri/Electron **desktop** app could preserve the local
+    `.scid`/OBS integrations the cloud SaaS must cut — a potential power-user/Pro tier.
+
 ## (Add new items below)
