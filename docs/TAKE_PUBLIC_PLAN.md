@@ -11,6 +11,13 @@ For the narrower "save for public" feature inventory see `PUBLIC_VERSION.md`.
 In progress. Distribution model and target audience are committed. Pricing
 tiers, broker import scope, and Rithmic licensing are open.
 
+## Phone-captured notes
+
+Quick thoughts captured from phone go in `PHONE_NOTES.md` (same directory).
+On the next desktop Claude Code session, process and clear that file —
+the standard prompt is *"read `docs/PHONE_NOTES.md`, integrate anything
+relevant into this plan, then clear the inbox."*
+
 ---
 
 ## Decisions committed
