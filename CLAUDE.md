@@ -39,16 +39,20 @@ RLS is enabled on every table with one policy: `for all using (auth.role() = 'au
 
 ## Tolerated lint
 
-`src/components/charts/LiveChart.tsx` carries **4 pre-existing `react-hooks/set-state-in-effect` errors** (load-prefs effect, hasSavedView effect, two more) — they're committed and the dev build runs fine. Don't try to "fix" them by ripping out the patterns; they're load-from-localStorage shims that need to setState in the effect. The rule fires inconsistently — when adding new sync `setState` in an effect, add `// eslint-disable-next-line react-hooks/set-state-in-effect -- <reason>` only if eslint actually flags it.
+`src/components/charts/LiveChart.tsx` previously carried 4 pre-existing `react-hooks/set-state-in-effect` errors. Those are gone now (verified clean: `0 errors, 1 warning` — the warning is an unused `hasSavedView` variable). General rule still applies: when adding sync `setState` in an effect for load-from-localStorage hydration, add `// eslint-disable-next-line react-hooks/set-state-in-effect -- <reason>` ONLY if eslint actually flags it; the rule fires inconsistently across files.
 
-## Recently shipped (latest commits on `feat/chart-migration-phase-1`)
+## Recently shipped (active branch: `feat/tag-taxonomy-cleanup-restore`, unmerged PR open)
 
-- Live chart (lightweight-charts v5) with VWAP/EMA/session-level lines, working saved zoom, row-hover ↔ chart crosshair link, AI Overview column per trade.
+- Live chart (lightweight-charts v5) with VWAP/EMA/session-level lines, working saved zoom, row-hover ↔ chart crosshair link, AI Overview column per trade. Per-(symbol, date) TF persistence — each day remembers its own timeframe. Exit fills grouped per time bucket; on-hover ribbons highlight; per-fill detail in popup, not on chart markers.
+- LiveChart mounted on prep page too (with screenshot/live toggle, defaults to Live). Analyze Prep auto-snaps the LiveChart canvas as a fallback chart-read image when no Sierra screenshot has been uploaded.
 - Background `BarWatcher` auto-imports today's bars from `.scid` every 3 min.
-- Tradezella import (`scripts/import-tradezella.ts`) + tag normalizer (`src/lib/tradezella-import.ts`); analytics UNIONs historical + native trades.
-- Analytics: paginated trades query (essential — without it, only the *oldest 1000* trades load and recent tagged trades drop out of the date filter), collapsible sections.
-- OBS recording → AI per-trade frame commentary MVP (`/api/video/commentary`, `src/components/eod/RecordingCommentary.tsx`). Plan file: `C:\Users\lamed\.claude\plans\jiggly-swimming-axolotl.md`.
+- Tradezella import (`scripts/import-tradezella.ts`) + tag normalizer (`src/lib/tradezella-import.ts`); analytics UNIONs historical + native trades. `tagKey()` folds `&` → `and` (so `Break & Retest` and `Break And Retest` dedupe).
+- Analytics: paginated trades query (essential — without it, only the *oldest 1000* trades load and recent tagged trades drop out of the date filter), collapsible sections, new `PeriodComparison` section (week-by-week / month-by-month with delta chips).
+- Dashboard rebuild: period selector (Week / Month / 30d / YTD / Last Year), 5 stat cards (P&L / Day Win % / Trade Win % / Avg MFE-MAE with pts/$/×ATR toggle / Median Process), combined `day_types[]` chip with array-aware filter, Today tile cascades Intraday→green once EOD is Completed.
+- EOD recap polish: W/L inline, `MAE %` no-wrap, ? help popups on stats columns and trade table headers, whole-dollar PnL.
+- OBS recording → AI per-trade frame commentary MVP (`/api/video/commentary`, `src/components/eod/RecordingCommentary.tsx`). DB persistence + localStorage→DB backfill landed. Plan file: `C:\Users\lamed\.claude\plans\jiggly-swimming-axolotl.md`.
 - EOD trade row click → intraday log deep-link.
+- Day's Range + current_price + auto-flag stats (rvol/adr/atr) — extracted from Sierra screenshot via `extract-context`, written to `market_context.day_range`; DR_ADR pill reactive to context updates; auto-applied bucket-driven flags in `MarketContextForm`.
 
 ## Open threads (not blocking, but pick these up if relevant)
 
