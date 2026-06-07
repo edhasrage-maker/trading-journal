@@ -34,7 +34,7 @@ export default function CalendarClient({ summaries, defaultStartDate, defaultEnd
   const filtered = useMemo(() => {
     return summaries.filter(s => {
       if (s.date < startDate || s.date > endDate) return false
-      if (dayType !== 'all' && (s.day_type ?? '').trim() !== dayType) return false
+      if (dayType !== 'all' && !s.day_types.some(t => t.trim() === dayType)) return false
       return true
     })
   }, [summaries, startDate, endDate, dayType])

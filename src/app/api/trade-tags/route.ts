@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import type { TagCategory, TradeTag } from '@/lib/supabase/types'
+import { tagKey } from '@/lib/tradezella-import'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -41,13 +42,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Label too long (max 80 chars)' }, { status: 400 })
   }
 
-  // Already exists? Return it — caller treats this as success.
-  const { data: existing } = await supabase
+  // Key-based dedup: match the importer's tagKey() (lowercase, strip non-alnum,
+  // & ↔ and) so case-only or punctuation-only variants ("Waited For 2x" vs
+  // "Waited for 2x", "Break & Retest" vs "Break And Retest") return the existing
+  // row instead of creating a duplicate.
+  const incomingKey = tagKey(label)
+  const { data: existingRows } = await supabase
     .from('trade_tags')
     .select('*')
-    .eq('category', category)
-    .eq('label', label)
-    .maybeSingle() as { data: TradeTag | null }
+    .eq('category', category) as { data: TradeTag[] | null }
+  const existing = (existingRows ?? []).find(r => tagKey(r.label) === incomingKey) ?? null
   if (existing) return NextResponse.json({ tag: existing, created: false })
 
   // Place after the current last chip in this category.

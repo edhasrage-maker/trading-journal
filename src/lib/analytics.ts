@@ -33,7 +33,8 @@ export interface DaySummary {
   trade_count: number
   wins: number
   losses: number
-  day_type: string | null
+  day_type: string | null  // Legacy single-tag — kept for callers that haven't migrated yet
+  day_types: string[]      // Multi-select; falls back to [day_type] when the DB row only has the legacy column
 }
 
 export interface PerformanceStats {
@@ -474,7 +475,7 @@ export function rollingStats(trades: TradeLike[], window: number): RollingPoint[
 
 /** Per-day rollups for the calendar heatmap. Falls back to summed trades.pnl if eod_pnl is null. */
 export function buildDaySummaries(
-  days: Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type'>[],
+  days: Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'day_types'>[],
   trades: Pick<Trade, 'pnl' | 'trading_day_id'>[],
 ): DaySummary[] {
   const tradesByDay = new Map<string, Pick<Trade, 'pnl' | 'trading_day_id'>[]>()
@@ -488,6 +489,9 @@ export function buildDaySummaries(
     const summed = ts.reduce((s, t) => s + (t.pnl ?? 0), 0)
     const wins = ts.filter(t => (t.pnl ?? 0) > 0).length
     const losses = ts.filter(t => (t.pnl ?? 0) < 0).length
+    const types = (d.day_types && d.day_types.length > 0)
+      ? d.day_types
+      : (d.day_type ? [d.day_type] : [])
     return {
       date: d.date,
       pnl: d.eod_pnl ?? summed,
@@ -495,6 +499,7 @@ export function buildDaySummaries(
       wins,
       losses,
       day_type: d.day_type,
+      day_types: types,
     }
   })
 }

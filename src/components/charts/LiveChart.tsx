@@ -357,13 +357,6 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // candles end up spread thin across the visible width. Fitting on TF
   // change snaps the view back to the actual data extent.
   const lastRenderedTfRef = useRef<number | null>(null)
-  const [hasSavedView, setHasSavedView] = useState(false)
-  // hasSavedView reflects whether the CURRENT TF has a saved view. Refetches
-  // when symbol/date/TF changes so the "Save chart view" indicator updates
-  // when you flip TFs.
-  useEffect(() => {
-    setHasSavedView(!!(symbol && loadView(symbol, date, chartTfMins)))
-  }, [symbol, date, chartTfMins])
 
   // Pull-on-mount: the one-shot chart-prefs migration only runs once per PC,
   // so a view saved on the OTHER PC after this PC migrated would never appear
@@ -389,7 +382,6 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       // already past its first-restore for this day.
       saveView(symbol, date, 1, range)
       if (LIVECHART_DEBUG) console.log('[livechart] pullChartPref hydrated 1m view', range)
-      setHasSavedView(true)
       const sameDay = restoredKeyRef.current === `${symbol}|${date}`
       const tscale = chartRef.current?.timeScale()
       // Only apply the server-saved range if the user is still on the default
@@ -432,7 +424,6 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       if (chartTfMins === 1) {
         schedulePushChartPref(viewKey(symbol, date, 1), range)
       }
-      setHasSavedView(true)
       if (LIVECHART_DEBUG) console.log('[livechart] saveChartView', { tf: chartTfMins, range })
     }
     setViewSavedFlash(true)
@@ -1364,7 +1355,6 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                       type="button"
                       onClick={() => {
                         if (symbol) clearView(symbol, date, chartTfMins)
-                        setHasSavedView(false)
                         chartRef.current?.timeScale().fitContent()
                       }}
                       className="w-full text-[10px] text-gray-400 hover:text-white border border-gray-700 rounded py-1"

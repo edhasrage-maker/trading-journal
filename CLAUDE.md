@@ -39,7 +39,7 @@ RLS is enabled on every table with one policy: `for all using (auth.role() = 'au
 
 ## Tolerated lint
 
-`src/components/charts/LiveChart.tsx` previously carried 4 pre-existing `react-hooks/set-state-in-effect` errors. Those are gone now (verified clean: `0 errors, 1 warning` — the warning is an unused `hasSavedView` variable). General rule still applies: when adding sync `setState` in an effect for load-from-localStorage hydration, add `// eslint-disable-next-line react-hooks/set-state-in-effect -- <reason>` ONLY if eslint actually flags it; the rule fires inconsistently across files.
+`src/components/charts/LiveChart.tsx` previously carried 4 pre-existing `react-hooks/set-state-in-effect` errors plus an unused-var warning; all resolved. General rule still applies: when adding sync `setState` in an effect for load-from-localStorage hydration, add `// eslint-disable-next-line react-hooks/set-state-in-effect -- <reason>` ONLY if eslint actually flags it; the rule fires inconsistently across files.
 
 ## Recently shipped (active branch: `feat/tag-taxonomy-cleanup-restore`, unmerged PR open)
 
