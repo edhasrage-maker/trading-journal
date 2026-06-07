@@ -1,67 +1,64 @@
-# Trading Journal — Status Summary
+# [Product name TBD] — Investor One-Pager
 
-*One-page snapshot for the take-public effort. Date: 2026-06-07.*
+*Working draft · 2026-06-07 · pre-revenue, pre-seed*
 
-## Current status
+**The trading journal that pays off on day one.** An AI-powered journal for serious
+futures traders that turns the most-avoided habit in trading into instant, actionable
+insight — no waiting months for the data to add up.
 
-A **feature-complete personal trading journal** running as a single-user local app
-(Next.js + Supabase + Anthropic), used daily alongside Sierra Chart. The decision is made
-to take it public as a **hosted, multi-tenant SaaS** for serious discretionary
-(futures-leaning) traders. Strategy is well-developed; **the build for launch has not
-started.** Constraints driving everything: ~5–10h/week, $500–2k budget, minimal audience,
-goal of ~$1–3k MRR (≈40–100 paying users).
+## The opportunity
 
-**Phase:** pre-validation. Next gate is proving 3–5 target traders will pay before the
-~3-month multi-tenant build.
+Trading journals are a proven, paid category: incumbents charge **$16–80/mo** (Tradezella,
+TraderSync, Edgewonk) with one-time tools at $159–$349. Our wedge is the **serious /
+prop-firm-evaluation futures trader** — a large, fast-growing segment that already pays
+$30–200/mo for platforms, data feeds, and eval accounts. High willingness-to-pay, sharp
+product-market fit, low acquisition cost in concentrated communities.
 
-## What's going well
+## The product (built and validated in daily use)
 
-- **Strong, verified differentiators that already exist and are cloud-safe:**
-  - **Day-one value** — instant analytics from the first import (beats incumbents whose
-    journals need 2–3 months of data to be useful — their biggest weakness).
-  - **MFE/MAE in ATR units + capture efficiency** — quantitative depth few competitors show.
-  - **Day-type / market-condition intelligence** in prep + analytics.
-  - **Drag-drop screenshot → autotag** — near-zero-friction journaling.
-- **Auth is done** (Supabase OTP + session/middleware) and reusable as-is.
-- **No service-role RLS bypasses** to untangle — clean base for multi-tenancy.
-- **Differentiators don't depend on local files** — the `.scid`/OBS cuts don't hurt the
-  core value.
-- Clear, sharp positioning: *"the journal that pays off on day one."*
+Four differentiators that already exist and run in the cloud:
+- **Day-one value** — full analytics, equity curve, and edge breakdowns from the *first*
+  import. Incumbents need 2–3 months of data to be useful; that gap is their #1 weakness.
+- **Quantitative depth others don't show** — MFE/MAE in ATR units and *capture efficiency*
+  (how much of each move you actually caught).
+- **Market-condition intelligence** — performance broken out by day type and regime
+  (volatility, range, opening behavior), so traders see *where* their edge lives.
+- **Near-zero friction** — drag-drop a screenshot, AI auto-tags the trade in seconds.
 
-## What's still needed (to launch)
+## Why it wins (defensibility)
 
-1. **Multi-tenancy** — add `user_id` + per-user RLS across ~14 tables and ~200–300 query
-   sites (medium lift, not the "one-day migration" once assumed).
-2. **Billing + cost controls** — Stripe + tier gating + **per-user AI rate limits/usage
-   caps** (none exist today; non-negotiable for an AI product).
-3. **Importers that carry excursion data** — Tradezella done; add NinjaTrader (has MAE/MFE),
-   verify Tradovate. Collect real sample exports to size the work.
-4. **Onboarding** — signup → import → see value in <5 min; lead untagged imports with the
-   tag-free metrics.
-5. **Validation + a little distribution** — landing page/waitlist, concierge test with
-   contacts, brand/name.
+Day-one value + analytical depth competitors don't replicate; a **hosted model** that keeps
+the AI logic and prompts private as trade secrets; **niche focus** the broad players won't
+match; and a future **cross-trader benchmark** dataset that compounds with every user.
 
-## Roadblocks / areas of concern
+## Traction & status
 
-- **Distribution is the #1 risk.** Minimal audience + light time. Building into silence is
-  the real danger — validate before the big build.
-- **Time is the binding constraint.** 5–10h/wk stretches launch to ~6 months, MRR target
-  to ~9–12 months.
-- **Competitors copy features** (esp. Tradezella). Features aren't legally protectable; the
-  moat is speed/niche/brand/data + hosting (trade secrets). Do cheap basics (trademark
-  name, closed-source, "show the what, hide the how"), then outrun.
-- **Excursion-data dependency** — MFE/MAE only lights up for excursion+stop-bearing trades;
-  a wrong first import shows blanks on the headline feature.
-- **Untagged bulk imports** have no tags/screenshots → tag-driven depth stays dark until a
-  low-friction enrichment path exists (bulk tagging).
-- **Cut features** (`.scid` charts, OBS video, Rithmic/Databento) — deferred; live charts
-  absent at MVP (rely on screenshot upload).
-- **TAM limiter:** day-type analysis is currently post-IB-anchored; open-session traders
-  need an earlier read before broadening the audience.
+The product is **feature-complete and in daily production use by the founder** — execution
+risk on "can it be built" is already retired. Authentication is live; the differentiators
+are verified cloud-deployable. **Pre-revenue and pre-multi-tenant** — the remaining work to
+open it to paying users is well-scoped (below), not exploratory.
 
-## Reference docs
+## Business model & unit economics
 
-- `docs/TAKE_PUBLIC_PLAN.md` — full strategy (note: predates this session's refinements).
-- `docs/SITE_IMPROVEMENTS.md` — concrete product/UX/app to-do backlog.
-- Strategic launch plan (off-repo): the lean go-to-market roadmap with phases, budget,
-  timeline, and the validation gate.
+Freemium → **Pro ~$19–25/mo** (undercutting the $29–30 field) → premium tier later (video
+AI, benchmarks). Estimated **COGS ~$2–10/user/mo**, supporting strong gross margins.
+Capital-efficient: solo, AI-accelerated development with minimal burn.
+
+## Roadmap — critical path to revenue
+
+1. **Multi-tenant migration** (per-user data + security) — well-understood, ~scoped.
+2. **Billing + AI usage controls** (Stripe, tiered, per-user cost caps).
+3. **2 high-value broker importers** (NinjaTrader, Tradovate) + a <5-minute onboarding.
+4. **Validation gate** → closed beta → public launch.
+
+## Key risks & mitigations (honest view)
+
+- **Distribution is the hardest problem** (limited starting audience). *Mitigation:*
+  validate with target users before scaling spend; lead with a sharp, copyable-resistant
+  niche message; build-in-public on outcomes, not the recipe.
+- **Founder bandwidth** (part-time). *Mitigation:* ruthless MVP scope; AI-accelerated build;
+  the costly, defensible core already exists.
+- **Feature copying by incumbents.** *Mitigation:* speed, niche depth, brand, hosted trade
+  secrets, and a compounding data moat — not patents.
+- **Insight quality depends on import data richness.** *Mitigation:* prioritize data
+  sources that unlock the headline metrics; clear guidance on first import.
