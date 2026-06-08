@@ -30,6 +30,7 @@ type Args = {
   mult: number
   rearmAtrFrac: number
   triggerExpireBars: number
+  debug: number
 }
 
 function parseArgs(): Args {
@@ -54,7 +55,8 @@ function parseArgs(): Args {
     contracts: Number(a.contracts ?? 5),
     mult: Number(a.mult ?? 2),
     rearmAtrFrac: Number(a.rearm ?? 0.5),
-    triggerExpireBars: Number(a['trigger-expire'] ?? 10),
+    triggerExpireBars: a['trigger-expire'] != null ? Number(a['trigger-expire']) : Number.POSITIVE_INFINITY,
+    debug: Number(a.debug ?? 0),
   }
 }
 
@@ -71,6 +73,7 @@ type OpenPos = {
   signalTs: string
   slopeAtSignal: number
   emaDistAtSignal: number
+  debugExample?: number
 }
 
 export type Trade = {
@@ -86,6 +89,17 @@ export type Trade = {
   R: number
   slope: number
   emaDistAtSignal: number
+}
+
+type DebugCtx = { remaining: number }
+
+const PT_LONG = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+})
+function ptTime(iso: string): string {
+  return PT_LONG.format(new Date(iso)) + ' PT'
 }
 
 function fillLong(bar1m: OhlcBar, limit: number): number | null {
@@ -119,8 +133,8 @@ function checkExit(
   return null
 }
 
-function simulate(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved: number } {
-  if (args.entry === 'break') return simulateBreak(bars1m, args)
+function simulate(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades: Trade[]; unresolved: number } {
+  if (args.entry === 'break') return simulateBreak(bars1m, args, dbg)
   return simulatePullback(bars1m, args)
 }
 
@@ -269,7 +283,7 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
 // stop at the rejection bar's low. Rejection bar = 1m bar that pierced the EMA
 // (low <= EMA) and closed back above it (close > EMA). Trend invalidated if 2
 // consecutive 1m bars close on the wrong side of the EMA.
-function simulateBreak(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved: number } {
+function simulateBreak(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades: Trade[]; unresolved: number } {
   if (bars1m.length < args.atrPeriod + 10) return { trades: [], unresolved: 0 }
 
   const isRTH1m = bars1m.map(b => isRTH(b.ts))
@@ -294,6 +308,7 @@ function simulateBreak(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unreso
     slopeAtSignal: number
     emaDistAtSignal: number
     signalTs5m: string
+    debugExample?: number
   } | null = null
   let posOpen: OpenPos | null = null
   let prevPtDate: string | null = null
@@ -303,6 +318,12 @@ function simulateBreak(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unreso
 
   const finalize = (exit: { idx: number; price: number; R: number }) => {
     if (!posOpen) return
+    if (posOpen.debugExample) {
+      const eb = bars1m[exit.idx]
+      const what = exit.R < 0 ? 'STOP HIT' : 'TARGET HIT'
+      console.log(`  ${ptTime(eb.ts)} 1m  O=${eb.open.toFixed(2)} H=${eb.high.toFixed(2)} L=${eb.low.toFixed(2)} C=${eb.close.toFixed(2)}`)
+      console.log(`             → ${what} @ ${exit.price.toFixed(2)}  R=${exit.R.toFixed(2)}`)
+    }
     trades.push({
       signalTs: posOpen.signalTs,
       fillTs: bars1m[posOpen.fillIdx1m].ts,
@@ -398,6 +419,11 @@ function simulateBreak(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unreso
               signalTs: pendingTrigger.signalTs5m,
               slopeAtSignal: pendingTrigger.slopeAtSignal,
               emaDistAtSignal: pendingTrigger.emaDistAtSignal,
+              debugExample: pendingTrigger.debugExample,
+            }
+            if (pendingTrigger.debugExample) {
+              console.log(`  ${ptTime(sub.ts)} 1m  O=${sub.open.toFixed(2)} H=${sub.high.toFixed(2)} L=${sub.low.toFixed(2)} C=${sub.close.toFixed(2)}`)
+              console.log(`             → FILLED @ ${entry.toFixed(2)}  stop=${stop.toFixed(2)}  target=${target.toFixed(2)}  risk=${stopDist.toFixed(2)}pts`)
             }
             const exit = checkExit(bars1m, posOpen, j, j + 1)
             if (exit) finalize(exit)
@@ -412,6 +438,26 @@ function simulateBreak(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unreso
       if (!Number.isFinite(emaForBar)) continue
 
       // Track consecutive closes against bias, detect rejection bars.
+      const announceRejection = (side: Side) => {
+        if (!dbg || dbg.remaining <= 0) return undefined
+        const ex = (args.debug - dbg.remaining) + 1
+        dbg.remaining--
+        console.log(`\n=== Example ${ex} (${side.toUpperCase()}) ===`)
+        if (prev5m) {
+          console.log(`  ${ptTime(prev5m.ts)} 5m  close=${prev5m.close.toFixed(2)}  EMA=${emaForBar.toFixed(2)}  slope=${slopeForBar?.toFixed(3)} pts/5m`)
+          console.log(`             → bias=${side.toUpperCase()}, armed (will fill on break of next 1m's high/low)`)
+        }
+        console.log(`  ${ptTime(sub.ts)} 1m  O=${sub.open.toFixed(2)} H=${sub.high.toFixed(2)} L=${sub.low.toFixed(2)} C=${sub.close.toFixed(2)}`)
+        const wickTouch = side === 'long' ? sub.low <= emaForBar : sub.high >= emaForBar
+        const closeHeld = side === 'long' ? sub.close > emaForBar : sub.close < emaForBar
+        console.log(`             → REJECTION: ${side === 'long' ? 'low' : 'high'}=${(side === 'long' ? sub.low : sub.high).toFixed(2)} ${side === 'long' ? '<=' : '>='} EMA=${emaForBar.toFixed(2)}? ${wickTouch}, close ${side === 'long' ? '>' : '<'} EMA? ${closeHeld}`)
+        const stopLevel = side === 'long' ? sub.low : sub.high
+        const breakLevel = side === 'long' ? sub.high : sub.low
+        const risk = Math.abs(breakLevel - stopLevel)
+        const target = side === 'long' ? breakLevel + risk * args.targetR : breakLevel - risk * args.targetR
+        console.log(`             → pending: ${side === 'long' ? 'BUY' : 'SELL'} STOP @ ${breakLevel.toFixed(2)}  loss-stop @ ${stopLevel.toFixed(2)}  risk=${risk.toFixed(2)}pts  target @ ${target.toFixed(2)}`)
+        return ex
+      }
       if (bias === 'long') {
         if (sub.close < emaForBar) {
           consecAgainst++
@@ -430,6 +476,7 @@ function simulateBreak(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unreso
               slopeAtSignal: slopeForBar,
               emaDistAtSignal: prev5m ? Math.abs(prev5m.close - emaForBar) : 0,
               signalTs5m: prev5m?.ts ?? bar5m.ts,
+              debugExample: announceRejection('long'),
             }
           }
         }
@@ -451,6 +498,7 @@ function simulateBreak(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unreso
               slopeAtSignal: -slopeForBar,
               emaDistAtSignal: prev5m ? Math.abs(prev5m.close - emaForBar) : 0,
               signalTs5m: prev5m?.ts ?? bar5m.ts,
+              debugExample: announceRejection('short'),
             }
           }
         }
@@ -508,6 +556,7 @@ async function loadAllTradesFromScid(args: Args): Promise<{ trades: Trade[]; unr
   const allTrades: Trade[] = []
   let totalUnresolved = 0
   const perContract: Array<{ contract: string; window: string; trades: number; bars: number }> = []
+  const dbg: DebugCtx = { remaining: args.debug }
 
   for (const c of contracts) {
     // Use the contract's front-month window, intersected with the user's --from/--to.
@@ -521,7 +570,7 @@ async function loadAllTradesFromScid(args: Args): Promise<{ trades: Trade[]; unr
       console.log('(no bars)')
       continue
     }
-    const { trades, unresolved } = simulate(bars as OhlcBar[], args)
+    const { trades, unresolved } = simulate(bars as OhlcBar[], args, dbg)
     allTrades.push(...trades)
     totalUnresolved += unresolved
     perContract.push({
