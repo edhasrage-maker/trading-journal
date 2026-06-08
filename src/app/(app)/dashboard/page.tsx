@@ -361,6 +361,7 @@ export default async function DashboardPage() {
     atr_1m: d.atr_1m,
     avg_live_atr_1m: d.avg_live_atr_1m,
     process_score: d.process_score,
+    process_v13_score: d.process_v13_score,
   }))
 
   // Recent Days table still scopes to the 180d window — keeps the table fast

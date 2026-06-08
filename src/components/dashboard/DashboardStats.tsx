@@ -36,7 +36,13 @@ export interface DayStat {
   /** Per-trade live ATR-10 averaged across the day's trades. Preferred ATR
    *  ref over prep_atr when present. */
   avg_live_atr_1m: number | null
+  /** Prep AI's 1-10 quality score (column is `process_score` for legacy
+   *  storage-layer reasons; the user-facing label is "Prep"). */
   process_score: number | null
+  /** v1.4 Process verdict-derived 0-10 score = Math.round(passCount/5*10).
+   *  Null on days where the EOD AI hasn't run, or on legacy pre-v1.4 rows
+   *  where the dashboard reader couldn't compute it. */
+  process_v13_score: number | null
 }
 
 type MfeUnit = 'pts' | 'dollars' | 'atr'
@@ -189,10 +195,13 @@ export default function DashboardStats({ days }: Props) {
       avgMae = maeAtr.length > 0 ? maeAtr.reduce((a, b) => a + b, 0) / maeAtr.length : null
     }
 
-    // Median Process: across all days that have a process score (i.e. prep
-    // was analyzed). Median preferred over mean to suppress outliers.
-    const procScores = inPeriod.map(d => d.process_score).filter((v): v is number => v != null)
-    const medianProcess = median(procScores)
+    // Median Prep (prep AI 1-10) and Median Process (v1.4 verdict-derived
+    // 0-10). Two separate medians on the same stat card — see render block.
+    // Median preferred over mean to suppress outliers.
+    const prepScores = inPeriod.map(d => d.process_score).filter((v): v is number => v != null)
+    const medianPrep = median(prepScores)
+    const v13Scores = inPeriod.map(d => d.process_v13_score).filter((v): v is number => v != null)
+    const medianProcessV13 = median(v13Scores)
 
     return {
       pnl,
@@ -200,10 +209,12 @@ export default function DashboardStats({ days }: Props) {
       tradeWinRate,
       avgMfe,
       avgMae,
-      medianProcess,
+      medianProcess: medianPrep,    // legacy field name preserved for callers
+      medianProcessV13,
       tradedDaysCount: tradedDays.length,
       totalTradesWithPnl,
-      procCount: procScores.length,
+      procCount: prepScores.length,
+      v13Count: v13Scores.length,
     }
   }, [days, period, mfeUnit])
 
@@ -277,19 +288,15 @@ export default function DashboardStats({ days }: Props) {
           }
           valueClass="text-base"
         />
-        <StatCard
-          label="Median Prep"
-          value={stats.medianProcess == null ? '—' : `${stats.medianProcess.toFixed(1)}/10`}
-          tone={
-            stats.medianProcess == null
-              ? 'neutral'
-              : stats.medianProcess >= 7
-                ? 'positive'
-                : stats.medianProcess >= 5
-                  ? 'neutral'
-                  : 'negative'
-          }
-          sub={`${stats.procCount} prep${stats.procCount === 1 ? '' : 's'} scored`}
+        {/* Stat card showing TWO medians: Prep (AI prep-quality 1-10) +
+            Process (v1.4 verdict-derived 0-10 from passCount/5*10). Stacked
+            vertically since they're related but measuring different things —
+            single card avoids growing the row to 6 cards. */}
+        <PrepAndProcessCard
+          medianPrep={stats.medianProcess}
+          prepCount={stats.procCount}
+          medianProcess={stats.medianProcessV13}
+          processCount={stats.v13Count}
         />
       </div>
     </div>
@@ -316,6 +323,50 @@ function StatCard({
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
       {subNode ? <div className="mt-1">{subNode}</div> : sub ? <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">{sub}</p> : null}
+    </div>
+  )
+}
+
+/** Stat card that shows Median Prep AND Median Process side-by-side. Both
+ *  are 0-10 but measure different things — Prep = AI prep-quality score
+ *  (1-10 from /api/analyze-prep), Process = v1.4 verdict-derived score
+ *  (passCount/5*10 from /api/analyze-eod). Stacked vertically to avoid
+ *  blowing out the stat-card row to 6 cards. */
+function PrepAndProcessCard({
+  medianPrep, prepCount, medianProcess, processCount,
+}: {
+  medianPrep: number | null
+  prepCount: number
+  medianProcess: number | null
+  processCount: number
+}) {
+  const toneColor = (v: number | null, goodThreshold: number, midThreshold: number): string => {
+    if (v == null) return 'text-gray-500'
+    if (v >= goodThreshold) return 'text-green-400'
+    if (v >= midThreshold) return 'text-yellow-300'
+    return 'text-red-400'
+  }
+  // Prep tones use the original 7/5 cutoffs the card had pre-change. Process
+  // tones map to the v1.4 thresholds — ≥8 (4/5 pass = at-threshold Compliant)
+  // is positive, anything lower trends toward red.
+  const prepColor = toneColor(medianPrep, 7, 5)
+  const procColor = toneColor(medianProcess, 8, 6)
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">Median Prep / Process</p>
+      <div className="flex items-baseline gap-2 whitespace-nowrap">
+        <span className={`font-bold text-base ${prepColor}`}>
+          {medianPrep == null ? '—' : `${medianPrep.toFixed(1)}`}
+        </span>
+        <span className="text-gray-600 text-xs">/</span>
+        <span className={`font-bold text-base ${procColor}`}>
+          {medianProcess == null ? '—' : `${medianProcess.toFixed(1)}`}
+        </span>
+        <span className="text-gray-600 text-xs">/10</span>
+      </div>
+      <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">
+        {prepCount} prep · {processCount} process
+      </p>
     </div>
   )
 }
