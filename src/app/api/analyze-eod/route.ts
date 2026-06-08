@@ -162,6 +162,33 @@ You are scoring against the v1.3 spec above. Two orthogonal layers — never com
   dashboard regardless of the session verdict — relaxing the threshold doesn't
   hide which rule failed. P&L does not override.
 
+**P4 (Stop Valid) — common misclassification to avoid:**
+P4 is binary and mechanical per §SIZING. The standard ATR band is [0.5, 1.5]
+inclusive. Walk the decision tree literally:
+
+  • ATR mult ∈ [0.5, 1.5] → P4 pass. STOP. Do not add "but marginal" or
+    "close to the edge" caveats — the spec has no soft zone.
+  • ATR mult < 0.5 AND tight_stop_reason logged → P4 pass.
+  • ATR mult < 0.5 AND tight_stop_reason NOT logged → P4 fail.
+  • ATR mult > 1.5 → P4 fail.
+  • 10-MNQ trade with ATR mult > 1.25 OR campaign risk > $200 → P4 fail
+    (this is the size-specific tighter band per §SIZING).
+
+The tight_stop_reason field is required ONLY when ATR mult < 0.5. A
+0.56-ATR stop does NOT require one. Do not mark P4 fail because
+tight_stop_reason is absent on a trade where ATR mult is already in
+[0.5, 1.5].
+
+DO NOT mark P4 fail for any of the following — these are NOT in the spec:
+  • "Stop was marginal / close to 0.5" — there is no marginal band.
+    Either it's in [0.5, 1.5] (pass) or it's not (fail).
+  • "Trader noted 'not clean 2/3 orderflow'" — that's a P7 concern about
+    setup quality, NOT a P4 concern about stop distance.
+  • "The trade stopped out" — outcome bias. A stopped 0.56-ATR trade is
+    still P4 pass if the stop was inside the band at entry.
+  • "Tight stop felt aggressive given the day's ATR" — feelings about
+    aggressiveness don't override the mechanical band check.
+
 **P7 (Setup Valid) — common misclassification to avoid:**
 P7 is binary and measures ONLY two things per §DEFINITIONS:
   (a) an orderflow read is logged for the trade, AND
