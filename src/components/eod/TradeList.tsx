@@ -144,7 +144,11 @@ export default function TradeList({
       <h2 className="font-semibold text-white mb-3 text-sm">Trades ({trades.length})</h2>
       <div className="overflow-x-auto">
         <table className="w-full text-xs font-mono">
-          <thead>
+          {/* Sticky header: stays pinned to the top of the viewport as the
+              user scrolls through trades. bg-gray-900 (matches the card
+              background) so scrolling content doesn't show through. z-20
+              is one above the chip's z-10 so the header always wins. */}
+          <thead className="sticky top-0 bg-gray-900 z-20">
             <tr className="text-gray-500 border-b border-gray-800">
               <th className="font-normal pb-2 pr-2 w-8" />
               <SortableHeader label="Time" sortKey="time" align="left" current={sortKey} dir={sortDir} onSort={onSort} />
@@ -307,20 +311,20 @@ export default function TradeList({
                       {t.direction?.toUpperCase() ?? '--'}
                     </span>
                   </td>
-                  {/* Entry cell: price on the baseline (vertically centered
-                      with LONG / Stop / TP1 / etc.) with the small setup
-                      chip absolutely-positioned BELOW the price. Absolute
-                      position keeps the row at its natural single-line
-                      height — the chip can overlap the row gap visually
-                      without forcing the other cells to top-align. */}
-                  <td className="py-1.5 pr-3 text-right text-gray-300 relative">
+                  {/* Entry cell: price center-aligned with the row (matches
+                      LONG / Stop / TP1 baseline), setup chip absolutely
+                      positioned at the BOTTOM of the cell (inside the
+                      row's extra padding), so it doesn't bleed into the
+                      next row. The row padding is bumped to py-2.5 just
+                      for trade rows (see <tr> className) to make room. */}
+                  <td className="py-2.5 pr-3 text-right text-gray-300 relative align-middle">
                     <span>{t.entry_price ?? '--'}</span>
                     {(() => {
                       const setup = t.tags_json?.setups?.[0]
                       if (!setup) return null
                       return (
                         <span
-                          className="absolute right-3 top-full -translate-y-0.5 text-[9px] font-normal bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case whitespace-nowrap"
+                          className="absolute right-3 bottom-0.5 text-[9px] font-normal bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case whitespace-nowrap leading-none"
                           title={t.tags_json?.setups?.join(', ')}
                         >
                           {setup}
