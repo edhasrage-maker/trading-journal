@@ -307,7 +307,28 @@ export default function TradeList({
                       {t.direction?.toUpperCase() ?? '--'}
                     </span>
                   </td>
-                  <td className="py-1.5 pr-3 text-right text-gray-300">{t.entry_price ?? '--'}</td>
+                  <td className="py-1.5 pr-3 text-right text-gray-300 align-top">
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span>{t.entry_price ?? '--'}</span>
+                      {/* Small setup-tag chip under the entry price. Neutral
+                          gray, not the category color, so it stays calm in
+                          the table. Shows the first setup tag only (multi-
+                          setup trades are rare; full tag list is in the
+                          row's hover popup elsewhere). */}
+                      {(() => {
+                        const setup = t.tags_json?.setups?.[0]
+                        if (!setup) return null
+                        return (
+                          <span
+                            className="text-[9px] font-normal bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case"
+                            title={t.tags_json?.setups?.join(', ')}
+                          >
+                            {setup}
+                          </span>
+                        )
+                      })()}
+                    </div>
+                  </td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-300">{t.quantity ?? '--'}</td>

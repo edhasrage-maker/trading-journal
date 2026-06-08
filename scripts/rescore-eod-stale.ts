@@ -65,6 +65,12 @@ const limitArg = argv.find(a => a.startsWith('--limit='))
 const limit = limitArg ? parseInt(limitArg.split('=')[1], 10) : Infinity
 const dateArg = argv.find(a => a.startsWith('--date='))
 const targetDate = dateArg ? dateArg.split('=')[1] : null
+// Inclusive date range. Both bounds = ISO YYYY-MM-DD. When set, OVERRIDES the
+// staleness check — every day in [from, to] with trades gets rescored.
+const fromArg = argv.find(a => a.startsWith('--from='))
+const fromDate = fromArg ? fromArg.split('=')[1] : null
+const toArg = argv.find(a => a.startsWith('--to='))
+const toDate = toArg ? toArg.split('=')[1] : null
 const pauseArg = argv.find(a => a.startsWith('--pause-ms='))
 const pauseMs = pauseArg ? parseInt(pauseArg.split('=')[1], 10) : 1500
 
@@ -138,12 +144,19 @@ async function findStaleDays(): Promise<StaleDay[]> {
   }
 
   const stale: StaleDay[] = []
+  const useRange = !!(fromDate && toDate)
   for (const d of days) {
     if ((countByDay.get(d.id) ?? 0) === 0) continue
     if (targetDate && d.date !== targetDate) continue
+    if (useRange && (d.date < fromDate! || d.date > toDate!)) continue
     const check = isStale(d.eod_ai_analysis_json as EodAiAnalysis | null)
-    if (!check.stale && !targetDate) continue   // --date forces rescore
-    stale.push({ id: d.id, date: d.date, reason: targetDate && !check.stale ? 'forced by --date' : check.reason })
+    // --date or --from/--to force rescore even when not stale
+    const forced = !!targetDate || useRange
+    if (!check.stale && !forced) continue
+    const reason = forced && !check.stale
+      ? (targetDate ? 'forced by --date' : 'forced by --from/--to range')
+      : check.reason
+    stale.push({ id: d.id, date: d.date, reason })
   }
   return stale
 }

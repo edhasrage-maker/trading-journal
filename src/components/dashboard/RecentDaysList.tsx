@@ -291,11 +291,12 @@ export default function RecentDaysList({ initialDays }: Props) {
             <tr className="text-xs text-gray-500 border-b border-gray-800">
               <th className="font-normal py-2 pl-2 pr-1 w-8" />
               <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3" />
-              {/* Abbreviated to "Exec" (was "Execution") so the column fits in
-                  w-20 without expanding and pushing the rightmost PnL column
-                  off-screen on narrower viewports. Tooltip on the column header
-                  spells it out for first-time readers. */}
-              <SortableTh label="Exec" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" titleAttr="Execution composite score (0–10)" />
+              {/* Header reads "Execution" in full (was "Exec") per user
+                  preference. The column now uses w-24 to fit the longer
+                  label without truncating; previous w-20 worked for "Exec"
+                  but truncated "Execution". Tooltip retained for the
+                  numeric definition. */}
+              <SortableTh label="Execution" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-24" titleAttr="Execution composite score (0–10) — see /eod page for the per-metric breakdown." />
               {/* v1.3 Process verdict — single 0-10, banded green/red color
                   by verdict per 2026-06-08 amendment (5/7 threshold). The old
                   "Process" column (which actually showed the prep AI score)
