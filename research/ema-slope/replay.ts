@@ -20,6 +20,7 @@ type Args = {
   to: string | null
   symbol: string | null
   scidDir: string
+  entry: 'pullback' | 'break'
   ema: number
   lookback: number
   atrPeriod: number
@@ -28,6 +29,7 @@ type Args = {
   contracts: number
   mult: number
   rearmAtrFrac: number
+  triggerExpireBars: number
 }
 
 function parseArgs(): Args {
@@ -43,6 +45,7 @@ function parseArgs(): Args {
     to: a.to ?? null,
     symbol: a.symbol ?? null,
     scidDir: a['scid-dir'] ?? process.env.SIERRA_DATA_DIR ?? 'D:\\SierraCharts\\Data',
+    entry: (a.entry ?? 'pullback') as 'pullback' | 'break',
     ema: Number(a.ema ?? 9),
     lookback: Number(a.lookback ?? 3),
     atrPeriod: Number(a.atr ?? 10),
@@ -51,6 +54,7 @@ function parseArgs(): Args {
     contracts: Number(a.contracts ?? 5),
     mult: Number(a.mult ?? 2),
     rearmAtrFrac: Number(a.rearm ?? 0.5),
+    triggerExpireBars: Number(a['trigger-expire'] ?? 10),
   }
 }
 
@@ -115,9 +119,13 @@ function checkExit(
   return null
 }
 
-// Runs the pullback simulation on one continuous 1m bar series. Returns the
-// trades that fired and the count of positions left open at end-of-day boundaries.
 function simulate(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved: number } {
+  if (args.entry === 'break') return simulateBreak(bars1m, args)
+  return simulatePullback(bars1m, args)
+}
+
+// Pullback-to-EMA mode: limit fill at the prior 5m bar's EMA value, 1x ATR stop.
+function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved: number } {
   if (bars1m.length < args.atrPeriod + 10) return { trades: [], unresolved: 0 }
 
   const isRTH1m = bars1m.map(b => isRTH(b.ts))
@@ -257,6 +265,226 @@ function simulate(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved:
   return { trades, unresolved }
 }
 
+// Break-of-candle mode: stop-buy at the prior 1m rejection bar's high (long),
+// stop at the rejection bar's low. Rejection bar = 1m bar that pierced the EMA
+// (low <= EMA) and closed back above it (close > EMA). Trend invalidated if 2
+// consecutive 1m bars close on the wrong side of the EMA.
+function simulateBreak(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved: number } {
+  if (bars1m.length < args.atrPeriod + 10) return { trades: [], unresolved: 0 }
+
+  const isRTH1m = bars1m.map(b => isRTH(b.ts))
+  const ptDate1m = bars1m.map(b => ptDateKey(b.ts))
+  const atr1m = atrWilder(bars1m, args.atrPeriod)
+
+  const { bars5m, ranges } = aggregate1mTo5m(bars1m)
+  const rthMask5m = ranges.map(r => isRTH1m[r.start])
+
+  const closes5m = bars5m.map(b => b.close)
+  const ema5m = emaSeries(closes5m, args.ema)
+  const slope5m: (number | null)[] = bars5m.map((_, i) =>
+    i >= args.lookback ? (ema5m[i] - ema5m[i - args.lookback]) / args.lookback : null,
+  )
+
+  let bias: Side | null = null
+  let armed = false
+  let pendingTrigger: {
+    high: number
+    low: number
+    createdAt1m: number
+    slopeAtSignal: number
+    emaDistAtSignal: number
+    signalTs5m: string
+  } | null = null
+  let posOpen: OpenPos | null = null
+  let prevPtDate: string | null = null
+  let consecAgainst = 0 // consecutive 1m closes on the wrong side of EMA
+  const trades: Trade[] = []
+  let unresolved = 0
+
+  const finalize = (exit: { idx: number; price: number; R: number }) => {
+    if (!posOpen) return
+    trades.push({
+      signalTs: posOpen.signalTs,
+      fillTs: bars1m[posOpen.fillIdx1m].ts,
+      exitTs: bars1m[exit.idx].ts,
+      side: posOpen.side,
+      entry: posOpen.entry,
+      exit: exit.price,
+      stop: posOpen.stop,
+      target: posOpen.target,
+      stopDist: posOpen.stopDist,
+      R: exit.R,
+      slope: Math.abs(posOpen.slopeAtSignal),
+      emaDistAtSignal: posOpen.emaDistAtSignal,
+    })
+    posOpen = null
+    armed = false
+    pendingTrigger = null
+    consecAgainst = 0
+  }
+
+  for (let i = 0; i < bars5m.length; i++) {
+    const range = ranges[i]
+    const bar5m = bars5m[i]
+    const slope = slope5m[i]
+    const ema = ema5m[i]
+    const inRTH = rthMask5m[i]
+    const ptDate = ptDate1m[range.start]
+
+    if (ptDate !== prevPtDate) {
+      if (posOpen) unresolved++
+      bias = null
+      armed = false
+      pendingTrigger = null
+      posOpen = null
+      consecAgainst = 0
+      prevPtDate = ptDate
+    }
+
+    if (!inRTH) continue
+
+    // EMA value used by 1m bars within this 5m bar = prior 5m bar's close.
+    const emaForBar = i > 0 ? ema5m[i - 1] : NaN
+    const slopeForBar = i > 0 ? slope5m[i - 1] : null
+    const prev5m = i > 0 ? bars5m[i - 1] : null
+
+    // Walk 1m bars within this 5m bar
+    for (let j = range.start; j < range.end; j++) {
+      if (!isRTH1m[j]) break
+      const sub = bars1m[j]
+
+      // Exit walk
+      if (posOpen) {
+        const exit = checkExit(bars1m, posOpen, posOpen.scanStart1m, j + 1)
+        if (exit) {
+          finalize(exit)
+        } else {
+          posOpen.scanStart1m = j + 1
+          continue
+        }
+      }
+
+      if (!bias || !armed) {
+        pendingTrigger = null
+        consecAgainst = 0
+        continue
+      }
+
+      // Pending trigger: expire stale and check for break entry
+      if (pendingTrigger && j - pendingTrigger.createdAt1m > args.triggerExpireBars) {
+        pendingTrigger = null
+      }
+      if (pendingTrigger) {
+        let fillPrice: number | null = null
+        if (bias === 'long' && sub.high >= pendingTrigger.high) {
+          fillPrice = Math.max(sub.open, pendingTrigger.high)
+        } else if (bias === 'short' && sub.low <= pendingTrigger.low) {
+          fillPrice = Math.min(sub.open, pendingTrigger.low)
+        }
+        if (fillPrice != null) {
+          const entry = fillPrice
+          const stop = bias === 'long' ? pendingTrigger.low : pendingTrigger.high
+          const stopDist = Math.abs(entry - stop)
+          if (stopDist > 0) {
+            const target = bias === 'long' ? entry + stopDist * args.targetR : entry - stopDist * args.targetR
+            posOpen = {
+              side: bias,
+              entry,
+              stop,
+              target,
+              stopDist,
+              fillIdx1m: j,
+              scanStart1m: j,
+              signalTs: pendingTrigger.signalTs5m,
+              slopeAtSignal: pendingTrigger.slopeAtSignal,
+              emaDistAtSignal: pendingTrigger.emaDistAtSignal,
+            }
+            const exit = checkExit(bars1m, posOpen, j, j + 1)
+            if (exit) finalize(exit)
+            else posOpen.scanStart1m = j + 1
+            pendingTrigger = null
+            consecAgainst = 0
+            continue
+          }
+        }
+      }
+
+      if (!Number.isFinite(emaForBar)) continue
+
+      // Track consecutive closes against bias, detect rejection bars.
+      if (bias === 'long') {
+        if (sub.close < emaForBar) {
+          consecAgainst++
+          if (consecAgainst >= 2) {
+            armed = false
+            pendingTrigger = null
+            consecAgainst = 0
+          }
+        } else {
+          consecAgainst = 0
+          if (sub.low <= emaForBar && slopeForBar != null) {
+            pendingTrigger = {
+              high: sub.high,
+              low: sub.low,
+              createdAt1m: j,
+              slopeAtSignal: slopeForBar,
+              emaDistAtSignal: prev5m ? Math.abs(prev5m.close - emaForBar) : 0,
+              signalTs5m: prev5m?.ts ?? bar5m.ts,
+            }
+          }
+        }
+      } else {
+        if (sub.close > emaForBar) {
+          consecAgainst++
+          if (consecAgainst >= 2) {
+            armed = false
+            pendingTrigger = null
+            consecAgainst = 0
+          }
+        } else {
+          consecAgainst = 0
+          if (sub.high >= emaForBar && slopeForBar != null) {
+            pendingTrigger = {
+              high: sub.high,
+              low: sub.low,
+              createdAt1m: j,
+              slopeAtSignal: -slopeForBar,
+              emaDistAtSignal: prev5m ? Math.abs(prev5m.close - emaForBar) : 0,
+              signalTs5m: prev5m?.ts ?? bar5m.ts,
+            }
+          }
+        }
+      }
+    }
+
+    // Update bias and arming from this 5m bar's close (after its 1m sub-bars).
+    if (slope == null || !Number.isFinite(ema)) continue
+    let newBias: Side | null = null
+    if (bar5m.close > ema && slope > 0) newBias = 'long'
+    else if (bar5m.close < ema && slope < 0) newBias = 'short'
+    if (args.side === 'long' && newBias === 'short') newBias = null
+    if (args.side === 'short' && newBias === 'long') newBias = null
+    if (newBias !== bias) {
+      armed = false
+      bias = newBias
+      pendingTrigger = null
+      consecAgainst = 0
+    }
+
+    if (bias && !armed && !posOpen) {
+      const lastIdx = range.end - 1
+      const atrEnd = atr1m[lastIdx]
+      if (Number.isFinite(atrEnd) && atrEnd > 0) {
+        const sep = Math.abs(bar5m.close - ema)
+        if (sep >= args.rearmAtrFrac * atrEnd) armed = true
+      }
+    }
+  }
+  if (posOpen) unresolved++
+
+  return { trades, unresolved }
+}
+
 function fmtDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10)
 }
@@ -344,7 +572,10 @@ function printReport(trades: Trade[], unresolved: number, args: Args) {
     console.log(`  edge${k}: ${pts.toFixed(3).padStart(8)} pts   ${pct.toFixed(5).padStart(10)} %    ${deg.toFixed(1).padStart(6)}°`)
   }
 
-  console.log(`\n9 EMA pullback test — 5m signal, 1m exit walk, ${args.targetR}R target, ATR(${args.atrPeriod}) Wilder stop`)
+  const stopDesc = args.entry === 'break'
+    ? `stop=prior 1m rejection bar low/high`
+    : `stop=1x ATR(${args.atrPeriod}) Wilder on 1m`
+  console.log(`\n9 EMA ${args.entry} test — 5m bias, 1m ${args.entry === 'break' ? 'break entry' : 'limit pullback'}, ${args.targetR}R target, ${stopDesc}`)
   console.log(`side=${args.side}  contracts=${args.contracts}  $/pt=${args.mult}\n`)
 
   const cols = ['bucket', 'n', 'WR%', 'avgR', 'totalR', 'EV $', 'totalPnL $', 'avgWin $', 'avgLoss $', 'avgEMAdist']
