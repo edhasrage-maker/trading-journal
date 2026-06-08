@@ -56,6 +56,23 @@ interface Suggestion {
   distance: number
 }
 
+/** Extract the set of numeric tokens from a label so we can suppress
+ *  pairs like "9 EMA Hold" vs "20 EMA Hold" or "2nd Attempt" vs "3rd
+ *  Attempt" — Levenshtein-only would flag those at distance ≤2 even
+ *  though they're semantically distinct (different EMAs, different
+ *  attempts). If the labels contain DIFFERENT numbers, they're almost
+ *  certainly distinct tags and shouldn't be offered as merge candidates. */
+function extractNumbers(s: string): Set<string> {
+  const nums = s.match(/\d+/g)
+  return new Set(nums ?? [])
+}
+
+function numberSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const x of a) if (!b.has(x)) return false
+  return true
+}
+
 function suggestPairs(tags: TradeTag[], threshold: number): Suggestion[] {
   const byCat: Record<string, TradeTag[]> = {}
   for (const t of tags) {
@@ -67,6 +84,11 @@ function suggestPairs(tags: TradeTag[], threshold: number): Suggestion[] {
     const list = byCat[cat]
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
+        // Pre-filter: if the labels contain different numeric tokens, they're
+        // distinct (e.g. 9 EMA vs 20 EMA, 2nd vs 3rd). Skip without scoring.
+        const numsA = extractNumbers(list[i].label)
+        const numsB = extractNumbers(list[j].label)
+        if (!numberSetsEqual(numsA, numsB)) continue
         const d = levenshtein(list[i].label.toLowerCase(), list[j].label.toLowerCase(), threshold)
         if (d <= threshold && d > 0) {
           pairs.push({ category: cat, a: list[i], b: list[j], distance: d })
@@ -101,6 +123,13 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
   const [manualCategory, setManualCategory] = useState<TagCategory>('setups')
   const [manualFrom, setManualFrom] = useState<string>('')
   const [manualTo, setManualTo] = useState<string>('')
+  // Move-tag state: pick a source category, pick a tag from it, pick the
+  // destination category. Independent of the merge state above.
+  const [moveSrcCategory, setMoveSrcCategory] = useState<TagCategory>('mistakes')
+  const [moveTagId, setMoveTagId] = useState<string>('')
+  const [moveDstCategory, setMoveDstCategory] = useState<TagCategory>('confluences')
+  const [moveBusy, setMoveBusy] = useState(false)
+  const [moveResult, setMoveResult] = useState<string | null>(null)
 
   const suggestions = useMemo(() => suggestPairs(tags, 2), [tags])
 
@@ -287,6 +316,106 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
             className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-xs font-medium rounded px-3 py-1.5 transition-colors"
           >
             Merge…
+          </button>
+        </div>
+      </section>
+
+      {/* Move tag to another category */}
+      <section className="border-t border-gray-800 pt-6 space-y-3">
+        <h2 className="text-lg font-semibold text-white">Move tag to another category</h2>
+        <p className="text-xs text-gray-500">
+          For when a tag is in the wrong category (e.g. &ldquo;Faded LTF Move&rdquo;
+          was logged as a Mistake but is really a Confluence). Moves both the
+          library row and the data — every trade tagged with it gets the label
+          shifted from the old category&apos;s array to the new one&apos;s.
+        </p>
+        {moveResult && (
+          <p className="text-xs text-green-300 bg-green-950/30 border border-green-900/40 rounded px-2 py-1.5">
+            {moveResult}
+          </p>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
+          <label className="text-xs text-gray-400 space-y-1">
+            From category
+            <select
+              value={moveSrcCategory}
+              onChange={e => { setMoveSrcCategory(e.target.value as TagCategory); setMoveTagId('') }}
+              className="w-full bg-gray-900 border border-gray-800 text-gray-200 text-xs rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
+            >
+              {CATEGORY_ORDER.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-gray-400 space-y-1">
+            Tag to move
+            <select
+              value={moveTagId}
+              onChange={e => setMoveTagId(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-800 text-gray-200 text-xs rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
+            >
+              <option value="">— select —</option>
+              {(byCategory[moveSrcCategory] ?? []).map(t => (
+                <option key={t.id} value={t.id}>{t.label} ({usageFor(t)})</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-gray-400 space-y-1">
+            To category
+            <select
+              value={moveDstCategory}
+              onChange={e => setMoveDstCategory(e.target.value as TagCategory)}
+              className="w-full bg-gray-900 border border-gray-800 text-gray-200 text-xs rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
+            >
+              {CATEGORY_ORDER.filter(c => c !== moveSrcCategory).map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+            </select>
+          </label>
+          <button
+            onClick={async () => {
+              if (!moveTagId || moveBusy || moveSrcCategory === moveDstCategory) return
+              const t = (byCategory[moveSrcCategory] ?? []).find(x => x.id === moveTagId)
+              if (!t) return
+              if (!confirm(
+                `Move "${t.label}" from ${CATEGORY_LABELS[moveSrcCategory]} to ${CATEGORY_LABELS[moveDstCategory]}?\n\n` +
+                `Every trade tagged with "${t.label}" in ${CATEGORY_LABELS[moveSrcCategory]} will have that label removed and added to ${CATEGORY_LABELS[moveDstCategory]} instead. This cannot be undone except by running the move in reverse.`
+              )) return
+              setMoveBusy(true)
+              setError(null)
+              setMoveResult(null)
+              try {
+                const res = await fetch('/api/trade-tags/recategorize', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ tag_id: moveTagId, to_category: moveDstCategory }),
+                })
+                const json = await res.json() as { ok?: boolean; trades_updated?: number; historical_updated?: number; label?: string; from_category?: TagCategory; to_category?: TagCategory; error?: string }
+                if (!res.ok || !json.ok) {
+                  setError(json.error ?? `Move failed (${res.status})`)
+                  return
+                }
+                // Local mirror: shift the tag's category, move usage key.
+                setTags(prev => prev.map(x => x.id === moveTagId ? { ...x, category: moveDstCategory } : x))
+                const oldKey = `${moveSrcCategory}|${t.label}`
+                const newKey = `${moveDstCategory}|${t.label}`
+                const moved = usage[oldKey] ?? 0
+                const next = { ...usage }
+                delete next[oldKey]
+                next[newKey] = (next[newKey] ?? 0) + moved
+                setUsage(next)
+                setMoveResult(
+                  `Moved "${json.label}" from ${CATEGORY_LABELS[json.from_category!]} → ${CATEGORY_LABELS[json.to_category!]}. ` +
+                  `Rewrote ${json.trades_updated ?? 0} trades and ${json.historical_updated ?? 0} historical rows.`
+                )
+                setMoveTagId('')
+                router.refresh()
+              } catch (e) {
+                setError(e instanceof Error ? e.message : 'Network error')
+              } finally {
+                setMoveBusy(false)
+              }
+            }}
+            disabled={!moveTagId || moveBusy || moveSrcCategory === moveDstCategory}
+            className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-xs font-medium rounded px-3 py-1.5 transition-colors"
+          >
+            {moveBusy ? 'Moving…' : 'Move'}
           </button>
         </div>
       </section>

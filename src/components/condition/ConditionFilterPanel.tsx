@@ -398,13 +398,17 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
           </div>
         )}
 
-        {/* Match details — side by side. Highlighted card tracks effectivePick
-            so toggling the dropdown above moves the highlight too. */}
-        {outcome && (outcome.best_median || outcome.best_tertile) && (
-          <div className="grid md:grid-cols-2 gap-3">
-            <MatchCard title="Median view" match={outcome.best_median} picked={effectivePick === 'median'} />
-            <MatchCard title="Tertile view" match={outcome.best_tertile} picked={effectivePick === 'tertile'} />
-          </div>
+        {/* Match details — single card for the currently-picked view only.
+            The verdict banner above already labels which view was chosen and
+            the dropdown lets the user flip; rendering both side-by-side was
+            redundant clutter. Toggling the override dropdown swaps the card
+            to the other view. */}
+        {outcome && effectiveMatch && (
+          <MatchCard
+            title={effectivePick === 'median' ? 'Median view' : 'Tertile view'}
+            match={effectiveMatch}
+            picked={true}
+          />
         )}
 
         {/* Notes + Save */}
