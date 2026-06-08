@@ -31,6 +31,32 @@ type Args = {
   rearmAtrFrac: number
   triggerExpireBars: number
   debug: number
+  showAtUtcMs: number | null
+}
+
+const PT_PARSE = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Los_Angeles',
+  hour12: false, hour: '2-digit', minute: '2-digit',
+})
+
+// Parses "YYYY-MM-DDTHH:MM" or "YYYY-MM-DD HH:MM" (in PT) to a UTC ms timestamp.
+// Tries both PDT (-07:00) and PST (-08:00) offsets and picks the one that
+// round-trips through the PT formatter — handles DST without hardcoding dates.
+function parseShowPt(s: string | null): number | null {
+  if (!s) return null
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})$/)
+  if (!m) return null
+  const [, date, hRaw, mm] = m
+  const hh = hRaw.padStart(2, '0')
+  for (const offset of ['-07:00', '-08:00']) {
+    const cand = new Date(`${date}T${hh}:${mm}:00${offset}`)
+    if (isNaN(cand.getTime())) continue
+    const parts = PT_PARSE.formatToParts(cand)
+    const ptHour = parts.find(p => p.type === 'hour')!.value
+    const ptMin = parts.find(p => p.type === 'minute')!.value
+    if (ptHour === hh && ptMin === mm) return cand.getTime()
+  }
+  return null
 }
 
 function parseArgs(): Args {
@@ -57,6 +83,7 @@ function parseArgs(): Args {
     rearmAtrFrac: Number(a.rearm ?? 0.5),
     triggerExpireBars: a['trigger-expire'] != null ? Number(a['trigger-expire']) : Number.POSITIVE_INFINITY,
     debug: Number(a.debug ?? 0),
+    showAtUtcMs: parseShowPt(a.show ?? null),
   }
 }
 
@@ -373,6 +400,23 @@ function simulateBreak(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades:
     for (let j = range.start; j < range.end; j++) {
       if (!isRTH1m[j]) break
       const sub = bars1m[j]
+
+      // Window-targeted state dump (--show <time>): force-print state around a target moment.
+      if (args.showAtUtcMs != null) {
+        const dt = Math.abs(new Date(sub.ts).getTime() - args.showAtUtcMs)
+        if (dt <= 15 * 60 * 1000) {
+          const trig = pendingTrigger
+            ? `pending ${bias === 'long' ? 'BUY@' + pendingTrigger.high.toFixed(2) : 'SELL@' + pendingTrigger.low.toFixed(2)} stop@${(bias === 'long' ? pendingTrigger.low : pendingTrigger.high).toFixed(2)}`
+            : 'no pending'
+          const emaStr = Number.isFinite(emaForBar) ? emaForBar.toFixed(2) : 'n/a'
+          const slopeStr = slopeForBar != null ? slopeForBar.toFixed(3) : 'n/a'
+          console.log(`  ${ptTime(sub.ts)} 1m  O=${sub.open.toFixed(2)} H=${sub.high.toFixed(2)} L=${sub.low.toFixed(2)} C=${sub.close.toFixed(2)}`)
+          console.log(`             | bias=${bias ?? 'NONE'}  armed=${armed}  EMA(5m)=${emaStr}  slope=${slopeStr} pts/5m  consecAgainst=${consecAgainst}  ${trig}`)
+          if (prev5m) {
+            console.log(`             | prior 5m close=${prev5m.close.toFixed(2)} (${prev5m.close > emaForBar ? 'above' : 'below'} EMA)`)
+          }
+        }
+      }
 
       // Exit walk
       if (posOpen) {
