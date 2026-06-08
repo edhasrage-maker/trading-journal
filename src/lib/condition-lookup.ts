@@ -192,12 +192,15 @@ const VERDICT_FAMILY: Record<ConditionVerdict, 'GREEN' | 'RED' | 'YELLOW' | 'GRA
 
 /**
  * Pick the consolidated verdict between the median and tertile matches.
- * Rules:
- *   - Only one exists → use it.
- *   - Both exist → higher specificity wins.
- *   - Tie on specificity → narrower EV CI wins (more confident).
- *   - Conflict flag fires when median and tertile pick opposing GREEN vs RED
- *     families, regardless of which is the consolidated pick.
+ *
+ * Rule (2026-06-08 update): TERTILE is preferred whenever it exists — the
+ * tighter bucket is a more specific match for today's actual conditions,
+ * even if the sample is smaller. Median is the FALLBACK for when tertile
+ * has insufficient data to produce a row (some metric had <9 historical
+ * sessions, so its tertile thresholds aren't defined).
+ *
+ * Conflict flag still fires when median and tertile pick opposing GREEN
+ * vs RED families — useful to surface even when we're committing to one.
  */
 export function consolidate(
   bestMedian: MatchResult | null,
@@ -205,7 +208,7 @@ export function consolidate(
 ): LookupOutcome['consolidated'] & { conflict: boolean; conflict_reason: string | null } {
   if (!bestMedian && !bestTertile) {
     return {
-      pick: 'median',
+      pick: 'tertile',
       verdict: null,
       condition_id: null,
       explanation: 'No matching lookup row in either view',
@@ -218,7 +221,7 @@ export function consolidate(
       pick: 'median',
       verdict: bestMedian.row.verdict,
       condition_id: bestMedian.row.condition_id,
-      explanation: 'Only median view returned a match',
+      explanation: 'Tertile had insufficient data — using median view as fallback',
       conflict: false,
       conflict_reason: null,
     }
@@ -234,11 +237,10 @@ export function consolidate(
     }
   }
 
-  // Both present
+  // Both present — tertile wins by default. Conflict still detected for the UI.
   const m = bestMedian!.row
   const t = bestTertile!.row
 
-  // Conflict: GREEN vs RED families
   const mf = VERDICT_FAMILY[m.verdict]
   const tf = VERDICT_FAMILY[t.verdict]
   const conflict = (mf === 'GREEN' && tf === 'RED') || (mf === 'RED' && tf === 'GREEN')
@@ -246,29 +248,11 @@ export function consolidate(
     ? `Median says ${VERDICT_DISPLAY[m.verdict]}, tertile says ${VERDICT_DISPLAY[t.verdict]} — they disagree on direction.`
     : null
 
-  let pick: 'median' | 'tertile'
-  let tied = false
-  if (m.specificity > t.specificity) {
-    pick = 'median'
-  } else if (t.specificity > m.specificity) {
-    pick = 'tertile'
-  } else {
-    // Specificity tie → narrower EV CI wins (more confident)
-    const widthM = (m.ev_ci_hi ?? 0) - (m.ev_ci_lo ?? 0)
-    const widthT = (t.ev_ci_hi ?? 0) - (t.ev_ci_lo ?? 0)
-    if (widthM < widthT) pick = 'median'
-    else if (widthT < widthM) pick = 'tertile'
-    else { pick = 'median'; tied = true }
-  }
-
-  const chosen = pick === 'tertile' ? t : m
   return {
-    pick,
-    verdict: chosen.verdict,
-    condition_id: chosen.condition_id,
-    explanation: tied
-      ? 'Median and tertile views tied on specificity and CI width; defaulting to median.'
-      : `${pick === 'median' ? 'Median' : 'Tertile'} view selected (specificity ${chosen.specificity})`,
+    pick: 'tertile',
+    verdict: t.verdict,
+    condition_id: t.condition_id,
+    explanation: `Tertile view selected (specificity ${t.specificity}). Use the dropdown above to switch to the median view.`,
     conflict,
     conflict_reason: conflictReason,
   }

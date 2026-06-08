@@ -92,6 +92,10 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [notes, setNotes] = useState('')
   const [showInfo, setShowInfo] = useState(false)
+  /** User can override the auto picker (which defaults to tertile, falls
+   *  back to median when tertile has insufficient data) to inspect the
+   *  other view. 'auto' = use the picker's choice. */
+  const [viewOverride, setViewOverride] = useState<'auto' | 'median' | 'tertile'>('auto')
   const [migrationNeeded, setMigrationNeeded] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -237,7 +241,22 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
     }
   }
 
-  const v = outcome?.consolidated.verdict ?? null
+  // Effective pick reflects the auto-picker default UNLESS the user explicitly
+  // overrode it. If the user picks a view that has no match, fall through to
+  // whichever view does have one (don't silently render nothing).
+  const autoPick = outcome?.consolidated.pick ?? 'tertile'
+  const effectivePick: 'median' | 'tertile' = (() => {
+    if (viewOverride === 'auto' || !outcome) return autoPick
+    const want = viewOverride
+    const wantHasMatch = want === 'median' ? !!outcome.best_median : !!outcome.best_tertile
+    return wantHasMatch ? want : autoPick
+  })()
+  const effectiveMatch = outcome
+    ? (effectivePick === 'tertile' ? outcome.best_tertile : outcome.best_median)
+    : null
+  const v: ConditionVerdict | null = effectiveMatch
+    ? effectiveMatch.row.verdict
+    : (outcome?.consolidated.verdict ?? null)
   const vintage = outcome?.vintage
   const vintageAge = vintage?.refreshed_at
     // eslint-disable-next-line react-hooks/purity
@@ -352,9 +371,20 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
           </div>
         )}
 
-        {/* Consolidated verdict */}
+        {/* Consolidated verdict + view-override dropdown.
+            Default picker is tertile (more specific match for today's conditions);
+            user can override to inspect the median view when they want a wider
+            sample. The select sits inside the verdict card so the connection
+            between the verdict and which-view-drove-it is unmissable. */}
         {v && outcome && (
-          <ConsolidatedVerdict verdict={v} outcome={outcome} />
+          <ConsolidatedVerdict
+            verdict={v}
+            outcome={outcome}
+            effectivePick={effectivePick}
+            viewOverride={viewOverride}
+            onChangeOverride={setViewOverride}
+            isOverridden={viewOverride !== 'auto' && viewOverride !== autoPick}
+          />
         )}
 
         {/* Conflict warning */}
@@ -368,11 +398,12 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
           </div>
         )}
 
-        {/* Match details — side by side */}
+        {/* Match details — side by side. Highlighted card tracks effectivePick
+            so toggling the dropdown above moves the highlight too. */}
         {outcome && (outcome.best_median || outcome.best_tertile) && (
           <div className="grid md:grid-cols-2 gap-3">
-            <MatchCard title="Median view" match={outcome.best_median} picked={outcome.consolidated.pick === 'median'} />
-            <MatchCard title="Tertile view" match={outcome.best_tertile} picked={outcome.consolidated.pick === 'tertile'} />
+            <MatchCard title="Median view" match={outcome.best_median} picked={effectivePick === 'median'} />
+            <MatchCard title="Tertile view" match={outcome.best_tertile} picked={effectivePick === 'tertile'} />
           </div>
         )}
 
@@ -437,7 +468,21 @@ function BucketReadout({ buckets }: { buckets: BucketAssignment[] }) {
   )
 }
 
-function ConsolidatedVerdict({ verdict, outcome }: { verdict: ConditionVerdict; outcome: LookupOutcome }) {
+function ConsolidatedVerdict({
+  verdict,
+  outcome,
+  effectivePick,
+  viewOverride,
+  onChangeOverride,
+  isOverridden,
+}: {
+  verdict: ConditionVerdict
+  outcome: LookupOutcome
+  effectivePick: 'median' | 'tertile'
+  viewOverride: 'auto' | 'median' | 'tertile'
+  onChangeOverride: (v: 'auto' | 'median' | 'tertile') => void
+  isOverridden: boolean
+}) {
   const tone = VERDICT_TONE[verdict]
   const bg = tone === 'good'
     ? 'bg-green-950/40 border-green-800'
@@ -453,6 +498,11 @@ function ConsolidatedVerdict({ verdict, outcome }: { verdict: ConditionVerdict; 
       : tone === 'neutral'
         ? 'text-yellow-300'
         : 'text-gray-300'
+  // Show a per-view explanation when overridden so the user understands why
+  // the verdict changed when they toggled.
+  const explanation = isOverridden
+    ? `${effectivePick === 'tertile' ? 'Tertile' : 'Median'} view (manual override)`
+    : outcome.consolidated.explanation
   return (
     <div className={`border rounded-xl px-5 py-4 ${bg}`}>
       <div className="flex items-baseline justify-between gap-4">
@@ -463,8 +513,25 @@ function ConsolidatedVerdict({ verdict, outcome }: { verdict: ConditionVerdict; 
             <div className="text-xs text-gray-400 mt-0.5" title={`Internal code: ${verdict}`}>{VERDICT_DISPLAY[verdict]}</div>
           </div>
         </div>
-        <div className="text-right text-xs text-gray-500 font-mono">
-          {outcome.consolidated.explanation}
+        <div className="text-right text-xs text-gray-500 space-y-1.5">
+          <div className="font-mono">{explanation}</div>
+          {/* Override dropdown — small, only visible when there's something
+              to switch to (both views have a match). */}
+          {outcome.best_median && outcome.best_tertile && (
+            <div className="flex items-center justify-end gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-gray-600">View:</span>
+              <select
+                value={viewOverride}
+                onChange={e => onChangeOverride(e.target.value as 'auto' | 'median' | 'tertile')}
+                className="bg-gray-900 border border-gray-700 text-gray-300 text-[11px] rounded px-1.5 py-0.5 font-mono focus:outline-none focus:border-blue-500"
+                title="Pick which historical-bucket view drives the verdict. Auto = tertile (more specific match), falling back to median when tertile has insufficient data."
+              >
+                <option value="auto">Auto (tertile)</option>
+                <option value="tertile">Tertile</option>
+                <option value="median">Median</option>
+              </select>
+            </div>
+          )}
         </div>
       </div>
     </div>

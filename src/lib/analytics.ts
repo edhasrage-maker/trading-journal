@@ -141,11 +141,17 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
 /**
  * Minimum MFE-to-planned-risk ratio required before captureRatio reports a
  * value. Below this, the trade barely went favorable and the capture ratio
- * is dominated by noise — a +$5 MFE on a -$50 loss is a "-1000% capture"
- * that doesn't mean "gave back a winner," it means "trade went against you
- * almost immediately." Hide rather than mislead.
+ * is dominated by noise — a +$50 MFE on a -$200 loss becomes "-400% capture"
+ * which doesn't mean "gave back a winner," it means "trade went against you
+ * almost immediately with a small tick-up at entry." Hide rather than mislead.
+ *
+ * 0.5R is the chosen floor: the trade has to have made it at least halfway
+ * toward a 1:1 reward target before reversing. This aligns the capture
+ * calculation more closely with the give-back classifier (which requires 1R,
+ * see `isGiveBackTrade`) so a trade with negative capture % is at least in
+ * the ballpark of "you had something to give back."
  */
-const MIN_MFE_RATIO_FOR_CAPTURE = 0.2
+const MIN_MFE_RATIO_FOR_CAPTURE = 0.5
 
 export function captureRatio(t: TradeWithExcursion): number | null {
   if (t.pnl == null || t.quantity == null) return null

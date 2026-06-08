@@ -1,10 +1,13 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns'
-import { Check, Trash2, Loader2, HelpCircle, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X } from 'lucide-react'
 import { captureRatio, maeHeatRatio, isGiveBackTrade, rMultiple } from '@/lib/analytics'
 import type { Trade } from '@/lib/supabase/types'
+
+type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
+type SortDir = 'asc' | 'desc'
 
 /** Display capture % per trade — uses the same null-handling as the intraday row. */
 function captureDisplay(t: Trade): string | null {
@@ -58,6 +61,54 @@ export default function TradeList({
   liveAtrByTradeId,
   postExitByTradeId,
 }: Props) {
+  // Sort state. Default is Time asc — preserves the existing fill-order view.
+  // Click a sortable column header to toggle; clicking a different column
+  // resets to that column's "natural" direction (time asc, everything else desc).
+  const [sortKey, setSortKey] = useState<SortKey>('time')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const naturalDir = (k: SortKey): SortDir => (k === 'time' ? 'asc' : 'desc')
+  const onSort = (k: SortKey) => {
+    if (k === sortKey) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(k)
+      setSortDir(naturalDir(k))
+    }
+  }
+
+  const sortedTrades = useMemo(() => {
+    const sortVal = (t: Trade): number => {
+      switch (sortKey) {
+        case 'time':
+          return t.entry_time ? Date.parse(t.entry_time) : 0
+        case 'atr':
+          return liveAtrByTradeId?.[t.id] ?? Number.NEGATIVE_INFINITY
+        case 'pnl':
+          return t.pnl ?? Number.NEGATIVE_INFINITY
+        case 'r':
+          return rMultiple(t) ?? Number.NEGATIVE_INFINITY
+        case 'mfe':
+          return captureRatio(t) ?? Number.NEGATIVE_INFINITY
+        case 'mae':
+          return maeHeatRatio(t) ?? Number.NEGATIVE_INFINITY
+      }
+    }
+    const copy = [...trades]
+    copy.sort((a, b) => {
+      const av = sortVal(a)
+      const bv = sortVal(b)
+      if (av === bv) {
+        // Time as deterministic tiebreaker so a re-sort on equal values
+        // doesn't shuffle rows.
+        const at = a.entry_time ? Date.parse(a.entry_time) : 0
+        const bt = b.entry_time ? Date.parse(b.entry_time) : 0
+        return at - bt
+      }
+      return sortDir === 'asc' ? av - bv : bv - av
+    })
+    return copy
+  }, [trades, sortKey, sortDir, liveAtrByTradeId])
+
   // Click-to-toggle popups for the MFE % / MAE % column definitions. Same
   // dashboard-style popup pattern as the EOD header — click outside / Esc to
   // dismiss. Pinned top-right of the viewport so they don't push the table.
@@ -96,18 +147,25 @@ export default function TradeList({
           <thead>
             <tr className="text-gray-500 border-b border-gray-800">
               <th className="font-normal pb-2 pr-2 w-8" />
-              <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Time</th>
+              <SortableHeader label="Time" sortKey="time" align="left" current={sortKey} dir={sortDir} onSort={onSort} />
               <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Dir</th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Entry</th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Stop</th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">TP1</th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Qty</th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot.">ATR@</th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">PnL</th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units).">R</th>
+              <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." />
+              <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} />
+              <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." />
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
                 <span className="inline-flex items-center gap-1 justify-end">
-                  MFE %
+                  <button
+                    type="button"
+                    onClick={() => onSort('mfe')}
+                    className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
+                    title="Sort by MFE %"
+                  >
+                    MFE % <SortIcon col="mfe" current={sortKey} dir={sortDir} />
+                  </button>
                   <button
                     type="button"
                     onClick={() => { setMfeOpen(o => !o); setMaeOpen(false) }}
@@ -145,7 +203,14 @@ export default function TradeList({
               </th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
                 <span className="inline-flex items-center gap-1 justify-end">
-                  MAE %
+                  <button
+                    type="button"
+                    onClick={() => onSort('mae')}
+                    className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
+                    title="Sort by MAE %"
+                  >
+                    MAE % <SortIcon col="mae" current={sortKey} dir={sortDir} />
+                  </button>
                   <button
                     type="button"
                     onClick={() => { setMaeOpen(o => !o); setMfeOpen(false) }}
@@ -187,7 +252,7 @@ export default function TradeList({
             </tr>
           </thead>
           <tbody>
-            {trades.map(t => {
+            {sortedTrades.map(t => {
               const pnl = t.pnl ?? 0
               const isHovered = hoveredTradeId === t.id
               const isSelected = selectedIds.has(t.id)
@@ -372,4 +437,43 @@ export default function TradeList({
       </div>
     </div>
   )
+}
+
+/** A column header that toggles sort on click; clicking a different column
+ *  resets to that column's natural direction. */
+function SortableHeader({
+  label, sortKey, align, current, dir, onSort, title,
+}: {
+  label: string
+  sortKey: SortKey
+  align: 'left' | 'right'
+  current: SortKey
+  dir: SortDir
+  onSort: (k: SortKey) => void
+  title?: string
+}) {
+  return (
+    <th
+      className={`${align === 'left' ? 'text-left' : 'text-right'} font-normal pb-2 pr-3 whitespace-nowrap`}
+      title={title}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors ${align === 'right' ? 'justify-end' : ''}`}
+      >
+        {label}
+        <SortIcon col={sortKey} current={current} dir={dir} />
+      </button>
+    </th>
+  )
+}
+
+function SortIcon({ col, current, dir }: { col: SortKey; current: SortKey; dir: SortDir }) {
+  if (col !== current) {
+    return <ArrowUpDown className="w-2.5 h-2.5 text-gray-700" />
+  }
+  return dir === 'asc'
+    ? <ArrowUp className="w-2.5 h-2.5 text-blue-400" />
+    : <ArrowDown className="w-2.5 h-2.5 text-blue-400" />
 }

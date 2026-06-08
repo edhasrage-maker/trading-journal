@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Plus, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2 } from 'lucide-react'
+import { GitMerge, Plus, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2 } from 'lucide-react'
 import TradeForm from './TradeForm'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
@@ -186,9 +186,65 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkTagOpen, setBulkTagOpen] = useState(false)
   const [bulkApplying, setBulkApplying] = useState(false)
+  const [merging, setMerging] = useState(false)
   const toggleSelected = (id: string) =>
     setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
   const clearSelection = () => setSelectedIds(new Set())
+
+  /** Merge exactly 2 selected trades — mirrors the EOD recap flow. Use case:
+   *  a manual trade logged via the intraday tagging flow (with screenshot,
+   *  setup tags) and the same physical fill imported later from a Sierra log.
+   *  Server picks the SC-imported one as the keeper and copies the manual
+   *  trade's qualitative fields onto it; the manual row is deleted. */
+  const handleMergeSelected = async () => {
+    if (selectedIds.size !== 2) return
+    const [idA, idB] = Array.from(selectedIds)
+    const a = trades.find(t => t.id === idA)
+    const b = trades.find(t => t.id === idB)
+    if (!a || !b) return
+    const fmtT = (t: Trade) =>
+      `${t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'} ${t.direction?.toUpperCase() ?? '--'} @ ${t.entry_price ?? '--'} qty ${t.quantity ?? '--'}${t.sierra_trade_id ? ' [SC]' : ' [manual]'}`
+    const proceed = confirm(
+      `Merge these two trades into one?\n\n` +
+        `  ${fmtT(a)}\n` +
+        `  ${fmtT(b)}\n\n` +
+        `The SC-imported trade keeps its fill data (time, price, qty, pnl). ` +
+        `The manual trade's tags, notes, screenshot, and stop/TP levels are ` +
+        `carried over. The other row is deleted.\n\n` +
+        `This cannot be undone.`,
+    )
+    if (!proceed) return
+
+    setMerging(true)
+    try {
+      const res = await fetch('/api/trades/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tradeIds: [idA, idB] }),
+      })
+      const data = await res.json() as { keeperId?: string; deletedId?: string; error?: string }
+      if (!res.ok || !data.keeperId || !data.deletedId) {
+        alert(`Merge failed: ${data.error ?? 'unknown error'}`)
+        return
+      }
+      // Optimistic local update: drop the deleted row; refetch the keeper to
+      // pick up the server-merged qualitative fields.
+      setTrades(prev => prev.filter(t => t.id !== data.deletedId))
+      const keeperId = data.keeperId
+      try {
+        const r = await fetch(`/api/trades/${keeperId}`)
+        if (r.ok) {
+          const fresh = await r.json() as Trade
+          setTrades(prev => prev.map(t => t.id === keeperId ? fresh : t))
+        }
+      } catch { /* the row stays as-is; non-fatal */ }
+      clearSelection()
+    } catch (e) {
+      alert(`Merge failed: ${e instanceof Error ? e.message : 'unknown'}`)
+    } finally {
+      setMerging(false)
+    }
+  }
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
@@ -414,15 +470,15 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                 className="accent-blue-600 cursor-pointer shrink-0"
                 title="Select for bulk tag-apply"
               />
-              {/* Direction badge */}
-              <span className={`text-xs font-bold px-2 py-0.5 rounded border shrink-0 ${
+              {/* Direction badge — sized down so the time can carry the row */}
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 leading-none ${
                 trade.direction === 'long' ? 'bg-green-900/40 border-green-700 text-green-400' : 'bg-red-900/40 border-red-700 text-red-400'
               }`}>
                 {trade.direction === 'long' ? '▲ L' : '▼ S'}
               </span>
 
-              {/* Time */}
-              <span className="text-xs text-gray-500 shrink-0">
+              {/* Time — bolder + lighter color so it reads as the row's anchor */}
+              <span className="text-sm font-bold text-gray-200 font-mono shrink-0">
                 {trade.entry_time ? new Date(trade.entry_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}
               </span>
 
@@ -631,6 +687,17 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-full text-xs font-medium transition-colors"
           >
             <Tag className="w-3 h-3" /> Add tags
+          </button>
+          {/* Merge only enabled when exactly 2 are selected — same shape as EOD. */}
+          <button
+            type="button"
+            onClick={handleMergeSelected}
+            disabled={selectedIds.size !== 2 || merging}
+            className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 text-white px-3 py-1 rounded-full text-xs font-medium transition-colors"
+            title={selectedIds.size === 2 ? 'Merge these two rows (manual + SC dedupe)' : 'Select exactly 2 trades to merge'}
+          >
+            {merging ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitMerge className="w-3 h-3" />}
+            Merge
           </button>
           <button
             type="button"
