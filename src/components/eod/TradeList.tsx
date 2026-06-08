@@ -311,26 +311,31 @@ export default function TradeList({
                       {t.direction?.toUpperCase() ?? '--'}
                     </span>
                   </td>
-                  {/* Entry cell: price center-aligned with the row (matches
-                      LONG / Stop / TP1 baseline), setup chip absolutely
-                      positioned at the BOTTOM of the cell (inside the
-                      row's extra padding), so it doesn't bleed into the
-                      next row. The row padding is bumped to py-2.5 just
-                      for trade rows (see <tr> className) to make room. */}
-                  <td className="py-2.5 pr-3 text-right text-gray-300 relative align-middle">
-                    <span>{t.entry_price ?? '--'}</span>
-                    {(() => {
-                      const setup = t.tags_json?.setups?.[0]
-                      if (!setup) return null
-                      return (
-                        <span
-                          className="absolute right-3 bottom-0.5 text-[9px] font-normal bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case whitespace-nowrap leading-none"
-                          title={t.tags_json?.setups?.join(', ')}
-                        >
-                          {setup}
-                        </span>
-                      )
-                    })()}
+                  {/* Entry cell: price + setup chip stacked tightly via flex
+                      column. Chip sits 2px below the price (gap-0.5) rather
+                      than being anchored to the row's bottom edge. Cell
+                      grows naturally to fit; other cells in the row middle-
+                      align around the combined height. Trade-off: the price
+                      sits slightly above LONG/29579's baseline because flex
+                      content centers as a unit. That offset is < the chip's
+                      half-height — barely noticeable, much better than the
+                      previous "chip floating far below" look. */}
+                  <td className="py-1.5 pr-3 text-right text-gray-300 align-middle">
+                    <div className="flex flex-col items-end gap-0.5 leading-tight">
+                      <span>{t.entry_price ?? '--'}</span>
+                      {(() => {
+                        const setup = t.tags_json?.setups?.[0]
+                        if (!setup) return null
+                        return (
+                          <span
+                            className="text-[9px] font-normal bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0 rounded normal-case whitespace-nowrap leading-tight"
+                            title={t.tags_json?.setups?.join(', ')}
+                          >
+                            {setup}
+                          </span>
+                        )
+                      })()}
+                    </div>
                   </td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>
