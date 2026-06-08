@@ -153,26 +153,47 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
  */
 const MIN_MFE_RATIO_FOR_CAPTURE = 0.5
 
-export function captureRatio(t: TradeWithExcursion): number | null {
+/** The two components a capture ratio is built from — PnL on top, peak
+ *  favorable move in $ on the bottom. Returned for trades that have all
+ *  the inputs to compute it AND pass the MFE noise filter. Aggregating at
+ *  the group level (tag rollup, period) requires summing the numerator and
+ *  denominator separately and then dividing — see avg_capture in
+ *  computeStats. A naive mean-of-per-trade-ratios produces pathological
+ *  results when even one losing trade has small mfeDollars (a -$200 loss
+ *  with $20 of MFE = -1000% individual ratio, dwarfing every other trade
+ *  in a simple mean). */
+export interface CaptureComponents {
+  pnl: number
+  mfeDollars: number
+}
+
+export function captureComponents(t: TradeWithExcursion): CaptureComponents | null {
   if (t.pnl == null || t.quantity == null) return null
   // Stop is required: without a planned-risk baseline we can't tell whether
-  // a small MFE is meaningful ("trade barely tagged green") or significant
-  // ("trade hit my target"). A trade like an unplanned intraday discretionary
-  // exit has no MFE/R baseline, so we don't report a capture for it. (The
-  // alternative — fallback to ATR — would conflate per-trade execution with
-  // the day's volatility regime; cleaner to just require the stop.)
+  // a small MFE is meaningful or significant. Trades without a stop don't
+  // get a capture report.
   if (t.entry_price == null || t.stop_price == null) return null
   const xc = mfeMaePoints(t)
   if (!xc) return null
   if (xc.mfe <= 0) return null
-  // Noise filter: require MFE to be at least 20% of planned risk so we don't
-  // print degenerate ratios on trades that barely tagged green before fading.
+  // Noise filter: require MFE to be at least MIN_MFE_RATIO_FOR_CAPTURE of
+  // planned risk so we don't print degenerate ratios on trades that barely
+  // tagged green before fading.
   const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
   if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
   const mult = symbolToMultiplier(t.symbol ?? '')
   const mfeDollars = xc.mfe * mult * t.quantity
   if (mfeDollars === 0) return null
-  return t.pnl / mfeDollars
+  return { pnl: t.pnl, mfeDollars }
+}
+
+/** Per-trade capture ratio = pnl / peak-favorable-$. Bounded [0, 1] for
+ *  winners (assuming pnl ≤ MFE in $); can be deeply negative for losers
+ *  where pnl is negative and mfeDollars is small. For per-trade display
+ *  only — use captureComponents for group aggregation. */
+export function captureRatio(t: TradeWithExcursion): number | null {
+  const c = captureComponents(t)
+  return c == null ? null : c.pnl / c.mfeDollars
 }
 
 /**
@@ -228,14 +249,18 @@ export function maeHeatRatio(t: TradeWithExcursion): number | null {
 }
 
 /** Aggregate capture across a set of trades. Skips trades whose ratio is null. */
+/** Group-level MFE capture — weighted by per-trade mfeDollars so a single
+ *  losing trade with tiny MFE can't drag the aggregate ratio into the
+ *  ground. Formula: sum(pnl) / sum(mfeDollars) over capturable trades. */
 export function avgCaptureRatio(trades: TradeWithExcursion[]): { avg: number | null; count: number } {
-  let sum = 0
+  let pnlSum = 0
+  let mfeSum = 0
   let n = 0
   for (const t of trades) {
-    const r = captureRatio(t)
-    if (r != null) { sum += r; n++ }
+    const c = captureComponents(t)
+    if (c != null) { pnlSum += c.pnl; mfeSum += c.mfeDollars; n++ }
   }
-  return { avg: n > 0 ? sum / n : null, count: n }
+  return { avg: mfeSum > 0 ? pnlSum / mfeSum : null, count: n }
 }
 
 /** Aggregate MAE loss across a set of trades. Skips trades whose ratio is null. */
@@ -255,7 +280,14 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
   let wins = 0, losses = 0, scratches = 0
   let total = 0, sumWinners = 0, sumLosers = 0
   let rSum = 0, rCount = 0
-  let capSum = 0, capCount = 0
+  // MFE Capture is WEIGHTED at the group level: sum(pnl) / sum(mfeDollars)
+  // over capturable trades. A naive mean of per-trade ratios is dominated
+  // by losers with small mfeDollars (a -$200 loss with $20 of MFE = -1000%
+  // individual ratio, drowning every other trade). Weighted aggregation
+  // answers "of every dollar of favorable move offered, how much did I
+  // book?" which is what the metric MEANS at a group level. See
+  // captureComponents for the per-trade numerator/denominator extraction.
+  let capPnlSum = 0, capMfeSum = 0, capCount = 0
   let lossSum = 0, lossCount = 0
   for (const t of trades) {
     const pnl = t.pnl ?? 0
@@ -270,8 +302,8 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     // on Trade and null-handled internally — cast through unknown so callers
     // that pass TradeLike still type-check, and the helpers null-out trades
     // that don't have the necessary data.
-    const cap = captureRatio(t as unknown as TradeWithExcursion)
-    if (cap != null) { capSum += cap; capCount++ }
+    const cap = captureComponents(t as unknown as TradeWithExcursion)
+    if (cap != null) { capPnlSum += cap.pnl; capMfeSum += cap.mfeDollars; capCount++ }
     const lossR = maeHeatRatio(t as unknown as TradeWithExcursion)
     if (lossR != null) { lossSum += lossR; lossCount++ }
   }
@@ -297,7 +329,7 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     profit_factor: profitFactor,
     avg_r: rCount > 0 ? rSum / rCount : null,
     r_count: rCount,
-    avg_capture: capCount > 0 ? capSum / capCount : null,
+    avg_capture: capMfeSum > 0 ? capPnlSum / capMfeSum : null,
     capture_count: capCount,
     avg_heat: lossCount > 0 ? lossSum / lossCount : null,
     heat_count: lossCount,
