@@ -15,7 +15,7 @@ interface Props {
   emptyMessage?: string
 }
 
-type SortKey = 'label' | 'count' | 'win_rate' | 'avg_pnl' | 'expectancy' | 'avg_r' | 'avg_capture' | 'avg_heat' | 'total_pnl'
+type SortKey = 'label' | 'count' | 'win_rate' | 'avg_pnl' | 'profit_factor' | 'avg_r' | 'avg_capture' | 'avg_heat' | 'total_pnl'
 
 export default function TagPerformanceTable({
   title,
@@ -41,7 +41,12 @@ export default function TagPerformanceTable({
         case 'count':       av = a.stats.count;                 bv = b.stats.count; break
         case 'win_rate':    av = a.stats.win_rate;              bv = b.stats.win_rate; break
         case 'avg_pnl':     av = a.stats.avg_pnl;               bv = b.stats.avg_pnl; break
-        case 'expectancy':  av = a.stats.expectancy;            bv = b.stats.expectancy; break
+        case 'profit_factor': {
+          // Sort Infinity (no losers, all wins) above any finite PF.
+          av = a.stats.profit_factor === Infinity ? Number.MAX_VALUE : a.stats.profit_factor
+          bv = b.stats.profit_factor === Infinity ? Number.MAX_VALUE : b.stats.profit_factor
+          break
+        }
         case 'avg_r':       av = a.stats.avg_r ?? -Infinity;    bv = b.stats.avg_r ?? -Infinity; break
         case 'avg_capture': av = a.stats.avg_capture ?? -Infinity; bv = b.stats.avg_capture ?? -Infinity; break
         case 'avg_heat':    av = a.stats.avg_heat ?? Infinity;     bv = b.stats.avg_heat ?? Infinity; break
@@ -68,8 +73,8 @@ export default function TagPerformanceTable({
     { k: 'count', label: 'Trades', align: 'right' },
     { k: 'win_rate', label: 'Win %', align: 'right' },
     { k: 'avg_pnl', label: 'Avg PnL', align: 'right' },
-    { k: 'expectancy', label: 'Expectancy', align: 'right' },
-    { k: 'avg_r', label: 'Avg R', align: 'right' },
+    { k: 'profit_factor', label: 'Profit Factor', align: 'right' },
+    { k: 'avg_r', label: 'Avg Win/Loss R', align: 'right' },
     { k: 'avg_capture', label: 'MFE %', align: 'right' },
     { k: 'avg_heat', label: 'MAE %', align: 'right' },
     { k: 'total_pnl', label: 'Total PnL', align: 'right' },
@@ -130,11 +135,42 @@ export default function TagPerformanceTable({
                   <td className={`py-1.5 pr-3 text-right ${stats.avg_pnl > 0 ? 'text-green-400' : stats.avg_pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
                     {stats.avg_pnl >= 0 ? '+' : ''}{stats.avg_pnl.toFixed(2)}
                   </td>
-                  <td className={`py-1.5 pr-3 text-right ${stats.expectancy > 0 ? 'text-green-400' : stats.expectancy < 0 ? 'text-red-400' : 'text-gray-500'}`}>
-                    {stats.expectancy >= 0 ? '+' : ''}{stats.expectancy.toFixed(2)}
+                  {/* Profit Factor — sum_winners / |sum_losers|. > 1 = green
+                      (gross winners outweighed gross losers). < 1 = red.
+                      Infinity (no losers) renders as "∞" and gets the deepest
+                      green tone. */}
+                  <td
+                    className={`py-1.5 pr-3 text-right ${
+                      stats.profit_factor === Infinity ? 'text-green-300 font-bold'
+                      : stats.profit_factor > 1 ? 'text-green-400'
+                      : stats.profit_factor < 1 ? 'text-red-400'
+                      : 'text-gray-500'
+                    }`}
+                    title="Gross winning dollars ÷ gross losing dollars. >1 means dollars-won exceeded dollars-lost in this group. ∞ means the group had no losing trades."
+                  >
+                    {stats.profit_factor === Infinity ? '∞' : stats.profit_factor.toFixed(2)}
                   </td>
-                  <td className="py-1.5 pr-3 text-right text-gray-400">
-                    {stats.avg_r == null ? '—' : `${stats.avg_r >= 0 ? '+' : ''}${stats.avg_r.toFixed(2)}R`}
+                  {/* Avg Win/Loss R — split display showing the average winner-R
+                      and average loser-R side by side, matching the visual of
+                      the "$294 / -$130" win/loss card. Reads as "winners
+                      typically book +X.XR, losers typically take -Y.YR." */}
+                  <td
+                    className="py-1.5 pr-3 text-right text-gray-400 whitespace-nowrap"
+                    title="Average R-multiple across winners (+) and losers (−). Looking for high winner-R relative to loser-R; the ratio between them is the R-multiple version of profit factor."
+                  >
+                    {stats.avg_winner_r == null && stats.avg_loser_r == null ? (
+                      <span className="text-gray-700">—</span>
+                    ) : (
+                      <>
+                        <span className="text-green-400">
+                          {stats.avg_winner_r == null ? '—' : `+${stats.avg_winner_r.toFixed(2)}R`}
+                        </span>
+                        <span className="text-gray-600 mx-1">/</span>
+                        <span className="text-red-400">
+                          {stats.avg_loser_r == null ? '—' : `${stats.avg_loser_r.toFixed(2)}R`}
+                        </span>
+                      </>
+                    )}
                   </td>
                   <td
                     className={`py-1.5 pr-3 text-right ${

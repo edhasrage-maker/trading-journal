@@ -52,7 +52,14 @@ export interface PerformanceStats {
   avg_loser: number         // negative number
   expectancy: number        // (winRate * avgWinner) + ((1 - winRate) * avgLoser)
   profit_factor: number     // sum_winners / |sum_losers|; Infinity if no losers
-  avg_r: number | null      // mean R-multiple (only counted when computable)
+  avg_r: number | null      // mean R-multiple across ALL trades with computable R
+  /** Mean R-multiple ACROSS WINNERS ONLY (positive R). Null if no winners
+   *  had computable R. Powers the "+winner_r / -loser_r" split display
+   *  on the analytics Setup Performance table. */
+  avg_winner_r: number | null
+  /** Mean R-multiple ACROSS LOSERS ONLY (negative R). Null if no losers
+   *  had computable R. */
+  avg_loser_r: number | null
   r_count: number           // how many trades had a computable R
   avg_capture: number | null  // mean MFE Capture % (only trades with MFE >= 20% of risk)
   capture_count: number       // how many trades had a computable capture
@@ -65,7 +72,7 @@ const ZERO_STATS: PerformanceStats = {
   win_rate: 0, total_pnl: 0, avg_pnl: 0,
   avg_winner: 0, avg_loser: 0,
   expectancy: 0, profit_factor: 0,
-  avg_r: null, r_count: 0,
+  avg_r: null, avg_winner_r: null, avg_loser_r: null, r_count: 0,
   avg_capture: null, capture_count: 0,
   avg_heat: null, heat_count: 0,
 }
@@ -280,6 +287,11 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
   let wins = 0, losses = 0, scratches = 0
   let total = 0, sumWinners = 0, sumLosers = 0
   let rSum = 0, rCount = 0
+  // Winner-only and loser-only R aggregates, so the analytics Setup
+  // Performance table can show "+1.20R / -0.50R" instead of a single
+  // mean-of-all-R that hides the win/loss asymmetry.
+  let winnerRSum = 0, winnerRCount = 0
+  let loserRSum = 0, loserRCount = 0
   // MFE Capture is WEIGHTED at the group level: sum(pnl) / sum(mfeDollars)
   // over capturable trades. A naive mean of per-trade ratios is dominated
   // by losers with small mfeDollars (a -$200 loss with $20 of MFE = -1000%
@@ -296,7 +308,11 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     else if (pnl < 0) { losses++; sumLosers += pnl }
     else scratches++
     const r = rMultiple(t)
-    if (r != null) { rSum += r; rCount++ }
+    if (r != null) {
+      rSum += r; rCount++
+      if (r > 0) { winnerRSum += r; winnerRCount++ }
+      else if (r < 0) { loserRSum += r; loserRCount++ }
+    }
     // Capture / Loss: trades may or may not have high/low_during_position. The
     // helpers accept TradeWithExcursion but the relevant fields are optional
     // on Trade and null-handled internally — cast through unknown so callers
@@ -328,6 +344,8 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     expectancy,
     profit_factor: profitFactor,
     avg_r: rCount > 0 ? rSum / rCount : null,
+    avg_winner_r: winnerRCount > 0 ? winnerRSum / winnerRCount : null,
+    avg_loser_r: loserRCount > 0 ? loserRSum / loserRCount : null,
     r_count: rCount,
     avg_capture: capMfeSum > 0 ? capPnlSum / capMfeSum : null,
     capture_count: capCount,
