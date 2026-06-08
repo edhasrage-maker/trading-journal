@@ -431,8 +431,27 @@ export default function TradeList({
                     )
                   })()}
                   <td className="py-1.5 pr-2 max-w-md">
+                    {/* Overview column priority:
+                          1. AI-generated summary if /api/trades/summary
+                             produced one for this trade.
+                          2. Trader's own typed notes (t.notes) — fallback so
+                             the cell isn't blank when the AI summary is
+                             missing. Notes are the most authoritative source
+                             anyway; better to show them than render "—"
+                             while the trader's actual context sits unused.
+                          3. "summarizing…" indicator while AI is still
+                             running on the rest of the trades.
+                          4. "—" only when there's neither AI summary nor
+                             typed notes. */}
                     {summary ? (
                       <span className="text-gray-300 font-sans whitespace-normal leading-snug">{summary}</span>
+                    ) : t.notes?.trim() ? (
+                      <span
+                        className="text-gray-300 font-sans whitespace-normal leading-snug italic"
+                        title="From the trader's own notes on this trade — AI summary not yet generated."
+                      >
+                        {t.notes.trim()}
+                      </span>
                     ) : summariesLoading ? (
                       <span className="text-gray-600 inline-flex items-center gap-1">
                         <Loader2 className="w-3 h-3 animate-spin" /> summarizing…
