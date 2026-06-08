@@ -20,25 +20,22 @@ export type ContractFile = {
   sizeBytes: number
 }
 
-// Parses a Sierra contract code like "NQM6" or "NQH26" into expiry month/year.
-// Two-digit years assumed 20xx. One-digit years use the next occurrence at or after 2020.
-export function parseContractCode(code: string): { month: number; year: number } | null {
-  const m = code.match(/^NQ([HMUZ])(\d{1,2})$/i)
+const CONTRACT_RE = /^NQ([HMUZ])(\d{1,2})[.\-]CME\.scid$/i
+
+// Parses a Sierra contract filename like "NQM6.CME.scid" or "NQZ23-CME.scid".
+export function parseContractFile(filename: string): { letter: string; month: number; year: number } | null {
+  const m = filename.match(CONTRACT_RE)
   if (!m) return null
-  const month = MONTH_LETTER_TO_IDX[m[1].toUpperCase()]
+  const letter = m[1].toUpperCase()
+  const month = MONTH_LETTER_TO_IDX[letter]
   const yr = parseInt(m[2], 10)
   let year: number
   if (m[2].length === 2) {
     year = yr >= 70 ? 1900 + yr : 2000 + yr
   } else {
-    // Single-digit year — ambiguous. Resolve to the decade we're in (2020s).
     year = 2020 + yr
-    // But if that's already past, bump to 2030+. Sierra single-digit codes are
-    // typically near-term so just-past contracts are common; we don't want to
-    // misread a 2024 contract as 2034.
-    // No bump needed — past contracts are fine to backtest.
   }
-  return { month, year }
+  return { letter, month, year }
 }
 
 // 14th of expiry month, UTC midnight — close enough to standard E-mini roll day.
@@ -73,27 +70,26 @@ function scidFileSpan(path: string): { firstMs: number | null; lastMs: number | 
 }
 
 // Lists NQ quarterly contract .scid files in a directory, sorted chronologically
-// by expiry. Each entry carries its "front-month" active window (prev roll → own roll)
-// so callers can read only that contract's high-volume span and avoid rollover overlap.
+// by expiry. Handles both naming conventions (NQM6.CME.scid and NQH23-CME.scid).
+// Where the same expiry month/year has multiple files (legacy + current naming),
+// the file with more bytes wins — that's the more complete copy.
 export function listNqContracts(dir: string): ContractFile[] {
-  const entries = readdirSync(dir).filter(f => /^NQ[HMUZ]\d{1,2}\.CME\.scid$/i.test(f))
-  const out: ContractFile[] = []
+  const entries = readdirSync(dir).filter(f => CONTRACT_RE.test(f))
+  const candidates: ContractFile[] = []
   for (const name of entries) {
     const path = join(dir, name)
     const st = statSync(path)
     if (st.size <= HEADER_SIZE) continue
-    const contract = name.replace(/\.CME\.scid$/i, '').toUpperCase()
-    const parsed = parseContractCode(contract)
+    const parsed = parseContractFile(name)
     if (!parsed) continue
-    const { month, year } = parsed
-    // Active window: [prev roll, own roll). Prev roll = roll day 3 months earlier.
+    const { letter, month, year } = parsed
     const ownRollMs = rollDateMs(year, month)
     const prevRollMs = rollDateMs(year, month - 3) // Date.UTC handles negative month
     const span = scidFileSpan(path)
-    out.push({
+    candidates.push({
       name,
       path,
-      contract,
+      contract: `NQ${letter}${year % 100}`.padEnd(5, '_').slice(0, 5),
       expiryMonth: month,
       expiryYear: year,
       activeStartMs: prevRollMs,
@@ -103,6 +99,28 @@ export function listNqContracts(dir: string): ContractFile[] {
       sizeBytes: span.sizeBytes,
     })
   }
+
+  // Dedupe by (year, month) — keep the largest file.
+  const byExpiry = new Map<string, ContractFile>()
+  const dropped: Array<{ kept: string; dropped: string }> = []
+  for (const cf of candidates) {
+    const key = `${cf.expiryYear}-${cf.expiryMonth}`
+    const existing = byExpiry.get(key)
+    if (!existing) {
+      byExpiry.set(key, cf)
+    } else if (cf.sizeBytes > existing.sizeBytes) {
+      dropped.push({ kept: cf.name, dropped: existing.name })
+      byExpiry.set(key, cf)
+    } else {
+      dropped.push({ kept: existing.name, dropped: cf.name })
+    }
+  }
+  if (dropped.length > 0) {
+    console.log(`Deduped ${dropped.length} duplicate contract file(s):`)
+    for (const d of dropped) console.log(`  kept ${d.kept}, dropped ${d.dropped}`)
+  }
+
+  const out = [...byExpiry.values()]
   out.sort((a, b) => a.activeStartMs - b.activeStartMs)
   return out
 }
