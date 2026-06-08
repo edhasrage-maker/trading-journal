@@ -10,7 +10,7 @@ Replace in full any prior ruleset, sizing model, or scoring logic. Adopt the bel
 
 **Two layers, never combined:**
 - **Process** = per-rule, scored independently. Each rule is binary (pass / fail / incomplete). The session-level verdict is a threshold over the per-rule results — see §VERDICT.
-- **Execution** = continuous, diagnostic, weekly, computed only on compliant sessions. Never touches the verdict, never blends with process.
+- **Execution** = continuous, diagnostic, weekly, computed **per-trade** across trades that individually passed every per-trade rule. A "compliant trade" = passed P2 (size cap), P3 (no size-up after loss), and P4 (cooldown ≥90s). Session-level rules P1 (daily loss) and P5 (trade cap) do NOT disqualify individual trades — they affect the Process verdict, but compliant trades within a Breach session STILL get scored for Execution. The execution composite is null only when zero trades passed all per-trade rules.
 
 ## WHAT IS TRACKED LIVE vs AFTER
 This is a **post-session scoring rubric.** The bot grades it after the session, not you at the desk. The only things you hold in your head live: **don't exceed size, don't size up after a loss, respect the 90s cooldown.** Everything else is audited at 9:31, not enforced by willpower at 8:31.

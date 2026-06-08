@@ -86,6 +86,11 @@ export function buildEodPrompt({
     ? '  No trades taken today.'
     : trades.map((t, i) => {
         const time = fmtTimePT(t.entry_time)
+        // Exit time is required for P4 (cooldown) computation. Without it the
+        // AI marks "T1 close time not provided → P4 fail" even on clean
+        // sessions. SC-imported trades always have exit_time; manual trades
+        // might not (open positions, partial logs).
+        const exitTime = fmtTimePT(t.exit_time)
         const dir = t.direction?.toUpperCase() ?? '--'
         const pnl = t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '--'
         const setups = t.tags_json?.setups?.join(', ') || '—'
@@ -102,7 +107,17 @@ export function buildEodPrompt({
         const commentaryLine = commentaryText ? `\n       AI frame commentary: ${commentaryText}` : ''
         const tp1 = t.tp1_price != null ? t.tp1_price : '?'
         const exit = t.exit_price != null ? t.exit_price : '?'
-        return `  ${i + 1}. ${time} ${dir} @ ${t.entry_price ?? '?'} stop ${t.stop_price ?? '?'} TP1 ${tp1} exit ${exit} qty ${t.quantity ?? '?'} | PnL ${pnl}
+        // High/low during position — the tick-precise extremes Sierra logged
+        // while the position was open. Required for accurate MFE capture +
+        // MAE heat computation. Without them, the AI either guesses (old
+        // behavior) or — under the tightened v1.4 prompt — correctly returns
+        // null for those sub-metrics. Including them lets the AI score MFE/
+        // MAE deterministically. Null entries get rendered as "?" so the AI
+        // sees the gap explicitly.
+        const hdp = t.high_during_position != null ? t.high_during_position : '?'
+        const ldp = t.low_during_position != null ? t.low_during_position : '?'
+        return `  ${i + 1}. open ${time} → close ${exitTime} | ${dir} @ ${t.entry_price ?? '?'} stop ${t.stop_price ?? '?'} TP1 ${tp1} exit ${exit} qty ${t.quantity ?? '?'} | PnL ${pnl}
+       intra-trade extremes: high=${hdp} low=${ldp}
        setups: ${setups} | confluences: ${confluences}
        management: ${mgmt} | mistakes: ${mistakes} | emotions: ${emotions}${notesLine}${commentaryLine}`
       }).join('\n')
@@ -165,9 +180,23 @@ Rule reference (renumbered):
   • P4 = Cooldown ≥90s after any loss
   • P5 = Trade cap ≤7 trades/session
 
-**Execution layer (continuous, diagnostic, compliant trades only):**
+**Execution layer (continuous, diagnostic, per-trade aggregation):**
 Per v1.4 amendment 3 (2026-06-08): Duration-to-thesis REMOVED; a 9-criterion
 Execution Parameters sub-metric REPLACES it at 35%. All weights rebalanced.
+
+**Critical:** Execution is computed PER-TRADE and aggregated across trades
+that INDIVIDUALLY passed every per-trade rule:
+  • P2 (size cap) passed for that trade
+  • P3 (no size-up after loss) passed for that trade
+  • P4 (cooldown ≥90s) passed for that trade
+
+Session-level rules P1 (daily loss) and P5 (trade cap) do NOT disqualify
+individual trades from execution scoring. EVEN IF the session verdict is
+Breach (e.g. because the daily loss limit hit), the trades that passed
+every per-trade rule above STILL get scored for Execution. Only return
+null sub-metrics when ZERO trades passed all the per-trade rules — and
+state that explicitly in execution.notes when it happens.
+
 Compute each sub-metric on 0..1 (higher = better):
 
     - execution_parameters (weight 35%): a 9-criterion per-trade checklist
