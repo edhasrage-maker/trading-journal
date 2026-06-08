@@ -1,20 +1,25 @@
-import { readFileSync } from 'fs'
+import { readFileSync, existsSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { emaSeries } from './ema'
 import { loadOhlcBars, pickBestSymbol, type OhlcBar } from './load'
 import { aggregate1mTo5m, isRTH, ptDateKey } from './aggregate'
 import { atrWilder } from './atr'
+import { listNqContracts } from './scid-discovery'
+import { readScidBars } from '../../src/lib/scid-reader'
 
-for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
-  const m = line.match(/^([A-Z_]+)=(.*)$/)
-  if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
+if (existsSync('.env.local')) {
+  for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^([A-Z_]+)=(.*)$/)
+    if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
+  }
 }
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
 type Args = {
+  source: 'scid' | 'db'
   from: string | null
   to: string | null
   symbol: string | null
+  scidDir: string
   ema: number
   lookback: number
   atrPeriod: number
@@ -33,9 +38,11 @@ function parseArgs(): Args {
     if (k.startsWith('--') && v !== undefined) a[k.slice(2)] = v
   }
   return {
+    source: (a.source ?? 'scid') as 'scid' | 'db',
     from: a.from ?? null,
     to: a.to ?? null,
     symbol: a.symbol ?? null,
+    scidDir: a['scid-dir'] ?? process.env.SIERRA_DATA_DIR ?? 'D:\\SierraCharts\\Data',
     ema: Number(a.ema ?? 9),
     lookback: Number(a.lookback ?? 3),
     atrPeriod: Number(a.atr ?? 10),
@@ -58,11 +65,11 @@ type OpenPos = {
   fillIdx1m: number
   scanStart1m: number
   signalTs: string
-  slopeAtSignal: number // pts per 5m bar, direction-aligned (always >= 0)
-  emaDistAtSignal: number // |close - ema| at signal bar
+  slopeAtSignal: number
+  emaDistAtSignal: number
 }
 
-type Trade = {
+export type Trade = {
   signalTs: string
   fillTs: string
   exitTs: string
@@ -73,7 +80,7 @@ type Trade = {
   target: number
   stopDist: number
   R: number
-  slope: number // direction-aligned, >= 0, pts/5m bar
+  slope: number
   emaDistAtSignal: number
 }
 
@@ -88,7 +95,6 @@ function fillShort(bar1m: OhlcBar, limit: number): number | null {
   return null
 }
 
-// Walk 1m bars [fromIdx, untilIdxExclusive) checking for stop/target. Pessimistic on same-bar tie.
 function checkExit(
   bars1m: OhlcBar[],
   pos: OpenPos,
@@ -96,50 +102,33 @@ function checkExit(
   untilIdxExclusive: number,
 ): { idx: number; price: number; R: number } | null {
   for (let j = fromIdx; j < untilIdxExclusive && j < bars1m.length; j++) {
-    if (!isRTH(bars1m[j].ts)) return null // shouldn't happen if walks are constrained, but guard
+    if (!isRTH(bars1m[j].ts)) return null
     const b = bars1m[j]
     if (pos.side === 'long') {
-      const hitStop = b.low <= pos.stop
-      const hitTgt = b.high >= pos.target
-      if (hitStop) return { idx: j, price: pos.stop, R: -1 }
-      if (hitTgt) return { idx: j, price: pos.target, R: (pos.target - pos.entry) / pos.stopDist }
+      if (b.low <= pos.stop) return { idx: j, price: pos.stop, R: -1 }
+      if (b.high >= pos.target) return { idx: j, price: pos.target, R: (pos.target - pos.entry) / pos.stopDist }
     } else {
-      const hitStop = b.high >= pos.stop
-      const hitTgt = b.low <= pos.target
-      if (hitStop) return { idx: j, price: pos.stop, R: -1 }
-      if (hitTgt) return { idx: j, price: pos.target, R: (pos.entry - pos.target) / pos.stopDist }
+      if (b.high >= pos.stop) return { idx: j, price: pos.stop, R: -1 }
+      if (b.low <= pos.target) return { idx: j, price: pos.target, R: (pos.entry - pos.target) / pos.stopDist }
     }
   }
   return null
 }
 
-async function main() {
-  const args = parseArgs()
-  console.log('args:', args)
-
-  const symbol = args.symbol ?? await pickBestSymbol(sb)
-  console.log(`symbol: ${symbol}`)
-
-  console.log('loading 1m bars...')
-  const bars1m = await loadOhlcBars(sb, symbol, args.from ?? undefined, args.to ?? undefined)
-  console.log(`loaded ${bars1m.length} 1m bars`)
-  if (bars1m.length < args.atrPeriod + 10) {
-    console.error('not enough bars to run')
-    process.exit(1)
-  }
+// Runs the pullback simulation on one continuous 1m bar series. Returns the
+// trades that fired and the count of positions left open at end-of-day boundaries.
+function simulate(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved: number } {
+  if (bars1m.length < args.atrPeriod + 10) return { trades: [], unresolved: 0 }
 
   const isRTH1m = bars1m.map(b => isRTH(b.ts))
   const ptDate1m = bars1m.map(b => ptDateKey(b.ts))
   const atr1m = atrWilder(bars1m, args.atrPeriod)
 
   const { bars5m, ranges } = aggregate1mTo5m(bars1m)
-  // Restrict to 5m bars whose first 1m sub-bar is in RTH (RTH-anchored 5m bars only).
   const rthMask5m = ranges.map(r => isRTH1m[r.start])
-  console.log(`aggregated to ${bars5m.length} 5m bars (${rthMask5m.filter(Boolean).length} in RTH)`)
 
   const closes5m = bars5m.map(b => b.close)
   const ema5m = emaSeries(closes5m, args.ema)
-  // slope[i] = (ema5m[i] - ema5m[i - lookback]) / lookback   (pts per 5m bar)
   const slope5m: (number | null)[] = bars5m.map((_, i) =>
     i >= args.lookback ? (ema5m[i] - ema5m[i - args.lookback]) / args.lookback : null,
   )
@@ -151,6 +140,26 @@ async function main() {
   let prevPtDate: string | null = null
   const trades: Trade[] = []
   let unresolved = 0
+
+  const finalize = (exit: { idx: number; price: number; R: number }) => {
+    if (!posOpen) return
+    trades.push({
+      signalTs: posOpen.signalTs,
+      fillTs: bars1m[posOpen.fillIdx1m].ts,
+      exitTs: bars1m[exit.idx].ts,
+      side: posOpen.side,
+      entry: posOpen.entry,
+      exit: exit.price,
+      stop: posOpen.stop,
+      target: posOpen.target,
+      stopDist: posOpen.stopDist,
+      R: exit.R,
+      slope: Math.abs(posOpen.slopeAtSignal),
+      emaDistAtSignal: posOpen.emaDistAtSignal,
+    })
+    posOpen = null
+    armed = false
+  }
 
   for (let i = 0; i < bars5m.length; i++) {
     const range = ranges[i]
@@ -171,33 +180,12 @@ async function main() {
 
     if (!inRTH) continue
 
-    // STEP 1: position management — walk 1m bars within this 5m to detect stop/target.
     if (posOpen) {
       const exit = checkExit(bars1m, posOpen, posOpen.scanStart1m, range.end)
-      if (exit) {
-        const dirAlignedSlope = Math.abs(posOpen.slopeAtSignal)
-        trades.push({
-          signalTs: posOpen.signalTs,
-          fillTs: bars1m[posOpen.fillIdx1m].ts,
-          exitTs: bars1m[exit.idx].ts,
-          side: posOpen.side,
-          entry: posOpen.entry,
-          exit: exit.price,
-          stop: posOpen.stop,
-          target: posOpen.target,
-          stopDist: posOpen.stopDist,
-          R: exit.R,
-          slope: dirAlignedSlope,
-          emaDistAtSignal: posOpen.emaDistAtSignal,
-        })
-        posOpen = null
-        armed = false
-      } else {
-        posOpen.scanStart1m = range.end
-      }
+      if (exit) finalize(exit)
+      else posOpen.scanStart1m = range.end
     }
 
-    // STEP 2: entry — only if no position and pendingLimit exists from prior bar.
     if (!posOpen && pendingLimit) {
       const lim = pendingLimit
       for (let j = range.start; j < range.end; j++) {
@@ -206,7 +194,7 @@ async function main() {
         const fp = lim.side === 'long' ? fillLong(sub, lim.price) : fillShort(sub, lim.price)
         if (fp == null) continue
         const atrIdx = j - 1
-        if (atrIdx < 0 || !Number.isFinite(atr1m[atrIdx])) break // ATR not warmed; skip this entry
+        if (atrIdx < 0 || !Number.isFinite(atr1m[atrIdx])) break
         const stopDist = atr1m[atrIdx]
         const entry = fp
         const stop = lim.side === 'long' ? entry - stopDist : entry + stopDist
@@ -223,34 +211,14 @@ async function main() {
           slopeAtSignal: lim.slopeAtSignal,
           emaDistAtSignal: lim.emaDistAtSignal,
         }
-        // Check for same-bar stop/target hit immediately (pessimistic).
         const exit = checkExit(bars1m, posOpen, j, range.end)
-        if (exit) {
-          trades.push({
-            signalTs: posOpen.signalTs,
-            fillTs: bars1m[posOpen.fillIdx1m].ts,
-            exitTs: bars1m[exit.idx].ts,
-            side: posOpen.side,
-            entry: posOpen.entry,
-            exit: exit.price,
-            stop: posOpen.stop,
-            target: posOpen.target,
-            stopDist: posOpen.stopDist,
-            R: exit.R,
-            slope: Math.abs(posOpen.slopeAtSignal),
-            emaDistAtSignal: posOpen.emaDistAtSignal,
-          })
-          posOpen = null
-          armed = false
-        } else {
-          posOpen.scanStart1m = range.end
-        }
+        if (exit) finalize(exit)
+        else posOpen.scanStart1m = range.end
         break
       }
       pendingLimit = null
     }
 
-    // STEP 3: update bias from this bar's close.
     if (slope == null || !Number.isFinite(ema)) continue
     let newBias: Side | null = null
     if (bar5m.close > ema && slope > 0) newBias = 'long'
@@ -264,7 +232,6 @@ async function main() {
       bias = newBias
     }
 
-    // STEP 4: arming via separation.
     if (bias && !armed && !posOpen) {
       const lastIdx = range.end - 1
       const atrEnd = atr1m[lastIdx]
@@ -274,7 +241,6 @@ async function main() {
       }
     }
 
-    // STEP 5: place pending limit for NEXT bar at the current bar's EMA.
     if (bias && armed && !posOpen) {
       pendingLimit = {
         side: bias,
@@ -288,10 +254,73 @@ async function main() {
   }
   if (posOpen) unresolved++
 
+  return { trades, unresolved }
+}
+
+function fmtDate(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10)
+}
+
+async function loadAllTradesFromScid(args: Args): Promise<{ trades: Trade[]; unresolved: number; perContract: Array<{ contract: string; window: string; trades: number; bars: number }> }> {
+  if (!existsSync(args.scidDir)) {
+    console.error(`SCID dir not found: ${args.scidDir}`)
+    console.error('Set SIERRA_DATA_DIR in .env.local or pass --scid-dir')
+    process.exit(1)
+  }
+  const contracts = listNqContracts(args.scidDir)
+  console.log(`Found ${contracts.length} NQ contracts in ${args.scidDir}`)
+  if (contracts.length === 0) {
+    console.error('No matching NQ[HMUZ]<year>.CME.scid files. Pass --scid-dir if your Sierra data lives elsewhere.')
+    process.exit(1)
+  }
+
+  const fromMs = args.from ? new Date(args.from + 'T00:00:00Z').getTime() : -Infinity
+  const toMs = args.to ? new Date(args.to + 'T23:59:59.999Z').getTime() : Infinity
+
+  const allTrades: Trade[] = []
+  let totalUnresolved = 0
+  const perContract: Array<{ contract: string; window: string; trades: number; bars: number }> = []
+
+  for (const c of contracts) {
+    // Use the contract's front-month window, intersected with the user's --from/--to.
+    const startMs = Math.max(c.activeStartMs, fromMs, c.fileFirstMs ?? -Infinity)
+    const endMs = Math.min(c.activeEndMs, toMs, (c.fileLastMs ?? Infinity) + 1)
+    if (startMs >= endMs) continue
+
+    process.stdout.write(`  ${c.contract.padEnd(8)} ${fmtDate(startMs)} → ${fmtDate(endMs)}  `)
+    const { bars } = readScidBars(c.path, startMs, endMs, { priceDivisor: 100, bucketMs: 60_000 })
+    if (bars.length === 0) {
+      console.log('(no bars)')
+      continue
+    }
+    const { trades, unresolved } = simulate(bars as OhlcBar[], args)
+    allTrades.push(...trades)
+    totalUnresolved += unresolved
+    perContract.push({
+      contract: c.contract,
+      window: `${fmtDate(startMs)} → ${fmtDate(endMs)}`,
+      trades: trades.length,
+      bars: bars.length,
+    })
+    console.log(`bars=${bars.length.toString().padStart(7)}  trades=${trades.length.toString().padStart(4)}  unresolved=${unresolved}`)
+  }
+
+  return { trades: allTrades, unresolved: totalUnresolved, perContract }
+}
+
+async function loadAllTradesFromDb(args: Args): Promise<{ trades: Trade[]; unresolved: number }> {
+  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+  const symbol = args.symbol ?? await pickBestSymbol(sb)
+  console.log(`symbol: ${symbol}`)
+  const bars1m = await loadOhlcBars(sb, symbol, args.from ?? undefined, args.to ?? undefined)
+  console.log(`loaded ${bars1m.length} 1m bars`)
+  return simulate(bars1m, args)
+}
+
+function printReport(trades: Trade[], unresolved: number, args: Args) {
   console.log(`\ntrades: ${trades.length}  unresolved: ${unresolved}`)
   if (trades.length === 0) return
 
-  // Bucket by tercile of |slope at signal|.
   const sorted = trades.map(t => t.slope).sort((a, b) => a - b)
   const p33 = sorted[Math.floor(sorted.length / 3)]
   const p66 = sorted[Math.floor((2 * sorted.length) / 3)]
@@ -301,17 +330,16 @@ async function main() {
   const bucketTrades: Trade[][] = [[], [], []]
   for (const t of trades) bucketTrades[bucketIdx(t.slope)].push(t)
 
-  // Convert pts/bar slope → angle in degrees, anchored so median slope = 45°.
   const slopeToDeg = (pts: number) => (Math.atan(pts / median) * 180) / Math.PI
-
   const dollarPerPoint = args.mult * args.contracts
   const edges = [0, p33, p66, sorted[sorted.length - 1]]
 
   console.log('\nslope tercile edges (pts per 5m bar / %/bar / deg [median=45°]):')
-  const medianClose = bars5m[bars5m.length - 1]?.close ?? 1
+  // Use median trade entry as a representative scale for %/bar
+  const medianEntry = trades.map(t => t.entry).sort((a, b) => a - b)[Math.floor(trades.length / 2)] || 1
   for (let k = 0; k < 4; k++) {
     const pts = edges[k]
-    const pct = (pts / medianClose) * 100
+    const pct = (pts / medianEntry) * 100
     const deg = slopeToDeg(pts)
     console.log(`  edge${k}: ${pts.toFixed(3).padStart(8)} pts   ${pct.toFixed(5).padStart(10)} %    ${deg.toFixed(1).padStart(6)}°`)
   }
@@ -320,78 +348,63 @@ async function main() {
   console.log(`side=${args.side}  contracts=${args.contracts}  $/pt=${args.mult}\n`)
 
   const cols = ['bucket', 'n', 'WR%', 'avgR', 'totalR', 'EV $', 'totalPnL $', 'avgWin $', 'avgLoss $', 'avgEMAdist']
-  const widths = [12, 5, 7, 7, 8, 9, 12, 10, 10, 11]
+  const widths = [12, 6, 7, 7, 9, 10, 14, 11, 11, 11]
   console.log(cols.map((c, i) => i === 0 ? c.padEnd(widths[i]) : c.padStart(widths[i])).join(' '))
   const labels = ['shallow', 'typical', 'steep']
-  for (let k = 0; k < 3; k++) {
-    const ts = bucketTrades[k]
+  const fmtRow = (label: string, ts: Trade[]) => {
+    if (ts.length === 0) return [label.padEnd(widths[0]), '0'.padStart(widths[1])].join(' ')
     const n = ts.length
-    if (n === 0) {
-      console.log([labels[k].padEnd(widths[0]), '0'.padStart(widths[1])].join(' '))
-      continue
+    const wins = ts.filter(t => t.R > 0)
+    const losses = ts.filter(t => t.R <= 0)
+    const wr = wins.length / n
+    const avgR = ts.reduce((a, t) => a + t.R, 0) / n
+    const totalR = ts.reduce((a, t) => a + t.R, 0)
+    const totalPnL = ts.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0)
+    const ev = totalPnL / n
+    const avgWin = wins.length ? wins.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0) / wins.length : 0
+    const avgLoss = losses.length ? losses.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0) / losses.length : 0
+    const avgDist = ts.reduce((a, t) => a + t.emaDistAtSignal, 0) / n
+    return [
+      label.padEnd(widths[0]),
+      String(n).padStart(widths[1]),
+      ((wr * 100).toFixed(1) + '%').padStart(widths[2]),
+      avgR.toFixed(2).padStart(widths[3]),
+      totalR.toFixed(1).padStart(widths[4]),
+      ev.toFixed(2).padStart(widths[5]),
+      totalPnL.toFixed(2).padStart(widths[6]),
+      avgWin.toFixed(2).padStart(widths[7]),
+      avgLoss.toFixed(2).padStart(widths[8]),
+      avgDist.toFixed(2).padStart(widths[9]),
+    ].join(' ')
+  }
+  for (let k = 0; k < 3; k++) console.log(fmtRow(labels[k], bucketTrades[k]))
+  console.log('-'.repeat(widths.reduce((a, b) => a + b + 1, 0)))
+  console.log(fmtRow('OVERALL', trades))
+  console.log(`\nunresolved (open at RTH close / session boundary): ${unresolved}`)
+}
+
+async function main() {
+  const args = parseArgs()
+  console.log('args:', args)
+
+  let trades: Trade[]
+  let unresolved: number
+
+  if (args.source === 'scid') {
+    const r = await loadAllTradesFromScid(args)
+    trades = r.trades
+    unresolved = r.unresolved
+    console.log('\n== Per-contract summary ==')
+    for (const pc of r.perContract) {
+      console.log(`  ${pc.contract.padEnd(8)} ${pc.window}  bars=${pc.bars.toString().padStart(7)}  trades=${pc.trades.toString().padStart(4)}`)
     }
-    const wins = ts.filter(t => t.R > 0)
-    const losses = ts.filter(t => t.R <= 0)
-    const wr = wins.length / n
-    const avgR = ts.reduce((a, t) => a + t.R, 0) / n
-    const totalR = ts.reduce((a, t) => a + t.R, 0)
-    const avgWinDollar = wins.length
-      ? wins.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0) / wins.length
-      : 0
-    const avgLossDollar = losses.length
-      ? losses.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0) / losses.length
-      : 0
-    const totalPnL = ts.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0)
-    const ev = totalPnL / n
-    const avgDist = ts.reduce((a, t) => a + t.emaDistAtSignal, 0) / n
-    console.log([
-      labels[k].padEnd(widths[0]),
-      String(n).padStart(widths[1]),
-      ((wr * 100).toFixed(1) + '%').padStart(widths[2]),
-      avgR.toFixed(2).padStart(widths[3]),
-      totalR.toFixed(1).padStart(widths[4]),
-      ev.toFixed(2).padStart(widths[5]),
-      totalPnL.toFixed(2).padStart(widths[6]),
-      avgWinDollar.toFixed(2).padStart(widths[7]),
-      avgLossDollar.toFixed(2).padStart(widths[8]),
-      avgDist.toFixed(2).padStart(widths[9]),
-    ].join(' '))
+  } else {
+    const r = await loadAllTradesFromDb(args)
+    trades = r.trades
+    unresolved = r.unresolved
   }
 
-  // OVERALL row
-  {
-    const ts = trades
-    const n = ts.length
-    const wins = ts.filter(t => t.R > 0)
-    const losses = ts.filter(t => t.R <= 0)
-    const wr = wins.length / n
-    const avgR = ts.reduce((a, t) => a + t.R, 0) / n
-    const totalR = ts.reduce((a, t) => a + t.R, 0)
-    const totalPnL = ts.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0)
-    const ev = totalPnL / n
-    const avgWinDollar = wins.length
-      ? wins.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0) / wins.length
-      : 0
-    const avgLossDollar = losses.length
-      ? losses.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0) / losses.length
-      : 0
-    const avgDist = ts.reduce((a, t) => a + t.emaDistAtSignal, 0) / n
-    console.log('-'.repeat(widths.reduce((a, b) => a + b + 1, 0)))
-    console.log([
-      'OVERALL'.padEnd(widths[0]),
-      String(n).padStart(widths[1]),
-      ((wr * 100).toFixed(1) + '%').padStart(widths[2]),
-      avgR.toFixed(2).padStart(widths[3]),
-      totalR.toFixed(1).padStart(widths[4]),
-      ev.toFixed(2).padStart(widths[5]),
-      totalPnL.toFixed(2).padStart(widths[6]),
-      avgWinDollar.toFixed(2).padStart(widths[7]),
-      avgLossDollar.toFixed(2).padStart(widths[8]),
-      avgDist.toFixed(2).padStart(widths[9]),
-    ].join(' '))
-  }
-
-  console.log(`\nunresolved (open at RTH close): ${unresolved}`)
+  printReport(trades, unresolved, args)
 }
 
 main().catch(e => { console.error(e); process.exit(1) })
