@@ -335,7 +335,17 @@ export interface EodAiAnalysis {
   execution?: ExecutionScore
 }
 
-export type RuleId = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7'
+/**
+ * Per v1.3 amendment 3 (2026-06-08): Process drops to 5 hard safety rails.
+ * The old P4 (stop valid) and P7 (setup valid) moved out — they're now
+ * scored within Execution Parameters (a 9-criterion sub-metric on the
+ * Execution side). Old P5 + P6 (cooldown + trade cap) renumber to P4 + P5.
+ *
+ * Historical data: pre-amendment rows have P1-P7 keys; this type only
+ * captures the new shape. The dashboard's process_v13_score gracefully
+ * ignores P-IDs outside the new range when reading legacy data.
+ */
+export type RuleId = 'P1' | 'P2' | 'P3' | 'P4' | 'P5'
 
 export interface RuleStatus {
   /** 'pass' = compliant. 'fail' = breached. 'incomplete' = data missing.
@@ -362,17 +372,22 @@ export interface ProcessVerdict {
 
 export interface ExecutionScore {
   /** Each sub-metric is 0..1 (higher = better) or null if not computable.
-   *  Per v1.3 (amended 2026-06-08) weights: duration 25%, MFE capture 25%,
-   *  MAE heat 20%, prep adherence 20%, RR 10%. */
-  duration_to_thesis: number | null
+   *  Per v1.3 (amended 2026-06-08, amendment 3) weights:
+   *  Execution Parameters 35%, MFE capture 20%, Prep adherence 20%,
+   *  MAE heat 15%, planned_vs_realized_rr 10%. Duration-to-thesis was
+   *  dropped entirely in amendment 3. */
   mfe_capture: number | null
   mae_heat: number | null
-  /** Did taken trades match the prep (bias, plans, day-character read)?
-   *  Added 2026-06-08 to surface the discipline leak the other four
-   *  sub-metrics miss — trading off-plan or off-bias even when individual
-   *  trade execution was fine. */
+  /** Did taken trades match the prep (bias, plans, day-character read)? */
   prep_adherence: number | null
   planned_vs_realized_rr: number | null
+  /** 9-criterion checklist scored 0..1 — mean of per-trade pass rates.
+   *  Replaces both the old duration_to_thesis sub-metric AND the moved-out
+   *  P4/P7 process rules (stop validity + setup validity). Criteria:
+   *  setup-in-playbook, stop in 0.5-1.5 ATR band, TP1 ≥ 2R (or reason),
+   *  clear AOI noted, 2/3 OF reads, Break of Cluster/Bubble entry,
+   *  chart-not-emotion management, no mistakes tagged, Stable emotion. */
+  execution_parameters: number | null
   /** Weighted composite of the five sub-metrics. Null if all inputs are null. */
   composite: number | null
   /** Number of COMPLIANT trades the execution score was computed across.
@@ -380,6 +395,20 @@ export interface ExecutionScore {
   compliant_trade_count: number
   /** AI commentary on execution quality — not a verdict, just diagnostic. */
   notes?: string
+  /** Optional: per-criterion pass rate for the Execution Parameters sub-metric.
+   *  Lets the UI show which criteria are dragging the score down across the
+   *  session. Keys mirror the 9-criterion list in the spec. */
+  execution_parameter_breakdown?: {
+    setup_in_playbook: number | null
+    stop_in_atr_band: number | null
+    tp1_at_2r_or_reasoned: number | null
+    clear_area_of_interest: number | null
+    two_thirds_orderflow: number | null
+    break_of_cluster_or_bubble_entry: number | null
+    chart_not_emotion_management: number | null
+    no_mistakes_tagged: number | null
+    stable_emotion: number | null
+  }
 }
 
 // ============================================================

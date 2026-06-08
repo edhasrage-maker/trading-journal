@@ -1,6 +1,9 @@
 # TRADING RULESET — v1.3
 **Effective 2026-06-07 · NQ/MNQ · RTH 06:30–13:00 PST**
-**Amended 2026-06-08:** (1) verdict threshold relaxed from "all 7 pass" to "5 of 7 pass" — see §VERDICT. (2) Execution gains a 5th sub-metric (Prep adherence, 20%) with rebalanced weights — see §EXECUTION QUALITY.
+**Amended 2026-06-08 (3 times same day):**
+  1. Verdict threshold relaxed from "all 7 pass" → "5 of 7 pass" — see §VERDICT (now superseded by amendment 3).
+  2. Execution gains Prep adherence sub-metric — see §EXECUTION QUALITY (now superseded by amendment 3).
+  3. **Major restructure:** P4 (Stop valid) and P7 (Setup valid) moved out of Process into a new Execution sub-metric "Execution Parameters" (35% weight, 9-criterion checklist). Process drops to 5 hard safety-rail rules with renumbered IDs; verdict threshold becomes "4 of 5 pass." Duration-to-thesis sub-metric removed; weights rebalanced across the remaining 5 Execution sub-metrics. See §VERDICT and §EXECUTION QUALITY.
 
 ## INSTRUCTION TO THE JOURNAL ASSISTANT
 Replace in full any prior ruleset, sizing model, or scoring logic. Adopt the below verbatim. Do not infer, soften, merge, or average rules. Evaluate each rule only against the data field named.
@@ -34,52 +37,56 @@ This is a **post-session scoring rubric.** The bot grades it after the session, 
 - < 0.5 ATR only with logged `tight_stop_reason`. > 1.5 ATR = breach.
 - **10-MNQ trades:** stop ≤ 1.25 ATR AND total campaign risk ≤ $200 (= 40% of $500 DLL). At $20/pt, $200 caps combined stop at 10 points; the add does not get a fresh budget.
 
-## PROCESS RULES (binary)
-Missing-data handling differs by tier (see §Unscorable).
+## PROCESS RULES (binary, hard safety rails only)
+Missing-data handling differs by tier (see §Unscorable). All 5 rules are mechanical / quantitative — no judgment involved. Stop validity (was P4) and setup validity (was P7) moved into Execution Parameters per the 2026-06-08 (amendment 3) restructure since they're quality concerns, not safety rails.
 
 | ID | Rule | Pass | Data field(s) | Enforce |
 |----|------|------|---------------|---------|
 | P1 | Daily loss limit | Session Net P&L not past −$500 | Net P&L by session | ENFORCED |
 | P2 | Size within cap | ≤5 MNQ; ≤10 only on valid Qualifying S&D (Path A/B) | Quantity, Setups, Orderflow, Net P&L | SELF |
 | P3 | No size-up after loss | Post-loss → ≤5 MNQ, no scale to 10 | Quantity, Net P&L, sequence | SELF |
-| P4 | Stop valid | ATR mult 0.5–1.5; 10-MNQ ≤1.25 ATR & ≤$200 campaign | planned stop points, ATR | SELF |
-| P5 | Cooldown | ≥90s after any loss | close time → open time | SELF until ACSIL |
-| P6 | Trade cap | ≤7 trades/session | trade count by session | SELF until ACSIL |
-| P7 | Setup valid | OF confirmation present AND directionally aligned | orderflow + manual context | SELF |
+| P4 | Cooldown | ≥90s after any loss | close time → open time | SELF until ACSIL |
+| P5 | Trade cap | ≤7 trades/session | trade count by session | SELF until ACSIL |
 
 No time-of-day gate. (Post-9:30 holds your expectancy; an early-entry rule is excluded by design.)
 
 ## VERDICT
-`pass_count = count(P1..P7 where status = 'pass') + count(P7 where status = 'incomplete')`
-`compliant = pass_count >= 5`
+`pass_count = count(P1..P5 where status = 'pass')`
+`compliant = pass_count >= 4`
 
-Verdict ∈ {Compliant, Breach}. P7 "incomplete" counts toward `pass_count` per §UNSCORABLE; P1–P6 incomplete counts as a fail. P&L does not define discipline: green P&L with ≤4 passes is **Breach**, red P&L with ≥5 passes is **Compliant**.
+Verdict ∈ {Compliant, Breach}. All 5 rules are hard quantitative safety rails — there is no "incomplete" tier for any of them; missing data on a safety rail counts as a fail (you can't verify a session is clean if the data isn't there). P&L does not define discipline: green P&L with ≤3 passes is **Breach**, red P&L with ≥4 passes is **Compliant**.
 
-**Why ≥5/7 and not "all 7":** the original v1.3 (effective 2026-06-07) required all 7 rules to pass for Compliant. Amended 2026-06-08 to a 5-of-7 threshold so a single isolated lapse (e.g. one cooldown short of 90s) doesn't blanket-classify an otherwise disciplined session as Breach. The threshold is still strict — 2 simultaneous breaches drop you to Breach, and the breach-count vector + per-rule chips on the dashboard still surface every individual failure regardless of the session verdict.
+**Why ≥4/5 and not "all 5":** preserves the spirit of the earlier 5/7 amendment — a single isolated lapse (e.g. one cooldown short of 90s) doesn't blanket-classify an otherwise disciplined session as Breach. Two simultaneous safety-rail breaches still drop you to Breach. The breach-count vector + per-rule chips on the dashboard still surface every individual failure regardless of the session verdict.
 
-## UNSCORABLE (scoped — this is the de-fusing fix)
-- **P1–P6 (enforcement-critical):** required data missing → **Breach.** These safety rails must be verifiable.
-- **P7 (judgment):** missing orderflow/context log → **Incomplete**, counted in the data-completeness metric, **not** an auto-breach. A run of blanks is itself a flag, but it does not zero your compliant-rate on paperwork.
+## UNSCORABLE
+- **All 5 P-rules are enforcement-critical:** required data missing → **Breach.** These safety rails must be verifiable. Stop-validity and setup-validity, which previously had an "incomplete" tier (P4/P7 pre-restructure), are now scored continuously in Execution Parameters where the "incomplete" framing doesn't apply — a missing orderflow log just lowers the Exec Params sub-metric score without forcing a session-level Breach.
 
 ## EXECUTION QUALITY (weekly, compliant trades only, diagnostic)
 | Metric | Source | Weight |
 |--------|--------|--------|
-| Duration-to-thesis | trade duration | 25% |
-| MFE capture / exit efficiency | exit efficiency, position MFE, best exit | 25% |
-| MAE / heat control | position MAE, price MAE | 20% |
+| Execution Parameters | 9-criterion checklist (see below) | 35% |
+| MFE capture / exit efficiency | exit efficiency, position MFE, best exit | 20% |
 | Prep adherence | prep notes (bias, trade plans, expected day character) vs taken trades | 20% |
+| MAE / heat control | position MAE, price MAE | 15% |
 | Realized vs planned RR | realized RR vs planned reward ratio | 10% |
 Composite is diagnostic only. Never combined with process.
 
-**Amended 2026-06-08:** Added Prep adherence sub-metric (20%). Duration cut 35→25, MFE cut 30→25, RR cut 15→10. Rationale: "did I play the day I planned" is a discipline signal worth as much as MAE heat — taking a long when prep was short-biased, or chasing a setup not in the plan, is a leak the original four sub-metrics don't catch. RR cut hardest because in practice it's often null when exits don't perfectly line up with logged TP1; small weight = a null value doesn't drag the composite badly.
+**Amended 2026-06-08 (amendment 3):** Duration-to-thesis sub-metric DROPPED entirely — too coarse a signal that wasn't producing actionable feedback. New "Execution Parameters" sub-metric absorbs what used to be P4 (stop validity) and P7 (setup validity) plus 7 additional quality criteria, weighted 35%. Other weights rebalanced.
 
-**Prep adherence is evaluated by comparing:**
-- prep bias vs the direction of taken trades
-- prep trade_plans[] vs actual entries (did each taken trade match a documented plan, or was it improvised?)
-- prep ib_behaviour / volume_profile_shape predictions vs what actually played out (was the day-character read right?)
-- prep day_types (if set) vs the realized day's character
+### Execution Parameters — 9-criterion checklist
+Each criterion is binary per trade (pass = 1, fail = 0, N/A = skipped). Per-trade score = passes ÷ (passes + fails). Sub-metric score = mean across compliant trades.
 
-Score on the same 0..1 scale as the other sub-metrics — 1.0 = trades all matched plans on a bias-aligned day; 0.0 = trades were off-plan, off-bias, and the day character was misread. Null only when prep notes are entirely blank (nothing to compare against).
+1. **Setup in playbook.** The setup tag on the trade exists in the trader's curated `setups` tag library. Discretionary one-off setups not in the library fail.
+2. **Stop in 0.5–1.5 ATR band** (formerly P4). Stop ÷ ATR-10 mult between 0.5 and 1.5 inclusive. Sub-0.5 needs `tight_stop_reason` logged. 10-MNQ trades: ≤1.25 ATR AND total campaign risk ≤$200.
+3. **TP1 ≥ 2R, or reason logged.** Planned TP1 is at least 2× the planned risk distance. If TP1 < 2R, the EOD recap must explain why (one-off structural target, day-character, etc.). Missing reason = fail.
+4. **Clear area of interest noted.** The trade is anchored to a specific structural level (PDH/PDL, IBH/IBL, ONH/ONL, HTF zone, LVN, demand/supply cluster). "Random mid-range entry" or "felt right" = fail.
+5. **2/3 orderflow reads = A+.** Trade has at least 2 of 3 strong orderflow signals: delta flip, absorption (delta bubble failure), delta fade. Trades with 0 or 1 OF signals fail this criterion.
+6. **Entry was Break of Cluster or Break of Bubble.** The trigger was a structural break (price breaking through a cluster of orders or breaking a bubble), NOT a discretionary price-based entry ("looked like a good price"). Discretionary entries fail.
+7. **Management based on chart, not emotion.** Exits driven by clear technical / structural triggers pass. Exit examples:
+   • PASS: "Exited long because a HUGE buyer came in above me but did NOT get rewarded" — that's a structural read that the level isn't holding.
+   • FAIL: "Exited early because I was scared to give back profits before my target" — PnL-anchored emotional decision, not structural.
+8. **No mistakes tagged.** `tags_json.mistakes` is empty on the trade. Any mistake tag = fail.
+9. **Emotion: Stable.** `tags_json.emotions` includes Stable (pass). Compromised = fail (not ideal, but trade-execution counts). MAXRAGE = fail AND a meta-signal that the trader shouldn't have been trading at all.
 
 ## TREND METRICS
 - Compliant-session rate, rolling 10 and 20 sessions.

@@ -148,83 +148,40 @@ ${RULESET_V13_MARKDOWN}
 You are scoring against the v1.3 spec above. Two orthogonal layers — never combined:
 
 **Process layer (per-rule binary, session verdict by threshold):**
-- For each of P1..P7, mark status as "pass", "fail", or "incomplete".
-- Per v1.3 §Unscorable: P1-P6 incomplete counts as a FAIL (these are safety
-  rails — required data missing means the session can't be verified clean).
-  P7 incomplete is tolerated — it counts as a pass for the verdict math.
-- For per-trade rules (P2/P3/P4/P5/P7), breach_count = number of trades that
-  breached. For session-level rules (P1/P6), breach_count = 1 if breached else 0.
-- pass_count = count of rules with status="pass" + P7 if its status="incomplete".
-- Verdict = "Compliant" if pass_count >= 5; otherwise "Breach". This is the
-  2026-06-08 amendment to v1.3 — a single isolated rule lapse no longer drops
-  an otherwise disciplined session to Breach, but two simultaneous breaches
-  do. The per-rule breakdown still surfaces every individual failure in the
-  dashboard regardless of the session verdict — relaxing the threshold doesn't
-  hide which rule failed. P&L does not override.
+Per v1.3 amendment 3 (2026-06-08), Process is now 5 hard safety-rail rules.
+The old P4 (stop validity) and P7 (setup validity) moved OUT of Process and
+into Execution Parameters (an Execution sub-metric below). What was P5 and
+P6 are renumbered to P4 and P5.
 
-**P4 (Stop Valid) — common misclassification to avoid:**
-P4 is binary and mechanical per §SIZING. The standard ATR band is [0.5, 1.5]
-inclusive. Walk the decision tree literally:
+- For each of P1..P5, mark status as "pass" or "fail".
+- All 5 rules are enforcement-critical safety rails. Required data missing
+  means the session can't be verified clean → FAIL. There is no "incomplete"
+  tier on any P-rule under v1.4 — the judgmental rule that used to have one
+  (old P7) is now in Execution Parameters.
+- For per-trade rules (P2/P3/P4), breach_count = number of trades that
+  breached. For session-level rules (P1/P5), breach_count = 1 if breached
+  else 0.
+- pass_count = count of rules with status="pass".
+- Verdict = "Compliant" if pass_count >= 4; otherwise "Breach". One safety-
+  rail lapse is tolerated; two simultaneous breaches = Breach. P&L does not
+  override.
 
-  • ATR mult ∈ [0.5, 1.5] → P4 pass. STOP. Do not add "but marginal" or
-    "close to the edge" caveats — the spec has no soft zone.
-  • ATR mult < 0.5 AND tight_stop_reason logged → P4 pass.
-  • ATR mult < 0.5 AND tight_stop_reason NOT logged → P4 fail.
-  • ATR mult > 1.5 → P4 fail.
-  • 10-MNQ trade with ATR mult > 1.25 OR campaign risk > $200 → P4 fail
-    (this is the size-specific tighter band per §SIZING).
-
-The tight_stop_reason field is required ONLY when ATR mult < 0.5. A
-0.56-ATR stop does NOT require one. Do not mark P4 fail because
-tight_stop_reason is absent on a trade where ATR mult is already in
-[0.5, 1.5].
-
-DO NOT mark P4 fail for any of the following — these are NOT in the spec:
-  • "Stop was marginal / close to 0.5" — there is no marginal band.
-    Either it's in [0.5, 1.5] (pass) or it's not (fail).
-  • "Trader noted 'not clean 2/3 orderflow'" — that's a P7 concern about
-    setup quality, NOT a P4 concern about stop distance.
-  • "The trade stopped out" — outcome bias. A stopped 0.56-ATR trade is
-    still P4 pass if the stop was inside the band at entry.
-  • "Tight stop felt aggressive given the day's ATR" — feelings about
-    aggressiveness don't override the mechanical band check.
-
-**P7 (Setup Valid) — common misclassification to avoid:**
-P7 is binary and measures ONLY two things per §DEFINITIONS:
-  (a) an orderflow read is logged for the trade, AND
-  (b) the trade side aligns with one of the listed market states: accepted
-      break, failed auction, trend pullback, balance-edge response, HTF
-      zone response, LVN rejection.
-
-If BOTH are true → P7 pass. Stop there.
-
-DO NOT mark P7 fail for any of the following — these are executional or
-adherence judgments and belong in OTHER metrics:
-  • "The LTF microstructure was sketchy at entry" → MFE capture / MAE heat
-    (executional read on entry timing, not setup validity).
-  • "The trade was off-plan" or "didn't match a documented prep plan" →
-    prep_adherence (Execution sub-metric, 20% weight).
-  • "Lower-high formed before entry / structural concern noted but trader
-    overrode" → MAE heat / execution notes. The setup TYPE was still valid
-    if it met (a) and (b); the override decision is executional quality.
-  • "The trade lost money" or "MFE was small" → outcome bias. P&L does not
-    define P7. A losing S&D long at a balance-edge response with logged OF
-    is still a P7 pass.
-
-P7 should fail only when (a) NO orderflow read was logged OR (b) the trade
-side has NO alignment with any of the listed market states (e.g. random
-mid-range entry with no structural context). "A touch of a level alone is
-not valid context" per the spec — that IS a P7 fail. But that's a
-structural absence, not an executional misjudgment.
+Rule reference (renumbered):
+  • P1 = Daily loss limit (Session Net P&L not past −$500)
+  • P2 = Size within cap (≤5 MNQ; ≤10 only on Qualifying S&D)
+  • P3 = No size-up after loss (post-loss → ≤5 MNQ, no scale to 10)
+  • P4 = Cooldown ≥90s after any loss
+  • P5 = Trade cap ≤7 trades/session
 
 **Execution layer (continuous, diagnostic, compliant trades only):**
-- Score each sub-metric on 0..1 (higher = better):
-    - duration_to_thesis (weight 25%): did the trade reach its thesis in
-      reasonable time? Drawn-out chop = lower. Quick clean resolution = higher.
-    - mfe_capture (weight 25%): realized PnL ÷ peak favorable move. Use
+Per v1.4 amendment 3 (2026-06-08): Duration-to-thesis REMOVED; a 9-criterion
+Execution Parameters sub-metric REPLACES it at 35%. All weights rebalanced.
+Compute each sub-metric on 0..1 (higher = better):
+
+    - execution_parameters (weight 35%): a 9-criterion per-trade checklist
+      averaged across compliant trades. See breakdown below.
+    - mfe_capture (weight 20%): realized PnL ÷ peak favorable move. Use
       high_during_position / low_during_position if provided per trade.
-    - mae_heat (weight 20%): 1 - (peak adverse / planned risk). Lower heat
-      taken = higher score.
     - prep_adherence (weight 20%): did the trades taken match what was
       planned? Compare prep.bias to trade direction; prep.trade_plans[] to
       actual entries (was each entry a documented plan, or improvised?);
@@ -232,14 +189,55 @@ structural absence, not an executional misjudgment.
       out; prep.day_types to realized day character. 1.0 = bias-aligned and
       every entry mapped to a documented plan on a correctly-read day. 0.0
       = trades off-bias, no plan match, day character misread. Null only
-      when prep notes are entirely blank — nothing to compare against.
+      when prep notes are entirely blank.
+    - mae_heat (weight 15%): 1 - (peak adverse / planned risk). Lower heat
+      taken = higher score.
     - planned_vs_realized_rr (weight 10%): realized_rr ÷ reward_ratio
-      (when both available). Compute from per-trade TP1/exit/stop now
-      included in the trade block above.
-- Composite = 0.25*duration + 0.25*mfe + 0.20*mae + 0.20*prep + 0.10*rr.
+      (when both available). Compute from per-trade TP1/exit/stop in the
+      trade block above.
+
+- Composite = 0.35*exec_params + 0.20*mfe + 0.20*prep + 0.15*mae + 0.10*rr.
   Null any sub-metric you can't compute; if all are null, composite is null.
 - compliant_trade_count = number of trades you included in the calc.
 - If there are zero compliant trades, all execution sub-metrics are null.
+
+**Execution Parameters — 9-criterion per-trade checklist:**
+For each compliant trade, evaluate each criterion as pass (1), fail (0), or
+N/A (skip the criterion in the denominator). Per-trade score = passes /
+(passes + fails). Sub-metric = mean across compliant trades.
+
+Also produce execution_parameter_breakdown — per-criterion pass rate
+across the session — so the UI can show which criteria are dragging.
+
+  1. setup_in_playbook — the setup tag on the trade exists in the trader's
+     curated 'setups' tag library. Improvised one-off setups not in the
+     library fail. N/A if no setup tag at all on the trade.
+  2. stop_in_atr_band — stop ÷ ATR-10 mult is in [0.5, 1.5]. Sub-0.5
+     needs tight_stop_reason logged. 10-MNQ trades: ≤1.25 ATR AND ≤$200
+     campaign risk. Mechanical — formerly P4, no "marginal" soft zone.
+  3. tp1_at_2r_or_reasoned — planned TP1 distance ÷ planned stop distance
+     ≥ 2.0. If TP1 < 2R, the EOD recap or trade notes must explicitly
+     explain why (one-off structural target etc.). Missing reason = fail.
+  4. clear_area_of_interest — the trade is anchored to a specific
+     structural level (PDH/PDL, IBH/IBL, ONH/ONL, HTF zone, LVN,
+     demand/supply cluster). Generic mid-range entries fail.
+  5. two_thirds_orderflow — trade has ≥2 of 3 strong orderflow signals:
+     delta flip, absorption (delta bubble failure), delta fade. 0 or 1
+     OF signals = fail.
+  6. break_of_cluster_or_bubble_entry — the trigger was a structural break
+     (price breaking through a cluster of orders or breaking a bubble),
+     NOT a discretionary price entry. Discretionary entries fail.
+  7. chart_not_emotion_management — exits driven by clear technical /
+     structural triggers pass. Worked examples:
+       PASS: "Exited long because a HUGE buyer came in above me but
+              did NOT get rewarded" — structural read on whether the
+              level is holding.
+       FAIL: "Exited early because I was scared to give back profits
+              before my target" — PnL-anchored emotional exit.
+  8. no_mistakes_tagged — tags_json.mistakes is empty on the trade.
+  9. stable_emotion — tags_json.emotions includes "Stable". Compromised
+     = fail. MAXRAGE = fail AND signals the trader shouldn't have been
+     trading at all (call this out in notes).
 
 **Be honest about what you can and can't see:** if orderflow context is missing
 for a trade (P7 data-completeness), say so — don't infer it. If you can't tell
@@ -297,25 +295,34 @@ ${useV13 ? `Respond with ONLY valid JSON in this exact structure (no markdown, n
   "process": {
     "verdict": "Compliant" | "Breach",
     "per_rule": {
-      "P1": { "status": "pass" | "fail" | "incomplete", "breach_count": <number>, "reason": "<brief if not pass>" },
+      "P1": { "status": "pass" | "fail", "breach_count": <number>, "reason": "<brief if fail>" },
       "P2": { "status": "...", "breach_count": <number>, "reason": "..." },
       "P3": { "status": "...", "breach_count": <number>, "reason": "..." },
       "P4": { "status": "...", "breach_count": <number>, "reason": "..." },
-      "P5": { "status": "...", "breach_count": <number>, "reason": "..." },
-      "P6": { "status": "...", "breach_count": <number>, "reason": "..." },
-      "P7": { "status": "...", "breach_count": <number>, "reason": "..." }
+      "P5": { "status": "...", "breach_count": <number>, "reason": "..." }
     },
-    "breach_count_vector": { "P1": <number>, "P2": <number>, "P3": <number>, "P4": <number>, "P5": <number>, "P6": <number>, "P7": <number> },
+    "breach_count_vector": { "P1": <number>, "P2": <number>, "P3": <number>, "P4": <number>, "P5": <number> },
     "notes": "<1-2 sentences on the verdict reasoning>"
   },
   "execution": {
-    "duration_to_thesis": <0..1 or null>,
+    "execution_parameters": <0..1 or null>,
     "mfe_capture": <0..1 or null>,
-    "mae_heat": <0..1 or null>,
     "prep_adherence": <0..1 or null>,
+    "mae_heat": <0..1 or null>,
     "planned_vs_realized_rr": <0..1 or null>,
     "composite": <0..1 or null>,
     "compliant_trade_count": <number>,
+    "execution_parameter_breakdown": {
+      "setup_in_playbook": <0..1 or null>,
+      "stop_in_atr_band": <0..1 or null>,
+      "tp1_at_2r_or_reasoned": <0..1 or null>,
+      "clear_area_of_interest": <0..1 or null>,
+      "two_thirds_orderflow": <0..1 or null>,
+      "break_of_cluster_or_bubble_entry": <0..1 or null>,
+      "chart_not_emotion_management": <0..1 or null>,
+      "no_mistakes_tagged": <0..1 or null>,
+      "stable_emotion": <0..1 or null>
+    },
     "notes": "<1-2 sentences diagnostic; never blends with process verdict>"
   }
 }

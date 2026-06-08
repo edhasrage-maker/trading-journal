@@ -732,12 +732,12 @@ function ScorePill({ value }: { value: number | null }) {
 }
 
 /**
- * v1.3 Process pill — same 0-10 visual footprint as ScorePill so columns
+ * v1.4 Process pill — same 0-10 visual footprint as ScorePill so columns
  * line up. The COLOR BAND is driven by the verdict (green=Compliant when
- * ≥5/7 rules pass per the 2026-06-08 amendment, red=Breach when ≤4/7); the
- * SHADE within each band is driven by the score so 7/7 reads deeper green
- * than a 5/7 scrape-through, and a 0/7 total failure reads darker than a
- * 4/7 just-under breach.
+ * ≥4/5 rules pass per 2026-06-08 amendment 3, red=Breach when ≤3/5); the
+ * SHADE within each band is driven by the score so 5/5 reads deeper green
+ * than a 4/5 scrape-through, and 0/5 total failure reads darker than a 3/5
+ * just-under breach. With 5 rules the score values are {0, 2, 4, 6, 8, 10}.
  */
 function VerdictPill({
   value, verdict, breachRules,
@@ -751,15 +751,14 @@ function VerdictPill({
   }
   const isCompliant = verdict === 'Compliant'
   const color = isCompliant
-    ? (value >= 10 ? 'text-green-300 border-green-700/60 bg-green-900/50'
-      : value >= 9  ? 'text-green-300 border-green-700/50 bg-green-900/35'
-      :              'text-emerald-300 border-emerald-700/40 bg-emerald-900/25')
-    : (value >= 6  ? 'text-orange-300 border-orange-700/50 bg-orange-900/30'
-      : value >= 4  ? 'text-red-300 border-red-800/50 bg-red-950/40'
-      : value >= 2  ? 'text-red-200 border-red-700/60 bg-red-900/50'
-      :              'text-red-100 border-red-600/70 bg-red-900/70')
+    ? (value >= 10 ? 'text-green-300 border-green-700/60 bg-green-900/50'      // 5/5 — deep green
+      :              'text-emerald-300 border-emerald-700/40 bg-emerald-900/25') // 4/5 — at threshold, cooler
+    : (value >= 6  ? 'text-orange-300 border-orange-700/50 bg-orange-900/30'  // 3/5 — just-under breach
+      : value >= 4  ? 'text-red-300 border-red-800/50 bg-red-950/40'           // 2/5
+      : value >= 2  ? 'text-red-200 border-red-700/60 bg-red-900/50'           // 1/5
+      :              'text-red-100 border-red-600/70 bg-red-900/70')           // 0/5 — total failure
   const tooltip = isCompliant
-    ? `Compliant — ${value}/10 (≥5/7 rules pass)`
+    ? `Compliant — ${value}/10 (≥4/5 rules pass)`
     : `Breach — ${(breachRules ?? []).join(', ') || 'rule(s) failed'}`
   return (
     <span

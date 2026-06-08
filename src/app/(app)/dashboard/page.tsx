@@ -290,29 +290,34 @@ export default async function DashboardPage() {
         const p = d.eod_ai_analysis_json?.process
         return p?.verdict ?? null
       })(),
+      // v1.4 (2026-06-08 amendment 3): Process is now 5 hard safety-rail
+      // rules (P1-P5). Score is Math.round((pass_count / 5) * 10). Legacy
+      // rows analyzed pre-amendment may have P1-P7 in their data; only the
+      // new P1-P5 IDs are counted, so legacy rows will appear understated
+      // (their old P5/P6/P7 entries don't map to anything). Re-running the
+      // analyze-session button on those days will refresh under v1.4.
       process_v13_score: (() => {
         const p = d.eod_ai_analysis_json?.process
         if (!p?.per_rule) return null
-        const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'] as const
+        const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5'] as const
         let passCount = 0
         for (const id of ruleIds) {
           const r = p.per_rule[id]
           if (!r) continue
           if (r.status === 'pass') passCount += 1
-          else if (r.status === 'incomplete' && id === 'P7') passCount += 1
         }
-        return Math.round((passCount / 7) * 10)
+        return Math.round((passCount / 5) * 10)
       })(),
       process_breach_rules: (() => {
         const p = d.eod_ai_analysis_json?.process
         if (!p?.per_rule) return null
-        const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'] as const
+        const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5'] as const
         const failed: string[] = []
         for (const id of ruleIds) {
           const r = p.per_rule[id]
           if (!r) continue
-          if (r.status === 'fail') failed.push(id)
-          else if (r.status === 'incomplete' && id !== 'P7') failed.push(id)
+          // v1.4: all 5 rules are enforcement-critical. No incomplete tier.
+          if (r.status === 'fail' || r.status === 'incomplete') failed.push(id)
         }
         return failed
       })(),

@@ -10,17 +10,17 @@ interface Props {
   disabled?: boolean
 }
 
+// v1.4 (2026-06-08 amendment 3): 5 hard safety-rail rules. Stop validity
+// (was P4) and Setup validity (was P7) moved to Execution Parameters.
 const RULE_LABELS: Record<RuleId, string> = {
   P1: 'Daily Loss Limit',
   P2: 'Size Within Cap',
   P3: 'No Size-Up After Loss',
-  P4: 'Stop Valid',
-  P5: 'Cooldown ≥90s',
-  P6: 'Trade Cap ≤7',
-  P7: 'Setup Valid',
+  P4: 'Cooldown ≥90s',
+  P5: 'Trade Cap ≤7',
 }
 
-const RULE_ORDER: RuleId[] = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7']
+const RULE_ORDER: RuleId[] = ['P1', 'P2', 'P3', 'P4', 'P5']
 
 export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled }: Props) {
   // v1.3-era analyses populate `process` + `execution`. Pre-v1.3 rows only
@@ -173,7 +173,7 @@ function ProcessCard({ process: p }: { process: ProcessVerdict }) {
         <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Process</span>
         <span className={`ml-auto text-lg font-bold ${verdictColor}`}>{p.verdict}</span>
       </div>
-      <div className="grid grid-cols-7 gap-1">
+      <div className="grid grid-cols-5 gap-1">
         {RULE_ORDER.map(id => (
           <RuleChip key={id} id={id} status={p.per_rule?.[id]} />
         ))}
@@ -223,10 +223,10 @@ function ExecutionCard({ execution: e }: { execution: ExecutionScore }) {
         </span>
       </div>
       <div className="grid grid-cols-5 gap-2 text-center">
-        <ExecMetric label="Duration" value={e.duration_to_thesis} weight="25%" />
-        <ExecMetric label="MFE Cap" value={e.mfe_capture} weight="25%" />
-        <ExecMetric label="MAE Heat" value={e.mae_heat} weight="20%" />
+        <ExecMetric label="Exec Params" value={e.execution_parameters} weight="35%" />
+        <ExecMetric label="MFE Cap" value={e.mfe_capture} weight="20%" />
         <ExecMetric label="Prep" value={e.prep_adherence} weight="20%" />
+        <ExecMetric label="MAE Heat" value={e.mae_heat} weight="15%" />
         <ExecMetric label="RR" value={e.planned_vs_realized_rr} weight="10%" />
       </div>
       <p className="text-[10px] text-gray-500">
