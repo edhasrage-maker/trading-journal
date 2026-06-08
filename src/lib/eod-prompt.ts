@@ -263,7 +263,96 @@ across the session — so the UI can show which criteria are dragging.
 **Be honest about what you can and can't see:** if orderflow context is missing
 for a trade, say so — don't infer it. If you can't tell whether an entry was
 Qualifying S&D from the tags, mark execution_parameters criterion #5 fail and
-note it.` : ''
+note it.
+
+══ NARRATIVE DISCIPLINE — common over-interpretation patterns to avoid ══
+
+These come up repeatedly in EOD analyses. Read this section CAREFULLY and apply
+each rule literally — don't soften, don't add hedges, don't tell stories.
+
+**1. Causation vs correlation.** The market causes trade outcomes, not the
+trader's reads. A weak orderflow read does NOT "directly cause" a loss; a
+strong read does NOT "directly cause" a win. Correlations exist, but DO NOT
+write "T1's not-clean orderflow directly caused the loss" or "the missing OF
+read led to the stop-out." Trader reads inform DECISIONS (whether to size up,
+whether to take the trade); they don't drive market behavior.
+  Correct framing: "T1 entered without 2/3 OF — this is a quality leak that
+                    fails execution criterion #5. The stop-out itself was the
+                    market's outcome, separate from the read."
+  Incorrect:       "T1's missing OF caused the loss."
+                   "Entering on 1/3 OF, which led to the stop."
+
+  Setup-without-orderflow STILL has positive EV on its own (the trader's
+  baseline stats: S&D alone has 48% WR / +0.43R per trade). 1/3 OF means
+  "don't size up to 10 MNQ" — it does NOT mean "this trade shouldn't have
+  been taken." Don't frame 1/3-OF entries as wrong; frame them as "ineligible
+  for the size-up exception."
+
+**2. P4 cooldown is mechanical. Stop after the math.** If gap ≥ 90s → P4 pass.
+That's the end of the analysis for P4. Do NOT add:
+  • "but the rush back in after a loss on the same zone is a pattern risk"
+  • "passes, but only 3 minutes after a loss is fast"
+  • "passes per the rule, but the speed of re-entry bears monitoring"
+
+These are SEPARATE behavioral observations. If you want to call them out,
+put them in "patterns" (across-trades observations) or "next_session_focus"
+(actionable items for tomorrow). Do NOT attach them as caveats to P4's pass —
+that functionally re-fails the rule via tone, which is exactly what v1.4's
+binary-rule design exists to prevent.
+
+  Correct framing in process.notes: "All 5 safety rails pass. Compliant."
+  Correct framing in patterns:     "Re-entry pattern on same zone after a
+                                    loss observed across T1→T2."
+  Incorrect:                       "P4 passes BUT the rush back bears
+                                    monitoring." (caveat-attached pass)
+
+**3. Hybrid exits with BOTH structural and PnL reasoning pass criterion #7.**
+A trade exit can have multiple drivers. If the trader's notes show ANY valid
+structural read (resistance approaching, level not holding, OF signal failing,
+absorption breaking), the exit passes criterion #7 — EVEN IF PnL anxiety was
+also present in the notes. Fail criterion #7 ONLY when the notes show ZERO
+structural reasoning behind the exit decision.
+
+  Test: "Would the structural read alone have justified the exit, ignoring
+        the PnL concern?" If yes → criterion #7 pass.
+
+  Worked example: trader exits long at +0.5R citing both "scared to give back"
+  AND "resistance above with sellers active." If the resistance was real and
+  the trade would have eventually stopped if held, the structural read was
+  RIGHT — exit passes criterion #7. Tag the fear in execution.notes as a
+  behavioral pattern, but do not fail the criterion.
+
+  ONLY fail criterion #7 on exits like: "exited because I was up money and
+  wanted to lock it in, no structural reason given" — that's purely PnL-
+  anchored with no chart backing.
+
+**4. Structural terminology — be literal, don't inflate.** Reserve these
+specific terms for their specific structural conditions:
+  • "Active downtrend" requires BOTH lower highs AND lower lows. A single
+    LH alone is NOT an active downtrend.
+  • "Fading the trend" requires an established trend. A single LH means
+    "fading a structure break attempt" or "fading a failed continuation",
+    not "fading an active downtrend."
+  • "Breakdown" requires a confirmed lower low past a prior swing low.
+  • "Acceptance" requires bars CLOSING beyond a level, not just touching.
+
+If the data shows ONE LH and no LL, write "after a lower-high formed" or
+"into a failing-continuation structure", NOT "into an active downtrend."
+Inflated terminology makes the trade sound worse than it was; that bleeds
+into how the trader internalizes the day.
+
+**5. Enumerate before counting.** When scoring criterion #5 (two_thirds_orderflow),
+LIST each of the 3 signals you find in the trade's tags / notes / commentary
+BEFORE giving the pass/fail. Don't summarize — name them.
+
+  Correct: "T3: delta flip ✓, absorption ✓, delta fade ✓ → 3/3 → pass."
+  Correct: "T1: delta flip ✓, absorption ✗, delta fade ✗ → 1/3 → fail."
+  Incorrect: "T3 had 2/3 OF signals → pass."  (no per-signal accounting →
+              easy to miscount and the trader can't audit your reasoning)
+
+This applies inside execution_parameter_breakdown reasoning AND when citing
+trades in process.notes or execution.notes. Trader needs to AUDIT your read
+against their own — they can only do that if you enumerate.` : ''
 
   const legacyFrameworkBlock = useV13 ? '' : `
 ══ TRADER'S FRAMEWORK (read this before judging anything) ══
