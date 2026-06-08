@@ -274,7 +274,48 @@ export default async function DashboardPage() {
       trades_with_pnl_count: tradesWithPnl.length,
       setups: setupsAll,
       process_score: d.ai_analysis_json?.score ?? null,
-      overall_grade: d.eod_ai_analysis_json?.score ?? null,
+      // overall_grade: prefer the v1.3 execution.composite (0..1, scaled to 0..10
+      // and rounded) over the legacy `score` field. Without the round, composite
+      // * 10 prints as a long float (0.59 → 5.8999999989999995) in the pill.
+      overall_grade: (() => {
+        const j = d.eod_ai_analysis_json
+        const composite = j?.execution?.composite
+        if (composite != null) return Math.round(composite * 10)
+        return j?.score ?? null
+      })(),
+      // v1.3 Process: binary verdict (Compliant / Breach, threshold-relaxed to
+      // 5/7 per 2026-06-08 amendment) + a 0-10 derived from "rules that didn't
+      // fail" out of 7. P7 incomplete is tolerated per spec.
+      process_verdict: (() => {
+        const p = d.eod_ai_analysis_json?.process
+        return p?.verdict ?? null
+      })(),
+      process_v13_score: (() => {
+        const p = d.eod_ai_analysis_json?.process
+        if (!p?.per_rule) return null
+        const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'] as const
+        let passCount = 0
+        for (const id of ruleIds) {
+          const r = p.per_rule[id]
+          if (!r) continue
+          if (r.status === 'pass') passCount += 1
+          else if (r.status === 'incomplete' && id === 'P7') passCount += 1
+        }
+        return Math.round((passCount / 7) * 10)
+      })(),
+      process_breach_rules: (() => {
+        const p = d.eod_ai_analysis_json?.process
+        if (!p?.per_rule) return null
+        const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'] as const
+        const failed: string[] = []
+        for (const id of ruleIds) {
+          const r = p.per_rule[id]
+          if (!r) continue
+          if (r.status === 'fail') failed.push(id)
+          else if (r.status === 'incomplete' && id !== 'P7') failed.push(id)
+        }
+        return failed
+      })(),
       win_rate: winRate,
       avg_mfe_pts: avgMfePts,
       avg_mae_pts: avgMaePts,

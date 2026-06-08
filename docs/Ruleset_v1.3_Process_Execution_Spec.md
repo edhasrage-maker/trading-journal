@@ -1,11 +1,12 @@
 # TRADING RULESET — v1.3
 **Effective 2026-06-07 · NQ/MNQ · RTH 06:30–13:00 PST**
+**Amended 2026-06-08:** (1) verdict threshold relaxed from "all 7 pass" to "5 of 7 pass" — see §VERDICT. (2) Execution gains a 5th sub-metric (Prep adherence, 20%) with rebalanced weights — see §EXECUTION QUALITY.
 
 ## INSTRUCTION TO THE JOURNAL ASSISTANT
 Replace in full any prior ruleset, sizing model, or scoring logic. Adopt the below verbatim. Do not infer, soften, merge, or average rules. Evaluate each rule only against the data field named.
 
 **Two layers, never combined:**
-- **Process** = binary, per-rule, scored independently. Any one breach = Breach session. No averaging, no percentage, no P&L override.
+- **Process** = per-rule, scored independently. Each rule is binary (pass / fail / incomplete). The session-level verdict is a threshold over the per-rule results — see §VERDICT.
 - **Execution** = continuous, diagnostic, weekly, computed only on compliant sessions. Never touches the verdict, never blends with process.
 
 ## WHAT IS TRACKED LIVE vs AFTER
@@ -49,8 +50,12 @@ Missing-data handling differs by tier (see §Unscorable).
 No time-of-day gate. (Post-9:30 holds your expectancy; an early-entry rule is excluded by design.)
 
 ## VERDICT
-`compliant = P1 AND P2 AND P3 AND P4 AND P5 AND P6 AND P7`
-Verdict ∈ {Compliant, Breach}. Green P&L + any breach = **Breach.** Red P&L + zero breaches = **Compliant.** P&L does not define discipline.
+`pass_count = count(P1..P7 where status = 'pass') + count(P7 where status = 'incomplete')`
+`compliant = pass_count >= 5`
+
+Verdict ∈ {Compliant, Breach}. P7 "incomplete" counts toward `pass_count` per §UNSCORABLE; P1–P6 incomplete counts as a fail. P&L does not define discipline: green P&L with ≤4 passes is **Breach**, red P&L with ≥5 passes is **Compliant**.
+
+**Why ≥5/7 and not "all 7":** the original v1.3 (effective 2026-06-07) required all 7 rules to pass for Compliant. Amended 2026-06-08 to a 5-of-7 threshold so a single isolated lapse (e.g. one cooldown short of 90s) doesn't blanket-classify an otherwise disciplined session as Breach. The threshold is still strict — 2 simultaneous breaches drop you to Breach, and the breach-count vector + per-rule chips on the dashboard still surface every individual failure regardless of the session verdict.
 
 ## UNSCORABLE (scoped — this is the de-fusing fix)
 - **P1–P6 (enforcement-critical):** required data missing → **Breach.** These safety rails must be verifiable.
@@ -59,11 +64,22 @@ Verdict ∈ {Compliant, Breach}. Green P&L + any breach = **Breach.** Red P&L + 
 ## EXECUTION QUALITY (weekly, compliant trades only, diagnostic)
 | Metric | Source | Weight |
 |--------|--------|--------|
-| Duration-to-thesis | trade duration | 35% |
-| MFE capture / exit efficiency | exit efficiency, position MFE, best exit | 30% |
+| Duration-to-thesis | trade duration | 25% |
+| MFE capture / exit efficiency | exit efficiency, position MFE, best exit | 25% |
 | MAE / heat control | position MAE, price MAE | 20% |
-| Realized vs planned RR | realized RR vs planned reward ratio | 15% |
+| Prep adherence | prep notes (bias, trade plans, expected day character) vs taken trades | 20% |
+| Realized vs planned RR | realized RR vs planned reward ratio | 10% |
 Composite is diagnostic only. Never combined with process.
+
+**Amended 2026-06-08:** Added Prep adherence sub-metric (20%). Duration cut 35→25, MFE cut 30→25, RR cut 15→10. Rationale: "did I play the day I planned" is a discipline signal worth as much as MAE heat — taking a long when prep was short-biased, or chasing a setup not in the plan, is a leak the original four sub-metrics don't catch. RR cut hardest because in practice it's often null when exits don't perfectly line up with logged TP1; small weight = a null value doesn't drag the composite badly.
+
+**Prep adherence is evaluated by comparing:**
+- prep bias vs the direction of taken trades
+- prep trade_plans[] vs actual entries (did each taken trade match a documented plan, or was it improvised?)
+- prep ib_behaviour / volume_profile_shape predictions vs what actually played out (was the day-character read right?)
+- prep day_types (if set) vs the realized day's character
+
+Score on the same 0..1 scale as the other sub-metrics — 1.0 = trades all matched plans on a bias-aligned day; 0.0 = trades were off-plan, off-bias, and the day character was misread. Null only when prep notes are entirely blank (nothing to compare against).
 
 ## TREND METRICS
 - Compliant-session rate, rolling 10 and 20 sessions.

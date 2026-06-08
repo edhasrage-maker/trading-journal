@@ -362,12 +362,18 @@ export interface ProcessVerdict {
 
 export interface ExecutionScore {
   /** Each sub-metric is 0..1 (higher = better) or null if not computable.
-   *  Per v1.3 weights: duration 35%, MFE capture 30%, MAE heat 20%, RR 15%. */
+   *  Per v1.3 (amended 2026-06-08) weights: duration 25%, MFE capture 25%,
+   *  MAE heat 20%, prep adherence 20%, RR 10%. */
   duration_to_thesis: number | null
   mfe_capture: number | null
   mae_heat: number | null
+  /** Did taken trades match the prep (bias, plans, day-character read)?
+   *  Added 2026-06-08 to surface the discipline leak the other four
+   *  sub-metrics miss — trading off-plan or off-bias even when individual
+   *  trade execution was fine. */
+  prep_adherence: number | null
   planned_vs_realized_rr: number | null
-  /** Weighted composite of the four sub-metrics. Null if all inputs are null. */
+  /** Weighted composite of the five sub-metrics. Null if all inputs are null. */
   composite: number | null
   /** Number of COMPLIANT trades the execution score was computed across.
    *  v1.3: execution never includes breach trades. */

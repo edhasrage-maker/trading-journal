@@ -25,6 +25,15 @@ export interface DayRowData {
   setups: string[] // all setups used that day, sorted by frequency desc
   process_score: number | null
   overall_grade: number | null
+  /** v1.3 Process verdict — null if the EOD AI hasn't run or this is a
+   *  legacy pre-v1.3 row. Compliant or Breach drives the pill color. */
+  process_verdict: 'Compliant' | 'Breach' | null
+  /** v1.3 Process score on the same 0-10 scale as Execution — Math.round
+   *  of (passCount / 7) * 10. The COLOR follows the verdict, not this
+   *  number (per v1.3 amended 2026-06-08, 5–7/7 = Compliant). */
+  process_v13_score: number | null
+  /** Rule IDs that failed (P1..P7). Powers the hover tooltip on Breach days. */
+  process_breach_rules: string[] | null
   win_rate: number | null
   avg_mfe_pts: number | null
   avg_mae_pts: number | null
@@ -46,7 +55,7 @@ interface Props {
   initialDays: DayRowData[]
 }
 
-type SortColumn = 'date' | 'grade' | 'process' | 'trades' | 'mfe_mae' | 'capture' | 'win_rate' | 'pnl'
+type SortColumn = 'date' | 'grade' | 'process_v13' | 'trades' | 'mfe_mae' | 'capture' | 'win_rate' | 'pnl'
 type SortDirection = 'asc' | 'desc'
 type MfeUnit = 'pts' | 'dollars' | 'atr'
 
@@ -137,7 +146,7 @@ export default function RecentDaysList({ initialDays }: Props) {
       switch (sortColumn) {
         case 'date': return d.date
         case 'grade': return d.overall_grade
-        case 'process': return d.process_score
+        case 'process_v13': return d.process_v13_score
         case 'trades': return d.trade_count
         case 'mfe_mae': return d.avg_mfe_pts // unit-agnostic; ordering identical across pts/dollars
         case 'capture': return d.avg_capture
@@ -282,8 +291,12 @@ export default function RecentDaysList({ initialDays }: Props) {
             <tr className="text-xs text-gray-500 border-b border-gray-800">
               <th className="font-normal py-2 pl-2 pr-1 w-8" />
               <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3" />
-              <SortableTh label="Grade" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
-              <SortableTh label="Process" column="process" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
+              <SortableTh label="Execution" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
+              {/* v1.3 Process verdict — single 0-10, banded green/red color
+                  by verdict per 2026-06-08 amendment (5/7 threshold). The old
+                  "Process" column (which actually showed the prep AI score)
+                  was renamed to Prep and then dropped from this dense table. */}
+              <SortableTh label="Process" column="process_v13" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
               <SortableTh label="Trades" column="trades" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
               <th className="font-normal py-2 pr-3 text-center w-28 relative">
                 <div className="flex flex-col items-center gap-0.5">
@@ -564,7 +577,13 @@ function DayRowItem({
         </div>
       </td>
       <td className={`py-2 pr-3 text-center ${cellBg}`}><ScorePill value={day.overall_grade} /></td>
-      <td className={`py-2 pr-3 text-center ${cellBg}`}><ScorePill value={day.process_score} /></td>
+      <td className={`py-2 pr-3 text-center ${cellBg}`}>
+        <VerdictPill
+          value={day.process_v13_score}
+          verdict={day.process_verdict}
+          breachRules={day.process_breach_rules}
+        />
+      </td>
       <td className={`py-2 pr-3 text-center text-gray-300 font-mono ${cellBg}`}>
         {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
       </td>
@@ -695,6 +714,46 @@ function ScorePill({ value }: { value: number | null }) {
     : 'text-red-300 border-red-800/50 bg-red-950/40'
   return (
     <span className={`font-mono border rounded px-1.5 py-0.5 inline-block w-8 text-center text-xs ${color}`}>
+      {value}
+    </span>
+  )
+}
+
+/**
+ * v1.3 Process pill — same 0-10 visual footprint as ScorePill so columns
+ * line up. The COLOR BAND is driven by the verdict (green=Compliant when
+ * ≥5/7 rules pass per the 2026-06-08 amendment, red=Breach when ≤4/7); the
+ * SHADE within each band is driven by the score so 7/7 reads deeper green
+ * than a 5/7 scrape-through, and a 0/7 total failure reads darker than a
+ * 4/7 just-under breach.
+ */
+function VerdictPill({
+  value, verdict, breachRules,
+}: {
+  value: number | null
+  verdict: 'Compliant' | 'Breach' | null
+  breachRules: string[] | null
+}) {
+  if (value === null || verdict === null) {
+    return <span className="text-gray-700 font-mono">—</span>
+  }
+  const isCompliant = verdict === 'Compliant'
+  const color = isCompliant
+    ? (value >= 10 ? 'text-green-300 border-green-700/60 bg-green-900/50'
+      : value >= 9  ? 'text-green-300 border-green-700/50 bg-green-900/35'
+      :              'text-emerald-300 border-emerald-700/40 bg-emerald-900/25')
+    : (value >= 6  ? 'text-orange-300 border-orange-700/50 bg-orange-900/30'
+      : value >= 4  ? 'text-red-300 border-red-800/50 bg-red-950/40'
+      : value >= 2  ? 'text-red-200 border-red-700/60 bg-red-900/50'
+      :              'text-red-100 border-red-600/70 bg-red-900/70')
+  const tooltip = isCompliant
+    ? `Compliant — ${value}/10 (≥5/7 rules pass)`
+    : `Breach — ${(breachRules ?? []).join(', ') || 'rule(s) failed'}`
+  return (
+    <span
+      className={`font-mono border rounded px-1.5 py-0.5 inline-block w-8 text-center text-xs ${color}`}
+      title={tooltip}
+    >
       {value}
     </span>
   )

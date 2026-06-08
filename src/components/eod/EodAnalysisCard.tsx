@@ -222,11 +222,12 @@ function ExecutionCard({ execution: e }: { execution: ExecutionScore }) {
           {composite == null ? '—' : `${Math.round(composite * 100)}%`}
         </span>
       </div>
-      <div className="grid grid-cols-4 gap-2 text-center">
-        <ExecMetric label="Duration" value={e.duration_to_thesis} weight="35%" />
-        <ExecMetric label="MFE Cap" value={e.mfe_capture} weight="30%" />
+      <div className="grid grid-cols-5 gap-2 text-center">
+        <ExecMetric label="Duration" value={e.duration_to_thesis} weight="25%" />
+        <ExecMetric label="MFE Cap" value={e.mfe_capture} weight="25%" />
         <ExecMetric label="MAE Heat" value={e.mae_heat} weight="20%" />
-        <ExecMetric label="RR" value={e.planned_vs_realized_rr} weight="15%" />
+        <ExecMetric label="Prep" value={e.prep_adherence} weight="20%" />
+        <ExecMetric label="RR" value={e.planned_vs_realized_rr} weight="10%" />
       </div>
       <p className="text-[10px] text-gray-500">
         Across {e.compliant_trade_count} compliant trade{e.compliant_trade_count === 1 ? '' : 's'} only — diagnostic, never blends with process.
