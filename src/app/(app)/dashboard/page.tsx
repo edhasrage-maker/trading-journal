@@ -274,13 +274,20 @@ export default async function DashboardPage() {
       trades_with_pnl_count: tradesWithPnl.length,
       setups: setupsAll,
       process_score: d.ai_analysis_json?.score ?? null,
-      // overall_grade: prefer the v1.3 execution.composite (0..1, scaled to 0..10
-      // and rounded) over the legacy `score` field. Without the round, composite
-      // * 10 prints as a long float (0.59 → 5.8999999989999995) in the pill.
+      // overall_grade: prefer v1.3+ execution.composite (0..1 scaled to 0..10
+      // and rounded) over the legacy `score` field.
+      //
+      // v1.4 null-composite case: if the EOD AI ran v1.4 (execution object
+      // present) but couldn't compute a composite because zero trades passed
+      // every per-trade rule, return 0 rather than null. "0 execution" is
+      // semantically correct — every trade either breached or had no data
+      // to score against — and it stops the dashboard from showing "—" as
+      // if the analysis hadn't run yet.
       overall_grade: (() => {
         const j = d.eod_ai_analysis_json
         const composite = j?.execution?.composite
         if (composite != null) return Math.round(composite * 10)
+        if (j?.execution != null) return 0   // ran but couldn't aggregate → 0
         return j?.score ?? null
       })(),
       // v1.3 Process: binary verdict (Compliant / Breach, threshold-relaxed to

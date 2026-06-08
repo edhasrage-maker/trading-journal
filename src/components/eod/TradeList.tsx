@@ -152,7 +152,9 @@ export default function TradeList({
             <tr className="text-gray-500 border-b border-gray-800">
               <th className="font-normal pb-2 pr-2 w-8" />
               <SortableHeader label="Time" sortKey="time" align="left" current={sortKey} dir={sortDir} onSort={onSort} />
-              <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Dir</th>
+              {/* Setup column replaces the old Dir column. Direction is
+                  shown as an inline arrow on the setup chip itself. */}
+              <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Setup</th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Entry</th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Stop</th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">TP1</th>
@@ -298,44 +300,38 @@ export default function TradeList({
                   <td className="py-1.5 pr-3 text-gray-300">
                     {t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'}
                   </td>
-                  <td className="py-1.5 pr-3">
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        t.direction === 'long'
-                          ? 'bg-green-900/50 text-green-300'
-                          : t.direction === 'short'
-                          ? 'bg-red-900/50 text-red-300'
-                          : 'bg-gray-800 text-gray-500'
-                      }`}
-                    >
-                      {t.direction?.toUpperCase() ?? '--'}
-                    </span>
+                  {/* Setup cell — replaces the old Dir column. Direction is
+                      encoded as a colored ▲ (long) / ▼ (short) icon at the
+                      START of the chip; setup name follows, truncated at
+                      ~12ch with hover-tooltip for the full text. Single
+                      line, max-w-[120px] to keep the column tight so the
+                      Overview column has room to breathe. */}
+                  <td className="py-1.5 pr-3 max-w-[120px]">
+                    {(() => {
+                      const setup = t.tags_json?.setups?.[0]
+                      const isLong = t.direction === 'long'
+                      const isShort = t.direction === 'short'
+                      const arrow = isLong ? '▲' : isShort ? '▼' : '–'
+                      const arrowColor = isLong ? 'text-green-400' : isShort ? 'text-red-400' : 'text-gray-500'
+                      const tooltipParts = [
+                        t.direction?.toUpperCase() ?? '—',
+                        t.tags_json?.setups?.join(', ') || '(no setup tagged)',
+                      ]
+                      return (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case max-w-full"
+                          title={tooltipParts.join(' · ')}
+                        >
+                          <span className={`${arrowColor} font-bold`}>{arrow}</span>
+                          <span className="truncate">{setup ?? '—'}</span>
+                        </span>
+                      )
+                    })()}
                   </td>
-                  {/* Entry cell: price + setup chip stacked tightly via flex
-                      column. Chip sits 2px below the price (gap-0.5) rather
-                      than being anchored to the row's bottom edge. Cell
-                      grows naturally to fit; other cells in the row middle-
-                      align around the combined height. Trade-off: the price
-                      sits slightly above LONG/29579's baseline because flex
-                      content centers as a unit. That offset is < the chip's
-                      half-height — barely noticeable, much better than the
-                      previous "chip floating far below" look. */}
-                  <td className="py-1.5 pr-3 text-right text-gray-300 align-middle">
-                    <div className="flex flex-col items-end gap-0.5 leading-tight">
-                      <span>{t.entry_price ?? '--'}</span>
-                      {(() => {
-                        const setup = t.tags_json?.setups?.[0]
-                        if (!setup) return null
-                        return (
-                          <span
-                            className="text-[9px] font-normal bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0 rounded normal-case whitespace-nowrap leading-tight"
-                            title={t.tags_json?.setups?.join(', ')}
-                          >
-                            {setup}
-                          </span>
-                        )
-                      })()}
-                    </div>
+                  {/* Entry cell — back to single line (price only). Setup
+                      now lives in the dedicated column to the left. */}
+                  <td className="py-1.5 pr-3 text-right text-gray-300">
+                    {t.entry_price ?? '--'}
                   </td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>
