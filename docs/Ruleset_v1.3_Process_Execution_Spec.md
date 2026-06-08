@@ -9,7 +9,7 @@
 Replace in full any prior ruleset, sizing model, or scoring logic. Adopt the below verbatim. Do not infer, soften, merge, or average rules. Evaluate each rule only against the data field named.
 
 **Two layers, never combined:**
-- **Process** = per-rule, scored independently. Each rule is binary (pass / fail / incomplete). The session-level verdict is a threshold over the per-rule results — see §VERDICT.
+- **Process** = per-rule, scored independently. Each rule is binary (pass / fail). Under v1.4 there is no "incomplete" tier on any P-rule — missing data on a safety rail counts as a fail. The session-level verdict is a threshold over the per-rule results — see §VERDICT.
 - **Execution** = continuous, diagnostic, weekly, computed **per-trade** across trades that individually passed every per-trade rule. A "compliant trade" = passed P2 (size cap), P3 (no size-up after loss), and P4 (cooldown ≥90s). Session-level rules P1 (daily loss) and P5 (trade cap) do NOT disqualify individual trades — they affect the Process verdict, but compliant trades within a Breach session STILL get scored for Execution. The execution composite is null only when zero trades passed all per-trade rules.
 
 ## WHAT IS TRACKED LIVE vs AFTER
@@ -91,13 +91,13 @@ Each criterion is binary per trade (pass = 1, fail = 0, N/A = skipped). Per-trad
 ## TREND METRICS
 - Compliant-session rate, rolling 10 and 20 sessions.
 - Per-rule breach count; days-between-breach per rule.
-- Breach **count vector** (never averaged), e.g. `P2:1 P3:0 P4:2 P5:1 P6:0 P7:3`.
+- Breach **count vector** (never averaged), e.g. `P1:0 P2:1 P3:0 P4:2 P5:1`.
 - 10-MNQ usage count and 10-MNQ breach count (tracks whether the size exception is being abused).
-- Data-completeness % (from P7 Incompletes).
+- Execution Parameters per-criterion pass rate (which of the 9 criteria are dragging the composite — surfaced in `execution_parameter_breakdown`).
 
 ## REMOVED FROM SCORING (ritual/qualitative, not process rules)
 Pre-trade read-aloud, post-loss screen-off, observation-only journaling, emotion notes, bank-the-day, hard time stop, T1-red two-trade cap, **post-9am entry gate.**
 
 ## STANDING FLAGS
-- ACSIL kill-switch **not compiled.** P5/P6 are SELF-POLICED until confirmed live; only P1 is externally enforced.
-- Contract size is fixed by rule (5 / 10), not ATR-derived. Stop floats with ATR, so dollar risk rises with volatility — bounded only by P1, P4, the $200 campaign cap, and the post-loss size cap. The 10-MNQ S&D on a wide-ATR day is your largest single-trade risk; on days where ATR > 8 points the $200 cap makes a full 10-MNQ entry mathematically impossible. That is intended.
+- ACSIL kill-switch **not compiled.** P4 (cooldown) and P5 (trade cap) are SELF-POLICED until confirmed live; only P1 (daily loss limit) is externally enforced.
+- Contract size is fixed by rule (5 / 10), not ATR-derived. Stop floats with ATR, so dollar risk rises with volatility — bounded only by P1, the Execution-Parameters #2 stop-band, the $200 campaign cap, and the post-loss size cap. The 10-MNQ S&D on a wide-ATR day is your largest single-trade risk; on days where ATR > 8 points the $200 cap makes a full 10-MNQ entry mathematically impossible. That is intended.
