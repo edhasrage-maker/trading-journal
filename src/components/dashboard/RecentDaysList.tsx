@@ -291,7 +291,11 @@ export default function RecentDaysList({ initialDays }: Props) {
             <tr className="text-xs text-gray-500 border-b border-gray-800">
               <th className="font-normal py-2 pl-2 pr-1 w-8" />
               <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3" />
-              <SortableTh label="Execution" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
+              {/* Abbreviated to "Exec" (was "Execution") so the column fits in
+                  w-20 without expanding and pushing the rightmost PnL column
+                  off-screen on narrower viewports. Tooltip on the column header
+                  spells it out for first-time readers. */}
+              <SortableTh label="Exec" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" titleAttr="Execution composite score (0–10)" />
               {/* v1.3 Process verdict — single 0-10, banded green/red color
                   by verdict per 2026-06-08 amendment (5/7 threshold). The old
                   "Process" column (which actually showed the prep AI score)
@@ -482,6 +486,7 @@ function SortableTh({
   onSort,
   align,
   className,
+  titleAttr,
 }: {
   // Accepts either a plain string or pre-rendered JSX so columns can have
   // multi-line headers (e.g. "MFE Realized %" / "MAE Heat %" stacked).
@@ -492,11 +497,14 @@ function SortableTh({
   onSort: (c: SortColumn) => void
   align: 'left' | 'center' | 'right'
   className?: string
+  /** Hover tooltip — useful when the header label is abbreviated (e.g. "Exec"
+   *  for Execution) and a first-time reader wants the full meaning. */
+  titleAttr?: string
 }) {
   const isActive = current === column
   const alignClass = align === 'left' ? 'text-left' : align === 'right' ? 'text-right' : 'text-center'
   return (
-    <th className={`font-normal py-2 ${alignClass} ${className ?? ''}`}>
+    <th className={`font-normal py-2 ${alignClass} ${className ?? ''}`} title={titleAttr}>
       <button
         type="button"
         onClick={() => onSort(column)}
@@ -568,7 +576,11 @@ function DayRowItem({
               title attribute. */}
           {day.day_types.length > 0 && (
             <span
-              className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap"
+              // max-w + truncate keep long combo chips (e.g. "GBX Reversal,
+              // Double Inside (PD + ON), Medium Mush Market (Indecisive)")
+              // from pushing the Date column wide enough to clip PnL on the
+              // right edge of the table. Full text still on hover.
+              className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap truncate max-w-[200px] inline-block"
               title={day.day_types.join(', ')}
             >
               {day.day_types.join(', ')}
