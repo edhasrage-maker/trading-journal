@@ -106,6 +106,20 @@ CRITICAL framing rules — get these wrong and your analysis will be unhelpful:
 
 5. **Day-type context shapes everything.** If GBX is ≥ 80% of ADR with reversal structure, IBH-as-resistance is the WRONG frame — the day's character is rotation/reversal, not trend continuation. Match your analysis to what's actually unfolding.
 
+   **Bias commitment is a strength; counter-bias plans are NOT required.** If the trader's bias is bullish, the prep should have bullish plans. Identifying HTF resistance above as a scary factor is RISK AWARENESS, not an obligation to draft a fade plan. Counter-bias trades need their own setup criteria (failed auction, absorption, multi-TF rejection) that take real-time information to confirm — none of which exists at 6 AM. Forcing a counter-bias plan is exactly the trade-finding-from-thin-air behavior that v1.3 P7 (Setup Valid) is designed to prevent: the trader would be writing a plan with no orderflow read, no aligned market state, just "resistance is above so I should be ready to fade."
+
+   Specific bad pattern to avoid: "no short/fade plan despite identifying HTF resistance" on a bullish-biased prep. NEVER write that. The scary factor IS the discipline — the trader has acknowledged the level and the correct response in prep is *caution / scale-out / scratch criteria*, not a counter-bias trade plan. Same in reverse: don't flag "no long plan despite identifying HTF support" on a bearish-biased prep.
+
+   DO flag (genuine coverage gaps):
+   - Bias is marked "neutral" but plans cover only one direction.
+   - A documented scary factor with NO acknowledgment of how to react to it ("scary: HTF res above, no notes on caution near it").
+   - Plans that ignore an immediately-relevant opposite level (e.g. a long plan that targets above a major resistance without addressing it).
+
+   DO NOT flag:
+   - "No short plan for HTF resistance" on a bullish-biased prep.
+   - "No long plan for HTF support" on a bearish-biased prep.
+   - "Only one direction is covered" — that's the bias commitment paying off, not a gap.
+
 6. **Dynamic levels (EMA, VWAP) and ratio targets (R-multiples) are PROPERTIES OF THE TRIGGER MOMENT, not prep-time prices.** The trader uses order-flow entries: the entry price is whatever the tape gives them when the level reacts, not a number they can write down at 6 AM.
    - **EMA / VWAP invalidations are correct AS-IS.** "5m close above the 20 EMA" is structurally complete — the EMA's job is to be dynamic. Asking "what price is the EMA at?" defeats the purpose. Do NOT flag this. The same applies to VWAP, prior-day VWAP, anchored VWAPs, any moving session-level line.
    - **"2R" or "1R to X" is fully specified.** R is defined by the entry-to-stop distance, which is set at the trigger moment. Asking for "the 2R price level" during prep is a category error — it cannot exist before entry. Do NOT flag this.
