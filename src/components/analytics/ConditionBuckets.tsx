@@ -5,6 +5,16 @@ import { ChevronDown } from 'lucide-react'
 import BarChart from '@/components/charts/BarChart'
 import { bucketByNumeric, type TradeWithContext, type Bucket } from '@/lib/analytics'
 
+/**
+ * Historical (imported) trades have no market context — Tradezella doesn't
+ * export RVol/IB/ADR/ATR — so they'd all dump into the "Unknown" bucket and
+ * make every condition chart look 50% useless. histToContext flags them with
+ * an empty `trading_day_id`; native trades always have a UUID.
+ */
+function hasMarketContext(t: TradeWithContext): boolean {
+  return t.trading_day_id !== ''
+}
+
 interface ConditionDef {
   key: 'rvol' | 'ib_vs_10d_avg' | 'ib_size' | 'adr' | 'atr_1m'
   title: string
@@ -13,13 +23,18 @@ interface ConditionDef {
   format: (n: number) => string
 }
 
+// Bucket boundaries are scale-of-the-data, NOT one-size-fits-all. NQ/MNQ
+// values are larger than ES; the original breaks were sized for ES and
+// dumped every trade into the top bucket. Rvol is stored as PERCENT
+// (100 = average) per the live market_context data, so the breaks are on
+// the percent scale — not the ratio scale.
 const CONDITIONS: ConditionDef[] = [
   {
     key: 'rvol',
     title: 'Relative Volume',
-    description: '1.0 = average. Higher Rvol = more activity than typical.',
-    breaks: [0.7, 1.0, 1.5, 2.0],
-    format: n => n.toFixed(2),
+    description: '100 = average. Higher Rvol = more activity than typical.',
+    breaks: [70, 100, 130, 180],
+    format: n => `${n.toFixed(0)}%`,
   },
   {
     key: 'ib_vs_10d_avg',
@@ -32,14 +47,14 @@ const CONDITIONS: ConditionDef[] = [
     key: 'ib_size',
     title: 'IB Size (points)',
     description: 'Initial Balance range in raw points.',
-    breaks: [30, 50, 80, 120],
+    breaks: [150, 250, 350, 500],
     format: n => n.toFixed(0),
   },
   {
     key: 'adr',
     title: 'Average Daily Range',
     description: 'ADR in points (RTH).',
-    breaks: [80, 120, 180],
+    breaks: [250, 320, 400, 500],
     format: n => n.toFixed(0),
   },
   {
@@ -57,6 +72,8 @@ interface Props {
 
 export default function ConditionBuckets({ trades }: Props) {
   const [open, setOpen] = useState(true)
+  const scopedTrades = useMemo(() => trades.filter(hasMarketContext), [trades])
+  const excluded = trades.length - scopedTrades.length
   return (
     <section>
       <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left mb-3">
@@ -64,7 +81,12 @@ export default function ConditionBuckets({ trades }: Props) {
         <div>
           <h2 className="font-semibold text-white">Performance by Market Condition</h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            How your trades performed across different market regimes — {trades.length} trade{trades.length === 1 ? '' : 's'} in window
+            How your trades performed across different market regimes — {scopedTrades.length} trade{scopedTrades.length === 1 ? '' : 's'} in window
+            {excluded > 0 && (
+              <span className="text-gray-600">
+                {' · '}{excluded} historical excluded (no market data)
+              </span>
+            )}
           </p>
         </div>
       </button>
@@ -72,7 +94,7 @@ export default function ConditionBuckets({ trades }: Props) {
       {open && (
         <div className="grid gap-4 lg:grid-cols-2">
           {CONDITIONS.map(c => (
-            <ConditionCard key={c.key} cond={c} trades={trades} />
+            <ConditionCard key={c.key} cond={c} trades={scopedTrades} />
           ))}
         </div>
       )}

@@ -1,12 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
 import AnalyticsClient from '@/components/analytics/AnalyticsClient'
 import { joinTradesWithContext, type TradeWithContext } from '@/lib/analytics'
-import type { TradingDay, Trade, MarketContext } from '@/lib/supabase/types'
+import { normalizeTagArray, type TradingDay, type Trade, type MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
-type DayRow = Pick<TradingDay, 'id' | 'date' | 'day_type' | 'eod_pnl' | 'ai_analysis_json'>
+type DayRow = Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types' | 'eod_pnl' | 'ai_analysis_json'>
 type ContextRow = Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>
 
 interface HistRow {
@@ -28,13 +28,26 @@ interface HistRow {
  * recorded realized RR so Avg R includes these trades too (rMultiple =
  * pnl / (|entry-stop|*qty) == realized_rr by construction).
  */
-function histToContext(h: HistRow): TradeWithContext {
+/** Per-date market_context lookup so historical trades on dates that have
+ *  a `trading_days` + `market_context` row (either AI-extracted from a prep
+ *  screenshot, or backfilled from a 1m CSV) get bucketed correctly instead
+ *  of falling into the Unknown bin. */
+type ContextByDate = Map<string, Pick<ContextRow, 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>>
+
+function histToContext(h: HistRow, ctxByDate: ContextByDate): TradeWithContext {
   const entry = h.entry_price, qty = h.quantity, pnl = h.net_pnl, rr = h.realized_rr
   let stop: number | null = null
   if (entry != null && qty && pnl != null && rr != null && rr !== 0) {
     const dist = Math.abs(pnl / (rr * qty))
     if (Number.isFinite(dist) && dist > 0) stop = h.side === 'short' ? entry + dist : entry - dist
   }
+  // Historical trades may store day_type as a string (legacy Tradezella) or
+  // as an array (post-migration). Normalize so combo days surface every tag.
+  const dayTypes = normalizeTagArray(h.tags_json?.day_type)
+  // Inherit any market_context that exists for this date — Tradezella doesn't
+  // export RVol/IB/ADR/ATR, but if the user later logged a prep on the same
+  // date OR ran the CSV-driven backfill, those fields are available here.
+  const ctx = h.trade_date ? ctxByDate.get(h.trade_date) : undefined
   return {
     id: h.id,
     pnl,
@@ -53,9 +66,19 @@ function histToContext(h: HistRow): TradeWithContext {
     // real symbol here would scale R by 1/multiplier and break parity with
     // realized_rr.
     symbol: null,
+    // Tradezella has no excursion fields — MFE/MAE math will null-out
+    // gracefully for these trades, the same way it does for any native
+    // trade that wasn't imported from a SC log with HighDuringPosition.
+    high_during_position: null,
+    low_during_position: null,
     date: h.trade_date ?? '',
-    day_type: (h.tags_json?.day_type as string) ?? null,
-    rvol: null, ib_size: null, ib_vs_10d_avg: null, adr: null, atr_1m: null,
+    day_type: dayTypes[0] ?? null,
+    day_types: dayTypes,
+    rvol: ctx?.rvol ?? null,
+    ib_size: ctx?.ib_size ?? null,
+    ib_vs_10d_avg: ctx?.ib_vs_10d_avg ?? null,
+    adr: ctx?.adr ?? null,
+    atr_1m: ctx?.atr_1m ?? null,
   }
 }
 
@@ -65,7 +88,7 @@ export default async function AnalyticsPage() {
   const [{ data: daysRaw }, { data: contextsRaw }] = await Promise.all([
     supabase
       .from('trading_days')
-      .select('id, date, day_type, eod_pnl, ai_analysis_json') as Promise<{ data: DayRow[] | null }>,
+      .select('id, date, day_type, day_types, eod_pnl, ai_analysis_json') as Promise<{ data: DayRow[] | null }>,
     supabase
       .from('market_context')
       .select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m') as Promise<{ data: ContextRow[] | null }>,
@@ -80,7 +103,7 @@ export default async function AnalyticsPage() {
   for (let p = 0; p < 50; p++) {
     const { data, error } = await supabase
       .from('trades')
-      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id')
+      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position')
       .order('entry_time', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -108,8 +131,17 @@ export default async function AnalyticsPage() {
 
   const days = daysRaw ?? []
   const contexts = contextsRaw ?? []
+  // Build a date→context map so historical (Tradezella) trades can inherit
+  // market_context populated by either the prep screenshot AI or the
+  // CSV-driven backfill — without it they all fall into the Unknown bucket.
+  const dayDateById = new Map(days.map(d => [d.id, d.date]))
+  const ctxByDate: ContextByDate = new Map()
+  for (const c of contexts) {
+    const date = dayDateById.get(c.trading_day_id)
+    if (date) ctxByDate.set(date, c)
+  }
   const joined = joinTradesWithContext(trades, days, contexts)
-  const merged = [...joined, ...hist.map(histToContext)]
+  const merged = [...joined, ...hist.map(h => histToContext(h, ctxByDate))]
 
   // Earliest date across native days + historical trades, so "All" covers both.
   const allDates = [...days.map(d => d.date), ...hist.map(h => h.trade_date).filter((d): d is string => !!d)].sort()

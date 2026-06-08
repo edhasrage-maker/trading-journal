@@ -209,8 +209,8 @@ function ThemeCard({ theme }: { theme: EnrichedTheme }) {
           </span>
         )}
         {theme.avg_process_score != null && (
-          <span className={`px-1.5 py-0.5 rounded ${theme.avg_process_score >= 7 ? 'bg-green-950/40 text-green-300' : theme.avg_process_score >= 5 ? 'bg-yellow-950/40 text-yellow-300' : 'bg-red-950/40 text-red-300'}`} title="Average process_score on days where this theme was quoted">
-            process {theme.avg_process_score.toFixed(1)}
+          <span className={`px-1.5 py-0.5 rounded ${theme.avg_process_score >= 7 ? 'bg-green-950/40 text-green-300' : theme.avg_process_score >= 5 ? 'bg-yellow-950/40 text-yellow-300' : 'bg-red-950/40 text-red-300'}`} title="Average prep-quality score on days where this theme was quoted">
+            prep {theme.avg_process_score.toFixed(1)}
           </span>
         )}
       </div>

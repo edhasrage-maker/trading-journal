@@ -1,16 +1,27 @@
 import { createClient } from '@/lib/supabase/server'
-import TagMergeClient from '@/components/settings/TagMergeClient'
-import { normalizeTagArray, type TagCategory, type TradeTag } from '@/lib/supabase/types'
+import { NextResponse } from 'next/server'
+import type { TagCategory } from '@/lib/supabase/types'
+import { normalizeTagArray } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
+
+/**
+ * Per-tag usage counts across native `trades` + imported `historical_trades`.
+ * Returns `{ usage: { "category|label": count } }` — the merge UI joins this
+ * with the tag library to show "Used by N trades" beside each chip.
+ *
+ * Counts are exact (full paginated scan); cheap enough that we don't bother
+ * caching. ~5k rows × <10 categories × O(small array) per row finishes in
+ * well under a second.
+ */
 
 const PAGE = 1000
 const CATEGORIES: TagCategory[] = [
   'setups', 'confluences', 'order_flow', 'trade_management', 'day_type', 'mistakes', 'emotions',
 ]
 
-async function tallyUsage(
+async function tallyTable(
   supabase: AnyClient,
   table: 'trades' | 'historical_trades',
   counts: Map<string, number>,
@@ -21,7 +32,7 @@ async function tallyUsage(
       .select('id, tags_json')
       .order('id', { ascending: true })
       .range(page * PAGE, page * PAGE + PAGE - 1)
-    if (error) throw new Error(`${table}: ${error.message}`)
+    if (error) throw new Error(`${table} usage scan: ${error.message}`)
     const rows = (data ?? []) as { tags_json: Record<string, unknown> | null }[]
     for (const r of rows) {
       const tj = r.tags_json ?? {}
@@ -37,32 +48,20 @@ async function tallyUsage(
   }
 }
 
-export default async function TagsSettingsPage() {
+export async function GET() {
   const supabase: AnyClient = await createClient()
-
-  const { data: tagsRaw } = await supabase
-    .from('trade_tags')
-    .select('*')
-    .order('category', { ascending: true })
-    .order('sort_order', { ascending: true }) as { data: TradeTag[] | null }
-  const tags = tagsRaw ?? []
-
   const counts = new Map<string, number>()
-  await tallyUsage(supabase, 'trades', counts)
-  await tallyUsage(supabase, 'historical_trades', counts)
+  try {
+    await tallyTable(supabase, 'trades', counts)
+    await tallyTable(supabase, 'historical_trades', counts)
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : 'Tally failed' },
+      { status: 500 },
+    )
+  }
+
   const usage: Record<string, number> = {}
   for (const [k, v] of counts) usage[k] = v
-
-  return (
-    <div className="max-w-4xl mx-auto">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Tag Management</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Merge near-duplicate tags so analytics groups them correctly. The merge
-          rewrites every native + imported trade that uses the old tag.
-        </p>
-      </header>
-      <TagMergeClient tags={tags} usage={usage} />
-    </div>
-  )
+  return NextResponse.json({ usage })
 }

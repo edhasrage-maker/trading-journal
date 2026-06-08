@@ -16,10 +16,13 @@ export type TradeWithExcursion = TradeLike & Pick<Trade,
   'high_during_position' | 'low_during_position' | 'symbol'
 >
 
-/** Trade with trading_day + market_context fields flattened in for easy filtering. */
-export interface TradeWithContext extends TradeLike {
+/** Trade with trading_day + market_context fields flattened in for easy filtering.
+ *  Extends TradeWithExcursion (not just TradeLike) so MFE/MAE math has the
+ *  high_during_position / low_during_position fields available. */
+export interface TradeWithContext extends TradeWithExcursion {
   date: string
-  day_type: string | null
+  day_type: string | null    // Legacy single-tag — kept for un-migrated callers
+  day_types: string[]        // Multi-select. Combo days surface every tag here.
   rvol: number | null
   ib_size: number | null
   ib_vs_10d_avg: number | null
@@ -324,13 +327,21 @@ export function aggregateByTag(trades: TradeLike[], category: TagCategoryKey): T
   return out.sort((a, b) => b.stats.total_pnl - a.stats.total_pnl)
 }
 
-/** Day-type aggregation (single-string field, lives at the trade or trading_day level). */
+/** Day-type aggregation — combo days count under EACH tag in `day_types[]`.
+ *  Per design call: a trade on a "Trend + IB Hold" day contributes to BOTH
+ *  the Trend and the IB Hold buckets independently (so the sum across buckets
+ *  exceeds the trade count, by construction — that's intentional). */
 export function aggregateByDayType(trades: TradeWithContext[]): TagPerf[] {
   const buckets = new Map<string, TradeLike[]>()
   for (const t of trades) {
-    const dt = (t.day_type ?? '').trim() || 'Untagged'
-    if (!buckets.has(dt)) buckets.set(dt, [])
-    buckets.get(dt)!.push(t)
+    const types = t.day_types.length > 0
+      ? t.day_types
+      : (t.day_type ? [t.day_type] : ['Untagged'])
+    for (const raw of types) {
+      const label = raw.trim() || 'Untagged'
+      if (!buckets.has(label)) buckets.set(label, [])
+      buckets.get(label)!.push(t)
+    }
   }
   return Array.from(buckets, ([label, ts]) => ({ label, stats: computeStats(ts) }))
     .sort((a, b) => b.stats.total_pnl - a.stats.total_pnl)
@@ -516,10 +527,13 @@ export function maxDrawdown(points: { cum_pnl: number }[]): number {
   return maxDD
 }
 
-/** Join trades with day + market_context, returning a flat shape for filtering. */
+/** Join trades with day + market_context, returning a flat shape for filtering.
+ *  Trades MUST carry high_during_position / low_during_position (they're
+ *  required on TradeWithExcursion, the supertype of TradeWithContext) — the
+ *  analytics page is responsible for selecting them from the DB. */
 export function joinTradesWithContext(
-  trades: TradeLike[],
-  days: Pick<TradingDay, 'id' | 'date' | 'day_type'>[],
+  trades: TradeWithExcursion[],
+  days: Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types'>[],
   contexts: Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>[],
 ): TradeWithContext[] {
   const dayById = new Map(days.map(d => [d.id, d]))
@@ -527,10 +541,14 @@ export function joinTradesWithContext(
   return trades.map(t => {
     const d = dayById.get(t.trading_day_id)
     const c = ctxByDay.get(t.trading_day_id)
+    const types = (d?.day_types && d.day_types.length > 0)
+      ? d.day_types
+      : (d?.day_type ? [d.day_type] : [])
     return {
       ...t,
       date: d?.date ?? '',
       day_type: d?.day_type ?? null,
+      day_types: types,
       rvol: c?.rvol ?? null,
       ib_size: c?.ib_size ?? null,
       ib_vs_10d_avg: c?.ib_vs_10d_avg ?? null,

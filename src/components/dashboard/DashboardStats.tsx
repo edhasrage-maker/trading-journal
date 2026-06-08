@@ -278,7 +278,7 @@ export default function DashboardStats({ days }: Props) {
           valueClass="text-base"
         />
         <StatCard
-          label="Median Process"
+          label="Median Prep"
           value={stats.medianProcess == null ? '—' : `${stats.medianProcess.toFixed(1)}/10`}
           tone={
             stats.medianProcess == null

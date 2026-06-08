@@ -242,21 +242,26 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
 
   return (
     <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left">
-        <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
-        <div className="flex-1">
-          <h2 className="font-semibold text-white">Period Comparison</h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Side-by-side P&L, win rates, and process scores. Delta chips show
-            change vs. the next-older period.
-          </p>
-        </div>
-        {/* Granularity toggle stays clickable independent of the collapse
-            chevron — stopPropagation so clicking it doesn't toggle open. */}
-        <div
-          className="flex bg-gray-800 border border-gray-700 rounded-md overflow-hidden text-xs"
-          onClick={e => e.stopPropagation()}
+      {/* Header row: collapse-button + title on the left, granularity toggle
+          on the right. They're SIBLINGS — earlier they were nested (the
+          granularity buttons lived inside the collapse <button>), which is
+          invalid HTML and broke hydration. */}
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          className="flex-1 flex items-start gap-2 text-left"
         >
+          <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+          <div>
+            <h2 className="font-semibold text-white">Period Comparison</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Side-by-side P&L, win rates, and process scores. Delta chips show
+              change vs. the next-older period.
+            </p>
+          </div>
+        </button>
+        <div className="flex bg-gray-800 border border-gray-700 rounded-md overflow-hidden text-xs shrink-0">
           {(['week', 'month'] as Granularity[]).map(g => (
             <button
               key={g}
@@ -270,7 +275,7 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
             </button>
           ))}
         </div>
-      </button>
+      </div>
 
       {open && (
         <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -281,7 +286,7 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
                 <th className="text-right font-normal py-2 pr-3 whitespace-nowrap">P&L</th>
                 <th className="text-right font-normal py-2 pr-3 whitespace-nowrap">Trade Win %</th>
                 <th className="text-right font-normal py-2 pr-3 whitespace-nowrap">Day Win %</th>
-                <th className="text-right font-normal py-2 pr-3 whitespace-nowrap">Median Process</th>
+                <th className="text-right font-normal py-2 pr-3 whitespace-nowrap">Median Prep</th>
                 <th className="text-right font-normal py-2 pr-3 whitespace-nowrap">Trades</th>
                 <th className="text-right font-normal py-2 pr-3 whitespace-nowrap">Days</th>
               </tr>

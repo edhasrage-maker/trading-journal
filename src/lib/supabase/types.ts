@@ -307,14 +307,73 @@ export interface ChartCalibration {
   calibrated_at: string
 }
 
+/**
+ * EOD AI analysis output.
+ *
+ * v1.3 split: under the new ruleset, the EOD AI produces TWO orthogonal
+ * verdicts in addition to the qualitative analysis:
+ *
+ *   - `process`: binary per-rule verdict (Compliant vs Breach). Any one
+ *     breach = Breach for the session. Magnitude doesn't matter; PnL
+ *     doesn't override; no averaging.
+ *   - `execution`: continuous diagnostic score (0..1 weighted composite)
+ *     computed ONLY over compliant trades. Never blended with process.
+ *
+ * `score` is kept for backward compatibility with rows analyzed before
+ * v1.3 landed (2026-06-08). New analyses populate `process` + `execution`
+ * instead; UI prefers those when present, falls back to `score`.
+ */
 export interface EodAiAnalysis {
   summary?: string
   what_worked?: string[]
   mistakes?: string[]
   patterns?: string[]
   next_session_focus?: string[]
-  score?: number
+  score?: number          // Deprecated post-v1.3. Kept for legacy rows.
   analyzed_at?: string
+  process?: ProcessVerdict
+  execution?: ExecutionScore
+}
+
+export type RuleId = 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7'
+
+export interface RuleStatus {
+  /** 'pass' = compliant. 'fail' = breached. 'incomplete' = data missing.
+   *  Per v1.3, P1-P6 incomplete = Breach (safety rails); P7 incomplete =
+   *  data-completeness flag, NOT auto-breach. */
+  status: 'pass' | 'fail' | 'incomplete'
+  /** For per-trade rules (P2/P3/P4/P5/P7), count of trades that breached.
+   *  For session-level rules (P1/P6), 1 = breached, 0 = passed. */
+  breach_count: number
+  /** Brief AI-written explanation for fail/incomplete. Empty on pass. */
+  reason?: string
+}
+
+export interface ProcessVerdict {
+  /** Compliant only if ALL of P1..P7 are pass (with P7 incomplete tolerated
+   *  per the spec). */
+  verdict: 'Compliant' | 'Breach'
+  per_rule: Record<RuleId, RuleStatus>
+  /** Convenience copy of breach_count per rule. e.g. { P2: 1, P3: 0, ... } */
+  breach_count_vector: Record<RuleId, number>
+  /** Freeform AI reasoning on the overall verdict. */
+  notes?: string
+}
+
+export interface ExecutionScore {
+  /** Each sub-metric is 0..1 (higher = better) or null if not computable.
+   *  Per v1.3 weights: duration 35%, MFE capture 30%, MAE heat 20%, RR 15%. */
+  duration_to_thesis: number | null
+  mfe_capture: number | null
+  mae_heat: number | null
+  planned_vs_realized_rr: number | null
+  /** Weighted composite of the four sub-metrics. Null if all inputs are null. */
+  composite: number | null
+  /** Number of COMPLIANT trades the execution score was computed across.
+   *  v1.3: execution never includes breach trades. */
+  compliant_trade_count: number
+  /** AI commentary on execution quality — not a verdict, just diagnostic. */
+  notes?: string
 }
 
 // ============================================================
