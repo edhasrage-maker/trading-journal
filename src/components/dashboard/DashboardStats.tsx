@@ -243,7 +243,15 @@ export default function DashboardStats({ days }: Props) {
       <div className="grid grid-cols-5 gap-4">
         <StatCard
           label={`${PERIOD_LABELS[period]} P&L`}
-          value={`$${stats.pnl >= 0 ? '+' : ''}${stats.pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+          value={(() => {
+            // Sign before the dollar: "+$1,395" / "-$1,395" / "$0".
+            // Previously was "$+1,395" — the sign-after-currency reads as
+            // a typo on first scan.
+            const abs = Math.abs(stats.pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })
+            if (stats.pnl > 0) return `+$${abs}`
+            if (stats.pnl < 0) return `-$${abs}`
+            return '$0'
+          })()}
           tone={stats.pnl > 0 ? 'positive' : stats.pnl < 0 ? 'negative' : 'neutral'}
           sub={`${stats.tradedDaysCount} trading day${stats.tradedDaysCount === 1 ? '' : 's'}`}
         />
