@@ -162,6 +162,34 @@ You are scoring against the v1.3 spec above. Two orthogonal layers — never com
   dashboard regardless of the session verdict — relaxing the threshold doesn't
   hide which rule failed. P&L does not override.
 
+**P7 (Setup Valid) — common misclassification to avoid:**
+P7 is binary and measures ONLY two things per §DEFINITIONS:
+  (a) an orderflow read is logged for the trade, AND
+  (b) the trade side aligns with one of the listed market states: accepted
+      break, failed auction, trend pullback, balance-edge response, HTF
+      zone response, LVN rejection.
+
+If BOTH are true → P7 pass. Stop there.
+
+DO NOT mark P7 fail for any of the following — these are executional or
+adherence judgments and belong in OTHER metrics:
+  • "The LTF microstructure was sketchy at entry" → MFE capture / MAE heat
+    (executional read on entry timing, not setup validity).
+  • "The trade was off-plan" or "didn't match a documented prep plan" →
+    prep_adherence (Execution sub-metric, 20% weight).
+  • "Lower-high formed before entry / structural concern noted but trader
+    overrode" → MAE heat / execution notes. The setup TYPE was still valid
+    if it met (a) and (b); the override decision is executional quality.
+  • "The trade lost money" or "MFE was small" → outcome bias. P&L does not
+    define P7. A losing S&D long at a balance-edge response with logged OF
+    is still a P7 pass.
+
+P7 should fail only when (a) NO orderflow read was logged OR (b) the trade
+side has NO alignment with any of the listed market states (e.g. random
+mid-range entry with no structural context). "A touch of a level alone is
+not valid context" per the spec — that IS a P7 fail. But that's a
+structural absence, not an executional misjudgment.
+
 **Execution layer (continuous, diagnostic, compliant trades only):**
 - Score each sub-metric on 0..1 (higher = better):
     - duration_to_thesis (weight 25%): did the trade reach its thesis in
