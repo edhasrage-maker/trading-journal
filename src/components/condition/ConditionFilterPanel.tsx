@@ -18,6 +18,12 @@ import type { ConditionMetric, ConditionVerdict, DailyPrep } from '@/lib/supabas
  * Morning prep condition filter — input 5 metrics, get a verdict, save the snapshot.
  */
 
+// METRICS was the input-grid definition that fed the (now-removed) per-field
+// inputs at the top of the panel. All four metrics auto-fill from Market
+// Context now (DR_ADR moved to the Volatility row in MarketContextForm
+// 2026-06-08), so the array was kept here only for reference but isn't read.
+// Suppressed-unused-vars since the names + hints are useful documentation.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const METRICS: Array<{
   metric: ConditionMetric
   field: 'rvol' | 'dr_adr' | 'ib' | 'atr_730' | 'atr_entry'
@@ -25,22 +31,20 @@ const METRICS: Array<{
   placeholder: string
   hint: string
 }> = [
-  { metric: 'RVOL', field: 'rvol', label: 'RVOL @ 7:30 PT', placeholder: '1.05', hint: 'Today\'s 6:30-7:30 volume / 10d avg of same window' },
-  { metric: 'DR_ADR', field: 'dr_adr', label: 'DR vs ADR @ 7:30 PT', placeholder: '0.60', hint: '(High-Low since 6:30) / 10d avg cash session range' },
-  { metric: 'IB', field: 'ib', label: 'IB vs 10d Avg', placeholder: '0.93', hint: '(IBH-IBL) / 10d avg IB range; IB = 6:30-7:30 PT' },
-  { metric: 'ATR_730', field: 'atr_730', label: 'ATR-10 (1m) @ 7:30', placeholder: '18.0', hint: '1-min ATR-10 Wilder, read at 7:30 PT' },
+  { metric: 'RVOL', field: 'rvol', label: 'RVOL', placeholder: '1.05', hint: 'Today\'s 6:30-7:30 volume / 10d avg of same window' },
+  { metric: 'DR_ADR', field: 'dr_adr', label: 'DR vs ADR', placeholder: '0.60', hint: '(High-Low since 6:30) / 10d avg cash session range' },
+  { metric: 'IB', field: 'ib', label: 'IB vs 10d Avg', placeholder: '0.93', hint: '(IBH-IBL) / 10d avg IB range' },
+  { metric: 'ATR_730', field: 'atr_730', label: 'ATR-10 (1m)', placeholder: '18.0', hint: '1-min ATR-10 Wilder' },
   // ATR_entry retired: the live per-trade ATR-10 (added in a9f6161) renders
   // the manual-entry field obsolete. Kept the lookup-side bucket inert by
   // dropping the metric from this list — outcome.buckets no longer includes
   // it, so the pill row doesn't render the empty ATR_ENTRY chip.
 ]
 
-// The bottom pill row + the bucket lookup still need values for these four
-// metrics. The TOP-row INPUT grid only renders DR_ADR explicitly — the other
-// three (RVOL, IB, ATR_730) auto-fill from Market Context above, which the
-// effectiveInputs fallback below funnels into the lookup. So the user only
-// types DR_ADR here; the rest flow automatically.
-const VISIBLE_INPUTS: ReadonlyArray<typeof METRICS[number]['field']> = ['dr_adr']
+// All four metrics (RVOL, DR_ADR, IB, ATR_730) auto-fill from Market Context
+// now — DR_ADR moved into the Volatility Metrics row in MarketContextForm
+// (2026-06-08). The panel no longer renders any input grid; it just renders
+// the bucket pills + verdict + matched card from the looked-up values.
 
 interface VintageInfo {
   refreshed_at: string | null
@@ -79,9 +83,6 @@ interface Props {
 
 const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '', atr_entry: '' }
 
-// Set of fields that are auto-fillable from Market Context (used for visual hint)
-const PREFILL_FIELDS: Array<keyof InputState> = ['rvol', 'ib', 'atr_730', 'dr_adr']
-
 export default function ConditionFilterPanel({ date, marketContext }: Props) {
   const [inputs, setInputs] = useState<InputState>(EMPTY)
   const [outcome, setOutcome] = useState<LookupResponse | null>(null)
@@ -112,9 +113,6 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
     atr_730: inputs.atr_730 || fromContext(marketContext?.atr_1m),
     atr_entry: inputs.atr_entry,
   }
-  const isAutoFilled = (field: keyof InputState): boolean =>
-    PREFILL_FIELDS.includes(field) && inputs[field] === '' && effectiveInputs[field] !== ''
-
   // ── Load existing prep + run initial lookup on mount ──────────────────────
   useEffect(() => {
     let cancelled = false
@@ -314,42 +312,12 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
           </div>
         )}
 
-        {/* Input grid — only DR_ADR is exposed here. RVOL/IB/ATR_730 auto-fill
-            from Market Context above and flow through `effectiveInputs` to the
-            lookup; the bucket pills below display their results. Showing the
-            inputs as well was just duplicate UI for the user to maintain. */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-sm">
-          {METRICS.filter(m => VISIBLE_INPUTS.includes(m.field)).map(m => {
-            const isPrefillField = PREFILL_FIELDS.includes(m.field)
-            const auto = isAutoFilled(m.field)
-            return (
-              <div key={m.field}>
-                <label className="block text-xs font-medium text-gray-400 mb-1 flex items-center gap-1" title={m.hint}>
-                  {m.label}
-                  {auto && (
-                    <span
-                      className="text-[9px] bg-blue-900/40 border border-blue-800 text-blue-300 px-1 rounded normal-case"
-                      title="Auto-filled from Market Context below. Type to override."
-                    >
-                      ↳ auto
-                    </span>
-                  )}
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  inputMode="decimal"
-                  placeholder={isPrefillField ? `${m.placeholder} · auto-fills from Market Context` : m.placeholder}
-                  value={effectiveInputs[m.field]}
-                  onChange={e => setInputs(s => ({ ...s, [m.field]: e.target.value }))}
-                  className={`w-full bg-gray-950 border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-blue-500 font-mono ${
-                    auto ? 'border-blue-900/60' : 'border-gray-700'
-                  }`}
-                />
-              </div>
-            )
-          })}
-        </div>
+        {/* DR_ADR manual-input removed from here 2026-06-08 — it now lives
+            in the Market Context Volatility Metrics row below as the 4th
+            input alongside Rvol/ADR/ATR-10. The dr_adr ratio is derived in
+            PrepClient from context.day_range / context.adr (set when the
+            new input writes back), and ConditionFilterPanel reads it via
+            marketContext.dr_adr same as before. */}
 
         {/* Bucket readout */}
         {outcome && (
@@ -447,6 +415,24 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** DR_ADR and IB are stored/computed as ratios (0.82, 0.99). They read
+ *  naturally as percentages, so format them that way for display. RVOL is
+ *  already in percent (100 = average). ATR_730 is raw points. */
+function formatMetricValue(metric: string, value: number | null | undefined): string {
+  if (value == null) return '—'
+  switch (metric) {
+    case 'DR_ADR':
+    case 'IB':
+      return `${Math.round(value * 100)}%`
+    case 'RVOL':
+      return `${Math.round(value)}%`
+    case 'ATR_730':
+      return value.toFixed(2)
+    default:
+      return String(value)
+  }
+}
+
 function BucketReadout({ buckets }: { buckets: BucketAssignment[] }) {
   // ATR_entry bucket is no longer surfaced — the live per-trade ATR-10 (a9f6161)
   // replaced the manual-entry input it depended on. Filter it out here rather
@@ -457,15 +443,13 @@ function BucketReadout({ buckets }: { buckets: BucketAssignment[] }) {
       {visible.map(b => (
         <div key={b.metric} className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
           <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">{b.metric}</div>
-          <div className="font-mono text-sm text-white">{b.value ?? <span className="text-gray-700">—</span>}</div>
-          <div className="flex gap-1.5 mt-1 text-[10px] font-mono">
-            <span className={`px-1.5 py-0.5 rounded ${bucketTone(b.median_bucket)}`}>
-              med: {b.median_bucket ?? '—'}
-            </span>
-            <span className={`px-1.5 py-0.5 rounded ${tertileTone(b.tertile_bucket)}`}>
-              ter: {b.tertile_bucket ?? '—'}
-            </span>
+          <div className="font-mono text-lg text-white">
+            {formatMetricValue(b.metric, b.value)}
           </div>
+          {/* med: / ter: bucket chips removed — they were internal-shorthand
+              that didn't add value to the trader's read. The card just shows
+              the metric + formatted value now. The classification still drives
+              the verdict above and the picked-view card below. */}
         </div>
       ))}
     </div>
@@ -612,7 +596,7 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
           <button onClick={onClose} className="text-gray-500 hover:text-white">✕</button>
         </div>
         <div className="text-sm text-gray-300 space-y-3">
-          <p>Input today&apos;s 5 market-state metrics, computed at 7:30 AM PT (end of NY Initial Balance). The lookup table tells you whether your historical edge in similar market conditions is positive, negative, or noise.</p>
+          <p>Today&apos;s market-state metrics (RVOL, DR vs ADR, IB, ATR-10), computed at the end of the Initial Balance. The lookup table tells you whether your historical edge in similar market conditions is positive, negative, or noise.</p>
 
           <div>
             <div className="font-semibold text-white text-sm mb-1">Grades</div>
@@ -652,15 +636,6 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
 // Style helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function bucketTone(b: 'LOW' | 'HIGH' | null): string {
-  if (b === 'LOW') return 'bg-blue-900/50 text-blue-200 border border-blue-800'
-  if (b === 'HIGH') return 'bg-amber-900/50 text-amber-200 border border-amber-800'
-  return 'bg-gray-900 text-gray-600 border border-gray-800'
-}
-
-function tertileTone(b: 'L' | 'M' | 'H' | null): string {
-  if (b === 'L') return 'bg-blue-900/50 text-blue-200 border border-blue-800'
-  if (b === 'M') return 'bg-gray-700 text-gray-200 border border-gray-600'
-  if (b === 'H') return 'bg-amber-900/50 text-amber-200 border border-amber-800'
-  return 'bg-gray-900 text-gray-600 border border-gray-800'
-}
+// bucketTone / tertileTone removed 2026-06-08 — they styled the med:/ter:
+// chips on each metric card, which were dropped from BucketReadout as
+// internal-shorthand that didn't add value to the trader's read.

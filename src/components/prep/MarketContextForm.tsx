@@ -1,5 +1,7 @@
 'use client'
 
+import { useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import type { MarketContext } from '@/lib/supabase/types'
 
 type ContextFields = Omit<MarketContext, 'id' | 'trading_day_id' | 'stat_performance_json' | 'created_at'>
@@ -41,12 +43,69 @@ function NumInput({ label, hint, value, onChange }: { label: string; hint?: stri
   )
 }
 
+/**
+ * DR_ADR input — accepts the ratio (e.g. 0.82) or a percent (82 → 0.82).
+ * The displayed placeholder + suffix make the percent interpretation
+ * obvious. Persists as `day_range = ratio × adr` so the Morning Conditions
+ * panel + condition lookup keep working off the same field they already
+ * read. Requires ADR to be set first — disabled with a hint otherwise.
+ */
+function DrAdrInput({
+  dayRange, adr, onChange,
+}: {
+  dayRange: number | null | undefined
+  adr: number | null | undefined
+  onChange: (ratio: number | null) => void
+}) {
+  const adrNum = adr == null ? null : Number(adr)
+  const adrUsable = adrNum != null && adrNum > 0
+  const currentRatio = adrUsable && dayRange != null ? Number(dayRange) / adrNum : null
+  const display = currentRatio == null ? '' : currentRatio.toFixed(2)
+  const placeholder = adrUsable ? '0.82  ·  shown as 82%' : 'set ADR first'
+
+  const onInput = (raw: string) => {
+    if (raw === '') { onChange(null); return }
+    let n = parseFloat(raw)
+    if (!Number.isFinite(n)) return
+    // Tolerate the user typing "82" when they meant 0.82 — anything > 5 is
+    // assumed to be a percent, divide by 100. Below 5, treat as ratio.
+    if (n > 5) n = n / 100
+    onChange(n)
+  }
+
+  return (
+    <div>
+      <label className="block text-xs text-gray-400 mb-1" title="(Day's high − low since 6:30 PT) / ADR">
+        DR_ADR
+      </label>
+      <input
+        type="number"
+        step="any"
+        placeholder={placeholder}
+        value={display}
+        disabled={!adrUsable}
+        onChange={e => onInput(e.target.value)}
+        className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+      />
+    </div>
+  )
+}
+
 export default function MarketContextForm({ value, onChange }: Props) {
   // Bad/Mid/Good per-metric flags + the metric-buckets fetch that fed
   // them used to live here — both removed 2026-06-08 as part of
   // consolidating with the Morning Conditions panel below. If you need
   // historical-bucket classification, that panel does it (with median +
   // tertile views, multi-metric verdict, override dropdown).
+
+  // Volatility Metrics is collapsible — the section is informational and
+  // takes vertical space the trader doesn't need to see once values are
+  // entered. Default OPEN on days where any volatility value is empty so
+  // the trader sees what's missing; default COLLAPSED when fully filled.
+  const allVolFilled =
+    value.rvol != null && value.adr != null && value.atr_1m != null &&
+    value.day_range != null
+  const [volOpen, setVolOpen] = useState(!allVolFilled)
 
   const set = (key: keyof ContextFields, raw: string) => {
     const num = parseFloat(raw)
@@ -166,20 +225,51 @@ export default function MarketContextForm({ value, onChange }: Props) {
         </div>
       </div>
 
-      {/* Volatility metrics — numeric inputs only. The historical-bucket
-          classification (Bad / Mid / Good + tercile suggestions) used to
-          live here as well, but it was duplicating the Morning Conditions
-          panel below; the per-metric flags weren't being used. Inputs
-          stay so you can still type a value manually when screenshot
-          extraction misses; everything else is read off these values
-          downstream (Morning Conditions, EOD analysis, analytics). */}
+      {/* Volatility metrics — numeric inputs only. Collapsible: the panel
+          above (Morning Conditions) already shows these values, so once
+          they're filled there's no reason to keep this section unfurled.
+          DR_ADR is shown as the 4th input alongside Rvol/ADR/ATR-10;
+          internally it stores as `day_range = ratio × adr` so the rest
+          of the app (Morning Conditions, condition lookup) keeps working
+          off the same `value.day_range` field. */}
       <div>
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Volatility metrics</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <NumInput label="Rvol" hint="Relative Volume" value={value.rvol} onChange={r => set('rvol', r)} />
-          <NumInput label="ADR" hint="Avg Daily Range (RTH)" value={value.adr} onChange={r => set('adr', r)} />
-          <NumInput label="ATR-10 (1m)" hint="1×ATR on 1min chart" value={value.atr_1m} onChange={r => set('atr_1m', r)} />
-        </div>
+        <button
+          type="button"
+          onClick={() => setVolOpen(o => !o)}
+          className="w-full flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 hover:text-gray-300 transition-colors"
+        >
+          <ChevronDown className={`w-3 h-3 transition-transform ${volOpen ? '' : '-rotate-90'}`} />
+          Volatility metrics
+          {!volOpen && (
+            <span className="ml-auto font-normal normal-case text-[10px] text-gray-600">
+              click to edit
+            </span>
+          )}
+        </button>
+        {volOpen && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <NumInput label="Rvol" hint="Relative Volume" value={value.rvol} onChange={r => set('rvol', r)} />
+            <NumInput label="ADR" hint="Avg Daily Range (RTH)" value={value.adr} onChange={r => set('adr', r)} />
+            <NumInput label="ATR-10 (1m)" hint="1×ATR on 1min chart" value={value.atr_1m} onChange={r => set('atr_1m', r)} />
+            <DrAdrInput
+              dayRange={value.day_range as number | null | undefined}
+              adr={value.adr as number | null | undefined}
+              onChange={ratio => {
+                const adr = value.adr == null ? null : Number(value.adr)
+                if (ratio == null) {
+                  onChange({ ...value, day_range: undefined })
+                  return
+                }
+                if (adr == null || !(adr > 0)) {
+                  // Without ADR we can't store the raw day_range; leave it
+                  // and surface the dependency in the input's hint.
+                  return
+                }
+                onChange({ ...value, day_range: parseFloat((ratio * adr).toFixed(2)) })
+              }}
+            />
+          </div>
+        )}
       </div>
 
     </div>
