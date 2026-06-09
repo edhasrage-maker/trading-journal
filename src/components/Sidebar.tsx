@@ -16,6 +16,7 @@ import {
   Archive,
   Database,
   CandlestickChart,
+  Microscope,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -47,6 +48,7 @@ export default function Sidebar() {
     { href: `/eod/${today}`, label: 'EOD Recap', icon: BarChart2 },
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp },
+    { href: '/studies/break-retest', label: 'Studies', icon: Microscope },
   ]
 
   return (
