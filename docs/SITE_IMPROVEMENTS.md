@@ -49,4 +49,21 @@ tasks. Newest considerations near the top of each section.
   - *Separate fork:* a Tauri/Electron **desktop** app could preserve the local
     `.scid`/OBS integrations the cloud SaaS must cut — a potential power-user/Pro tier.
 
+## Session model — accommodate traders who trade the open
+
+- [ ] **Audit ALL functions/analytics for IB (Initial Balance) anchoring; add an
+  earlier-session read for open-traders.** Much of the analysis currently assumes a
+  *post-IB* perspective — day-type prediction leans on IB size/behavior, condition
+  buckets include IB-size-vs-average, session levels use IBH/IBL, and `market_context`
+  captures IB metrics. Traders who trade *the open* don't have an IB formed yet, so the
+  insight has to be available earlier (pre-open / opening-range) or derived from non-IB
+  signals. **This is a TAM limiter:** until fixed, the product implicitly only serves
+  IB-waiters. Audit scope:
+  - `predict-day-type` — IB-dependent inputs → provide an earlier/opening-range read
+  - `ConditionBuckets.tsx` — the IB-size bucket assumes the IB has formed
+  - Session levels / `market_context` — IB-based levels (IBH / IBL / IB size)
+  - Any prep/analytics step that effectively gates on post-IB timing
+  - Confirm time-agnostic metrics (MFE/MAE, capture, P&L, win rate) are unaffected
+  - Likely solution: a per-user "session style" (open vs IB) that adapts the read
+
 ## (Add new items below)
