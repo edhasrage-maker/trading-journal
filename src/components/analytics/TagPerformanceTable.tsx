@@ -13,6 +13,10 @@ interface Props {
   /** Hide rows with fewer than this many trades */
   minCount?: number
   emptyMessage?: string
+  /** Click handler for the tag label. When provided, the label becomes a
+   *  button that opens the drilldown modal (TradeListModal). Pages that
+   *  don't need drilldown can omit this — the row stays static. */
+  onTagClick?: (label: string) => void
 }
 
 type SortKey = 'label' | 'count' | 'win_rate' | 'avg_pnl' | 'profit_factor' | 'avg_r' | 'avg_capture' | 'avg_heat' | 'total_pnl'
@@ -24,10 +28,11 @@ export default function TagPerformanceTable({
   variant = 'default',
   minCount = 1,
   emptyMessage = 'No tagged trades in this category yet.',
+  onTagClick,
 }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('total_pnl')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
 
   const filtered = useMemo(() => data.filter(d => d.stats.count >= minCount), [data, minCount])
 
@@ -124,9 +129,23 @@ export default function TagPerformanceTable({
               {sorted.map(({ label, stats }) => (
                 <tr key={label} className="border-b border-gray-800/50 hover:bg-gray-800/40 transition-colors">
                   <td className="py-1.5 pr-3">
-                    <span className={`inline-block px-2 py-0.5 rounded text-[11px] border ${labelTone}`}>
-                      {label}
-                    </span>
+                    {onTagClick ? (
+                      // Clickable label opens the drilldown modal — shows every
+                      // trade in this aggregate. Hover ring highlights the
+                      // affordance; cursor flips to pointer.
+                      <button
+                        type="button"
+                        onClick={() => onTagClick(label)}
+                        className={`inline-block px-2 py-0.5 rounded text-[11px] border ${labelTone} hover:ring-1 hover:ring-blue-500 cursor-pointer transition-shadow`}
+                        title={`Show all ${stats.count} trade${stats.count === 1 ? '' : 's'} with this tag`}
+                      >
+                        {label}
+                      </button>
+                    ) : (
+                      <span className={`inline-block px-2 py-0.5 rounded text-[11px] border ${labelTone}`}>
+                        {label}
+                      </span>
+                    )}
                   </td>
                   <td className="py-1.5 pr-3 text-right text-gray-300">{stats.count}</td>
                   <td className={`py-1.5 pr-3 text-right ${stats.win_rate >= 0.5 ? 'text-green-400' : 'text-gray-300'}`}>

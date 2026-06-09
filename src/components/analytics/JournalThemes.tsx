@@ -30,7 +30,7 @@ interface ApiError {
  * theme. Cached server-side; clicking Generate re-runs Claude.
  */
 export default function JournalThemes({ from, to }: Props) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const [data, setData] = useState<ApiResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

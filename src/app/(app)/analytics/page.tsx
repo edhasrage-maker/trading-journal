@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import AnalyticsClient from '@/components/analytics/AnalyticsClient'
 import { joinTradesWithContext, type TradeWithContext } from '@/lib/analytics'
-import { normalizeTagArray, type TradingDay, type Trade, type MarketContext } from '@/lib/supabase/types'
+import type { TradingDay, Trade, MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -18,6 +18,12 @@ interface HistRow {
   open_at: string | null
   trade_date: string | null
   realized_rr: number | null
+  // Bar-derived excursion fields, populated by scripts/backfill-historical-mfe.ts.
+  // Null on dates the CSV doesn't cover (currently ~6 weeks at the tail end
+  // until the user re-exports a longer CSV / runs the .scid path). Analytics
+  // gracefully shows "—" for those rows in the MFE/MAE columns.
+  high_during_position: number | null
+  low_during_position: number | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tags_json: any
 }
@@ -34,16 +40,28 @@ interface HistRow {
  *  of falling into the Unknown bin. */
 type ContextByDate = Map<string, Pick<ContextRow, 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>>
 
-function histToContext(h: HistRow, ctxByDate: ContextByDate): TradeWithContext {
+/** Per-date day-type lookup pulled from native `trading_days.day_types[]`
+ *  (the labels the trader set during prep). Historical Tradezella trades
+ *  on dates the trader prepped will inherit those labels; historical trades
+ *  on un-prepped dates fall through to "Untagged" rather than borrowing
+ *  Tradezella's own day_type field (which uses a different taxonomy and
+ *  was conflating Untagged with TZ's "ungrouped" bucket). */
+type DayTypesByDate = Map<string, string[]>
+
+function histToContext(h: HistRow, ctxByDate: ContextByDate, dayTypesByDate: DayTypesByDate): TradeWithContext {
   const entry = h.entry_price, qty = h.quantity, pnl = h.net_pnl, rr = h.realized_rr
   let stop: number | null = null
   if (entry != null && qty && pnl != null && rr != null && rr !== 0) {
     const dist = Math.abs(pnl / (rr * qty))
     if (Number.isFinite(dist) && dist > 0) stop = h.side === 'short' ? entry + dist : entry - dist
   }
-  // Historical trades may store day_type as a string (legacy Tradezella) or
-  // as an array (post-migration). Normalize so combo days surface every tag.
-  const dayTypes = normalizeTagArray(h.tags_json?.day_type)
+  // Day types for historical trades come from the NATIVE trading_days lookup
+  // (the trader's own prep-tagged labels), NOT from Tradezella's tags_json.
+  // Tradezella's day_type field uses a different taxonomy (and most TZ trades
+  // predate the trader's current taxonomy anyway), so importing those labels
+  // muddies the Day Type analytics. If the trader prepped the day natively,
+  // those day_types carry over; otherwise the trade is honestly "Untagged".
+  const dayTypes = h.trade_date ? (dayTypesByDate.get(h.trade_date) ?? []) : []
   // Inherit any market_context that exists for this date — Tradezella doesn't
   // export RVol/IB/ADR/ATR, but if the user later logged a prep on the same
   // date OR ran the CSV-driven backfill, those fields are available here.
@@ -66,11 +84,14 @@ function histToContext(h: HistRow, ctxByDate: ContextByDate): TradeWithContext {
     // real symbol here would scale R by 1/multiplier and break parity with
     // realized_rr.
     symbol: null,
-    // Tradezella has no excursion fields — MFE/MAE math will null-out
-    // gracefully for these trades, the same way it does for any native
-    // trade that wasn't imported from a SC log with HighDuringPosition.
-    high_during_position: null,
-    low_during_position: null,
+    // Excursion fields are backfilled from 1m CSV bars by
+    // scripts/backfill-historical-mfe.ts. Tradezella's own price_mfe/mae
+    // fields are intentionally NOT used here — the trader distrusts them.
+    // Trades on dates not covered by the CSV stay null and analytics
+    // shows "—" the same way it does for native trades without excursion
+    // data.
+    high_during_position: h.high_during_position,
+    low_during_position: h.low_during_position,
     date: h.trade_date ?? '',
     day_type: dayTypes[0] ?? null,
     day_types: dayTypes,
@@ -119,7 +140,7 @@ export default async function AnalyticsPage() {
   for (let p = 0; p < 50; p++) {
     const { data, error } = await supabase
       .from('historical_trades')
-      .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, tags_json')
+      .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, high_during_position, low_during_position, tags_json')
       .order('trade_date', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -140,8 +161,19 @@ export default async function AnalyticsPage() {
     const date = dayDateById.get(c.trading_day_id)
     if (date) ctxByDate.set(date, c)
   }
+  // Build a date→day_types[] map from native trading_days so historical
+  // trades pick up the trader's own prep-tagged labels (not Tradezella's
+  // taxonomy). Native rows have either day_types[] (current) or day_type
+  // (legacy single); fall back to [day_type] when the array is empty.
+  const dayTypesByDate: DayTypesByDate = new Map()
+  for (const d of days) {
+    const types = (d.day_types && d.day_types.length > 0)
+      ? d.day_types
+      : (d.day_type ? [d.day_type] : [])
+    if (types.length > 0) dayTypesByDate.set(d.date, types)
+  }
   const joined = joinTradesWithContext(trades, days, contexts)
-  const merged = [...joined, ...hist.map(h => histToContext(h, ctxByDate))]
+  const merged = [...joined, ...hist.map(h => histToContext(h, ctxByDate, dayTypesByDate))]
 
   // Earliest date across native days + historical trades, so "All" covers both.
   const allDates = [...days.map(d => d.date), ...hist.map(h => h.trade_date).filter((d): d is string => !!d)].sort()

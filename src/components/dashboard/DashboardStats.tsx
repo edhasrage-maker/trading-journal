@@ -296,13 +296,13 @@ export default function DashboardStats({ days }: Props) {
           }
           valueClass="text-base"
         />
-        {/* Stat card showing TWO medians: Prep (AI prep-quality 1-10) +
-            Process (v1.4 verdict-derived 0-10 from passCount/5*10). Stacked
-            vertically since they're related but measuring different things —
-            single card avoids growing the row to 6 cards. */}
-        <PrepAndProcessCard
-          medianPrep={stats.medianProcess}
-          prepCount={stats.procCount}
+        {/* Median Process (v1.4 verdict-derived 0-10, passCount/5*10). The
+            previous PrepAndProcessCard showed Prep AND Process side-by-side —
+            the trader dropped Prep here because the prep AI's 1-10 quality
+            score (still surfaced inside individual day cards / EOD recap) is
+            duplicative at the rolled-up dashboard level. Process is the more
+            actionable rule-adherence signal. */}
+        <ProcessCard
           medianProcess={stats.medianProcessV13}
           processCount={stats.v13Count}
         />
@@ -335,45 +335,30 @@ function StatCard({
   )
 }
 
-/** Stat card that shows Median Prep AND Median Process side-by-side. Both
- *  are 0-10 but measure different things — Prep = AI prep-quality score
- *  (1-10 from /api/analyze-prep), Process = v1.4 verdict-derived score
- *  (passCount/5*10 from /api/analyze-eod). Stacked vertically to avoid
- *  blowing out the stat-card row to 6 cards. */
-function PrepAndProcessCard({
-  medianPrep, prepCount, medianProcess, processCount,
+/** Stat card showing only Median Process (v1.4 verdict-derived 0-10).
+ *  Was previously PrepAndProcessCard — see commit removing Prep from the
+ *  dashboard rollup. Tones map to v1.4 thresholds: ≥8 (4/5 rules pass =
+ *  at-threshold Compliant) is positive, anything lower trends toward red. */
+function ProcessCard({
+  medianProcess, processCount,
 }: {
-  medianPrep: number | null
-  prepCount: number
   medianProcess: number | null
   processCount: number
 }) {
-  const toneColor = (v: number | null, goodThreshold: number, midThreshold: number): string => {
-    if (v == null) return 'text-gray-500'
-    if (v >= goodThreshold) return 'text-green-400'
-    if (v >= midThreshold) return 'text-yellow-300'
-    return 'text-red-400'
-  }
-  // Prep tones use the original 7/5 cutoffs the card had pre-change. Process
-  // tones map to the v1.4 thresholds — ≥8 (4/5 pass = at-threshold Compliant)
-  // is positive, anything lower trends toward red.
-  const prepColor = toneColor(medianPrep, 7, 5)
-  const procColor = toneColor(medianProcess, 8, 6)
+  const procColor =
+    medianProcess == null ? 'text-gray-500'
+    : medianProcess >= 8 ? 'text-green-400'
+    : medianProcess >= 6 ? 'text-yellow-300'
+    : 'text-red-400'
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">Median Prep / Process</p>
-      <div className="flex items-baseline gap-2 whitespace-nowrap">
-        <span className={`font-bold text-base ${prepColor}`}>
-          {medianPrep == null ? '—' : `${medianPrep.toFixed(1)}`}
-        </span>
-        <span className="text-gray-600 text-xs">/</span>
-        <span className={`font-bold text-base ${procColor}`}>
-          {medianProcess == null ? '—' : `${medianProcess.toFixed(1)}`}
-        </span>
-        <span className="text-gray-600 text-xs">/10</span>
-      </div>
+      <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">Median Process</p>
+      <p className={`font-bold text-xl ${procColor} whitespace-nowrap`}>
+        {medianProcess == null ? '—' : `${medianProcess.toFixed(1)}`}
+        <span className="text-gray-600 text-xs ml-1">/10</span>
+      </p>
       <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">
-        {prepCount} prep · {processCount} process
+        {processCount} day{processCount === 1 ? '' : 's'} scored
       </p>
     </div>
   )

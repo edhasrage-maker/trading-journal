@@ -16,7 +16,7 @@ const COLORS = ['#60a5fa', '#a78bfa', '#fbbf24'] // blue, violet, amber
 export default function RollingPerformance({ trades }: Props) {
   const baseline = useMemo(() => rollingStats(trades, 1), [trades])
   const series = useMemo(() => WINDOWS.map(w => rollingStats(trades, w)), [trades])
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
 
   if (baseline.length === 0) {
     return (

@@ -55,6 +55,14 @@ create table if not exists market_context (
   -- Day's Range from Sierra stats overlay (points). Source of truth for DR_ADR.
   day_range numeric(10,2),
   atr_1m numeric(10,2),
+  -- IB-close snapshot fields (computed at 07:29 PT bar by the CSV backfill).
+  -- Used by derive-day-types.ts for the "by 07:30" honest-snapshot classifier.
+  -- The end-of-RTH rvol/atr_1m fields above are kept for full-day rollups.
+  rvol_at_ib_close numeric(6,2),  -- percent: vol 06:30-07:29 / 10d avg same window × 100
+  atr_at_ib_close numeric(10,2),  -- Wilder's ATR-10 1m at 07:29 PT bar
+  atr_10d_avg numeric(10,2),      -- trailing-10 avg of atr_at_ib_close
+  rth_open numeric(10,2),         -- close of 06:30 PT bar
+  ib_close_price numeric(10,2),   -- close of 07:29 PT bar
   stat_performance_json jsonb default '{}',
   -- stat_performance_json shape:
   -- {
@@ -487,6 +495,15 @@ create table if not exists historical_trades (
   position_mae numeric,
   price_mfe numeric,
   price_mae numeric,
+  -- bar-derived high/low while position was open, backfilled from a 1m CSV
+  -- (scripts/backfill-historical-mfe.ts). Mirrors trades.high/low_during_position
+  -- so analytics can compute MFE/MAE the same way for native + historical trades.
+  -- The Tradezella-supplied price_mfe/price_mae columns above are kept for
+  -- traceability but the trader explicitly distrusts them; analytics consumes
+  -- these bar-derived fields instead. Null when the CSV doesn't cover the
+  -- trade's date range.
+  high_during_position numeric(10,2),
+  low_during_position numeric(10,2),
   duration_sec numeric,
   rating numeric,
   zella_score numeric,

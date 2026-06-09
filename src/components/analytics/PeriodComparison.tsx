@@ -232,9 +232,37 @@ function Delta({
 
 export default function PeriodComparison({ trades, dayStats }: Props) {
   const [gran, setGran] = useState<Granularity>('week')
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
+  // Period picker — which buckets to include in the comparison. Defaults
+  // to the 3 most recent (the user's most common ask: "how does this
+  // week/month compare to the last two") but the popover lets them check
+  // any combination, e.g. "last 3 weeks plus the same week a quarter ago".
+  const [pickerOpen, setPickerOpen] = useState(false)
+  // Tagged selection — { gran, keys }. When gran flips (week ↔ month) or
+  // selection is null, we render the top-3 default during render — no effect
+  // needed, avoiding the set-state-in-effect rule.
+  const [selection, setSelection] = useState<{ gran: Granularity; keys: Set<string> } | null>(null)
 
   const buckets = useMemo(() => computeBuckets(trades, dayStats, gran), [trades, dayStats, gran])
+
+  const selectedKeys = useMemo<Set<string>>(() => {
+    if (selection && selection.gran === gran) return selection.keys
+    return new Set(buckets.slice(0, 3).map(b => b.key))
+  }, [selection, gran, buckets])
+
+  const visibleBuckets = useMemo(
+    () => buckets.filter(b => selectedKeys.has(b.key)),
+    [buckets, selectedKeys],
+  )
+
+  const toggleKey = (key: string) => {
+    const next = new Set(selectedKeys)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    setSelection({ gran, keys: next })
+  }
+
+  const resetSelection = () => setSelection(null)
 
   if (buckets.length === 0) {
     return null
@@ -261,19 +289,67 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
             </p>
           </div>
         </button>
-        <div className="flex bg-gray-800 border border-gray-700 rounded-md overflow-hidden text-xs shrink-0">
-          {(['week', 'month'] as Granularity[]).map(g => (
-            <button
-              key={g}
-              type="button"
-              onClick={() => setGran(g)}
-              className={`px-3 py-1 transition-colors ${
-                gran === g ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'
-              }`}
-            >
-              {GRAN_LABELS[g]}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 shrink-0">
+          {open && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setPickerOpen(o => !o)}
+                className="px-3 py-1 text-xs bg-gray-800 border border-gray-700 rounded-md text-gray-300 hover:bg-gray-700 transition-colors whitespace-nowrap"
+                title="Pick which periods appear in the table"
+              >
+                {selectedKeys.size} selected
+              </button>
+              {pickerOpen && (
+                <div className="absolute right-0 mt-1 w-56 max-h-80 overflow-y-auto bg-gray-950 border border-gray-700 rounded-md shadow-xl z-20 p-1">
+                  <div className="flex items-center justify-between px-2 py-1 text-[10px] text-gray-500 uppercase tracking-wide">
+                    <span>Periods</span>
+                    <button
+                      type="button"
+                      onClick={resetSelection}
+                      className="text-blue-400 hover:text-blue-300 normal-case tracking-normal"
+                    >
+                      Reset to last 3
+                    </button>
+                  </div>
+                  {buckets.map(b => {
+                    const checked = selectedKeys.has(b.key)
+                    return (
+                      <label
+                        key={b.key}
+                        className="flex items-center gap-2 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800 rounded cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleKey(b.key)}
+                          className="accent-blue-600"
+                        />
+                        <span className="flex-1 font-sans">{b.label}</span>
+                        <span className="text-[10px] text-gray-600 font-mono">
+                          {b.tradeCount}t
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex bg-gray-800 border border-gray-700 rounded-md overflow-hidden text-xs">
+            {(['week', 'month'] as Granularity[]).map(g => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setGran(g)}
+                className={`px-3 py-1 transition-colors ${
+                  gran === g ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                {GRAN_LABELS[g]}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -292,9 +368,12 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
               </tr>
             </thead>
             <tbody>
-              {buckets.map((b, i) => {
-                // Prior bucket = the next-older one in the sorted list (i+1).
-                const prev = buckets[i + 1] ?? null
+              {visibleBuckets.map((b, i) => {
+                // Prior bucket = the next-older SELECTED one, so deltas
+                // compare against whatever the user chose to put next to
+                // this row (could be the immediately prior week or, e.g.,
+                // last quarter's same-week if that's what they picked).
+                const prev = visibleBuckets[i + 1] ?? null
                 const pnlColor = b.pnl > 0 ? 'text-green-400' : b.pnl < 0 ? 'text-red-400' : 'text-gray-400'
                 return (
                   <tr key={b.key} className="border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors">
@@ -354,12 +433,16 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
               })}
             </tbody>
           </table>
-          {buckets.length >= 2 && (
+          {visibleBuckets.length >= 2 && (
             <p className="text-[10px] text-gray-600 mt-2 flex items-center gap-1">
               <ArrowRight className="w-3 h-3" />
-              Delta chips compare each row vs. the next row (the older period).
-              First row has no delta — no prior bucket to compare against in the
-              current range.
+              Delta chips compare each row vs. the next row (the older selected period).
+              First row has no delta — no prior bucket to compare against.
+            </p>
+          )}
+          {visibleBuckets.length === 0 && (
+            <p className="text-center text-xs text-gray-600 italic py-6">
+              No periods selected. Open the picker above to choose which {gran}s to compare.
             </p>
           )}
         </div>

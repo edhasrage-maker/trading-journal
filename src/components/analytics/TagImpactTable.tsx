@@ -24,7 +24,7 @@ export default function TagImpactTable({
   minCount = 3,
 }: Props) {
   const filtered = data.filter(d => d.withStats.count >= minCount)
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const tone = variant === 'mistakes'
     ? 'bg-red-900/30 border-red-800 text-red-300'
     : 'bg-purple-900/30 border-purple-800 text-purple-300'

@@ -6,13 +6,22 @@ import BarChart from '@/components/charts/BarChart'
 import { bucketByNumeric, type TradeWithContext, type Bucket } from '@/lib/analytics'
 
 /**
- * Historical (imported) trades have no market context — Tradezella doesn't
- * export RVol/IB/ADR/ATR — so they'd all dump into the "Unknown" bucket and
- * make every condition chart look 50% useless. histToContext flags them with
- * an empty `trading_day_id`; native trades always have a UUID.
+ * Was: filter on trading_day_id (excluded all historical trades because
+ * histToContext sets it to ''). Now: filter on whether any context FIELD is
+ * actually populated, because the date-keyed lookup in analytics/page.tsx
+ * inherits market_context onto historical trades whose date has data. A
+ * historical trade with rvol/ib/adr/atr filled by inheritance is a real
+ * market-context match and should bucket correctly, not get filtered out as
+ * "Unknown".
  */
 function hasMarketContext(t: TradeWithContext): boolean {
-  return t.trading_day_id !== ''
+  return (
+    t.rvol != null ||
+    t.ib_size != null ||
+    t.ib_vs_10d_avg != null ||
+    t.adr != null ||
+    t.atr_1m != null
+  )
 }
 
 interface ConditionDef {
@@ -71,12 +80,18 @@ interface Props {
 }
 
 export default function ConditionBuckets({ trades }: Props) {
-  const [open, setOpen] = useState(true)
+  // Default collapsed — analytics page has many sections and starting them
+  // all open made the page feel cluttered. User opens the section they care
+  // about for that review.
+  const [open, setOpen] = useState(false)
   const scopedTrades = useMemo(() => trades.filter(hasMarketContext), [trades])
   const excluded = trades.length - scopedTrades.length
   return (
-    <section>
-      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left mb-3">
+    // Wrapped in the same card styling as every other analytics section
+    // (bg-gray-900 / border / rounded-xl / p-5) so this section stops
+    // visually orphaning at the bottom of the page.
+    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left">
         <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
         <div>
           <h2 className="font-semibold text-white">Performance by Market Condition</h2>
@@ -92,7 +107,7 @@ export default function ConditionBuckets({ trades }: Props) {
       </button>
 
       {open && (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2 mt-4">
           {CONDITIONS.map(c => (
             <ConditionCard key={c.key} cond={c} trades={scopedTrades} />
           ))}
@@ -108,8 +123,11 @@ function ConditionCard({ cond, trades }: { cond: ConditionDef; trades: TradeWith
     [trades, cond.key, cond.breaks, cond.format],
   )
 
-  // Hide empty buckets except the Unknown sentinel — but keep Unknown only if it has data
-  const visible = buckets.filter(b => b.trades.length > 0 || (b.range[0] != null || b.range[1] != null))
+  // Hide ANY bucket with zero trades — previously we kept named buckets
+  // (those with non-null range bounds) even when empty, which produced rows
+  // like "≥ 500 | 0 | — | — | —" cluttering the table. User wants the
+  // chart/table to show only buckets that have actual trades to evaluate.
+  const visible = buckets.filter(b => b.trades.length > 0)
 
   if (visible.every(b => b.trades.length === 0)) {
     return (

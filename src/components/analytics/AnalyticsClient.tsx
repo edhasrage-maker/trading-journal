@@ -9,6 +9,7 @@ import RollingPerformance from './RollingPerformance'
 import PeriodComparison from './PeriodComparison'
 import JournalThemes from './JournalThemes'
 import CsvExportButton from './CsvExportButton'
+import TradeListModal, { type ModalCategory } from './TradeListModal'
 import {
   aggregateByTag,
   aggregateByDayType,
@@ -36,14 +37,25 @@ const RANGE_OPTIONS: { label: string; months: number }[] = [
 ]
 
 export default function AnalyticsClient({ trades, dayStats, defaultStartDate, defaultEndDate }: Props) {
-  const [rangeMonths, setRangeMonths] = useState(3)
-
   const today = format(new Date(), 'yyyy-MM-dd')
+  // Range mode: either one of the preset windows (1M/3M/6M/1Y/All) OR a
+  // user-entered From/To range. Two pieces of state so the user can flip
+  // between modes without losing their custom selection.
+  const [rangeMonths, setRangeMonths] = useState<number | 'custom'>(3)
+  const [customFrom, setCustomFrom] = useState<string>(
+    format(subMonths(new Date(), 3), 'yyyy-MM-dd'),
+  )
+  const [customTo, setCustomTo] = useState<string>(today)
+
   const startDate = useMemo(() => {
+    if (rangeMonths === 'custom') return customFrom
     if (rangeMonths === 0) return defaultStartDate
     return format(subMonths(new Date(), rangeMonths), 'yyyy-MM-dd')
-  }, [rangeMonths, defaultStartDate])
-  const endDate = today > defaultEndDate ? today : defaultEndDate
+  }, [rangeMonths, defaultStartDate, customFrom])
+  const endDate = useMemo(() => {
+    if (rangeMonths === 'custom') return customTo
+    return today > defaultEndDate ? today : defaultEndDate
+  }, [rangeMonths, customTo, today, defaultEndDate])
 
   const filtered = useMemo(() => {
     return trades.filter(t => t.date >= startDate && t.date <= endDate)
@@ -62,6 +74,12 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
   const mgmtPerf = useMemo(() => aggregateByTag(filtered, 'trade_management'), [filtered])
   const dayTypePerf = useMemo(() => aggregateByDayType(filtered), [filtered])
 
+  // Drilldown modal state — which (category, label) pair the user clicked
+  // on. Click any tag label in any of the five performance tables to open
+  // a list of the trades behind that aggregate.
+  const [openTag, setOpenTag] = useState<{ category: ModalCategory; label: string } | null>(null)
+  const openCategory = (category: ModalCategory) => (label: string) => setOpenTag({ category, label })
+
   // Mistakes + Emotions impact aggregations removed — both categories hidden
   // from the tagging system pending a redesign. Historical tag data is
   // preserved in tags_json; restore these two lines and the two
@@ -78,25 +96,61 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <CsvExportButton from={startDate} to={endDate} />
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-3">
+            <CsvExportButton from={startDate} to={endDate} />
 
-          {/* Range selector */}
-          <div className="flex bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-            {RANGE_OPTIONS.map(o => (
+            {/* Range selector — preset windows plus a "Custom" button that
+                reveals From/To date inputs below. Custom is a sibling of the
+                presets (not a separate mode toggle) so it's discoverable. */}
+            <div className="flex bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+              {RANGE_OPTIONS.map(o => (
+                <button
+                  key={o.label}
+                  onClick={() => setRangeMonths(o.months)}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    rangeMonths === o.months
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
               <button
-                key={o.label}
-                onClick={() => setRangeMonths(o.months)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  rangeMonths === o.months
+                onClick={() => setRangeMonths('custom')}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-gray-800 ${
+                  rangeMonths === 'custom'
                     ? 'bg-blue-600 text-white'
                     : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
                 }`}
               >
-                {o.label}
+                Custom
               </button>
-            ))}
+            </div>
           </div>
+
+          {rangeMonths === 'custom' && (
+            <div className="flex items-center gap-2 text-xs font-mono">
+              <label className="text-gray-500">From</label>
+              <input
+                type="date"
+                value={customFrom}
+                max={customTo}
+                onChange={e => setCustomFrom(e.target.value)}
+                className="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-gray-200 [color-scheme:dark] focus:outline-none focus:border-blue-600"
+              />
+              <label className="text-gray-500">To</label>
+              <input
+                type="date"
+                value={customTo}
+                min={customFrom}
+                max={today}
+                onChange={e => setCustomTo(e.target.value)}
+                className="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-gray-200 [color-scheme:dark] focus:outline-none focus:border-blue-600"
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -143,32 +197,38 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
         />
       </div>
 
-      {/* Tag performance sections */}
+      {/* Tag performance sections — each label click opens TradeListModal
+          filtered to that tag (within the active date range). */}
       <TagPerformanceTable
         title="Setup Performance"
         description="Win rate, expectancy, and PnL by setup tag"
         data={setupPerf}
+        onTagClick={openCategory('setups')}
       />
       <TagPerformanceTable
         title="Confluences"
         description="Performance when each confluence was tagged on the trade"
         data={confluencePerf}
+        onTagClick={openCategory('confluences')}
       />
       <TagPerformanceTable
         title="Order Flow"
         description="Performance broken down by order-flow signal tags"
         data={orderFlowPerf}
+        onTagClick={openCategory('order_flow')}
       />
       <TagPerformanceTable
         title="Day Type"
         description="Performance by the day type set during prep"
         data={dayTypePerf}
+        onTagClick={openCategory('day_types')}
       />
       <TagPerformanceTable
         title="Trade Management"
         description="How different management styles played out"
         data={mgmtPerf}
         minCount={2}
+        onTagClick={openCategory('trade_management')}
       />
 
       {/* Mistakes / Emotions Impact tables removed — pending new tagging
@@ -181,6 +241,14 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
       <PeriodComparison trades={filtered} dayStats={filteredDayStats} />
 
       <JournalThemes from={startDate} to={endDate} />
+
+      {/* Drilldown drawer — uses `filtered` (date-range-scoped) and includes
+          both native + historical trades. Closes via Escape, backdrop, or X. */}
+      <TradeListModal
+        open={openTag}
+        trades={filtered}
+        onClose={() => setOpenTag(null)}
+      />
     </div>
   )
 }

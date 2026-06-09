@@ -48,7 +48,12 @@ export default function BarChart({
     : 100
 
   return (
-    <div className="w-full" style={{ height }}>
+    // Outer wrapper no longer constrains height — the SVG box does. Otherwise
+    // the labels grid below would overflow and overlap whatever element sits
+    // beneath the chart (in ConditionCard's case, the BucketTable header
+    // landing on top of "-$450").
+    <div className="w-full">
+      <div style={{ height }}>
       <svg
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
@@ -105,6 +110,7 @@ export default function BarChart({
           )
         })}
       </svg>
+      </div>
 
       {/* Labels row (HTML, not SVG, so it's readable across responsive widths) */}
       <div className="grid mt-1.5 gap-px" style={{ gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))` }}>
