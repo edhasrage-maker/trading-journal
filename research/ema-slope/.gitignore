@@ -1,0 +1,3 @@
+# Sweep outputs are regenerable by re-running replay.ts — keep them out of git.
+# FINDINGS.md preserves the conclusions; the engine reproduces the raw numbers.
+*.log
