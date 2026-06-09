@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { GitMerge, Plus, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2 } from 'lucide-react'
 import TradeForm from './TradeForm'
+import ScreenshotLightbox from './ScreenshotLightbox'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
@@ -746,36 +747,9 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
         />
       )}
 
-      {/* Screenshot zoom lightbox. Click any trade screenshot to open here;
-          click the backdrop, the close button, or press Escape to dismiss.
-          Image is rendered at its natural resolution capped to the viewport
-          via max-h/max-w so very wide screenshots get vertically letterboxed
-          rather than cropped. */}
-      {zoomedScreenshot && (
-        <div
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
-          onClick={() => setZoomedScreenshot(null)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Trade screenshot zoom"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={zoomedScreenshot}
-            alt="Trade screenshot (zoomed)"
-            className="max-w-full max-h-full object-contain rounded shadow-2xl"
-            onClick={e => e.stopPropagation()}
-          />
-          <button
-            type="button"
-            onClick={() => setZoomedScreenshot(null)}
-            className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-gray-900/80 hover:bg-gray-800 text-gray-300 hover:text-white border border-gray-700 transition-colors"
-            aria-label="Close zoom"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      {/* Screenshot zoom lightbox. Shared with TradeForm (edit mode) via
+          src/components/intraday/ScreenshotLightbox.tsx. */}
+      <ScreenshotLightbox src={zoomedScreenshot} onClose={() => setZoomedScreenshot(null)} />
 
     </div>
   )

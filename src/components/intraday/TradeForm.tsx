@@ -5,6 +5,7 @@ import { Loader2, Save, X, ScanLine } from 'lucide-react'
 import PinPlacement, { type PinType, type Pin } from './PinPlacement'
 // PinType / Pin still used by the legacy pin-position fields kept in FormState
 // so existing trades load + save their saved pin coordinates without loss.
+import ScreenshotLightbox from './ScreenshotLightbox'
 import TagSelector from './TagSelector'
 import { deleteBlob } from '@/lib/storage'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
@@ -120,6 +121,9 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   // Track the originally-saved screenshot URL so we can delete it from storage
   // if the user replaces or removes it on save.
   const [savedScreenshotUrl, setSavedScreenshotUrl] = useState<string | null>(trade?.screenshot_url ?? null)
+  // Zoom lightbox state — independent of IntradayClient's lightbox since
+  // TradeForm is mounted as a modal/inline form with its own scope.
+  const [zoomedScreenshot, setZoomedScreenshot] = useState<string | null>(null)
 
   const set = <K extends keyof FormState>(key: K, val: FormState[K]) =>
     setForm(f => ({ ...f, [key]: val }))
@@ -347,6 +351,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               <PinPlacement
                 imageUrl={form.screenshot_url}
                 pins={pins}
+                onZoom={() => setZoomedScreenshot(form.screenshot_url)}
               />
               <div className="flex items-center gap-4">
                 <button type="button" onClick={readScreenshot} disabled={extracting}
@@ -483,6 +488,10 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
         </div>
 
       </div>
+
+      {/* Edit-form zoom lightbox — fires when the screenshot's PinPlacement
+          is clicked. Mounted at TradeForm's root so it overlays the form. */}
+      <ScreenshotLightbox src={zoomedScreenshot} onClose={() => setZoomedScreenshot(null)} />
     </div>
   )
 }

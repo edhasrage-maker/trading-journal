@@ -6,6 +6,11 @@ export interface Pin { x: number; y: number }
 interface Props {
   imageUrl: string
   pins: Partial<Record<PinType, Pin>>
+  /** When provided, the image becomes clickable and fires this callback —
+   *  TradeForm uses it to open the shared ScreenshotLightbox modal. The
+   *  pin-overlay SVG already uses pointer-events-none, so the click reaches
+   *  the underlying button unimpeded. */
+  onZoom?: () => void
 }
 
 const PIN_CFG: Record<PinType, { color: string; short: string }> = {
@@ -21,11 +26,31 @@ const PIN_CFG: Record<PinType, { color: string; short: string }> = {
  * marking became redundant. Legacy trades with saved entry_pin_x/y etc.
  * still render here so historical journal data isn't lost.
  */
-export default function PinPlacement({ imageUrl, pins }: Props) {
+export default function PinPlacement({ imageUrl, pins, onZoom }: Props) {
+  // Wrap the image in a <button> when zoom is enabled so the entire image
+  // area becomes a click target. Without onZoom, falls back to a plain
+  // <img> to preserve the original purely-display behavior.
+  const imageEl = onZoom ? (
+    <button
+      type="button"
+      onClick={onZoom}
+      className="block w-full cursor-zoom-in p-0 m-0 border-0 bg-transparent"
+      title="Click to zoom"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={imageUrl}
+        alt="Trade screenshot"
+        className="w-full object-contain max-h-[480px] transition-opacity hover:opacity-90"
+      />
+    </button>
+  ) : (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={imageUrl} alt="Trade screenshot" className="w-full object-contain max-h-[480px]" />
+  )
   return (
     <div className="relative rounded-xl overflow-hidden border border-gray-700 bg-gray-900">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={imageUrl} alt="Trade screenshot" className="w-full object-contain max-h-[480px]" />
+      {imageEl}
       <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
         {(Object.entries(pins) as [PinType, Pin][]).map(([type, pin]) => {
           const cfg = PIN_CFG[type]
