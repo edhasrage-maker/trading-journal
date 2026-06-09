@@ -818,10 +818,14 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         )}
         <DayTypePredictor
           date={date}
-          currentDayType={dayType}
-          // The predictor still returns a single label — append it (or replace
-          // the existing one) to the multi-select rather than overwriting all.
-          onAccept={label => setDayTypes(prev => prev.includes(label) ? prev : [...prev, label])}
+          currentDayTypes={dayTypes}
+          // Multi-axis predictor returns an array — dedupe-append to the
+          // multi-select so structural + regime + flags all land in one click.
+          onAccept={labels => setDayTypes(prev => {
+            const next = [...prev]
+            for (const l of labels) if (!next.includes(l)) next.push(l)
+            return next
+          })}
         />
       </div>
 

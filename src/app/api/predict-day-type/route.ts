@@ -17,13 +17,45 @@ interface DayTypeDef {
   description: string | null
 }
 
-interface PredictResponse {
-  prediction: string
-  reasoning: string
-  confidence: 'high' | 'medium' | 'low'
+type Confidence = 'high' | 'medium' | 'low'
+type Axis = 'structural' | 'regime' | 'flag'
+
+interface PredictionItem {
+  label: string
+  confidence: Confidence
+  axis: Axis
 }
 
-const CONFIDENCE_VALUES = ['high', 'medium', 'low'] as const
+interface PredictResponse {
+  predictions: PredictionItem[]
+  reasoning: string
+}
+
+const CONFIDENCE_VALUES: readonly Confidence[] = ['high', 'medium', 'low']
+
+/**
+ * Canonical axis assignments for the locked-in v1.4 day-type taxonomy. The
+ * day-type system is two orthogonal axes plus optional flags:
+ *   - structural: Trend Day | Range Day (mutually exclusive)
+ *   - regime:     High Action / Medium Mush / Low Participation (mutually exclusive)
+ *   - flag:       Double Inside (PD + ON) / GBX Reversal (zero or more)
+ * Unknown labels (user-added custom tags) default to 'structural' since the
+ * model has to pick exactly one of those — letting custom labels participate
+ * in the structural axis preserves backwards compatibility with single-pick
+ * legacy day types like "Holiday" or "Half Session".
+ */
+const CANONICAL_AXIS: Record<string, Axis> = {
+  'Trend Day': 'structural',
+  'Range Day': 'structural',
+  'High Action Market': 'regime',
+  'Medium Mush Market (Indecisive)': 'regime',
+  'Low Participation/Compressed': 'regime',
+  'Double Inside (PD + ON)': 'flag',
+  'GBX Reversal': 'flag',
+}
+function axisFor(label: string): Axis {
+  return CANONICAL_AXIS[label] ?? 'structural'
+}
 
 /**
  * POST /api/predict-day-type
@@ -125,7 +157,7 @@ async function handle(req: Request) {
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 600,
+    max_tokens: 900,
     messages: [{ role: 'user', content: prompt }],
   })
   const text = message.content[0]?.type === 'text' ? message.content[0].text : ''
@@ -134,19 +166,40 @@ async function handle(req: Request) {
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('No JSON object found in Claude response')
-    parsed = JSON.parse(jsonMatch[0]) as PredictResponse
-    if (typeof parsed.prediction !== 'string' || typeof parsed.reasoning !== 'string') {
-      throw new Error('Response missing prediction or reasoning')
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = JSON.parse(jsonMatch[0]) as any
+    if (typeof raw?.reasoning !== 'string') throw new Error('Response missing reasoning')
+    if (!Array.isArray(raw?.predictions)) throw new Error('Response missing predictions[] array')
     const allowed = new Set(dayTypeDefs.map(d => d.label))
-    if (!allowed.has(parsed.prediction)) {
-      throw new Error(`Prediction "${parsed.prediction}" is not in the day_type library (${[...allowed].join(', ')})`)
+    const predictions: PredictionItem[] = []
+    for (const p of raw.predictions) {
+      if (typeof p?.label !== 'string') continue
+      if (!allowed.has(p.label)) {
+        throw new Error(`Prediction "${p.label}" is not in the day_type library (${[...allowed].join(', ')})`)
+      }
+      const confidence = CONFIDENCE_VALUES.includes(p.confidence) ? (p.confidence as Confidence) : 'medium'
+      // Always derive axis server-side from the canonical mapping; ignore
+      // whatever Claude returned to avoid taxonomy drift.
+      predictions.push({ label: p.label, confidence, axis: axisFor(p.label) })
     }
-    // Confidence is required but tolerate a missing/weird value — default to
-    // medium so the UI can still render rather than 500'ing.
-    if (!CONFIDENCE_VALUES.includes(parsed.confidence as typeof CONFIDENCE_VALUES[number])) {
-      parsed.confidence = 'medium'
+    if (predictions.length === 0) {
+      throw new Error('No valid predictions returned')
     }
+    // Enforce at most ONE structural and ONE regime prediction (the model
+    // sometimes returns both Trend Day AND Range Day when conflicted —
+    // keep the higher-confidence one to honor the orthogonal-axis design).
+    // Flags can repeat freely.
+    const dedupedByAxis: PredictionItem[] = []
+    const seenAxes = new Set<Axis>()
+    const confRank: Record<Confidence, number> = { high: 3, medium: 2, low: 1 }
+    const sorted = [...predictions].sort((a, b) => confRank[b.confidence] - confRank[a.confidence])
+    for (const p of sorted) {
+      if (p.axis === 'flag') { dedupedByAxis.push(p); continue }
+      if (seenAxes.has(p.axis)) continue
+      seenAxes.add(p.axis)
+      dedupedByAxis.push(p)
+    }
+    parsed = { predictions: dedupedByAxis, reasoning: raw.reasoning }
   } catch (e) {
     console.error('[predict-day-type] parse failed:', e, '\nraw text:', text.slice(0, 500))
     return NextResponse.json(
@@ -159,9 +212,8 @@ async function handle(req: Request) {
   }
 
   return NextResponse.json({
-    prediction: parsed.prediction,
+    predictions: parsed.predictions,
     reasoning: parsed.reasoning,
-    confidence: parsed.confidence,
     model: 'claude-sonnet-4-6',
     generated_at: new Date().toISOString(),
   })
@@ -213,9 +265,33 @@ function buildPrompt(date: string, ctx: MarketContext | null, notes: PrepNotes, 
       : `- "${d.label}": (no description yet — infer from the label name)`
   }).join('\n')
 
+  // Pre-categorize labels by axis so the prompt can show structural / regime / flag
+  // groups separately. Unknown labels default to "structural" (see CANONICAL_AXIS).
+  const grouped: Record<Axis, DayTypeDef[]> = { structural: [], regime: [], flag: [] }
+  for (const d of dayTypeDefs) {
+    grouped[axisFor(d.label)].push(d)
+  }
+  const formatGroup = (defs: DayTypeDef[]) => defs.length === 0
+    ? '  (none configured)'
+    : defs.map(d => {
+        const desc = d.description?.trim()
+        return desc ? `- "${d.label}": ${desc}` : `- "${d.label}": (no description — infer from label)`
+      }).join('\n')
+
   return `You are a futures trading coach predicting the SESSION CHARACTER (day type) for ${date} based on the trader's pre-market data. The trader trades NQ futures using an MGI-based framework.
 
-Pick EXACTLY ONE of these ${dayTypeDefs.length} day type${dayTypeDefs.length === 1 ? '' : 's'} (use the label EXACTLY as written, including capitalization, spaces, parentheses, and special characters):
+The taxonomy is two orthogonal axes plus optional open-time flags. Return ONE label per axis (when applicable) plus any flags that fit:
+
+══ STRUCTURAL axis (pick at most ONE — mutually exclusive) ══
+${formatGroup(grouped.structural)}
+
+══ REGIME axis (pick at most ONE — mutually exclusive) ══
+${formatGroup(grouped.regime)}
+
+══ FLAGS (pick zero or more — additive) ══
+${formatGroup(grouped.flag)}
+
+For reference, the full label list (use the EXACT string including capitalization, spaces, parentheses):
 ${dayTypeListBlock}
 
 ══ INPUTS ══
@@ -271,8 +347,16 @@ Set "confidence" honestly:
 
 Respond with ONLY a valid JSON object (no markdown, no code fences, no preamble):
 {
-  "prediction": "<one of the day type labels above EXACTLY as written>",
-  "reasoning": "<2-3 sentences. Cite specific numbers or notes from the inputs. If you're overriding any heuristic above, explain why explicitly.>",
-  "confidence": "high" | "medium" | "low"
-}`
+  "predictions": [
+    { "label": "<exact label string>", "confidence": "high" | "medium" | "low" },
+    ...
+  ],
+  "reasoning": "<3-5 sentences. Cite specific numbers or notes from the inputs. Walk through EACH label you returned — why structural pick, why regime pick, why each flag (or why no flag). If you're overriding any heuristic above, explain why explicitly. If you intentionally omitted an axis (e.g. no flags fit), say so.>"
+}
+
+Rules:
+- "predictions" is an ARRAY — return one entry per axis that has a clear pick (structural and regime when applicable), plus one entry per flag that fits.
+- A typical response has 2 predictions (structural + regime). Add flag predictions when their open-time conditions are met. If structural is unclear (e.g. data is sparse), omit it rather than guessing.
+- Confidence is PER label, not per session. Different axes can have different confidence levels (e.g. regime=high, structural=medium).
+- Do NOT include axis labels ("structural"/"regime"/"flag") in the output — the server derives them from the label string.`
 }
