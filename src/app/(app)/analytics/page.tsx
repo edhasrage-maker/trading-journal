@@ -24,6 +24,9 @@ interface HistRow {
   // gracefully shows "—" for those rows in the MFE/MAE columns.
   high_during_position: number | null
   low_during_position: number | null
+  // Per-trade entry-time snapshots (backfilled by scripts/backfill-entry-metrics.ts).
+  entry_atr_1m: number | null
+  entry_rvol: number | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tags_json: any
 }
@@ -92,6 +95,8 @@ function histToContext(h: HistRow, ctxByDate: ContextByDate, dayTypesByDate: Day
     // data.
     high_during_position: h.high_during_position,
     low_during_position: h.low_during_position,
+    entry_atr_1m: h.entry_atr_1m,
+    entry_rvol: h.entry_rvol,
     date: h.trade_date ?? '',
     day_type: dayTypes[0] ?? null,
     day_types: dayTypes,
@@ -120,16 +125,22 @@ export default async function AnalyticsPage() {
   // (ascending) returned only the oldest, untagged trades and Analytics came up
   // empty. id is the tiebreaker so range() paging is deterministic.
   const PAGE = 1000
-  const trades: Trade[] = []
+  // entry_atr_1m / entry_rvol added by the 2026-06-09 migration — Supabase
+  // generated types haven't been regenerated yet, so we widen the row type
+  // locally. When the types are next regenerated, drop the intersection.
+  type TradeRowWithEntryMetrics = Trade & { entry_atr_1m: number | null; entry_rvol: number | null }
+  const trades: TradeRowWithEntryMetrics[] = []
   for (let p = 0; p < 50; p++) {
     const { data, error } = await supabase
       .from('trades')
-      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position')
+      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol')
       .order('entry_time', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
     if (error) { console.error('[analytics] trades page', p, 'failed:', error.message); break }
-    const rows = (data ?? []) as Trade[]
+    // Runtime shape includes entry_atr_1m + entry_rvol (added to SELECT above);
+    // generated Trade type doesn't know about them yet so we widen via unknown.
+    const rows = (data ?? []) as unknown as TradeRowWithEntryMetrics[]
     trades.push(...rows)
     if (rows.length < PAGE) break
   }
@@ -140,7 +151,7 @@ export default async function AnalyticsPage() {
   for (let p = 0; p < 50; p++) {
     const { data, error } = await supabase
       .from('historical_trades')
-      .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, high_during_position, low_during_position, tags_json')
+      .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, high_during_position, low_during_position, entry_atr_1m, entry_rvol, tags_json')
       .order('trade_date', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)

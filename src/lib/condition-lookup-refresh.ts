@@ -31,11 +31,12 @@ import type {
 export interface MarketContextLite {
   trading_day_id: string
   rvol: number | null
-  ib_vs_10d_avg: number | null   // → IB metric
+  rvol_at_ib_close: number | null   // → RVOL metric (preferred, 07:30 PT snapshot)
+  ib_vs_10d_avg: number | null      // → IB metric
   adr: number | null
-  day_range: number | null       // for DR_ADR derivation
-  atr_at_ib_close: number | null // → ATR_730 metric (preferred)
-  atr_1m: number | null          // → ATR_730 fallback when atr_at_ib_close is null
+  day_range: number | null          // for DR_ADR derivation
+  atr_at_ib_close: number | null    // → ATR_730 metric (preferred)
+  atr_1m: number | null             // → ATR_730 fallback when atr_at_ib_close is null
 }
 
 export interface TradeLite {
@@ -64,7 +65,11 @@ export function deriveMetrics(ctx: MarketContextLite | null): MetricRow {
     ? (ctx.day_range / ctx.adr) * 100
     : null
   return {
-    rvol: ctx.rvol,
+    // RVOL for the prep lookup uses the 07:30 PT snapshot (rvol_at_ib_close)
+    // so it reflects what was actually visible at IB close — the moment the
+    // trader makes the day-type call during prep. EOD `rvol` is kept as a
+    // fallback for legacy rows where rvol_at_ib_close wasn't computed yet.
+    rvol: ctx.rvol_at_ib_close ?? ctx.rvol,
     dr_adr,
     ib: ctx.ib_vs_10d_avg,
     atr_730: ctx.atr_at_ib_close ?? ctx.atr_1m,

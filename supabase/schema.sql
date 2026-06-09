@@ -100,6 +100,13 @@ create table if not exists trades (
   symbol text, -- e.g. "MNQM6.CME"; used for per-contract multiplier lookup when displaying MFE/MAE in dollars
   high_during_position numeric(10,2), -- tick-precise high price reached while position was open (Sierra's HighDuringPosition)
   low_during_position numeric(10,2),  -- tick-precise low price reached while position was open (Sierra's LowDuringPosition)
+  -- Per-trade entry-time snapshots (backfilled by scripts/backfill-entry-metrics.ts).
+  -- ATR/RVOL inherited from market_context is day-level; these capture the
+  -- actual condition AT the minute of entry so analytics buckets reflect
+  -- "what was volatility doing when I pulled the trigger" instead of EOD aggregates.
+  -- Daily Prep continues to use atr_at_ib_close / rvol_at_ib_close (07:30 PT snapshot).
+  entry_atr_1m numeric(10,2), -- Wilder ATR-10 1m value at the bar containing entry_time
+  entry_rvol numeric(6,2),    -- cumulative RTH volume through entry minute / 10d avg of same window × 100
   exits_json jsonb, -- array of partial exits: [{ time: ISO-8601, price: number, qty: number }, ...]; null/empty -> fall back to single exit_time/exit_price avg
   tags_json jsonb default '{}',
   -- tags_json shape:
@@ -504,6 +511,9 @@ create table if not exists historical_trades (
   -- trade's date range.
   high_during_position numeric(10,2),
   low_during_position numeric(10,2),
+  -- Per-trade entry-time snapshots (mirrors trades.entry_atr_1m / entry_rvol).
+  entry_atr_1m numeric(10,2),
+  entry_rvol numeric(6,2),
   duration_sec numeric,
   rating numeric,
   zella_score numeric,

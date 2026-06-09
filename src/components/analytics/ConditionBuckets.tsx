@@ -30,6 +30,13 @@ interface ConditionDef {
   description: string
   breaks: number[]
   format: (n: number) => string
+  /** Per-trade value override. Returns the entry-time snapshot when available
+   *  (preferred — no afternoon lookahead), falls back to the day-level value
+   *  on the trade row when the per-trade snapshot is null (e.g., pre-2025
+   *  trades, or trades whose entry fell outside RTH). Conditions that are
+   *  structurally day-level (IB size, ADR, IB vs 10d) leave this undefined
+   *  and the chart uses t[key] directly. */
+  resolve?: (t: TradeWithContext) => number | null
 }
 
 // Bucket boundaries are scale-of-the-data, NOT one-size-fits-all. NQ/MNQ
@@ -40,10 +47,12 @@ interface ConditionDef {
 const CONDITIONS: ConditionDef[] = [
   {
     key: 'rvol',
-    title: 'Relative Volume',
-    description: '100 = average. Higher Rvol = more activity than typical.',
+    title: 'Relative Volume (at entry)',
+    description: '100 = average pace. Cumulative volume from RTH open through the entry minute / 10d avg same window. Trades pre-2025 fall back to full-day RVOL.',
     breaks: [70, 100, 130, 180],
     format: n => `${n.toFixed(0)}%`,
+    // Prefer per-trade entry-time RVOL; fall back to day-level rvol when null.
+    resolve: t => t.entry_rvol ?? t.rvol,
   },
   {
     key: 'ib_vs_10d_avg',
@@ -77,10 +86,12 @@ const CONDITIONS: ConditionDef[] = [
   },
   {
     key: 'atr_1m',
-    title: 'ATR-10 (1m)',
-    description: '1-minute ATR-10 — short-term volatility.',
+    title: 'ATR-10 (at entry)',
+    description: 'Wilder ATR-10 on 1m bars, snapshotted at the minute of entry. Trades pre-2025 fall back to end-of-RTH ATR.',
     breaks: [10, 12, 15, 20],
     format: n => n.toFixed(0),
+    // Prefer per-trade entry-time ATR; fall back to day-level atr_1m when null.
+    resolve: t => t.entry_atr_1m ?? t.atr_1m,
   },
 ]
 
@@ -127,9 +138,16 @@ export default function ConditionBuckets({ trades }: Props) {
 }
 
 function ConditionCard({ cond, trades }: { cond: ConditionDef; trades: TradeWithContext[] }) {
+  // Use per-trade resolver when provided (rvol/atr_1m → entry-time snapshot
+  // with day-level fallback). Day-level structural conditions (IB/ADR/etc)
+  // omit the resolver and we read t[cond.key] directly. valueOf is inlined
+  // into the useMemo callback so its identity doesn't change render-to-render.
   const buckets = useMemo(
-    () => bucketByNumeric(trades, t => t[cond.key], cond.breaks, cond.format),
-    [trades, cond.key, cond.breaks, cond.format],
+    () => {
+      const valueOf = cond.resolve ?? ((t: TradeWithContext) => t[cond.key])
+      return bucketByNumeric(trades, valueOf, cond.breaks, cond.format)
+    },
+    [trades, cond.resolve, cond.key, cond.breaks, cond.format],
   )
 
   // Hide ANY bucket with zero trades — previously we kept named buckets

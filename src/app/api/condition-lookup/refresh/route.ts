@@ -39,7 +39,7 @@ async function handle() {
 
   // ── 1. Pull market_context + trading_days so we can map id → date ─────────
   const [{ data: contextsRaw, error: cErr }, { data: daysRaw, error: dErr }] = await Promise.all([
-    supabase.from('market_context').select('trading_day_id, rvol, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_1m') as Promise<{ data: MarketContextLite[] | null; error: { message: string } | null }>,
+    supabase.from('market_context').select('trading_day_id, rvol, rvol_at_ib_close, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_1m') as Promise<{ data: MarketContextLite[] | null; error: { message: string } | null }>,
     supabase.from('trading_days').select('id, date') as Promise<{ data: { id: string; date: string }[] | null; error: { message: string } | null }>,
   ])
   if (cErr) return NextResponse.json({ error: `Failed to load market_context: ${cErr.message}` }, { status: 500 })

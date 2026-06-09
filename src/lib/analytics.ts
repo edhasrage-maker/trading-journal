@@ -23,11 +23,18 @@ export interface TradeWithContext extends TradeWithExcursion {
   date: string
   day_type: string | null    // Legacy single-tag — kept for un-migrated callers
   day_types: string[]        // Multi-select. Combo days surface every tag here.
+  // Day-level market_context (inherited; every trade on the day shares these)
   rvol: number | null
   ib_size: number | null
   ib_vs_10d_avg: number | null
   adr: number | null
   atr_1m: number | null
+  // Per-trade entry-time snapshots (backfilled by scripts/backfill-entry-metrics.ts).
+  // ATR/RVOL at the minute of entry, no afternoon lookahead. ConditionBuckets
+  // prefers these when present, falls back to day-level rvol/atr_1m for
+  // trades that haven't been backfilled (e.g. pre-2025).
+  entry_atr_1m: number | null
+  entry_rvol: number | null
 }
 
 export interface DaySummary {
@@ -586,9 +593,14 @@ export function maxDrawdown(points: { cum_pnl: number }[]): number {
 /** Join trades with day + market_context, returning a flat shape for filtering.
  *  Trades MUST carry high_during_position / low_during_position (they're
  *  required on TradeWithExcursion, the supertype of TradeWithContext) — the
- *  analytics page is responsible for selecting them from the DB. */
+ *  analytics page is responsible for selecting them from the DB.
+ *
+ *  Per-trade entry-time snapshots (entry_atr_1m / entry_rvol) are read off
+ *  the trade row if present. The Trade DB row carries them as of the
+ *  2026-06-09 migration; until the generated Supabase types catch up, the
+ *  caller widens the row type locally and we tolerate them being missing. */
 export function joinTradesWithContext(
-  trades: TradeWithExcursion[],
+  trades: (TradeWithExcursion & { entry_atr_1m?: number | null; entry_rvol?: number | null })[],
   days: Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types'>[],
   contexts: Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>[],
 ): TradeWithContext[] {
@@ -610,6 +622,8 @@ export function joinTradesWithContext(
       ib_vs_10d_avg: c?.ib_vs_10d_avg ?? null,
       adr: c?.adr ?? null,
       atr_1m: c?.atr_1m ?? null,
+      entry_atr_1m: t.entry_atr_1m ?? null,
+      entry_rvol: t.entry_rvol ?? null,
     }
   })
 }
