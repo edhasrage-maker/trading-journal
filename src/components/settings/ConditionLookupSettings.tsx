@@ -236,7 +236,13 @@ export default function ConditionLookupSettings({
                   <td className="py-1.5 pr-3 text-right text-blue-300">{t.tertile_low.toFixed(3)}</td>
                   <td className="py-1.5 pr-3 text-right text-white">{t.median.toFixed(3)}</td>
                   <td className="py-1.5 pr-3 text-right text-amber-300">{t.tertile_high.toFixed(3)}</td>
-                  <td className="py-1.5 pl-3 text-gray-600">
+                  {/* `formatDistanceToNowStrict` uses Date.now() under the hood,
+                      so the server and client compute slightly different
+                      strings ("7 seconds" vs "8 seconds") at hydration.
+                      suppressHydrationWarning tells React the mismatch is
+                      intentional — the client value is what we want shown,
+                      and it converges within a render. */}
+                  <td className="py-1.5 pl-3 text-gray-600" suppressHydrationWarning>
                     {formatDistanceToNowStrict(new Date(t.updated_at))} ago
                   </td>
                 </tr>
