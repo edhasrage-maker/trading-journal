@@ -187,6 +187,16 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const [bulkTagOpen, setBulkTagOpen] = useState(false)
   const [bulkApplying, setBulkApplying] = useState(false)
   const [merging, setMerging] = useState(false)
+  // Zoom lightbox — set to a screenshot URL to open a fullscreen viewer
+  // overlay. Click backdrop or press Escape to close. Replaces the
+  // earlier "open in new tab" affordance.
+  const [zoomedScreenshot, setZoomedScreenshot] = useState<string | null>(null)
+  useEffect(() => {
+    if (!zoomedScreenshot) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoomedScreenshot(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [zoomedScreenshot])
   const toggleSelected = (id: string) =>
     setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
   const clearSelection = () => setSelectedIds(new Set())
@@ -561,19 +571,18 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                   )
                 })()}
 
-                {/* Screenshot with pins. The image is wrapped in an external
-                    anchor so a click opens the full-res version in a new tab
-                    (useful when the inline thumbnail is too small to read).
-                    The pin-overlay SVG has pointer-events-none so it never
-                    intercepts the click on the image beneath it. */}
+                {/* Screenshot with pins. Click opens an in-page zoom lightbox
+                    (replaces the earlier open-in-new-tab affordance — the
+                    inline thumbnail is too small to read but a new tab is more
+                    friction than wanted). The pin-overlay SVG has
+                    pointer-events-none so it never intercepts the click. */}
                 {trade.screenshot_url && (
                   <div className="relative rounded-lg overflow-hidden border border-gray-700 bg-gray-950 group">
-                    <a
-                      href={trade.screenshot_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block cursor-zoom-in"
-                      title="Open screenshot in new tab"
+                    <button
+                      type="button"
+                      onClick={() => setZoomedScreenshot(trade.screenshot_url)}
+                      className="block w-full cursor-zoom-in p-0 m-0 border-0 bg-transparent"
+                      title="Click to zoom"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
@@ -581,7 +590,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                         alt="Trade"
                         className="w-full object-contain max-h-80 transition-opacity group-hover:opacity-90"
                       />
-                    </a>
+                    </button>
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
                       {([
                         { key: 'entry', x: trade.entry_pin_x, y: trade.entry_pin_y, color: '#22c55e', short: 'E' },
@@ -735,6 +744,37 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           onCancel={() => setBulkTagOpen(false)}
           onApply={handleBulkApplyTags}
         />
+      )}
+
+      {/* Screenshot zoom lightbox. Click any trade screenshot to open here;
+          click the backdrop, the close button, or press Escape to dismiss.
+          Image is rendered at its natural resolution capped to the viewport
+          via max-h/max-w so very wide screenshots get vertically letterboxed
+          rather than cropped. */}
+      {zoomedScreenshot && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setZoomedScreenshot(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Trade screenshot zoom"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={zoomedScreenshot}
+            alt="Trade screenshot (zoomed)"
+            className="max-w-full max-h-full object-contain rounded shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={() => setZoomedScreenshot(null)}
+            className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-gray-900/80 hover:bg-gray-800 text-gray-300 hover:text-white border border-gray-700 transition-colors"
+            aria-label="Close zoom"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       )}
 
     </div>
