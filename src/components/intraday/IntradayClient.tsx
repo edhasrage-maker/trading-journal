@@ -561,11 +561,27 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                   )
                 })()}
 
-                {/* Screenshot with pins */}
+                {/* Screenshot with pins. The image is wrapped in an external
+                    anchor so a click opens the full-res version in a new tab
+                    (useful when the inline thumbnail is too small to read).
+                    The pin-overlay SVG has pointer-events-none so it never
+                    intercepts the click on the image beneath it. */}
                 {trade.screenshot_url && (
-                  <div className="relative rounded-lg overflow-hidden border border-gray-700 bg-gray-950">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={trade.screenshot_url} alt="Trade" className="w-full object-contain max-h-80" />
+                  <div className="relative rounded-lg overflow-hidden border border-gray-700 bg-gray-950 group">
+                    <a
+                      href={trade.screenshot_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block cursor-zoom-in"
+                      title="Open screenshot in new tab"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={trade.screenshot_url}
+                        alt="Trade"
+                        className="w-full object-contain max-h-80 transition-opacity group-hover:opacity-90"
+                      />
+                    </a>
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
                       {([
                         { key: 'entry', x: trade.entry_pin_x, y: trade.entry_pin_y, color: '#22c55e', short: 'E' },

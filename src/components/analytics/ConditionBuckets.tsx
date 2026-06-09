@@ -52,25 +52,34 @@ const CONDITIONS: ConditionDef[] = [
     breaks: [0.7, 1.0, 1.3],
     format: n => `${n.toFixed(1)}×`,
   },
+  // Break points below are rounded to nice numbers AT the actual quintile
+  // boundaries of the user's market_context data (queried 2026-06-09):
+  //   IB:    p20=105, p40=144, p60=185, p80=243   → [100, 150, 200, 250]
+  //   ADR:   p20=216, p40=265, p60=316, p80=383   → [220, 270, 320, 380]
+  //   ATR:   p20=10.0, p40=12.0, p60=14.9, p80=19.5 → [10, 12, 15, 20]
+  // Earlier breaks (150/250/350/500 for IB, etc.) were guess-based and
+  // dumped 60-70% of trades into the middle bucket, leaving the wings
+  // sparse and the visualization useless. These quintile-aligned breaks
+  // give roughly 20% of trades per bucket so each band is informative.
   {
     key: 'ib_size',
     title: 'IB Size (points)',
     description: 'Initial Balance range in raw points.',
-    breaks: [150, 250, 350, 500],
+    breaks: [100, 150, 200, 250],
     format: n => n.toFixed(0),
   },
   {
     key: 'adr',
     title: 'Average Daily Range',
     description: 'ADR in points (RTH).',
-    breaks: [250, 320, 400, 500],
+    breaks: [220, 270, 320, 380],
     format: n => n.toFixed(0),
   },
   {
     key: 'atr_1m',
     title: 'ATR-10 (1m)',
     description: '1-minute ATR-10 — short-term volatility.',
-    breaks: [10, 20, 40],
+    breaks: [10, 12, 15, 20],
     format: n => n.toFixed(0),
   },
 ]
