@@ -168,48 +168,87 @@ ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}
 Trade context (matches the image labels by trade id):
 ${tradeDescriptions}
 
-Respond with ONLY valid JSON (no markdown, no code fences). Map each trade id to its commentary AND a (possibly empty) array of suggested mistake labels chosen from the list above. Omit suggested_mistakes or use [] when nothing visible warrants a flag:
-{ "trades": { "<tradeId>": { "commentary": "<1-3 sentence commentary>", "suggested_mistakes": ["<exact label from list>", ...] }, ... } }`
+Return ONE entry in the trades array per unique trade id (use the id strings exactly as shown above). suggested_mistakes is required but may be an empty array when nothing visible warrants a flag.`
 
   blocks.push({ type: 'text', text: prompt })
 
   try {
+    // Structured outputs guarantee syntactically valid JSON — previously we
+    // hand-parsed text.match(/{...}/) and JSON.parse, which kept blowing up
+    // on the AI's unescaped quotes in commentary strings. The schema uses an
+    // array of trade objects (not a map keyed by trade id) because
+    // structured outputs don't support `additionalProperties` as a schema —
+    // only `additionalProperties: false`. Putting the id inside each object
+    // keeps the dynamic-key data without violating the spec.
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       messages: [{ role: 'user', content: blocks }],
-    })
+      output_config: {
+        format: {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            properties: {
+              trades: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    commentary: { type: 'string' },
+                    suggested_mistakes: {
+                      type: 'array',
+                      items: { type: 'string' },
+                    },
+                  },
+                  required: ['id', 'commentary', 'suggested_mistakes'],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ['trades'],
+            additionalProperties: false,
+          },
+        },
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
     const text = message.content[0]?.type === 'text' ? message.content[0].text : ''
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
+    if (!text) {
       return NextResponse.json({
         commentary: {}, suggested_mistakes: {}, skipped, framesUsed: blocks.length - 1,
-        note: 'AI returned no parseable JSON.',
+        note: 'AI returned no text content.',
       })
     }
-    // Accept two shapes for resilience:
-    //   { "trades": { id: { commentary, suggested_mistakes } } }   ← new schema
-    //   { "commentary": { id: "..." } }                            ← legacy
-    const parsed = JSON.parse(jsonMatch[0]) as {
-      trades?: Record<string, { commentary?: string; suggested_mistakes?: string[] }>
-      commentary?: Record<string, string>
+    // With structured outputs, the entire `text` IS the JSON — no need to
+    // hunt for braces. Still wrap in try/catch in case Anthropic ever returns
+    // a refusal or empty payload.
+    let parsed: { trades?: Array<{ id?: string; commentary?: string; suggested_mistakes?: string[] }> }
+    try {
+      parsed = JSON.parse(text)
+    } catch (parseErr) {
+      console.error('[video/commentary] JSON parse failed despite structured outputs:', parseErr, '\nraw text:', text.slice(0, 500))
+      return NextResponse.json({
+        commentary: {}, suggested_mistakes: {}, skipped, framesUsed: blocks.length - 1,
+        note: `Structured-output JSON failed to parse: ${parseErr instanceof Error ? parseErr.message : 'unknown'}`,
+      })
     }
     const commentary: Record<string, string> = {}
     const suggested: Record<string, string[]> = {}
-    if (parsed.trades && typeof parsed.trades === 'object') {
+    if (Array.isArray(parsed.trades)) {
       const librarySet = new Set(mistakeLibrary)
-      for (const [id, v] of Object.entries(parsed.trades)) {
-        if (typeof v?.commentary === 'string') commentary[id] = v.commentary
-        if (Array.isArray(v?.suggested_mistakes)) {
+      for (const t of parsed.trades) {
+        if (typeof t?.id !== 'string' || typeof t?.commentary !== 'string') continue
+        commentary[t.id] = t.commentary
+        if (Array.isArray(t.suggested_mistakes)) {
           // Constrain to known mistake labels — if the model hallucinates,
           // drop those entries silently. The "+ Add tag" flow is the right
           // place to introduce new labels, not the AI.
-          const valid = v.suggested_mistakes.filter(s => typeof s === 'string' && librarySet.has(s))
-          if (valid.length > 0) suggested[id] = valid
+          const valid = t.suggested_mistakes.filter(s => typeof s === 'string' && librarySet.has(s))
+          if (valid.length > 0) suggested[t.id] = valid
         }
       }
-    } else if (parsed.commentary) {
-      Object.assign(commentary, parsed.commentary)
     }
 
     // Persist per-trade commentary to Supabase so it survives reload + syncs
