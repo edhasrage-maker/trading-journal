@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { GitMerge, Plus, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2 } from 'lucide-react'
 import TradeForm from './TradeForm'
 import ScreenshotLightbox from './ScreenshotLightbox'
+import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
@@ -395,9 +396,11 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
         </div>
       </div>
 
-      {/* Summary bar */}
+      {/* Summary bar — Trades / Day P&L / Wins-Losses / Avg MFE-MAE. The
+          MFE/MAE column drops in inline (variant='inline') so it fits in the
+          existing strip rather than living in a second row of cards below. */}
       {trades.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl px-5 py-3 flex items-center gap-6">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl px-5 py-3 flex items-center gap-6 flex-wrap">
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider">Trades</div>
             <div className="text-lg font-bold text-white">{trades.length}</div>
@@ -416,6 +419,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
               <span className="text-red-400">{trades.filter(t => (t.pnl ?? 0) < 0).length}</span>
             </div>
           </div>
+          <AvgMfeMaeCard trades={trades} variant="inline" />
         </div>
       )}
 

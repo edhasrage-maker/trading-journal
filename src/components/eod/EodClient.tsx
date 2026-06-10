@@ -17,6 +17,7 @@ import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import DeleteDayDangerZone from './DeleteDayDangerZone'
 import RecordingCommentary from './RecordingCommentary'
+import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import { avgCaptureRatio, avgMaeHeatRatio } from '@/lib/analytics'
 import type {
   TradingDay,
@@ -698,6 +699,9 @@ export default function EodClient({
               {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
             </div>
           </div>
+          {/* Avg MFE/MAE — inline variant, drops between PnL and MFE Realized %.
+              Uses pts/$/×ATR toggle synced with the Dashboard card via localStorage. */}
+          <AvgMfeMaeCard trades={trades} variant="inline" />
           <div className="relative">
             <div className="text-[11px] text-gray-500 whitespace-nowrap flex items-center gap-1">
               MFE Realized %

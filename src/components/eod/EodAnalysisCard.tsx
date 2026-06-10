@@ -20,6 +20,20 @@ const RULE_LABELS: Record<RuleId, string> = {
   P5: 'Trade Cap ≤7',
 }
 
+/**
+ * Full descriptions for the hover popup. Source of truth is
+ * docs/Ruleset_v1.3_Process_Execution_Spec.md — kept short here so the
+ * tooltip stays compact. Each line is one sentence on what the rule
+ * enforces and why a breach matters.
+ */
+const RULE_DESCRIPTIONS: Record<RuleId, string> = {
+  P1: 'Stop trading the moment cumulative session P&L drops to the daily loss limit. Hard safety rail — breach means a missed stop on the DLL itself.',
+  P2: 'Every trade must be at or below the per-trade size cap. No exceptions for "high-conviction" setups.',
+  P3: 'After a losing trade, the next trade must be the same size or smaller — never larger. Sizing up after a loss is the classic revenge-trade tell.',
+  P4: 'At least 90 seconds must elapse between one trade closing and the next opening. Forces a deliberate decision, not a reactive re-entry.',
+  P5: 'Maximum 7 trades per day. Past 7 is overtrading territory regardless of P&L — quit while the edge is fresh.',
+}
+
 const RULE_ORDER: RuleId[] = ['P1', 'P2', 'P3', 'P4', 'P5']
 
 export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled }: Props) {
@@ -192,13 +206,37 @@ function RuleChip({ id, status }: { id: RuleId; status: RuleStatus | undefined }
     : s === 'fail'
       ? 'bg-red-900/40 text-red-300 border-red-800/60'
       : 'bg-gray-800 text-gray-500 border-gray-700'
-  const tooltip = `${id} — ${RULE_LABELS[id]}\nstatus: ${s}` + (status?.breach_count ? `\nbreaches: ${status.breach_count}` : '') + (status?.reason ? `\n${status.reason}` : '')
+  const statusColor = s === 'pass' ? 'text-green-300' : s === 'fail' ? 'text-red-300' : 'text-gray-400'
+  // Custom hover popup using group-hover — pure CSS, no React state needed.
+  // Replaces the native title="" tooltip which (a) didn't show the rule
+  // description, only the label, and (b) had a ~500ms delay that made the
+  // 5-chip strip feel sluggish.
   return (
-    <div
-      className={`${cls} text-center text-[10px] font-mono py-1 rounded border cursor-help`}
-      title={tooltip}
-    >
+    <div className={`relative group ${cls} text-center text-[10px] font-mono py-1 rounded border cursor-help`}>
       {id}
+      <div className="invisible group-hover:visible absolute z-30 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-gray-950 border border-gray-700 rounded-lg shadow-xl p-3 text-left pointer-events-none">
+        <div className="flex items-baseline justify-between gap-2 mb-1.5">
+          <span className="text-xs font-bold text-white">
+            {id} — {RULE_LABELS[id]}
+          </span>
+          <span className={`text-[10px] font-mono uppercase ${statusColor}`}>{s}</span>
+        </div>
+        <p className="text-[11px] text-gray-300 leading-snug font-sans">
+          {RULE_DESCRIPTIONS[id]}
+        </p>
+        {(status?.breach_count != null && status.breach_count > 0) && (
+          <p className="text-[10px] text-red-400 font-mono mt-1.5">
+            Breaches today: {status.breach_count}
+          </p>
+        )}
+        {status?.reason && (
+          <p className="text-[10px] text-gray-400 italic mt-1.5 font-sans leading-snug">
+            {status.reason}
+          </p>
+        )}
+        {/* arrow */}
+        <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-950 border-r border-b border-gray-700 rotate-45 -mt-1" />
+      </div>
     </div>
   )
 }

@@ -43,6 +43,12 @@ export interface DayStat {
    *  Null on days where the EOD AI hasn't run, or on legacy pre-v1.4 rows
    *  where the dashboard reader couldn't compute it. */
   process_v13_score: number | null
+  /** Execution composite scaled to 0-10. Same value rendered in the
+   *  Recent Days table's "Execution" column. */
+  overall_grade: number | null
+  /** Process verdict — used to compute the dashboard's compliance rate
+   *  (Compliant days / scored days × 100). */
+  process_verdict: 'Compliant' | 'Breach' | null
 }
 
 type MfeUnit = 'pts' | 'dollars' | 'atr'
@@ -203,6 +209,17 @@ export default function DashboardStats({ days }: Props) {
     const v13Scores = inPeriod.map(d => d.process_v13_score).filter((v): v is number => v != null)
     const medianProcessV13 = median(v13Scores)
 
+    // Median Execution + Process compliance rate. Replaces the older
+    // medianProcessV13-only card per the 2026-06-09 design: traders care
+    // less about "what's the median process number" (binary-ish) and more
+    // about "of the days where I had a process score, how often was I
+    // compliant" + "how strong was my execution on average".
+    const execScores = inPeriod.map(d => d.overall_grade).filter((v): v is number => v != null)
+    const medianExecution = median(execScores)
+    const verdictDays = inPeriod.map(d => d.process_verdict).filter((v): v is 'Compliant' | 'Breach' => v != null)
+    const compliantDays = verdictDays.filter(v => v === 'Compliant').length
+    const complianceRate = verdictDays.length > 0 ? compliantDays / verdictDays.length : null
+
     return {
       pnl,
       dayWinRate,
@@ -211,10 +228,15 @@ export default function DashboardStats({ days }: Props) {
       avgMae,
       medianProcess: medianPrep,    // legacy field name preserved for callers
       medianProcessV13,
+      medianExecution,
+      complianceRate,
+      compliantDays,
+      verdictDaysCount: verdictDays.length,
       tradedDaysCount: tradedDays.length,
       totalTradesWithPnl,
       procCount: prepScores.length,
       v13Count: v13Scores.length,
+      execCount: execScores.length,
     }
   }, [days, period, mfeUnit])
 
@@ -296,15 +318,16 @@ export default function DashboardStats({ days }: Props) {
           }
           valueClass="text-base"
         />
-        {/* Median Process (v1.4 verdict-derived 0-10, passCount/5*10). The
-            previous PrepAndProcessCard showed Prep AND Process side-by-side —
-            the trader dropped Prep here because the prep AI's 1-10 quality
-            score (still surfaced inside individual day cards / EOD recap) is
-            duplicative at the rolled-up dashboard level. Process is the more
-            actionable rule-adherence signal. */}
-        <ProcessCard
-          medianProcess={stats.medianProcessV13}
-          processCount={stats.v13Count}
+        {/* Execution / Compliance card: Median Execution score (0-10)
+            paired with Process Compliance rate (% of scored days that were
+            Compliant). Replaces the older Median Process card — surfaces
+            BOTH dimensions instead of just the verdict-derived score. */}
+        <ExecutionComplianceCard
+          medianExecution={stats.medianExecution}
+          execCount={stats.execCount}
+          complianceRate={stats.complianceRate}
+          compliantDays={stats.compliantDays}
+          verdictDaysCount={stats.verdictDaysCount}
         />
       </div>
     </div>
@@ -335,31 +358,60 @@ function StatCard({
   )
 }
 
-/** Stat card showing only Median Process (v1.4 verdict-derived 0-10).
- *  Was previously PrepAndProcessCard — see commit removing Prep from the
- *  dashboard rollup. Tones map to v1.4 thresholds: ≥8 (4/5 rules pass =
- *  at-threshold Compliant) is positive, anything lower trends toward red. */
-function ProcessCard({
-  medianProcess, processCount,
+/** Stat card showing Median Execution score (0-10) + Process Compliance
+ *  rate (% of scored days that were Compliant). Format: "7.0 / 70%" —
+ *  median execution was 7, you were compliant on 70% of scored days.
+ *
+ *  Replaces the older Median-Process-only card. Captures both dimensions
+ *  of the v1.4 spec: Execution is the continuous diagnostic (how well
+ *  you traded), Compliance is the binary safety-rail check (how often
+ *  you stayed within the rules). They tell different stories — a day
+ *  can have great execution but still breach a hard rule, or be
+ *  compliant but with poor execution.
+ */
+function ExecutionComplianceCard({
+  medianExecution, execCount, complianceRate, compliantDays, verdictDaysCount,
 }: {
-  medianProcess: number | null
-  processCount: number
+  medianExecution: number | null
+  execCount: number
+  complianceRate: number | null
+  compliantDays: number
+  verdictDaysCount: number
 }) {
-  const procColor =
-    medianProcess == null ? 'text-gray-500'
-    : medianProcess >= 8 ? 'text-green-400'
-    : medianProcess >= 6 ? 'text-yellow-300'
+  // Tone driven by execution score (the larger, continuous signal). Color
+  // bands match the v1.4 thresholds — ≥7 is solid, 5-7 is concerning,
+  // <5 is bad.
+  const execTone =
+    medianExecution == null ? 'text-gray-500'
+    : medianExecution >= 7 ? 'text-green-400'
+    : medianExecution >= 5 ? 'text-yellow-300'
+    : 'text-red-400'
+  // Compliance gets its own color signal: ≥80% green (rule-following),
+  // 50-80% yellow (slipping), <50% red (chronic breaches).
+  const compTone =
+    complianceRate == null ? 'text-gray-500'
+    : complianceRate >= 0.8 ? 'text-green-400'
+    : complianceRate >= 0.5 ? 'text-yellow-300'
     : 'text-red-400'
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">Median Process</p>
-      <p className={`font-bold text-xl ${procColor} whitespace-nowrap`}>
-        {medianProcess == null ? '—' : `${medianProcess.toFixed(1)}`}
-        <span className="text-gray-600 text-xs ml-1">/10</span>
+      <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">Execution / Compliance</p>
+      <p className="font-bold text-xl whitespace-nowrap">
+        <span className={execTone}>
+          {medianExecution == null ? '—' : medianExecution.toFixed(1)}
+        </span>
+        <span className="text-gray-600 mx-1">/</span>
+        <span className={compTone}>
+          {complianceRate == null ? '—' : `${Math.round(complianceRate * 100)}%`}
+        </span>
       </p>
       <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">
-        {processCount} day{processCount === 1 ? '' : 's'} scored
+        {execCount} executed
+        {verdictDaysCount > 0 && (
+          <> · {compliantDays}/{verdictDaysCount} compliant</>
+        )}
       </p>
     </div>
   )
 }
+

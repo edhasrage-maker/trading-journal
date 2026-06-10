@@ -733,12 +733,16 @@ function ScorePill({ value }: { value: number | null }) {
 }
 
 /**
- * v1.4 Process pill — same 0-10 visual footprint as ScorePill so columns
- * line up. The COLOR BAND is driven by the verdict (green=Compliant when
- * ≥4/5 rules pass per 2026-06-08 amendment 3, red=Breach when ≤3/5); the
- * SHADE within each band is driven by the score so 5/5 reads deeper green
- * than a 4/5 scrape-through, and 0/5 total failure reads darker than a 3/5
- * just-under breach. With 5 rules the score values are {0, 2, 4, 6, 8, 10}.
+ * v1.4 Process pill — renders as a check/X icon with a color gradient
+ * driven by the score. Compliant (≥4/5 pass) is green and gets brighter
+ * with higher pass counts; Breach (<4/5) is red and gets darker with
+ * more failed rules. Score values are {0,2,4,6,8,10} (passCount × 2),
+ * giving a 6-step gradient: 10 (5/5 pass) → 8 (4/5) → 6 (3/5) → 4 (2/5)
+ * → 2 (1/5) → 0 (0/5).
+ *
+ * Same w-8 visual footprint as ScorePill so the column lines up. Hover
+ * tooltip carries the underlying score + breach detail so the precise
+ * verdict is one mouse-over away.
  */
 function VerdictPill({
   value, verdict, breachRules,
@@ -752,21 +756,22 @@ function VerdictPill({
   }
   const isCompliant = verdict === 'Compliant'
   const color = isCompliant
-    ? (value >= 10 ? 'text-green-300 border-green-700/60 bg-green-900/50'      // 5/5 — deep green
-      :              'text-emerald-300 border-emerald-700/40 bg-emerald-900/25') // 4/5 — at threshold, cooler
-    : (value >= 6  ? 'text-orange-300 border-orange-700/50 bg-orange-900/30'  // 3/5 — just-under breach
-      : value >= 4  ? 'text-red-300 border-red-800/50 bg-red-950/40'           // 2/5
-      : value >= 2  ? 'text-red-200 border-red-700/60 bg-red-900/50'           // 1/5
-      :              'text-red-100 border-red-600/70 bg-red-900/70')           // 0/5 — total failure
+    ? (value >= 10 ? 'text-emerald-300 border-emerald-600/60 bg-emerald-500/30'    // 5/5 — brightest
+      :              'text-emerald-400 border-emerald-700/50 bg-emerald-600/30')   // 4/5 — at threshold
+    : (value >= 6  ? 'text-red-400 border-red-700/50 bg-red-600/25'                // 3/5 — just-under breach
+      : value >= 4  ? 'text-red-400 border-red-800/60 bg-red-700/30'                // 2/5
+      : value >= 2  ? 'text-red-300 border-red-900/70 bg-red-800/35'                // 1/5
+      :              'text-red-200 border-red-950/80 bg-red-900/45')                // 0/5 — total failure
   const tooltip = isCompliant
-    ? `Compliant — ${value}/10 (≥4/5 rules pass)`
-    : `Breach — ${(breachRules ?? []).join(', ') || 'rule(s) failed'}`
+    ? `Compliant — ${value / 2}/5 rules pass (≥4/5 threshold)`
+    : `Breach — ${value / 2}/5 rules pass · ${(breachRules ?? []).join(', ') || 'rule(s) failed'}`
+  const Icon = isCompliant ? Check : X
   return (
     <span
-      className={`font-mono border rounded px-1.5 py-0.5 inline-block w-8 text-center text-xs ${color}`}
+      className={`border rounded px-1.5 py-0.5 inline-flex items-center justify-center w-8 h-6 ${color}`}
       title={tooltip}
     >
-      {value}
+      <Icon className="w-3.5 h-3.5" strokeWidth={3} />
     </span>
   )
 }

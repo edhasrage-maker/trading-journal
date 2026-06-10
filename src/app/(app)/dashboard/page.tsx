@@ -369,6 +369,10 @@ export default async function DashboardPage() {
     avg_live_atr_1m: d.avg_live_atr_1m,
     process_score: d.process_score,
     process_v13_score: d.process_v13_score,
+    // Execution composite (0-10) + Process verdict piped through so the
+    // dashboard card can show median Execution / Compliance rate.
+    overall_grade: d.overall_grade,
+    process_verdict: d.process_verdict,
   }))
 
   // Recent Days table still scopes to the 180d window — keeps the table fast
