@@ -10,7 +10,7 @@ import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
-import { captureRatio, maeHeatRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
+import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, type BarLike } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { useMfeUnit, formatMfeMae } from '@/lib/mfe-unit'
 import { mergeTradeTags } from '@/lib/suggest-tags'
@@ -45,11 +45,14 @@ function rMultiple(t: Trade): string | null {
   return (t.pnl / risk).toFixed(1) + 'R'
 }
 
-/** Display-formatted capture % — null when MFE can't be computed or was non-positive. */
-function captureDisplay(t: Trade): string | null {
-  const r = captureRatio(t)
+/** Display-formatted capture % — null when MFE can't be computed or was non-positive.
+ *  When bars are provided, prefers the per-leg scaling-aware ratio (each leg's max
+ *  possible bounded by the price IT could've captured before exiting); without
+ *  bars OR when bar coverage has a gap, falls back to the simple peak × full-qty
+ *  ratio so the trader always sees SOMETHING. */
+function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
+  const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
   if (r == null) return null
-  // Bound display at -999/+999% so a degenerate ratio doesn't blow the layout.
   const pct = Math.max(-999, Math.min(999, r * 100))
   return `${pct.toFixed(0)}%`
 }
@@ -68,8 +71,11 @@ function heatDisplay(t: Trade): string | null {
  * red+bold only for the cross-case patterns that need review (give-back
  * loser, lucky-escape winner, heat past stop).
  */
-function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | null }) {
-  const cap = captureRatio(trade)
+function CapHeatInline({ trade, rDisplay, bars }: { trade: Trade; rDisplay: string | null; bars?: BarLike[] }) {
+  // Prefer per-leg scaling-aware capture when bars are available; fall back
+  // to the simple peak × full-qty calc otherwise. Matches the displayed %
+  // so the standout-color logic agrees with what the trader sees.
+  const cap = (bars && bars.length > 0 ? captureRatioScaled(trade, bars) : null) ?? captureRatio(trade)
   const heat = maeHeatRatio(trade)
   if (cap == null && heat == null && !rDisplay) return null
 
@@ -103,10 +109,10 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
         <span
           className={capCls}
           title={isGiveBack
-            ? `MFE Realized %: ${captureDisplay(trade)} — give-back (trade went favorable then closed negative).`
-            : `MFE Realized %: ${captureDisplay(trade)} of peak favorable excursion realized as PnL.`}
+            ? `MFE Realized %: ${captureDisplay(trade, bars)} — give-back (trade went favorable then closed negative).`
+            : `MFE Realized %: ${captureDisplay(trade, bars)} of peak favorable excursion realized as PnL.${bars && bars.length > 0 ? ' Per-leg scaling-aware.' : ''}`}
         >
-          {captureDisplay(trade)}
+          {captureDisplay(trade, bars)}
         </span>
       )}
       {heat != null && (
@@ -155,6 +161,30 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const [deleting, setDeleting] = useState<string | null>(null)
   const [pastedFile, setPastedFile] = useState<File | null>(null)
   const [showChart, setShowChart] = useState(true)
+
+  // 1-minute bars for the day, used by the scaling-aware MFE Capture
+  // calculation. The trades share the symbol of the first trade with one
+  // set (Sierra import gives every trade a symbol; some legacy / Tradezella
+  // trades may have null). Without bars, the per-row capture % falls back
+  // to the simple peak × full-qty formula.
+  const [bars, setBars] = useState<BarLike[] | null>(null)
+  useEffect(() => {
+    const symbol = trades.find(t => t.symbol)?.symbol
+    if (!symbol) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing bars when day has no symbol
+      setBars(null)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}&date=${date}`)
+      .then(res => res.ok ? res.json() : null)
+      .then((data: { bars?: BarLike[] } | null) => {
+        if (cancelled) return
+        setBars(data?.bars ?? null)
+      })
+      .catch(() => { if (!cancelled) setBars(null) })
+    return () => { cancelled = true }
+  }, [trades, date])
 
   // Session journal — shared with EOD recap via trading_days.eod_notes.
   // The trader writes during the session; the same text is there waiting at
@@ -520,7 +550,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                 <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
                   {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
                 </div>
-                <CapHeatInline trade={trade} rDisplay={r} />
+                <CapHeatInline trade={trade} rDisplay={r} bars={bars ?? undefined} />
               </div>
 
               {isOpen ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0" />}
@@ -544,12 +574,15 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                 </div>
 
                 {/* Execution quality: Capture % (how much of MFE did I take?) and
-                    Heat % (did I sit through more than my planned stop?). */}
-                {(captureDisplay(trade) != null || heatDisplay(trade) != null) && (() => {
+                    Heat % (did I sit through more than my planned stop?).
+                    Scaling-aware capture when bars are loaded — falls back to
+                    simple peak × full-qty when bars haven't arrived yet OR a
+                    bar coverage gap returns null. */}
+                {(captureDisplay(trade, bars ?? undefined) != null || heatDisplay(trade) != null) && (() => {
                   const xc = mfeMaePoints(trade)
-                  const cap = captureDisplay(trade)
+                  const cap = captureDisplay(trade, bars ?? undefined)
                   const heat = heatDisplay(trade)
-                  const capRatio = captureRatio(trade)
+                  const capRatio = (bars && bars.length > 0 ? captureRatioScaled(trade, bars) : null) ?? captureRatio(trade)
                   const heatRatio = maeHeatRatio(trade)
                   // Gray default; red+bold only for standout cases (negative
                   // capture = give-back, heat > 100% = past stop).

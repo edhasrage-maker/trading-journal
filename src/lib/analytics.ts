@@ -35,6 +35,10 @@ export interface TradeWithContext extends TradeWithExcursion {
   // trades that haven't been backfilled (e.g. pre-2025).
   entry_atr_1m: number | null
   entry_rvol: number | null
+  // Scaling-aware MFE max-possible (sum over legs of leg_qty × leg_window_peak ×
+  // multiplier). Populated by scripts/backfill-per-leg-mfe.ts. When present,
+  // captureComponents uses this instead of the simple peak × full-qty formula.
+  mfe_dollars_per_leg: number | null
 }
 
 export interface DaySummary {
@@ -195,6 +199,16 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
   // tagged green before fading.
   const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
   if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
+  // Prefer the per-leg backfilled value when present — that's the
+  // scaling-aware ceiling (sum over legs of leg_qty × leg_window_peak ×
+  // multiplier). Populated by scripts/backfill-per-leg-mfe.ts after the
+  // 2026-06-09 migration. Falls back to the simple peak × full-qty
+  // formula for trades that haven't been backfilled yet OR pre-2025
+  // trades outside the CSV+SCID bar coverage window.
+  const tx = t as TradeWithExcursion & { mfe_dollars_per_leg?: number | null }
+  if (tx.mfe_dollars_per_leg != null && tx.mfe_dollars_per_leg > 0) {
+    return { pnl: t.pnl, mfeDollars: tx.mfe_dollars_per_leg }
+  }
   const mult = symbolToMultiplier(t.symbol ?? '')
   const mfeDollars = xc.mfe * mult * t.quantity
   if (mfeDollars === 0) return null
@@ -207,6 +221,165 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
  *  only — use captureComponents for group aggregation. */
 export function captureRatio(t: TradeWithExcursion): number | null {
   const c = captureComponents(t)
+  return c == null ? null : c.pnl / c.mfeDollars
+}
+
+/** 1-minute (or any TF) OHLC bar shape needed by the per-leg max walk.
+ *  Matches the row shape returned by /api/bars and used by LiveChart. */
+export interface BarLike {
+  ts: string  // ISO-8601
+  high: number
+  low: number
+}
+
+/** Single scale-out leg in trades.exits_json. Mirrors the TradeExit type
+ *  in src/lib/supabase/types.ts but redeclared here to avoid the analytics
+ *  lib taking a dependency on the generated supabase types. */
+export interface ExitLeg {
+  time: string  // ISO-8601 exit timestamp
+  price: number
+  qty: number
+}
+
+/**
+ * Sum of MAX-POSSIBLE dollars per leg, walking exits_json. Each leg's max
+ * = the highest favorable price seen between (prev leg's exit time OR
+ * trade entry_time) and that leg's exit time, multiplied by the leg's
+ * own qty.
+ *
+ * Why this matters: the simple captureComponents() uses
+ *   max$ = peak_MFE × FULL_initial_qty × multiplier
+ * which assumes the trader could've held every contract to the peak. For
+ * scaled-out trades that's mathematically impossible — once a leg exits
+ * at TP1 +20 pts, it can't possibly capture more even if price runs to
+ * +25 later. perLegMaxDollars gives the honest ceiling: each leg can
+ * only capture up to the peak BEFORE it exited.
+ *
+ * Example: 5 lots entered at $100, 3 lots out at $120 (+20), price runs
+ * to $125 (+25), 2 lots out at $120 (+20).
+ *   - Leg 1 (3 lots, exit at $120): peak between entry & this exit was
+ *     $120 → max = 3 × 20 × mult = 3 × 20 × $2 = $120
+ *   - Leg 2 (2 lots, exit at $120): peak between leg 1's exit & this
+ *     exit was $125 → max = 2 × 25 × mult = $100
+ *   - Total max = $220
+ *
+ * Whereas the simple formula gives 5 × 25 × $2 = $250, understating
+ * actual capture by 14%.
+ *
+ * Returns null when:
+ *   - Required trade fields missing (entry_price/direction/quantity/entry_time)
+ *   - Bars don't cover at least one leg's window
+ *   - Symbol has no multiplier mapping
+ *
+ * Falls back to the simple formula when exits_json is missing or empty
+ * (single-leg trade — the per-leg math reduces to the simple math anyway).
+ */
+export function perLegMaxDollars(
+  t: TradeWithExcursion & {
+    exits_json?: ExitLeg[] | null
+    entry_time?: string | null
+  },
+  bars: BarLike[],
+): number | null {
+  if (t.entry_price == null || t.direction == null || t.quantity == null) return null
+  if (!t.entry_time) return null
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  if (mult === 0) return null
+
+  // Sort legs chronologically. exits_json should already be sorted at
+  // import time, but the import flow has multiple sources (Sierra log,
+  // Tradezella, manual) so don't trust it.
+  const legs: ExitLeg[] = Array.isArray(t.exits_json) && t.exits_json.length > 0
+    ? [...t.exits_json].sort((a, b) => a.time.localeCompare(b.time))
+    : []
+
+  // Single-leg trade — no scaling, defer to the simple captureComponents().
+  if (legs.length === 0) {
+    const xc = mfeMaePoints(t)
+    if (!xc) return null
+    return Math.max(0, xc.mfe) * t.quantity * mult
+  }
+
+  const isLong = t.direction === 'long'
+  let totalMax = 0
+  let windowStartTs = t.entry_time
+
+  for (const leg of legs) {
+    const peak = findFavorablePeak(bars, windowStartTs, leg.time, isLong)
+    if (peak == null) return null  // bar coverage gap — caller should fall back
+
+    // Excursion is the favorable distance from entry to the leg's peak.
+    // Floor at 0 — a leg that never went favorable shouldn't get NEGATIVE
+    // max possible (which would inflate the capture ratio).
+    const excursionPts = isLong
+      ? Math.max(0, peak - t.entry_price)
+      : Math.max(0, t.entry_price - peak)
+    totalMax += excursionPts * leg.qty * mult
+    windowStartTs = leg.time
+  }
+
+  return totalMax
+}
+
+/** Walk bars in [startTs, endTs] inclusive, returning the highest high
+ *  (for longs) or lowest low (for shorts). Returns null when no bars fall
+ *  in the window — caller should treat as "bar coverage gap" and fall
+ *  back to the simple max-possible formula. */
+function findFavorablePeak(bars: BarLike[], startTs: string, endTs: string, isLong: boolean): number | null {
+  let peak = isLong ? -Infinity : Infinity
+  let found = false
+  for (const b of bars) {
+    if (b.ts < startTs) continue
+    if (b.ts > endTs) break  // bars are sorted ASC — past the window
+    if (isLong) {
+      if (b.high > peak) { peak = b.high; found = true }
+    } else {
+      if (b.low < peak) { peak = b.low; found = true }
+    }
+  }
+  return found ? peak : null
+}
+
+/**
+ * Scaling-aware version of captureComponents. Identical to the simple one
+ * except mfeDollars is computed from perLegMaxDollars() instead of the
+ * peak × full-qty formula. Used by per-trade displays where bars are
+ * available; aggregate analytics fall back to captureComponents() because
+ * we don't yet pre-compute the per-leg value at write time.
+ *
+ * Returns null when perLegMaxDollars returns null (bar gap) OR when the
+ * underlying trade fails the same MFE noise filter as captureComponents.
+ */
+export function captureComponentsScaled(
+  t: TradeWithExcursion & {
+    exits_json?: ExitLeg[] | null
+    entry_time?: string | null
+  },
+  bars: BarLike[],
+): CaptureComponents | null {
+  if (t.pnl == null || t.quantity == null) return null
+  if (t.entry_price == null || t.stop_price == null) return null
+  const xc = mfeMaePoints(t)
+  if (!xc) return null
+  if (xc.mfe <= 0) return null
+  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
+
+  const mfeDollars = perLegMaxDollars(t, bars)
+  if (mfeDollars == null || mfeDollars === 0) return null
+  return { pnl: t.pnl, mfeDollars }
+}
+
+/** Per-trade capture ratio with per-leg-aware denominator. Mirror of
+ *  captureRatio() but uses captureComponentsScaled. */
+export function captureRatioScaled(
+  t: TradeWithExcursion & {
+    exits_json?: ExitLeg[] | null
+    entry_time?: string | null
+  },
+  bars: BarLike[],
+): number | null {
+  const c = captureComponentsScaled(t, bars)
   return c == null ? null : c.pnl / c.mfeDollars
 }
 
@@ -600,7 +773,7 @@ export function maxDrawdown(points: { cum_pnl: number }[]): number {
  *  2026-06-09 migration; until the generated Supabase types catch up, the
  *  caller widens the row type locally and we tolerate them being missing. */
 export function joinTradesWithContext(
-  trades: (TradeWithExcursion & { entry_atr_1m?: number | null; entry_rvol?: number | null })[],
+  trades: (TradeWithExcursion & { entry_atr_1m?: number | null; entry_rvol?: number | null; mfe_dollars_per_leg?: number | null })[],
   days: Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types'>[],
   contexts: Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>[],
 ): TradeWithContext[] {
@@ -624,6 +797,7 @@ export function joinTradesWithContext(
       atr_1m: c?.atr_1m ?? null,
       entry_atr_1m: t.entry_atr_1m ?? null,
       entry_rvol: t.entry_rvol ?? null,
+      mfe_dollars_per_leg: t.mfe_dollars_per_leg ?? null,
     }
   })
 }

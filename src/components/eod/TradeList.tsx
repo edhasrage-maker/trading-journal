@@ -3,15 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X } from 'lucide-react'
-import { captureRatio, maeHeatRatio, isGiveBackTrade, rMultiple } from '@/lib/analytics'
+import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, type BarLike } from '@/lib/analytics'
 import type { Trade } from '@/lib/supabase/types'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
 
-/** Display capture % per trade — uses the same null-handling as the intraday row. */
-function captureDisplay(t: Trade): string | null {
-  const r = captureRatio(t)
+/** Display capture % per trade — uses the same null-handling as the intraday row.
+ *  When bars are provided, prefers the per-leg scaling-aware ratio so a scaled-
+ *  out trade isn't graded against an impossible-to-hold full-qty peak. */
+function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
+  const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
   if (r == null) return null
   return `${Math.max(-999, Math.min(999, r * 100)).toFixed(0)}%`
 }
@@ -43,6 +45,11 @@ interface Props {
   liveAtrByTradeId?: Record<string, number>
   /** Per-trade post-exit continuation @30m — how much further the market went after the trade closed. Powers the "Post-Exit" column. */
   postExitByTradeId?: Record<string, import('@/lib/atr').PostExitData>
+  /** 1-minute bars for the day. When provided, the per-row MFE Realized %
+   *  uses the scaling-aware capture calc (walks exits_json + finds the
+   *  per-leg peak between scale-outs). When omitted, falls back to the
+   *  simple peak × full-qty formula so the column still renders. */
+  bars?: BarLike[] | null
 }
 
 export default function TradeList({
@@ -60,6 +67,7 @@ export default function TradeList({
   summariesLoading = false,
   liveAtrByTradeId,
   postExitByTradeId,
+  bars,
 }: Props) {
   // Sort state. Default is Time asc — preserves the existing fill-order view.
   // Click a sortable column header to toggle; clicking a different column
@@ -88,7 +96,7 @@ export default function TradeList({
         case 'r':
           return rMultiple(t) ?? Number.NEGATIVE_INFINITY
         case 'mfe':
-          return captureRatio(t) ?? Number.NEGATIVE_INFINITY
+          return ((bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)) ?? Number.NEGATIVE_INFINITY
         case 'mae':
           return maeHeatRatio(t) ?? Number.NEGATIVE_INFINITY
       }
@@ -107,7 +115,7 @@ export default function TradeList({
       return sortDir === 'asc' ? av - bv : bv - av
     })
     return copy
-  }, [trades, sortKey, sortDir, liveAtrByTradeId])
+  }, [trades, sortKey, sortDir, liveAtrByTradeId, bars])
 
   // Click-to-toggle popups for the MFE % / MAE % column definitions. Same
   // dashboard-style popup pattern as the EOD header — click outside / Esc to
@@ -369,7 +377,6 @@ export default function TradeList({
                       Bold marks high-signal cross-cases that deserve attention
                       on review (give-back loser, lucky-escape winner). */}
                   {(() => {
-                    const cap = captureRatio(t)
                     const heat = maeHeatRatio(t)
                     const isGiveBack = isGiveBackTrade(t)
                     const isLuckyEscape = (t.pnl ?? 0) > 0 && heat != null && heat > 1.0
@@ -383,7 +390,7 @@ export default function TradeList({
                       <>
                         <td className={`py-1.5 pr-3 text-right ${capCls}`}
                           title={isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.' : undefined}>
-                          {captureDisplay(t) ?? '—'}
+                          {captureDisplay(t, bars ?? undefined) ?? '—'}
                         </td>
                         <td className={`py-1.5 pr-3 text-right ${heatCls}`}
                           title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : undefined}>

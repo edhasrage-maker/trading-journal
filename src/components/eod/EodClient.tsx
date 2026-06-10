@@ -18,7 +18,7 @@ import EodAnalysisCard from './EodAnalysisCard'
 import DeleteDayDangerZone from './DeleteDayDangerZone'
 import RecordingCommentary from './RecordingCommentary'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
-import { avgCaptureRatio, avgMaeHeatRatio } from '@/lib/analytics'
+import { avgCaptureRatio, avgMaeHeatRatio, type BarLike } from '@/lib/analytics'
 import type {
   TradingDay,
   Trade,
@@ -63,6 +63,28 @@ export default function EodClient({
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
+  // 1m bars for the day, fetched once on mount. Threaded into TradeList so
+  // per-row MFE Realized % uses the scaling-aware capture calc (walks
+  // exits_json + per-leg peaks). Falls back to simple peak × full-qty when
+  // bars unavailable or no symbol on any trade.
+  const [bars, setBars] = useState<BarLike[] | null>(null)
+  useEffect(() => {
+    const symbol = trades.find(t => t.symbol)?.symbol
+    if (!symbol) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear bars when no symbol
+      setBars(null)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}&date=${date}`)
+      .then(res => res.ok ? res.json() : null)
+      .then((data: { bars?: BarLike[] } | null) => {
+        if (cancelled) return
+        setBars(data?.bars ?? null)
+      })
+      .catch(() => { if (!cancelled) setBars(null) })
+    return () => { cancelled = true }
+  }, [trades, date])
   const [chartUrl, setChartUrl] = useState<string | null>(initialDay?.eod_chart_screenshot_url ?? null)
   const [uploadingChart, setUploadingChart] = useState(false)
   const [calibration, setCalibration] = useState<ChartCalibration | null>(initialDay?.chart_calibration_json ?? null)
@@ -939,6 +961,7 @@ export default function EodClient({
         summariesLoading={summariesLoading}
         liveAtrByTradeId={liveAtrByTradeId}
         postExitByTradeId={postExitByTradeId}
+        bars={bars}
       />
 
       <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />

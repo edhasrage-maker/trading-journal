@@ -107,6 +107,11 @@ create table if not exists trades (
   -- Daily Prep continues to use atr_at_ib_close / rvol_at_ib_close (07:30 PT snapshot).
   entry_atr_1m numeric(10,2), -- Wilder ATR-10 1m value at the bar containing entry_time
   entry_rvol numeric(6,2),    -- cumulative RTH volume through entry minute / 10d avg of same window × 100
+  -- Scaling-aware MFE max-possible. Sum over legs of (leg_qty × peak_in_leg_window
+  -- × multiplier). Bounds each leg's max by the price it could've captured BEFORE
+  -- being scaled out — so the simple peak × full-qty overstatement is fixed for
+  -- multi-leg trades. Populated by scripts/backfill-per-leg-mfe.ts.
+  mfe_dollars_per_leg numeric(10,2),
   exits_json jsonb, -- array of partial exits: [{ time: ISO-8601, price: number, qty: number }, ...]; null/empty -> fall back to single exit_time/exit_price avg
   tags_json jsonb default '{}',
   -- tags_json shape:
@@ -514,6 +519,12 @@ create table if not exists historical_trades (
   -- Per-trade entry-time snapshots (mirrors trades.entry_atr_1m / entry_rvol).
   entry_atr_1m numeric(10,2),
   entry_rvol numeric(6,2),
+  -- Scaling-aware MFE max-possible (mirrors trades.mfe_dollars_per_leg).
+  -- Tradezella exports don't carry exits_json yet so most TZ historical
+  -- trades won't have this populated (single-leg fallback applies at read
+  -- time). When the importer is upgraded to capture multi-leg exits this
+  -- column can be backfilled the same way as native trades.
+  mfe_dollars_per_leg numeric(10,2),
   duration_sec numeric,
   rating numeric,
   zella_score numeric,
