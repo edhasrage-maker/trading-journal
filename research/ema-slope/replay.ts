@@ -20,8 +20,9 @@ type Args = {
   to: string | null
   symbol: string | null
   scidDir: string
-  entry: 'pullback' | 'break'
+  entry: 'pullback' | 'break' | 'zone'
   ema: number
+  ema2: number
   lookback: number
   atrPeriod: number
   targetR: number
@@ -33,6 +34,9 @@ type Args = {
   minSlope: number
   entryStartMin: number | null
   entryEndMin: number | null
+  scaleQty: number // contracts to book at +1R; remainder runs to EMA-close (0 = disabled)
+  runnerStop: 'be' | 'atr' // after scale: breakeven, or keep original ATR stop
+  vwapFilter: boolean // require bias aligned with 24h VWAP (anchored 15:00 PT)
   debug: number
   showAtUtcMs: number | null
 }
@@ -99,8 +103,9 @@ function parseArgs(): Args {
     to: a.to ?? null,
     symbol: a.symbol ?? null,
     scidDir: a['scid-dir'] ?? process.env.SIERRA_DATA_DIR ?? 'D:\\SierraCharts\\Data',
-    entry: (a.entry ?? 'pullback') as 'pullback' | 'break',
+    entry: (a.entry ?? 'pullback') as 'pullback' | 'break' | 'zone',
     ema: Number(a.ema ?? 9),
+    ema2: Number(a.ema2 ?? 20),
     lookback: Number(a.lookback ?? 3),
     atrPeriod: Number(a.atr ?? 10),
     targetR: Number(a.target ?? 2),
@@ -112,6 +117,9 @@ function parseArgs(): Args {
     minSlope: Number(a['min-slope'] ?? 0),
     entryStartMin: parseHM(a['time-start']),
     entryEndMin: parseHM(a['time-end']),
+    scaleQty: Number(a['scale-qty'] ?? 0),
+    runnerStop: (a['runner-stop'] ?? 'be') as 'be' | 'atr',
+    vwapFilter: (a['vwap-filter'] ?? '0') === '1',
     debug: Number(a.debug ?? 0),
     showAtUtcMs: parseShowPt(a.show ?? null),
   }
@@ -132,6 +140,8 @@ type OpenPos = {
   emaDistAtSignal: number
   mfe: number // running max favorable excursion (points), over the holding period
   mae: number // running max adverse excursion (points)
+  scaled?: boolean // scale-out mode: partial booked at +1R, runner active
+  runnerStopPrice?: number // stop on the runner leg after the scale
   debugExample?: number
 }
 
@@ -202,6 +212,7 @@ function checkExit(
 
 function simulate(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades: Trade[]; unresolved: number } {
   if (args.entry === 'break') return simulateBreak(bars1m, args, dbg)
+  if (args.entry === 'zone') return simulateZone(bars1m, args)
   return simulatePullback(bars1m, args)
 }
 
@@ -226,6 +237,35 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
     i >= args.lookback ? (ema5m[i] - ema5m[i - args.lookback]) / args.lookback : null,
   )
 
+  // Scale-out (Test 1): book scaleQty contracts at +1R, run the remainder until
+  // a 1m close back through the EMA. Only active when 0 < scaleQty < contracts.
+  const scaleActive = args.scaleQty > 0 && args.scaleQty < args.contracts
+  const runnerQty = args.contracts - args.scaleQty
+  // Prior-5m EMA applicable to each 1m bar — runner's EMA-close exit reference.
+  const emaFor1m = new Array<number>(bars1m.length).fill(NaN)
+  if (scaleActive) {
+    for (let i = 0; i < bars5m.length; i++) {
+      const e = i > 0 ? ema5m[i - 1] : NaN
+      for (let j = ranges[i].start; j < ranges[i].end; j++) emaFor1m[j] = e
+    }
+  }
+  // 24h VWAP anchored at 15:00 PT (Test 3): volume-weighted typical price,
+  // reset each day at 3pm PT, accumulated across ETH + RTH.
+  const vwap1m = new Array<number>(bars1m.length).fill(NaN)
+  if (args.vwapFilter) {
+    const ptDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' })
+    let cumPV = 0, cumV = 0, anchor = ''
+    for (let j = 0; j < bars1m.length; j++) {
+      const t = new Date(bars1m[j].ts).getTime()
+      const key = ptDay.format(new Date(t - 15 * 3600 * 1000)) // 15:00 PT boundary
+      if (key !== anchor) { cumPV = 0; cumV = 0; anchor = key }
+      const vol = bars1m[j].volume ?? 0
+      const tp = (bars1m[j].high + bars1m[j].low + bars1m[j].close) / 3
+      cumPV += tp * vol; cumV += vol
+      vwap1m[j] = cumV > 0 ? cumPV / cumV : NaN
+    }
+  }
+
   let bias: Side | null = null
   let armed = false
   // After exit or 2-against disarm, require price to compress within rearmAtrFrac × ATR
@@ -236,22 +276,23 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
   let pendingLimit: { side: Side; price: number; slopeAtSignal: number; emaDistAtSignal: number; signalTs5m: string } | null = null
   let posOpen: OpenPos | null = null
   let prevPtDate: string | null = null
+  let lastRthIdx = -1 // last RTH 1m bar seen — runner EOD force-flatten reference
   const trades: Trade[] = []
   let unresolved = 0
 
-  const finalize = (exit: { idx: number; price: number; R: number }) => {
+  const finalize = (exitIdx: number, exitPrice: number, R: number) => {
     if (!posOpen) return
     trades.push({
       signalTs: posOpen.signalTs,
       fillTs: bars1m[posOpen.fillIdx1m].ts,
-      exitTs: bars1m[exit.idx].ts,
+      exitTs: bars1m[exitIdx].ts,
       side: posOpen.side,
       entry: posOpen.entry,
-      exit: exit.price,
+      exit: exitPrice,
       stop: posOpen.stop,
       target: posOpen.target,
       stopDist: posOpen.stopDist,
-      R: exit.R,
+      R,
       slope: Math.abs(posOpen.slopeAtSignal),
       emaDistAtSignal: posOpen.emaDistAtSignal,
       mfeAtr: posOpen.stopDist > 0 ? posOpen.mfe / posOpen.stopDist : 0,
@@ -264,6 +305,52 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
     pendingLimit = null
   }
 
+  // Close the runner leg and finalize with blended R = (scaleQty×targetR + runnerQty×runnerR)/contracts.
+  const closeRunner = (idx: number, price: number): boolean => {
+    const pos = posOpen!
+    const runnerR = pos.side === 'long' ? (price - pos.entry) / pos.stopDist : (pos.entry - price) / pos.stopDist
+    const blended = (args.scaleQty * args.targetR + runnerQty * runnerR) / args.contracts
+    finalize(idx, price, blended)
+    return true
+  }
+
+  // Process one 1m bar for the open position. Returns true if the trade fully closed.
+  const stepExit = (j: number): boolean => {
+    const pos = posOpen!
+    const b = bars1m[j]
+    const fav = pos.side === 'long' ? b.high - pos.entry : pos.entry - b.low
+    const adv = pos.side === 'long' ? pos.entry - b.low : b.high - pos.entry
+    if (fav > pos.mfe) pos.mfe = fav
+    if (adv > pos.mae) pos.mae = adv
+    if (!pos.scaled) {
+      // Pre-scale (or no-scale): original stop = full loss; target = scale event or full win.
+      if (pos.side === 'long') {
+        if (b.low <= pos.stop) { finalize(j, pos.stop, -1); return true }
+        if (b.high >= pos.target) {
+          if (scaleActive) { pos.scaled = true; pos.runnerStopPrice = args.runnerStop === 'be' ? pos.entry : pos.stop; return false }
+          finalize(j, pos.target, (pos.target - pos.entry) / pos.stopDist); return true
+        }
+      } else {
+        if (b.high >= pos.stop) { finalize(j, pos.stop, -1); return true }
+        if (b.low <= pos.target) {
+          if (scaleActive) { pos.scaled = true; pos.runnerStopPrice = args.runnerStop === 'be' ? pos.entry : pos.stop; return false }
+          finalize(j, pos.target, (pos.entry - pos.target) / pos.stopDist); return true
+        }
+      }
+    } else {
+      // Runner: exit on runner stop (intrabar) or first 1m close back through the EMA.
+      const emaRef = emaFor1m[j]
+      if (pos.side === 'long') {
+        if (b.low <= pos.runnerStopPrice!) return closeRunner(j, pos.runnerStopPrice!)
+        if (Number.isFinite(emaRef) && b.close < emaRef) return closeRunner(j, b.close)
+      } else {
+        if (b.high >= pos.runnerStopPrice!) return closeRunner(j, pos.runnerStopPrice!)
+        if (Number.isFinite(emaRef) && b.close > emaRef) return closeRunner(j, b.close)
+      }
+    }
+    return false
+  }
+
   for (let i = 0; i < bars5m.length; i++) {
     const range = ranges[i]
     const bar5m = bars5m[i]
@@ -273,7 +360,11 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
     const ptDate = ptDate1m[range.start]
 
     if (ptDate !== prevPtDate) {
-      if (posOpen) unresolved++
+      if (posOpen) {
+        // Scaled runner still open at session end → force-flatten at last RTH close.
+        if (posOpen.scaled && lastRthIdx >= 0) closeRunner(lastRthIdx, bars1m[lastRthIdx].close)
+        else unresolved++
+      }
       bias = null
       armed = false
       needCompress = false
@@ -291,17 +382,13 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
 
     for (let j = range.start; j < range.end; j++) {
       if (!isRTH1m[j]) break
+      lastRthIdx = j
       const sub = bars1m[j]
 
       // Exit walk for an open position — one 1m bar at a time.
       if (posOpen) {
-        const exit = checkExit(bars1m, posOpen, posOpen.scanStart1m, j + 1)
-        if (exit) {
-          finalize(exit)
-        } else {
-          posOpen.scanStart1m = j + 1
-          continue
-        }
+        const closed = stepExit(j)
+        if (!closed) { posOpen.scanStart1m = j + 1; continue }
       }
 
       // Without bias+armed, nothing to do this 1m bar. Clear any stale pending.
@@ -336,9 +423,8 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
               mfe: 0,
               mae: 0,
             }
-            const exit = checkExit(bars1m, posOpen, j, j + 1)
-            if (exit) finalize(exit)
-            else posOpen.scanStart1m = j + 1
+            const closed = stepExit(j)
+            if (!closed) posOpen.scanStart1m = j + 1
             pendingLimit = null
             consecAgainst = 0
             continue
@@ -375,6 +461,14 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
     if (newBias != null && Math.abs(slope) < args.minSlope) newBias = null
     // Entry-time window: no new arming outside the configured PT window.
     if (newBias != null && !inEntryWindow(bar5m.ts, args.entryStartMin, args.entryEndMin)) newBias = null
+    // 24h VWAP filter (Test 3): only trade aligned with the 3pm-PT-anchored VWAP.
+    if (newBias != null && args.vwapFilter) {
+      const v = vwap1m[range.end - 1]
+      if (Number.isFinite(v)) {
+        if (newBias === 'long' && bar5m.close <= v) newBias = null
+        else if (newBias === 'short' && bar5m.close >= v) newBias = null
+      }
+    }
 
     if (newBias !== bias) {
       armed = false
@@ -410,7 +504,10 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
       pendingLimit = null
     }
   }
-  if (posOpen) unresolved++
+  if (posOpen) {
+    if (posOpen.scaled && lastRthIdx >= 0) closeRunner(lastRthIdx, bars1m[lastRthIdx].close)
+    else unresolved++
+  }
 
   return { trades, unresolved }
 }
@@ -700,6 +797,160 @@ function simulateBreak(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades:
         }
       }
     }
+  }
+  if (posOpen) unresolved++
+
+  return { trades, unresolved }
+}
+
+// Zone mode (Test 4): 9/20 EMA band. Bias from the EMA stack (9>20 = up). When
+// price pulls back INTO the [20,9] band (reaching the 9) without closing through
+// the far 20-band, arm. Enter on the first 1m bar that breaks the PRIOR 1m bar's
+// extreme back in the trend direction (buy-stop 1 tick above its high / sell-stop
+// 1 tick below its low). Stop = that setup candle's opposite extreme ∓ 1 tick.
+function simulateZone(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved: number } {
+  if (bars1m.length < 30) return { trades: [], unresolved: 0 }
+  const tick = 0.25
+  const isRTH1m = bars1m.map(b => isRTH(b.ts))
+  const ptDate1m = bars1m.map(b => ptDateKey(b.ts))
+
+  const { bars5m, ranges } = aggregate1mTo5m(bars1m)
+  const rthMask5m = ranges.map(r => isRTH1m[r.start])
+  const closes5m = bars5m.map(b => b.close)
+  const ema9 = emaSeries(closes5m, args.ema)
+  const ema20 = emaSeries(closes5m, args.ema2)
+  const slope5m: (number | null)[] = bars5m.map((_, i) =>
+    i >= args.lookback ? (ema9[i] - ema9[i - args.lookback]) / args.lookback : null,
+  )
+
+  let bias: Side | null = null
+  let enteredZone = false
+  let posOpen: OpenPos | null = null
+  let prevPtDate: string | null = null
+  let prevBar: OhlcBar | null = null
+  const trades: Trade[] = []
+  let unresolved = 0
+
+  const finalize = (exit: { idx: number; price: number; R: number }) => {
+    if (!posOpen) return
+    trades.push({
+      signalTs: posOpen.signalTs,
+      fillTs: bars1m[posOpen.fillIdx1m].ts,
+      exitTs: bars1m[exit.idx].ts,
+      side: posOpen.side,
+      entry: posOpen.entry,
+      exit: exit.price,
+      stop: posOpen.stop,
+      target: posOpen.target,
+      stopDist: posOpen.stopDist,
+      R: exit.R,
+      slope: Math.abs(posOpen.slopeAtSignal),
+      emaDistAtSignal: posOpen.emaDistAtSignal,
+      mfeAtr: posOpen.stopDist > 0 ? posOpen.mfe / posOpen.stopDist : 0,
+      maeAtr: posOpen.stopDist > 0 ? posOpen.mae / posOpen.stopDist : 0,
+    })
+    posOpen = null
+    enteredZone = false
+  }
+
+  for (let i = 0; i < bars5m.length; i++) {
+    const range = ranges[i]
+    const bar5m = bars5m[i]
+    const inRTH = rthMask5m[i]
+    const ptDate = ptDate1m[range.start]
+
+    if (ptDate !== prevPtDate) {
+      if (posOpen) unresolved++
+      bias = null
+      enteredZone = false
+      posOpen = null
+      prevBar = null
+      prevPtDate = ptDate
+    }
+    if (!inRTH) continue
+
+    // Prior completed 5m EMAs drive the 1m decisions (no lookahead).
+    const e9 = i > 0 ? ema9[i - 1] : NaN
+    const e20 = i > 0 ? ema20[i - 1] : NaN
+    const slopePrev = i > 0 ? slope5m[i - 1] : null
+    const prev5m = i > 0 ? bars5m[i - 1] : null
+
+    for (let j = range.start; j < range.end; j++) {
+      if (!isRTH1m[j]) break
+      const sub = bars1m[j]
+
+      // Exit walk
+      if (posOpen) {
+        const exit = checkExit(bars1m, posOpen, posOpen.scanStart1m, j + 1)
+        if (exit) finalize(exit)
+        else { posOpen.scanStart1m = j + 1; continue }
+      }
+
+      if (!bias || !Number.isFinite(e9) || !Number.isFinite(e20)) { prevBar = sub; continue }
+
+      // Zone broken: a 1m close through the far (20) band disarms.
+      const broken = bias === 'long' ? sub.close < e20 : sub.close > e20
+      if (broken) { enteredZone = false; prevBar = sub; continue }
+
+      // Pulled into the zone: reached the near (9) band.
+      if (bias === 'long' ? sub.low <= e9 : sub.high >= e9) enteredZone = true
+
+      // Entry: first break of the prior 1m bar's extreme, in the trend direction.
+      if (enteredZone && prevBar) {
+        if (bias === 'long') {
+          const trigger = prevBar.high + tick
+          if (sub.high >= trigger) {
+            const entry = Math.max(sub.open, trigger)
+            const stop = prevBar.low - tick
+            const stopDist = entry - stop
+            if (stopDist > 0) {
+              const target = entry + stopDist * args.targetR
+              posOpen = {
+                side: 'long', entry, stop, target, stopDist, fillIdx1m: j, scanStart1m: j,
+                signalTs: prev5m?.ts ?? bar5m.ts, slopeAtSignal: slopePrev ?? 0,
+                emaDistAtSignal: Math.abs(entry - e9), mfe: 0, mae: 0,
+              }
+              const exit = checkExit(bars1m, posOpen, j, j + 1)
+              if (exit) finalize(exit); else posOpen.scanStart1m = j + 1
+              enteredZone = false
+              prevBar = sub
+              continue
+            }
+          }
+        } else {
+          const trigger = prevBar.low - tick
+          if (sub.low <= trigger) {
+            const entry = Math.min(sub.open, trigger)
+            const stop = prevBar.high + tick
+            const stopDist = stop - entry
+            if (stopDist > 0) {
+              const target = entry - stopDist * args.targetR
+              posOpen = {
+                side: 'short', entry, stop, target, stopDist, fillIdx1m: j, scanStart1m: j,
+                signalTs: prev5m?.ts ?? bar5m.ts, slopeAtSignal: -(slopePrev ?? 0),
+                emaDistAtSignal: Math.abs(entry - e9), mfe: 0, mae: 0,
+              }
+              const exit = checkExit(bars1m, posOpen, j, j + 1)
+              if (exit) finalize(exit); else posOpen.scanStart1m = j + 1
+              enteredZone = false
+              prevBar = sub
+              continue
+            }
+          }
+        }
+      }
+      prevBar = sub
+    }
+
+    // 5m close: bias from the EMA stack, plus optional filters.
+    if (!Number.isFinite(ema9[i]) || !Number.isFinite(ema20[i])) continue
+    const slope = slope5m[i]
+    let newBias: Side | null = ema9[i] > ema20[i] ? 'long' : ema9[i] < ema20[i] ? 'short' : null
+    if (args.side === 'long' && newBias === 'short') newBias = null
+    if (args.side === 'short' && newBias === 'long') newBias = null
+    if (newBias != null && slope != null && Math.abs(slope) < args.minSlope) newBias = null
+    if (newBias != null && !inEntryWindow(bar5m.ts, args.entryStartMin, args.entryEndMin)) newBias = null
+    if (newBias !== bias) { bias = newBias; enteredZone = false }
   }
   if (posOpen) unresolved++
 

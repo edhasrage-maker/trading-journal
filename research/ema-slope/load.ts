@@ -103,7 +103,7 @@ export async function loadBarsForDay(
   return out
 }
 
-export type OhlcBar = { ts: string; open: number; high: number; low: number; close: number }
+export type OhlcBar = { ts: string; open: number; high: number; low: number; close: number; volume?: number }
 
 // Full OHLC bars for a symbol across [from, to]. Paginates by id tiebreaker for determinism.
 export async function loadOhlcBars(
