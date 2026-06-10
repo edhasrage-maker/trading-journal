@@ -73,6 +73,10 @@ export default function RecentDaysList({ initialDays }: Props) {
   const mfeInfoRef = useRef<HTMLDivElement>(null)
   const [realizedInfoOpen, setRealizedInfoOpen] = useState(false)
   const realizedInfoRef = useRef<HTMLDivElement>(null)
+  // MFE Realized %/MAE Heat % column unit. Default '%' preserves the
+  // existing ratio display; user can switch to pts/$/×ATR to see the
+  // realized excursion values themselves.
+  const [realizedUnit, setRealizedUnit] = useState<MfeUnit | '%'>('%')
 
   // Click-outside + Escape dismiss for the MFE/MAE info popover.
   useEffect(() => {
@@ -394,12 +398,24 @@ export default function RecentDaysList({ initialDays }: Props) {
                     className={`inline-flex flex-col items-center leading-tight hover:text-white transition-colors ${sortColumn === 'capture' ? 'text-blue-300' : 'text-gray-500'}`}
                   >
                     <span className="inline-flex items-center gap-1">
-                      MFE Realized %
+                      {realizedUnit === '%' ? 'MFE Realized %' : 'MFE Realized'}
                       {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
                     </span>
-                    <span>MAE Heat %</span>
+                    <span>{realizedUnit === '%' ? 'MAE Heat %' : 'MAE Heat'}</span>
                   </button>
                 </div>
+                <select
+                  value={realizedUnit}
+                  onChange={e => setRealizedUnit(e.target.value as MfeUnit | '%')}
+                  onClick={e => e.stopPropagation()}
+                  className="bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 mt-0.5 focus:outline-none focus:border-blue-500 leading-tight normal-case"
+                  title="Unit for MFE Realized / MAE Heat columns"
+                >
+                  <option value="%">%</option>
+                  <option value="pts">pts</option>
+                  <option value="dollars">$</option>
+                  <option value="atr">×ATR</option>
+                </select>
                 {realizedInfoOpen && (
                   <div
                     ref={realizedInfoRef}
@@ -468,6 +484,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                 selected={selectedIds.has(day.id)}
                 deleting={deletingDate === day.date || (bulkDeleting && selectedIds.has(day.id))}
                 mfeUnit={mfeUnit}
+                realizedUnit={realizedUnit}
                 onToggleSelect={() => toggleSelect(day.id)}
                 onDelete={() => handleSingleDelete(day.date, day.eod_pnl != null)}
               />
@@ -527,6 +544,7 @@ function DayRowItem({
   selected,
   deleting,
   mfeUnit,
+  realizedUnit,
   onToggleSelect,
   onDelete,
 }: {
@@ -534,6 +552,7 @@ function DayRowItem({
   selected: boolean
   deleting: boolean
   mfeUnit: MfeUnit
+  realizedUnit: MfeUnit | '%'
   onToggleSelect: () => void
   onDelete: () => void
 }) {
@@ -604,7 +623,7 @@ function DayRowItem({
         <MfeMaeCell day={day} unit={mfeUnit} />
       </td>
       <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-        <CaptureHeatCell day={day} />
+        <CaptureHeatCell day={day} realizedUnit={realizedUnit} />
       </td>
       {/* Win % and PnL rendered at text-xs (one size down from the table
           default text-sm) — keeps the columns readable but visually
@@ -693,17 +712,60 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
  *   Capture %  = realized PnL ÷ peak favorable in $ during the position
  *   Heat %     = peak MAE ÷ planned stop distance in pts (100% = touched stop)
  */
-function CaptureHeatCell({ day }: { day: DayRowData }) {
+function CaptureHeatCell({ day, realizedUnit }: { day: DayRowData; realizedUnit: MfeUnit | '%' }) {
   if (day.avg_capture == null && day.avg_heat == null) {
     return <span className="text-gray-700">—</span>
   }
-  // Standout rules for the day-level aggregate:
-  //   capture < 0   → day averaged give-back trades (red, bold)
-  //   heat   > 100% → day averaged past planned stop (red, bold)
+  // Standout rules — bound to capture < 0 / heat > 100% regardless of unit
+  // since those crossings are semantic (give-back, past stop) and don't
+  // change with display unit.
   const capStandout = day.avg_capture != null && day.avg_capture < 0
   const heatStandout = day.avg_heat != null && day.avg_heat > 1.0
   const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
   const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
+
+  // Non-% units: show "realized / max" for MFE and "adverse / stop" for MAE.
+  // Per-leg precision (e.g., trader exits 3 lots @ +20 then 2 lots @ +20
+  // after price peaked at +25) requires server-side aggregation we don't
+  // do yet — current math is the simpler "avg peak × avg capture" approx.
+  if (realizedUnit !== '%') {
+    const atrRef = day.avg_live_atr_1m ?? day.atr_1m
+    const isAtr = realizedUnit === 'atr'
+    const isDollars = realizedUnit === 'dollars'
+    const peakMfe = isDollars ? day.avg_mfe_dollars
+      : isAtr ? (day.avg_mfe_pts != null && atrRef ? day.avg_mfe_pts / atrRef : null)
+      : day.avg_mfe_pts
+    const peakMae = isDollars ? day.avg_mae_dollars
+      : isAtr ? (day.avg_mae_pts != null && atrRef ? day.avg_mae_pts / atrRef : null)
+      : day.avg_mae_pts
+    const realizedMfe = peakMfe != null && day.avg_capture != null ? peakMfe * day.avg_capture : null
+    const stopMae = peakMae != null && day.avg_heat != null && day.avg_heat !== 0 ? peakMae / day.avg_heat : null
+    const fmt = (v: number | null, signed: boolean): string => {
+      if (v == null) return '—'
+      const abs = Math.abs(v)
+      if (isDollars) return (signed ? (v >= 0 ? '+$' : '-$') : '$') + Math.round(abs).toLocaleString()
+      if (isAtr) return (signed && v >= 0 ? '+' : signed ? '-' : '') + abs.toFixed(2) + '×'
+      return (signed && v >= 0 ? '+' : signed ? '-' : '') + abs.toFixed(1)
+    }
+    return (
+      <span
+        className="flex flex-col items-center leading-tight whitespace-nowrap text-[10px]"
+        title={`Realized excursion in ${realizedUnit === 'dollars' ? '$' : realizedUnit === 'atr' ? '×ATR' : 'pts'}. Per-leg scaling approximated using avg peak × avg capture; switch to % for the exact ratio.`}
+      >
+        <span className={capCls}>
+          {fmt(realizedMfe, true)}{peakMfe != null && (
+            <span className="text-gray-600">{` / ${fmt(peakMfe, false)}`}</span>
+          )}
+        </span>
+        <span className={heatCls}>
+          -{fmt(peakMae, false)}{stopMae != null && (
+            <span className="text-gray-600">{` / -${fmt(stopMae, false)}`}</span>
+          )}
+        </span>
+      </span>
+    )
+  }
+
   return (
     <span
       className="flex flex-col items-center leading-tight whitespace-nowrap"
