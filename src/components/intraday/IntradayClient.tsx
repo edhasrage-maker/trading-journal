@@ -12,6 +12,7 @@ import LiveChart from '@/components/charts/LiveChart'
 import { deleteBlob } from '@/lib/storage'
 import { captureRatio, maeHeatRatio, mfeMaePoints, isGiveBackTrade } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { useMfeUnit, formatMfeMae } from '@/lib/mfe-unit'
 import { mergeTradeTags } from '@/lib/suggest-tags'
 import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
 
@@ -124,6 +125,10 @@ function CapHeatInline({ trade, rDisplay }: { trade: Trade; rDisplay: string | n
 
 export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '' }: Props) {
   const router = useRouter()
+  // Live MFE/MAE display unit, synced with AvgMfeMaeCard via custom event +
+  // localStorage. Drives the Peak MFE / Peak MAE rows in per-trade details
+  // so flipping the unit in the summary bar updates the detail rows too.
+  const [mfeUnit] = useMfeUnit()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   // Tags are local so newly-created custom tags appear across every TradeForm
   // on the page (existing edit-mode forms + the "new" form) without a full
@@ -550,6 +555,29 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                   // capture = give-back, heat > 100% = past stop).
                   const capCls = capRatio != null && capRatio < 0 ? 'text-red-400 font-bold' : 'text-gray-300'
                   const heatCls = heatRatio != null && heatRatio > 1.0 ? 'text-red-400 font-bold' : 'text-gray-300'
+
+                  // Convert raw pts MFE/MAE to the active unit so Peak MFE /
+                  // Peak MAE responds to the same toggle that drives the
+                  // day-level Avg MFE/MAE in the summary bar. ATR mode prefers
+                  // the trade's own entry_atr_1m snapshot (no afternoon
+                  // lookahead); pre-2025 trades without that field render '—'
+                  // for ATR rather than fall back silently.
+                  const convert = (pts: number): number | null => {
+                    if (mfeUnit === 'pts') return pts
+                    if (mfeUnit === 'dollars') {
+                      const mult = symbolToMultiplier(trade.symbol ?? '')
+                      const qty = trade.quantity ?? 1
+                      return pts * qty * mult
+                    }
+                    // atr
+                    const entryAtr = (trade as Trade & { entry_atr_1m?: number | null }).entry_atr_1m
+                    if (entryAtr != null && entryAtr > 0) return pts / entryAtr
+                    return null
+                  }
+                  const peakMfe = xc ? convert(xc.mfe) : null
+                  const peakMae = xc ? convert(xc.mae) : null
+                  // formatMfeMae handles +/- prefix; we negate MAE since it's
+                  // stored as a positive magnitude (distance from entry).
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                       <div>
@@ -565,12 +593,12 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                         <div className={`font-medium ${heatCls}`}>{heat ?? '—'}</div>
                       </div>
                       <div className="hidden sm:block">
-                        <div className="text-xs text-gray-500 mb-0.5" title="Raw MFE in points">Peak MFE</div>
-                        <div className="text-gray-300 font-mono">{xc ? `+${xc.mfe.toFixed(2)}` : '—'}</div>
+                        <div className="text-xs text-gray-500 mb-0.5" title={`Peak favorable excursion (${mfeUnit === 'dollars' ? '$' : mfeUnit === 'atr' ? '×ATR' : 'pts'})`}>Peak MFE</div>
+                        <div className="text-gray-300 font-mono">{formatMfeMae(peakMfe, mfeUnit)}</div>
                       </div>
                       <div className="hidden sm:block">
-                        <div className="text-xs text-gray-500 mb-0.5" title="Raw MAE in points">Peak MAE</div>
-                        <div className="text-gray-300 font-mono">{xc ? `−${xc.mae.toFixed(2)}` : '—'}</div>
+                        <div className="text-xs text-gray-500 mb-0.5" title={`Peak adverse excursion (${mfeUnit === 'dollars' ? '$' : mfeUnit === 'atr' ? '×ATR' : 'pts'})`}>Peak MAE</div>
+                        <div className="text-gray-300 font-mono">{formatMfeMae(peakMae == null ? null : -peakMae, mfeUnit)}</div>
                       </div>
                     </div>
                   )

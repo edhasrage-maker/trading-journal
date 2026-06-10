@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { mfeMaePoints } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { useMfeUnit, formatMfeMae, type MfeUnit } from '@/lib/mfe-unit'
 import type { Trade } from '@/lib/supabase/types'
 
 /**
@@ -18,12 +18,10 @@ import type { Trade } from '@/lib/supabase/types'
  * back to the optional `dayAtrRef` (typically market_context.atr_1m for
  * the day), and finally to null (skipped from the ×ATR average).
  *
- * Unit choice is shared with the Dashboard via the same localStorage key
- * so flipping it in one place updates the other on next mount.
+ * Unit choice is shared globally via the useMfeUnit() hook (custom event +
+ * localStorage), so flipping it here ALSO updates the per-trade Peak MFE/
+ * Peak MAE display on the intraday detail rows.
  */
-
-type MfeUnit = 'pts' | 'dollars' | 'atr'
-const UNIT_KEY = 'dashboard-stat-mfe-unit-v1'
 
 // Trade with the recently-added entry-time snapshot columns. The Supabase
 // generated Trade type doesn't include them yet (regeneration pending), so
@@ -51,20 +49,7 @@ interface Props {
 }
 
 export default function AvgMfeMaeCard({ trades, dayAtrRef, variant = 'card', className, label = 'Avg MFE / MAE' }: Props) {
-  const [mfeUnit, setMfeUnit] = useState<MfeUnit>('atr')
-  const [hydrated, setHydrated] = useState(false)
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(UNIT_KEY) as MfeUnit | null
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration shim
-      if (raw === 'pts' || raw === 'dollars' || raw === 'atr') setMfeUnit(raw)
-    } catch { /* ignore */ }
-    setHydrated(true)
-  }, [])
-  useEffect(() => {
-    if (!hydrated) return
-    try { localStorage.setItem(UNIT_KEY, mfeUnit) } catch { /* ignore */ }
-  }, [mfeUnit, hydrated])
+  const [mfeUnit, setMfeUnit] = useMfeUnit()
 
   // Compute per-trade MFE/MAE in the active unit, then mean across trades
   // with data. Each unit has its own denominator (count of trades for which
@@ -100,15 +85,7 @@ export default function AvgMfeMaeCard({ trades, dayAtrRef, variant = 'card', cla
     return { mfe: avg(mfeVals), mae: avg(maeVals), n: mfeVals.length }
   })()
 
-  const display = (v: number | null): string => {
-    if (v == null) return '—'
-    if (mfeUnit === 'dollars') {
-      const abs = Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })
-      return (v >= 0 ? '+$' : '-$') + abs
-    }
-    if (mfeUnit === 'atr') return (v >= 0 ? '+' : '') + v.toFixed(2) + '×'
-    return (v >= 0 ? '+' : '') + v.toFixed(1)
-  }
+  const display = (v: number | null): string => formatMfeMae(v, mfeUnit)
 
   const valueBlock = stats.mfe == null || stats.mae == null ? (
     <span className="text-gray-500">—</span>
