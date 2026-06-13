@@ -166,6 +166,7 @@ interface TradeRow {
   table: 'trades' | 'historical_trades'
   id: string
   entry_ms: number
+  exit_ms: number | null  // for single-leg fallback bars walk when high/low_during_position is null
   entry_price: number | null
   direction: 'long' | 'short' | null
   quantity: number | null
@@ -182,7 +183,7 @@ async function fetchTrades(): Promise<TradeRow[]> {
   for (let p = 0; p < 50; p++) {
     let q = sb
       .from('trades')
-      .select('id, entry_time, entry_price, direction, quantity, symbol, exits_json, high_during_position, low_during_position, mfe_dollars_per_leg')
+      .select('id, entry_time, exit_time, entry_price, direction, quantity, symbol, exits_json, high_during_position, low_during_position, mfe_dollars_per_leg')
       .order('entry_time', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -195,8 +196,10 @@ async function fetchTrades(): Promise<TradeRow[]> {
       if (!r.entry_time) continue
       const ms = Date.parse(r.entry_time)
       if (!Number.isFinite(ms)) continue
+      const exitMs = r.exit_time ? Date.parse(r.exit_time) : NaN
       out.push({
         table: 'trades', id: r.id, entry_ms: ms,
+        exit_ms: Number.isFinite(exitMs) ? exitMs : null,
         entry_price: r.entry_price, direction: r.direction, quantity: r.quantity,
         symbol: r.symbol, exits_json: r.exits_json,
         high_during_position: r.high_during_position, low_during_position: r.low_during_position,
@@ -208,7 +211,7 @@ async function fetchTrades(): Promise<TradeRow[]> {
   for (let p = 0; p < 50; p++) {
     let q = sb
       .from('historical_trades')
-      .select('id, open_at, entry_price, side, quantity, symbol, high_during_position, low_during_position, mfe_dollars_per_leg')
+      .select('id, open_at, close_at, entry_price, side, quantity, symbol, high_during_position, low_during_position, mfe_dollars_per_leg')
       .order('open_at', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -221,8 +224,10 @@ async function fetchTrades(): Promise<TradeRow[]> {
       if (!r.open_at) continue
       const ms = Date.parse(r.open_at)
       if (!Number.isFinite(ms)) continue
+      const closeMs = r.close_at ? Date.parse(r.close_at) : NaN
       out.push({
         table: 'historical_trades', id: r.id, entry_ms: ms,
+        exit_ms: Number.isFinite(closeMs) ? closeMs : null,
         entry_price: r.entry_price,
         direction: (r.side === 'long' || r.side === 'short') ? r.side : null,
         quantity: r.quantity, symbol: r.symbol,
@@ -236,11 +241,28 @@ async function fetchTrades(): Promise<TradeRow[]> {
   return out
 }
 
-/** Compute per-leg max for one trade. Returns null if data insufficient. */
-function computePerLegMax(t: TradeRow, bars: Bar[]): number | null {
-  if (t.entry_price == null || t.direction == null || t.quantity == null) return null
+type SkipReason =
+  | 'no_direction' | 'no_entry_price' | 'no_quantity'
+  | 'bad_leg_time' | 'bar_gap_multileg'
+  | 'no_window_end_singleleg' | 'bar_gap_singleleg'
+
+type ComputeResult =
+  | { ok: true; value: number; path: 'multileg' | 'single_excursion' | 'single_bars' }
+  | { ok: false; reason: SkipReason }
+
+/** Compute per-leg max for one trade.
+ *
+ * Multi-leg path: walk exits_json chronologically, find peak per leg from bars.
+ * Single-leg path: prefer pre-backfilled high/low_during_position; otherwise
+ *  walk bars [entry_ms, exit_ms]. The bars walk is what makes this script
+ *  populate native trades that don't carry exits_json and don't have
+ *  high/low_during_position from the historical-MFE backfill (which only runs
+ *  on historical_trades). */
+function computePerLegMax(t: TradeRow, bars: Bar[]): ComputeResult {
+  if (t.direction == null) return { ok: false, reason: 'no_direction' }
+  if (t.entry_price == null) return { ok: false, reason: 'no_entry_price' }
+  if (t.quantity == null) return { ok: false, reason: 'no_quantity' }
   const mult = symbolToMultiplier(t.symbol)
-  if (mult === 0) return null
   const isLong = t.direction === 'long'
 
   // Multi-leg path — walk exits_json
@@ -250,28 +272,35 @@ function computePerLegMax(t: TradeRow, bars: Bar[]): number | null {
     let windowStartMs = t.entry_ms
     for (const leg of legs) {
       const legMs = Date.parse(leg.time)
-      if (!Number.isFinite(legMs)) return null
+      if (!Number.isFinite(legMs)) return { ok: false, reason: 'bad_leg_time' }
       const peak = findFavorablePeak(bars, windowStartMs, legMs, isLong)
-      if (peak == null) return null  // bar gap
+      if (peak == null) return { ok: false, reason: 'bar_gap_multileg' }
       const exc = isLong ? Math.max(0, peak - t.entry_price) : Math.max(0, t.entry_price - peak)
       total += exc * leg.qty * mult
       windowStartMs = legMs
     }
-    return total
+    return { ok: true, value: total, path: 'multileg' }
   }
 
-  // Single-leg fallback — same as simple captureComponents formula. Use
-  // high/low_during_position when populated (already backfilled by the
-  // historical-MFE script), else find from bars using the entry → end-
-  // of-day window (best-effort).
-  const peak = isLong
-    ? t.high_during_position
-    : t.low_during_position
-  if (peak == null) return null
+  // Single-leg path — prefer pre-backfilled excursion fields, then bars walk.
+  const cached = isLong ? t.high_during_position : t.low_during_position
+  if (cached != null) {
+    const exc = isLong
+      ? Math.max(0, cached - t.entry_price)
+      : Math.max(0, t.entry_price - cached)
+    return { ok: true, value: exc * t.quantity * mult, path: 'single_excursion' }
+  }
+
+  // Last resort: walk bars between entry and exit and find the peak. This is
+  // what catches the bulk of native trades that don't store excursion fields
+  // and don't carry exits_json. Requires exit_time to bound the window.
+  if (t.exit_ms == null) return { ok: false, reason: 'no_window_end_singleleg' }
+  const peak = findFavorablePeak(bars, t.entry_ms, t.exit_ms, isLong)
+  if (peak == null) return { ok: false, reason: 'bar_gap_singleleg' }
   const exc = isLong
     ? Math.max(0, peak - t.entry_price)
     : Math.max(0, t.entry_price - peak)
-  return exc * t.quantity * mult
+  return { ok: true, value: exc * t.quantity * mult, path: 'single_bars' }
 }
 
 async function main() {
@@ -308,28 +337,49 @@ async function main() {
   console.log()
 
   const updates: Array<{ table: 'trades' | 'historical_trades'; id: string; mfe_dollars_per_leg: number }> = []
-  let skipped = 0
+  const skipReasons: Record<SkipReason, number> = {
+    no_direction: 0, no_entry_price: 0, no_quantity: 0,
+    bad_leg_time: 0, bar_gap_multileg: 0,
+    no_window_end_singleleg: 0, bar_gap_singleleg: 0,
+  }
+  const pathCounts: Record<'multileg' | 'single_excursion' | 'single_bars', number> = {
+    multileg: 0, single_excursion: 0, single_bars: 0,
+  }
   let processed = 0
   let samplesPrinted = 0
   const SAMPLE_N = 5
 
   for (const t of trades) {
     if (processed >= limit) break
-    const val = computePerLegMax(t, allBars)
-    if (val == null) { skipped++; continue }
-    const rounded = Math.round(val * 100) / 100
+    const r = computePerLegMax(t, allBars)
+    if (!r.ok) { skipReasons[r.reason]++; continue }
+    const rounded = Math.round(r.value * 100) / 100
     updates.push({ table: t.table, id: t.id, mfe_dollars_per_leg: rounded })
+    pathCounts[r.path]++
     processed++
     if (samplesPrinted < SAMPLE_N) {
       const legs = t.exits_json?.length ?? 0
-      console.log(`  sample #${samplesPrinted + 1}: ${t.table.padEnd(16)} ${t.direction?.padEnd(5)}  entry=${t.entry_price}  qty=${t.quantity}  legs=${legs}  per-leg-max=$${rounded.toFixed(2)}`)
+      console.log(`  sample #${samplesPrinted + 1}: ${t.table.padEnd(16)} ${t.direction?.padEnd(5)}  entry=${t.entry_price}  qty=${t.quantity}  legs=${legs}  path=${r.path.padEnd(17)} per-leg-max=$${rounded.toFixed(2)}`)
       samplesPrinted++
     }
   }
 
   console.log()
   console.log(`Candidates: ${updates.length}`)
-  console.log(`  skipped (missing data / bar gap):  ${skipped}`)
+  console.log(`  by path:`)
+  console.log(`    multileg          (exits_json walk):     ${pathCounts.multileg}`)
+  console.log(`    single_excursion  (cached high/low):     ${pathCounts.single_excursion}`)
+  console.log(`    single_bars       (entry→exit bars walk): ${pathCounts.single_bars}`)
+  const skipTotal = Object.values(skipReasons).reduce((a, b) => a + b, 0)
+  console.log(`Skipped: ${skipTotal}`)
+  console.log(`  by reason:`)
+  console.log(`    no_direction:             ${skipReasons.no_direction}`)
+  console.log(`    no_entry_price:           ${skipReasons.no_entry_price}`)
+  console.log(`    no_quantity:              ${skipReasons.no_quantity}`)
+  console.log(`    bad_leg_time:             ${skipReasons.bad_leg_time}`)
+  console.log(`    bar_gap_multileg:         ${skipReasons.bar_gap_multileg}`)
+  console.log(`    no_window_end_singleleg:  ${skipReasons.no_window_end_singleleg}`)
+  console.log(`    bar_gap_singleleg:        ${skipReasons.bar_gap_singleleg}`)
 
   if (dryRun) {
     console.log('\nDry run — no writes.')
