@@ -59,6 +59,13 @@ type SortColumn = 'date' | 'grade' | 'process_v13' | 'trades' | 'mfe_mae' | 'cap
 type SortDirection = 'asc' | 'desc'
 type MfeUnit = 'pts' | 'dollars' | 'atr'
 
+/** Columns the user can drag-reorder. Date is pinned left (row identifier),
+ *  the checkbox cell is pinned left (selection), the delete cell is pinned
+ *  right (row action) — those three never move. */
+type ReorderableColumnId = 'grade' | 'process_v13' | 'trades' | 'mfe_mae' | 'capture' | 'win_rate' | 'pnl'
+const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['grade', 'process_v13', 'trades', 'mfe_mae', 'capture', 'win_rate', 'pnl']
+const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v1'
+
 export default function RecentDaysList({ initialDays }: Props) {
   const router = useRouter()
   const [days, setDays] = useState<DayRowData[]>(initialDays)
@@ -77,6 +84,57 @@ export default function RecentDaysList({ initialDays }: Props) {
   // existing ratio display; user can switch to pts/$/×ATR to see the
   // realized excursion values themselves.
   const [realizedUnit, setRealizedUnit] = useState<MfeUnit | '%'>('%')
+  // Drag-reorder state for the data columns. Restored from localStorage on
+  // mount; persisted on every change. Invalid stored values fall back to the
+  // canonical default order.
+  const [columnOrder, setColumnOrder] = useState<ReorderableColumnId[]>(DEFAULT_COLUMN_ORDER)
+  const [dragColId, setDragColId] = useState<ReorderableColumnId | null>(null)
+  const [dragOverColId, setDragOverColId] = useState<ReorderableColumnId | null>(null)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(COLUMN_ORDER_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as unknown
+      if (!Array.isArray(parsed)) return
+      const filtered = parsed.filter((x): x is ReorderableColumnId =>
+        typeof x === 'string' && (DEFAULT_COLUMN_ORDER as string[]).includes(x))
+      // Append any missing columns (e.g. a future column gets added without
+      // wiping the user's saved order) at their canonical position.
+      const next: ReorderableColumnId[] = [...filtered]
+      for (const id of DEFAULT_COLUMN_ORDER) if (!next.includes(id)) next.push(id)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration from localStorage
+      setColumnOrder(next)
+    } catch { /* ignore */ }
+  }, [])
+  useEffect(() => {
+    try { localStorage.setItem(COLUMN_ORDER_STORAGE_KEY, JSON.stringify(columnOrder)) } catch { /* ignore */ }
+  }, [columnOrder])
+
+  const onColDragStart = (e: React.DragEvent<HTMLTableCellElement>, id: ReorderableColumnId) => {
+    setDragColId(id)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', id)
+  }
+  const onColDragOver = (e: React.DragEvent<HTMLTableCellElement>, id: ReorderableColumnId) => {
+    if (!dragColId) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dragOverColId !== id) setDragOverColId(id)
+  }
+  const onColDrop = (e: React.DragEvent<HTMLTableCellElement>, dropOnId: ReorderableColumnId) => {
+    e.preventDefault()
+    if (!dragColId || dragColId === dropOnId) {
+      setDragColId(null); setDragOverColId(null); return
+    }
+    setColumnOrder(prev => {
+      const next = prev.filter(c => c !== dragColId)
+      const idx = next.indexOf(dropOnId)
+      next.splice(idx === -1 ? next.length : idx, 0, dragColId)
+      return next
+    })
+    setDragColId(null); setDragOverColId(null)
+  }
+  const onColDragEnd = () => { setDragColId(null); setDragOverColId(null) }
 
   // Click-outside + Escape dismiss for the MFE/MAE info popover.
   useEffect(() => {
@@ -249,12 +307,251 @@ export default function RecentDaysList({ initialDays }: Props) {
     )
   }
 
+  // Drag-handle props applied to each reorderable header <th>. The header
+  // gets draggable=true, drag start/over/drop/end handlers, an opacity tweak
+  // while it's the source, and a left/right border highlight when it's the
+  // current drop target (column slides into the slot where the target
+  // currently sits).
+  const dragProps = (id: ReorderableColumnId): React.ThHTMLAttributes<HTMLTableCellElement> => {
+    const isDragging = dragColId === id
+    const isHover = dragOverColId === id && dragColId !== null && dragColId !== id
+    return {
+      draggable: true,
+      onDragStart: e => onColDragStart(e, id),
+      onDragOver: e => onColDragOver(e, id),
+      onDrop: e => onColDrop(e, id),
+      onDragEnd: onColDragEnd,
+      className: [
+        'cursor-grab active:cursor-grabbing select-none',
+        isDragging ? 'opacity-40' : '',
+        isHover ? 'ring-2 ring-blue-500 rounded' : '',
+      ].filter(Boolean).join(' '),
+      title: 'Drag to reorder',
+    }
+  }
+
+  // Header node per reorderable column id. Same JSX as before, with the
+  // draggable / drop-hint props spread onto each <th>.
+  const headerNodes: Record<ReorderableColumnId, React.ReactNode> = {
+    grade: (
+      <SortableTh
+        key="grade"
+        label="Execution"
+        column="grade"
+        current={sortColumn}
+        direction={sortDirection}
+        onSort={setSort}
+        align="center"
+        className="pr-3 w-24"
+        titleAttr="Execution composite score (0–10) — drag to reorder."
+        thProps={dragProps('grade')}
+      />
+    ),
+    process_v13: (
+      <SortableTh
+        key="process_v13"
+        label="Process"
+        column="process_v13"
+        current={sortColumn}
+        direction={sortDirection}
+        onSort={setSort}
+        align="center"
+        className="pr-3 w-20"
+        thProps={dragProps('process_v13')}
+      />
+    ),
+    trades: (
+      <SortableTh
+        key="trades"
+        label="Trades"
+        column="trades"
+        current={sortColumn}
+        direction={sortDirection}
+        onSort={setSort}
+        align="center"
+        className="pr-3 w-16"
+        thProps={dragProps('trades')}
+      />
+    ),
+    mfe_mae: (
+      <th key="mfe_mae" {...dragProps('mfe_mae')} className={`font-normal py-2 pr-3 text-center w-28 relative ${dragProps('mfe_mae').className ?? ''}`}>
+        <div className="flex flex-col items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => setMfeInfoOpen(o => !o)}
+            className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+            title="What is MFE/MAE?"
+          >
+            <HelpCircle className="w-3 h-3" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSort('mfe_mae')}
+            className={`inline-flex items-center gap-1 hover:text-white transition-colors ${sortColumn === 'mfe_mae' ? 'text-blue-300' : 'text-gray-500'}`}
+          >
+            Avg MFE/MAE
+            {sortColumn === 'mfe_mae' ? (
+              sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+            ) : (
+              <span className="w-3 h-3 opacity-30">▾</span>
+            )}
+          </button>
+          <select
+            value={mfeUnit}
+            onChange={e => setMfeUnit(e.target.value as MfeUnit)}
+            onClick={e => e.stopPropagation()}
+            className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight"
+            title="Display unit for MFE/MAE"
+          >
+            <option value="pts">pts</option>
+            <option value="dollars">$</option>
+            <option value="atr">ATR</option>
+          </select>
+        </div>
+        {mfeInfoOpen && (
+          <div
+            ref={mfeInfoRef}
+            className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+          >
+            <div className="flex items-start justify-between mb-2">
+              <p className="font-semibold text-white">Avg MFE / MAE</p>
+              <button type="button" onClick={() => setMfeInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="mb-2">
+              Average per-trade <strong className="text-green-300">M</strong>aximum <strong className="text-green-300">F</strong>avorable / <strong className="text-red-300">M</strong>aximum <strong className="text-red-300">A</strong>dverse <strong>E</strong>xcursion across the day&apos;s trades. Sourced tick-precise from Sierra Chart&apos;s <span className="font-mono">HighDuringPosition</span> / <span className="font-mono">LowDuringPosition</span> on closing fills.
+            </p>
+            <p className="mb-2">Per-trade calc, depending on direction:</p>
+            <ul className="list-disc pl-4 space-y-1 mb-2">
+              <li><strong>Long</strong>: MFE = high âˆ’ entry, MAE = entry âˆ’ low</li>
+              <li><strong>Short</strong>: MFE = entry âˆ’ low, MAE = high âˆ’ entry</li>
+            </ul>
+            <p className="mb-2">Unit options:</p>
+            <ul className="list-disc pl-4 space-y-1">
+              <li><strong>pts</strong>: raw price points</li>
+              <li><strong>$</strong>: points × per-symbol contract multiplier × trade quantity</li>
+              <li><strong>ATR</strong>: 1× ATR-10 (Wilder) units. Uses the day&apos;s prep ATR (market_context.atr_1m); shows — if not entered.</li>
+            </ul>
+            <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
+          </div>
+        )}
+      </th>
+    ),
+    capture: (
+      <th key="capture" {...dragProps('capture')} className={`font-normal py-2 pr-3 text-center w-36 relative whitespace-nowrap ${dragProps('capture').className ?? ''}`}>
+        <div className="flex flex-col items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => setRealizedInfoOpen(o => !o)}
+            className={`transition-colors ${realizedInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+            title="What are MFE Realized % and MAE Heat %?"
+          >
+            <HelpCircle className="w-3 h-3" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSort('capture')}
+            className={`inline-flex flex-col items-center leading-tight hover:text-white transition-colors ${sortColumn === 'capture' ? 'text-blue-300' : 'text-gray-500'}`}
+          >
+            <span className="inline-flex items-center gap-1">
+              {realizedUnit === '%' ? 'MFE Realized %' : 'MFE Realized'}
+              {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+            </span>
+            <span>{realizedUnit === '%' ? 'MAE Heat %' : 'MAE Heat'}</span>
+          </button>
+        </div>
+        <select
+          value={realizedUnit}
+          onChange={e => setRealizedUnit(e.target.value as MfeUnit | '%')}
+          onClick={e => e.stopPropagation()}
+          className="bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 mt-0.5 focus:outline-none focus:border-blue-500 leading-tight normal-case"
+          title="Unit for MFE Realized / MAE Heat columns"
+        >
+          <option value="%">%</option>
+          <option value="pts">pts</option>
+          <option value="dollars">$</option>
+          <option value="atr">×ATR</option>
+        </select>
+        {realizedInfoOpen && (
+          <div
+            ref={realizedInfoRef}
+            className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+          >
+            <div className="flex items-start justify-between mb-2">
+              <p className="font-semibold text-white">MFE Realized % / MAE Heat %</p>
+              <button type="button" onClick={() => setRealizedInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="mb-2">
+              Two execution-quality metrics averaged across the day&apos;s trades. Both bounded by <strong>entry â†’ exit</strong> — they measure what happened <em>while you held the position</em>, not after.
+            </p>
+            <p className="mb-1"><strong className="text-green-300">MFE Realized %</strong></p>
+            <p className="mb-2 text-gray-400">
+              = realized PnL Ã· peak favorable excursion in $ — &ldquo;of the move I was offered, how much did I take?&rdquo;
+            </p>
+            <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
+              <li><strong>100%</strong>: exited at the high — perfect timing</li>
+              <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
+              <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — trade went green then closed at a loss</li>
+            </ul>
+            <p className="mb-1"><strong className="text-red-300">MAE Heat %</strong></p>
+            <p className="mb-2 text-gray-400">
+              = peak adverse excursion Ã· planned stop distance — &ldquo;how much of my planned risk did I sit through?&rdquo;
+            </p>
+            <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
+              <li><strong>0–50%</strong>: clean entry, light pressure</li>
+              <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
+              <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — you moved it, slipped, or trade reversed in time to save you</li>
+            </ul>
+            <p className="mb-2 text-gray-500">
+              <strong>Color rule:</strong> gray by default; red bold only on standout days — when the day averaged a give-back (capture &lt; 0) or sat past planned stop (heat &gt; 100%). Other days stay gray on purpose so the eye lands on what needs review.
+            </p>
+            <p className="mb-1 text-gray-500">Trades excluded from the average:</p>
+            <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-500">
+              <li>No stop_price recorded (no risk baseline)</li>
+              <li>MFE &lt; 20% of planned risk (denominator too small — capture ratio is noise)</li>
+            </ul>
+            <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
+          </div>
+        )}
+      </th>
+    ),
+    win_rate: (
+      <SortableTh
+        key="win_rate"
+        label="Win %"
+        column="win_rate"
+        current={sortColumn}
+        direction={sortDirection}
+        onSort={setSort}
+        align="center"
+        className="pr-3 w-16 whitespace-nowrap"
+        thProps={dragProps('win_rate')}
+      />
+    ),
+    pnl: (
+      <SortableTh
+        key="pnl"
+        label="PnL"
+        column="pnl"
+        current={sortColumn}
+        direction={sortDirection}
+        onSort={setSort}
+        align="right"
+        className="pr-3 w-24 whitespace-nowrap"
+        thProps={dragProps('pnl')}
+      />
+    ),
+  }
+
   return (
     <>
       {toast && (
         <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium
           ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
-          {toast.type === 'success' ? '✓' : '✕'} {toast.msg}
+          {toast.type === 'success' ? 'âœ“' : 'âœ•'} {toast.msg}
         </div>
       )}
 
@@ -295,184 +592,11 @@ export default function RecentDaysList({ initialDays }: Props) {
             <tr className="text-xs text-gray-500 border-b border-gray-800">
               <th className="font-normal py-2 pl-2 pr-1 w-8" />
               <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3" />
-              {/* Header reads "Execution" in full (was "Exec") per user
-                  preference. The column now uses w-24 to fit the longer
-                  label without truncating; previous w-20 worked for "Exec"
-                  but truncated "Execution". Tooltip retained for the
-                  numeric definition. */}
-              <SortableTh label="Execution" column="grade" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-24" titleAttr="Execution composite score (0–10) — see /eod page for the per-metric breakdown." />
-              {/* v1.3 Process verdict — single 0-10, banded green/red color
-                  by verdict per 2026-06-08 amendment (5/7 threshold). The old
-                  "Process" column (which actually showed the prep AI score)
-                  was renamed to Prep and then dropped from this dense table. */}
-              <SortableTh label="Process" column="process_v13" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-20" />
-              <SortableTh label="Trades" column="trades" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16" />
-              <th className="font-normal py-2 pr-3 text-center w-28 relative">
-                <div className="flex flex-col items-center gap-0.5">
-                  {/* Help icon parked on its own row above the title so it
-                      doesn't crowd the centered column heading. */}
-                  <button
-                    type="button"
-                    onClick={() => setMfeInfoOpen(o => !o)}
-                    className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                    title="What is MFE/MAE?"
-                  >
-                    <HelpCircle className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSort('mfe_mae')}
-                    className={`inline-flex items-center gap-1 hover:text-white transition-colors ${
-                      sortColumn === 'mfe_mae' ? 'text-blue-300' : 'text-gray-500'
-                    }`}
-                  >
-                    Avg MFE/MAE
-                    {sortColumn === 'mfe_mae' ? (
-                      sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
-                    ) : (
-                      <span className="w-3 h-3 opacity-30">▾</span>
-                    )}
-                  </button>
-                  <select
-                    value={mfeUnit}
-                    onChange={e => setMfeUnit(e.target.value as MfeUnit)}
-                    onClick={e => e.stopPropagation()}
-                    className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight"
-                    title="Display unit for MFE/MAE"
-                  >
-                    <option value="pts">pts</option>
-                    <option value="dollars">$</option>
-                    <option value="atr">ATR</option>
-                  </select>
-                </div>
-                {mfeInfoOpen && (
-                  <div
-                    ref={mfeInfoRef}
-                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <p className="font-semibold text-white">Avg MFE / MAE</p>
-                      <button
-                        type="button"
-                        onClick={() => setMfeInfoOpen(false)}
-                        className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5"
-                        aria-label="Close"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <p className="mb-2">
-                      Average per-trade <strong className="text-green-300">M</strong>aximum <strong className="text-green-300">F</strong>avorable / <strong className="text-red-300">M</strong>aximum <strong className="text-red-300">A</strong>dverse <strong>E</strong>xcursion across the day&apos;s trades. Sourced tick-precise from Sierra Chart&apos;s <span className="font-mono">HighDuringPosition</span> / <span className="font-mono">LowDuringPosition</span> on closing fills.
-                    </p>
-                    <p className="mb-2">Per-trade calc, depending on direction:</p>
-                    <ul className="list-disc pl-4 space-y-1 mb-2">
-                      <li><strong>Long</strong>: MFE = high − entry, MAE = entry − low</li>
-                      <li><strong>Short</strong>: MFE = entry − low, MAE = high − entry</li>
-                    </ul>
-                    <p className="mb-2">Unit options:</p>
-                    <ul className="list-disc pl-4 space-y-1">
-                      <li><strong>pts</strong>: raw price points</li>
-                      <li><strong>$</strong>: points × per-symbol contract multiplier × trade quantity</li>
-                      <li><strong>ATR</strong>: 1× ATR-10 (Wilder) units. Uses the day&apos;s prep ATR (market_context.atr_1m); shows — if not entered.</li>
-                    </ul>
-                    <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
-                  </div>
-                )}
-              </th>
-              <th className="font-normal py-2 pr-3 text-center w-36 relative whitespace-nowrap">
-                <div className="flex flex-col items-center gap-0.5">
-                  {/* Help icon parked on its own row above the title — matches
-                      the Avg MFE/MAE column's layout so the two help icons
-                      sit at the same vertical level across the row. */}
-                  <button
-                    type="button"
-                    onClick={() => setRealizedInfoOpen(o => !o)}
-                    className={`transition-colors ${realizedInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                    title="What are MFE Realized % and MAE Heat %?"
-                  >
-                    <HelpCircle className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSort('capture')}
-                    className={`inline-flex flex-col items-center leading-tight hover:text-white transition-colors ${sortColumn === 'capture' ? 'text-blue-300' : 'text-gray-500'}`}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      {realizedUnit === '%' ? 'MFE Realized %' : 'MFE Realized'}
-                      {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-                    </span>
-                    <span>{realizedUnit === '%' ? 'MAE Heat %' : 'MAE Heat'}</span>
-                  </button>
-                </div>
-                <select
-                  value={realizedUnit}
-                  onChange={e => setRealizedUnit(e.target.value as MfeUnit | '%')}
-                  onClick={e => e.stopPropagation()}
-                  className="bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 mt-0.5 focus:outline-none focus:border-blue-500 leading-tight normal-case"
-                  title="Unit for MFE Realized / MAE Heat columns"
-                >
-                  <option value="%">%</option>
-                  <option value="pts">pts</option>
-                  <option value="dollars">$</option>
-                  <option value="atr">×ATR</option>
-                </select>
-                {realizedInfoOpen && (
-                  <div
-                    ref={realizedInfoRef}
-                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <p className="font-semibold text-white">MFE Realized % / MAE Heat %</p>
-                      <button
-                        type="button"
-                        onClick={() => setRealizedInfoOpen(false)}
-                        className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5"
-                        aria-label="Close"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <p className="mb-2">
-                      Two execution-quality metrics averaged across the day&apos;s trades. Both bounded by <strong>entry → exit</strong> — they measure what happened <em>while you held the position</em>, not after.
-                    </p>
-
-                    <p className="mb-1"><strong className="text-green-300">MFE Realized %</strong></p>
-                    <p className="mb-2 text-gray-400">
-                      = realized PnL ÷ peak favorable excursion in $ — &ldquo;of the move I was offered, how much did I take?&rdquo;
-                    </p>
-                    <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
-                      <li><strong>100%</strong>: exited at the high — perfect timing</li>
-                      <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
-                      <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — trade went green then closed at a loss</li>
-                    </ul>
-
-                    <p className="mb-1"><strong className="text-red-300">MAE Heat %</strong></p>
-                    <p className="mb-2 text-gray-400">
-                      = peak adverse excursion ÷ planned stop distance — &ldquo;how much of my planned risk did I sit through?&rdquo;
-                    </p>
-                    <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
-                      <li><strong>0–50%</strong>: clean entry, light pressure</li>
-                      <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
-                      <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — you moved it, slipped, or trade reversed in time to save you</li>
-                    </ul>
-
-                    <p className="mb-2 text-gray-500">
-                      <strong>Color rule:</strong> gray by default; red bold only on standout days — when the day averaged a give-back (capture &lt; 0) or sat past planned stop (heat &gt; 100%). Other days stay gray on purpose so the eye lands on what needs review.
-                    </p>
-
-                    <p className="mb-1 text-gray-500">Trades excluded from the average:</p>
-                    <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-500">
-                      <li>No stop_price recorded (no risk baseline)</li>
-                      <li>MFE &lt; 20% of planned risk (denominator too small — capture ratio is noise)</li>
-                    </ul>
-
-                    <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
-                  </div>
-                )}
-              </th>
-              <SortableTh label="Win %" column="win_rate" current={sortColumn} direction={sortDirection} onSort={setSort} align="center" className="pr-3 w-16 whitespace-nowrap" />
-              <SortableTh label="PnL" column="pnl" current={sortColumn} direction={sortDirection} onSort={setSort} align="right" className="pr-3 w-24 whitespace-nowrap" />
+              {/* All seven data columns below are now draggable — held order
+                  lives in columnOrder state, persisted to localStorage. The
+                  Date and checkbox columns above stay pinned (row identity);
+                  the delete column at the right stays pinned (row action). */}
+              {columnOrder.map(id => headerNodes[id])}
               <th className="w-10" />
             </tr>
           </thead>
@@ -485,6 +609,7 @@ export default function RecentDaysList({ initialDays }: Props) {
                 deleting={deletingDate === day.date || (bulkDeleting && selectedIds.has(day.id))}
                 mfeUnit={mfeUnit}
                 realizedUnit={realizedUnit}
+                columnOrder={columnOrder}
                 onToggleSelect={() => toggleSelect(day.id)}
                 onDelete={() => handleSingleDelete(day.date, day.eod_pnl != null)}
               />
@@ -505,6 +630,7 @@ function SortableTh({
   align,
   className,
   titleAttr,
+  thProps,
 }: {
   // Accepts either a plain string or pre-rendered JSX so columns can have
   // multi-line headers (e.g. "MFE Realized %" / "MAE Heat %" stacked).
@@ -518,11 +644,18 @@ function SortableTh({
   /** Hover tooltip — useful when the header label is abbreviated (e.g. "Exec"
    *  for Execution) and a first-time reader wants the full meaning. */
   titleAttr?: string
+  /** Extra props spread onto the <th> — used by RecentDaysList to attach
+   *  drag/drop handlers without forking the component. */
+  thProps?: React.ThHTMLAttributes<HTMLTableCellElement>
 }) {
   const isActive = current === column
   const alignClass = align === 'left' ? 'text-left' : align === 'right' ? 'text-right' : 'text-center'
   return (
-    <th className={`font-normal py-2 ${alignClass} ${className ?? ''}`} title={titleAttr}>
+    <th
+      {...thProps}
+      className={`font-normal py-2 ${alignClass} ${className ?? ''} ${thProps?.className ?? ''}`}
+      title={titleAttr}
+    >
       <button
         type="button"
         onClick={() => onSort(column)}
@@ -545,6 +678,7 @@ function DayRowItem({
   deleting,
   mfeUnit,
   realizedUnit,
+  columnOrder,
   onToggleSelect,
   onDelete,
 }: {
@@ -553,6 +687,9 @@ function DayRowItem({
   deleting: boolean
   mfeUnit: MfeUnit
   realizedUnit: MfeUnit | '%'
+  /** Order of the 7 reorderable data columns. Must match what the parent's
+   *  <thead> iterates so headers and cells stay in lockstep. */
+  columnOrder: ReorderableColumnId[]
   onToggleSelect: () => void
   onDelete: () => void
 }) {
@@ -608,38 +745,52 @@ function DayRowItem({
           )}
         </div>
       </td>
-      <td className={`py-2 pr-3 text-center ${cellBg}`}><ScorePill value={day.overall_grade} /></td>
-      <td className={`py-2 pr-3 text-center ${cellBg}`}>
-        <VerdictPill
-          value={day.process_v13_score}
-          verdict={day.process_verdict}
-          breachRules={day.process_breach_rules}
-        />
-      </td>
-      <td className={`py-2 pr-3 text-center text-gray-300 font-mono ${cellBg}`}>
-        {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
-      </td>
-      <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-        <MfeMaeCell day={day} unit={mfeUnit} />
-      </td>
-      <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-        <CaptureHeatCell day={day} realizedUnit={realizedUnit} />
-      </td>
-      {/* Win % and PnL rendered at text-xs (one size down from the table
-          default text-sm) — keeps the columns readable but visually
-          de-emphasizes vs the more central Grade/Process/MFE columns. */}
-      <td className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-        {day.win_rate === null
-          ? <span className="text-gray-700">—</span>
-          : <span className={day.win_rate >= 50 ? 'text-green-400' : 'text-gray-400'}>{day.win_rate.toFixed(0)}%</span>}
-      </td>
-      <td className={`py-2 pr-3 text-right font-mono font-medium text-xs ${pnlColor} ${cellBg}`}>
-        {/* Whole-dollar PnL — the narrow Recent Days column was clipping
-            ".50" off "$368.50" and showing a dangling "$368." period. The
-            day-level summary doesn't need cent precision; per-trade rows
-            still keep decimals where they matter. */}
-        {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}`}
-      </td>
+      {/* Reorderable data cells. Keyed by ReorderableColumnId so the iteration
+          below stays in lockstep with the parent's header iteration. */}
+      {(() => {
+        const cellNodes: Record<ReorderableColumnId, React.ReactNode> = {
+          grade: (
+            <td key="grade" className={`py-2 pr-3 text-center ${cellBg}`}><ScorePill value={day.overall_grade} /></td>
+          ),
+          process_v13: (
+            <td key="process_v13" className={`py-2 pr-3 text-center ${cellBg}`}>
+              <VerdictPill
+                value={day.process_v13_score}
+                verdict={day.process_verdict}
+                breachRules={day.process_breach_rules}
+              />
+            </td>
+          ),
+          trades: (
+            <td key="trades" className={`py-2 pr-3 text-center text-gray-300 font-mono ${cellBg}`}>
+              {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
+            </td>
+          ),
+          mfe_mae: (
+            <td key="mfe_mae" className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
+              <MfeMaeCell day={day} unit={mfeUnit} />
+            </td>
+          ),
+          capture: (
+            <td key="capture" className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
+              <CaptureHeatCell day={day} realizedUnit={realizedUnit} />
+            </td>
+          ),
+          win_rate: (
+            <td key="win_rate" className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
+              {day.win_rate === null
+                ? <span className="text-gray-700">—</span>
+                : <span className={day.win_rate >= 50 ? 'text-green-400' : 'text-gray-400'}>{day.win_rate.toFixed(0)}%</span>}
+            </td>
+          ),
+          pnl: (
+            <td key="pnl" className={`py-2 pr-3 text-right font-mono font-medium text-xs ${pnlColor} ${cellBg}`}>
+              {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}`}
+            </td>
+          ),
+        }
+        return columnOrder.map(id => cellNodes[id])
+      })()}
       <td className={`py-2 pr-2 text-right ${cellBg}`}>
         <button
           onClick={onDelete}
@@ -709,8 +860,8 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
  * eye lands on days that need review.
  *
  * Both shown as percentages for uniformity:
- *   Capture %  = realized PnL ÷ peak favorable in $ during the position
- *   Heat %     = peak MAE ÷ planned stop distance in pts (100% = touched stop)
+ *   Capture %  = realized PnL Ã· peak favorable in $ during the position
+ *   Heat %     = peak MAE Ã· planned stop distance in pts (100% = touched stop)
  */
 function CaptureHeatCell({ day, realizedUnit }: { day: DayRowData; realizedUnit: MfeUnit | '%' }) {
   if (day.avg_capture == null && day.avg_heat == null) {
@@ -769,7 +920,7 @@ function CaptureHeatCell({ day, realizedUnit }: { day: DayRowData; realizedUnit:
   return (
     <span
       className="flex flex-col items-center leading-tight whitespace-nowrap"
-      title="MFE Realized % = avg realized PnL ÷ peak favorable $ per trade (during position, not after exit). MAE Heat % = avg peak MAE ÷ planned stop distance per trade (100% = touched stop level; > 100% = blew past it). Red bold means the day averaged a give-back (capture < 0) or sat past planned stop (heat > 100%)."
+      title="MFE Realized % = avg realized PnL Ã· peak favorable $ per trade (during position, not after exit). MAE Heat % = avg peak MAE Ã· planned stop distance per trade (100% = touched stop level; > 100% = blew past it). Red bold means the day averaged a give-back (capture < 0) or sat past planned stop (heat > 100%)."
     >
       <span className={capCls}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
       <span className={heatCls}>{day.avg_heat == null ? '—' : `${(day.avg_heat * 100).toFixed(0)}%`}</span>
@@ -796,11 +947,11 @@ function ScorePill({ value }: { value: number | null }) {
 
 /**
  * v1.4 Process pill — renders as a check/X icon with a color gradient
- * driven by the score. Compliant (≥4/5 pass) is green and gets brighter
+ * driven by the score. Compliant (â‰¥4/5 pass) is green and gets brighter
  * with higher pass counts; Breach (<4/5) is red and gets darker with
  * more failed rules. Score values are {0,2,4,6,8,10} (passCount × 2),
- * giving a 6-step gradient: 10 (5/5 pass) → 8 (4/5) → 6 (3/5) → 4 (2/5)
- * → 2 (1/5) → 0 (0/5).
+ * giving a 6-step gradient: 10 (5/5 pass) â†’ 8 (4/5) â†’ 6 (3/5) â†’ 4 (2/5)
+ * â†’ 2 (1/5) â†’ 0 (0/5).
  *
  * Same w-8 visual footprint as ScorePill so the column lines up. Hover
  * tooltip carries the underlying score + breach detail so the precise
@@ -825,8 +976,8 @@ function VerdictPill({
       : value >= 2  ? 'text-red-300 border-red-900/70 bg-red-800/35'                // 1/5
       :              'text-red-200 border-red-950/80 bg-red-900/45')                // 0/5 — total failure
   const tooltip = isCompliant
-    ? `Compliant — ${value / 2}/5 rules pass (≥4/5 threshold)`
-    : `Breach — ${value / 2}/5 rules pass · ${(breachRules ?? []).join(', ') || 'rule(s) failed'}`
+    ? `Compliant — ${value / 2}/5 rules pass (â‰¥4/5 threshold)`
+    : `Breach — ${value / 2}/5 rules pass Â· ${(breachRules ?? []).join(', ') || 'rule(s) failed'}`
   const Icon = isCompliant ? Check : X
   return (
     <span

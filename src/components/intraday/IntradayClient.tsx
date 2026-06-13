@@ -58,11 +58,14 @@ function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
 }
 
 /** Display-formatted MAE Heat as a percentage. Null when no stop or no MAE.
- *  100% = MAE touched stop level; >100% = blew past it. */
+ *  100% = MAE touched stop level; >100% = blew past it. Negative heat (trade
+ *  was instantly favorable and never traded back through entry) is floored at
+ *  0% for display; the chip renderer adds a small ↑ marker so the signal isn't
+ *  lost. */
 function heatDisplay(t: Trade): string | null {
   const r = maeHeatRatio(t)
   if (r == null) return null
-  return `${Math.round(r * 100)}%`
+  return `${Math.round(Math.max(0, r) * 100)}%`
 }
 
 /**
@@ -120,9 +123,14 @@ function CapHeatInline({ trade, rDisplay, bars }: { trade: Trade; rDisplay: stri
           className={heatCls}
           title={isLuckyEscape
             ? `MAE Heat %: ${heatDisplay(trade)} — lucky escape (winner that violated planned stop).`
-            : `MAE Heat %: ${heatDisplay(trade)} of planned stop distance touched as MAE.`}
+            : heat < 0
+              ? `MAE Heat %: 0% — trade never breached entry (instantly favorable).`
+              : `MAE Heat %: ${heatDisplay(trade)} of planned stop distance touched as MAE.`}
         >
           {heatDisplay(trade)}
+          {heat < 0 && (
+            <span className="ml-0.5 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
+          )}
         </span>
       )}
     </div>
@@ -620,10 +628,15 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                         <div className={`font-medium ${capCls}`}>{cap ?? '—'}</div>
                       </div>
                       <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="MAE Heat %: peak adverse excursion / planned stop distance. 100% = MAE touched your stop level. Red bold means past stop (you blew through or got slipped).">
+                        <div className="text-xs text-gray-500 mb-0.5" title="MAE Heat %: peak adverse excursion / planned stop distance. 100% = MAE touched your stop level. Red bold means past stop (you blew through or got slipped). ↑ means the trade never breached entry.">
                           MAE Heat %
                         </div>
-                        <div className={`font-medium ${heatCls}`}>{heat ?? '—'}</div>
+                        <div className={`font-medium ${heatCls}`}>
+                          {heat ?? '—'}
+                          {heatRatio != null && heatRatio < 0 && (
+                            <span className="ml-1 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
+                          )}
+                        </div>
                       </div>
                       <div className="hidden sm:block">
                         <div className="text-xs text-gray-500 mb-0.5" title={`Peak favorable excursion (${mfeUnit === 'dollars' ? '$' : mfeUnit === 'atr' ? '×ATR' : 'pts'})`}>Peak MFE</div>

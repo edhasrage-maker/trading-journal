@@ -18,11 +18,15 @@ function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
   return `${Math.max(-999, Math.min(999, r * 100)).toFixed(0)}%`
 }
 
-/** Display MAE Heat as a percentage per trade. 100% = MAE touched stop level. */
+/** Display MAE Heat as a percentage per trade. 100% = MAE touched stop level.
+ *  Negative heat (= low-during-position above entry for a long, or high below
+ *  entry for a short — i.e. the trade was instantly favorable and never went
+ *  red) is floored at 0% for display. Render callers separately surface a
+ *  "never breached entry" marker when the raw ratio is negative. */
 function heatDisplay(t: Trade): string | null {
   const r = maeHeatRatio(t)
   if (r == null) return null
-  return `${Math.round(r * 100)}%`
+  return `${Math.round(Math.max(0, r) * 100)}%`
 }
 
 interface Props {
@@ -380,6 +384,10 @@ export default function TradeList({
                     const heat = maeHeatRatio(t)
                     const isGiveBack = isGiveBackTrade(t)
                     const isLuckyEscape = (t.pnl ?? 0) > 0 && heat != null && heat > 1.0
+                    // Negative heat = trade was instantly favorable and never traded
+                    // back through entry. Render a small ↑ marker so the lossless-
+                    // from-entry signal isn't hidden by the 0% floor.
+                    const neverRed = heat != null && heat < 0
                     // Gray default; standout cells (give-back, lucky escape, heat past stop)
                     // get red+bold so the eye lands on trades that need review.
                     const capStandout = isGiveBack
@@ -395,6 +403,9 @@ export default function TradeList({
                         <td className={`py-1.5 pr-3 text-right ${heatCls}`}
                           title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : undefined}>
                           {heatDisplay(t) ?? '—'}
+                          {neverRed && (
+                            <span className="ml-1 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
+                          )}
                         </td>
                       </>
                     )
