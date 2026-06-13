@@ -1,10 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
-import type { TradePlan, PlanAssessment } from '@/lib/supabase/types'
+import type { TradePlan, PlanAssessment, TradeTag } from '@/lib/supabase/types'
 
-const PRESET_SETUPS = ['Supply/Demand', 'Break/Retest', 'LVN/Hold', 'EMA Trend Following', 'Reversal Trade']
+// Fallback list when /api/trade-tags hasn't loaded yet — keeps the dropdown
+// from rendering empty on first paint. As soon as the library fetch resolves
+// the dynamic list takes over.
+const FALLBACK_SETUPS = ['Supply/Demand', 'Break/Retest', 'LVN/Hold', 'EMA Trend Following', 'Reversal Trade']
 
 interface Props {
   plans: TradePlan[]
@@ -19,10 +22,37 @@ const qualityColor = (n: number) =>
 
 export default function TradePlansSection({ plans, onChange, planAssessments }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  // Track which plans are using a custom (non-preset) setup name
-  const [customMode, setCustomMode] = useState<Set<string>>(
-    () => new Set(plans.filter(p => p.setup_name && !PRESET_SETUPS.includes(p.setup_name)).map(p => p.id))
-  )
+  // Setup library — sourced from the `trade_tags` table (category='setups')
+  // so this dropdown stays in lockstep with the tags the user already curates
+  // for the EOD/intraday tagging flow. Previously a hardcoded list, which
+  // silently drifted from the library (e.g. "IB Fade" lived as a tag but
+  // never appeared here, prompting users to think it had been deleted).
+  const [setupLibrary, setSetupLibrary] = useState<string[]>(FALLBACK_SETUPS)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/trade-tags')
+      .then(r => r.ok ? r.json() : [])
+      .then((rows: TradeTag[]) => {
+        if (cancelled || !Array.isArray(rows)) return
+        const setups = rows
+          .filter(r => r.category === 'setups' && typeof r.label === 'string' && r.label.trim().length > 0)
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+          .map(r => r.label)
+        if (setups.length > 0) setSetupLibrary(setups)
+      })
+      .catch(() => { /* keep fallback list */ })
+    return () => { cancelled = true }
+  }, [])
+  // Track which plans the user has EXPLICITLY toggled into "Other (custom)"
+  // via the dropdown. A plan is treated as custom when EITHER it's in this
+  // set OR its setup_name is non-empty but not in the library (e.g. a
+  // freeform value typed before the library entry existed, or before the
+  // library finished loading). Deriving the second condition at render time
+  // means a setup that's later added to the library auto-deselects custom
+  // mode on the next render — no effect needed.
+  const [customMode, setCustomMode] = useState<Set<string>>(new Set())
+  const isCustom = (plan: TradePlan): boolean =>
+    customMode.has(plan.id) || (!!plan.setup_name && !setupLibrary.includes(plan.setup_name))
 
   const addPlan = () => {
     const id = Date.now().toString()
@@ -112,7 +142,7 @@ export default function TradePlansSection({ plans, onChange, planAssessments }: 
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Setup Type</label>
                     <select
-                      value={customMode.has(plan.id) ? '__custom__' : (plan.setup_name || '')}
+                      value={isCustom(plan) ? '__custom__' : (plan.setup_name || '')}
                       onChange={e => {
                         if (e.target.value === '__custom__') {
                           setCustomMode(s => new Set([...s, plan.id]))
@@ -125,10 +155,10 @@ export default function TradePlansSection({ plans, onChange, planAssessments }: 
                       className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
                     >
                       <option value="">Select type...</option>
-                      {PRESET_SETUPS.map(s => <option key={s} value={s}>{s}</option>)}
+                      {setupLibrary.map(s => <option key={s} value={s}>{s}</option>)}
                       <option value="__custom__">Other (custom)</option>
                     </select>
-                    {customMode.has(plan.id) && (
+                    {isCustom(plan) && (
                       <input type="text" spellCheck autoCorrect="on" placeholder="Describe the setup..."
                         value={plan.setup_name}
                         onChange={e => update(plan.id, { setup_name: e.target.value })}
