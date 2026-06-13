@@ -979,12 +979,19 @@ export default function EodClient({
         onError={msg => showToast(msg, 'error')}
       />
 
-      {/* AI session analysis */}
+      {/* AI session analysis. latestTradeUpdate flags the analysis as stale
+          when any trade has been modified after the analysis was generated —
+          common when the user backfills tags, stops, or detected levels post-
+          analysis. */}
       <EodAnalysisCard
         analysis={aiAnalysis}
         loading={analyzing}
         onAnalyze={runAnalysis}
         disabled={trades.length === 0 && !day?.eod_notes}
+        latestTradeUpdate={trades.reduce<string | null>((max, t) => {
+          if (!t.updated_at) return max
+          return max == null || t.updated_at > max ? t.updated_at : max
+        }, null)}
       />
 
       {/* Danger zone — delete entire day */}

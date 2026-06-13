@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { Video, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
-import type { Trade } from '@/lib/supabase/types'
+import type { Trade, DetectedLevels } from '@/lib/supabase/types'
 
 interface VideoFile { name: string; sizeBytes: number; mtimeMs: number }
 interface CommentaryResponse {
   commentary: Record<string, string>
   suggested_mistakes?: Record<string, string[]>
+  detected_levels?: Record<string, DetectedLevels>
   skipped: Array<{ id: string; reason: string }>
   framesUsed?: number
   recordingStartIso?: string
@@ -58,6 +59,32 @@ const mistakeKey = (id: string) => `recording-mistakes-${id}`
  *
  * Returns null when there's no usable text to show.
  */
+/** Pull `detected_levels` from a recording_commentary row when present.
+ *  Mirrors extractCommentaryText's shape-handling — object or JSON-encoded
+ *  string. Returns null when the row predates level detection or the model
+ *  couldn't read anything. Video-file mismatch check matches the text helper
+ *  so we don't surface levels from a different recording. */
+function extractDetectedLevels(raw: unknown, selectedVideo: string): DetectedLevels | null {
+  if (raw == null) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tryObj = (obj: any): DetectedLevels | null => {
+    if (!obj || typeof obj !== 'object') return null
+    if (obj.video_file && obj.video_file !== selectedVideo) return null
+    const lvl = obj.detected_levels
+    if (!lvl || typeof lvl !== 'object') return null
+    if (typeof lvl.confidence !== 'string') return null
+    return lvl as DetectedLevels
+  }
+  if (typeof raw === 'object') return tryObj(raw)
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try { return tryObj(JSON.parse(trimmed)) } catch { return null }
+    }
+  }
+  return null
+}
+
 function extractCommentaryText(raw: unknown, selectedVideo: string): string | null {
   if (raw == null) return null
   // Form 1: proper object
@@ -95,7 +122,9 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
   const [error, setError] = useState<string | null>(null)
   const [commentary, setCommentary] = useState<Record<string, string>>({})
   const [suggestedMistakes, setSuggestedMistakes] = useState<Record<string, string[]>>({})
+  const [detectedLevels, setDetectedLevels] = useState<Record<string, DetectedLevels>>({})
   const [applyingFor, setApplyingFor] = useState<string | null>(null)
+  const [applyingLevelFor, setApplyingLevelFor] = useState<string | null>(null)
   const [dismissed, setDismissed] = useState<Record<string, Set<string>>>({})
 
   // Load available recordings on mount.
@@ -154,10 +183,12 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing cached commentaries when no recording is selected
       setCommentary({})
       setSuggestedMistakes({})
+      setDetectedLevels({})
       return
     }
     const cached: Record<string, string> = {}
     const cachedMistakes: Record<string, string[]> = {}
+    const cachedLevels: Record<string, DetectedLevels> = {}
     // Trades whose commentary we have in localStorage but the DB doesn't —
     // we'll push them up below so the other PC sees them next time it loads.
     // This closes the gap where an earlier "Run commentary" hit a route
@@ -171,6 +202,8 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
       // video_file). If it returns text we're done — load mistakes + heal
       // the row's video_file when needed, then move on.
       const text = extractCommentaryText(t.recording_commentary, videoFile)
+      const lvls = extractDetectedLevels(t.recording_commentary, videoFile)
+      if (lvls) cachedLevels[t.id] = lvls
       if (text) {
         cached[t.id] = text
         // Heal: if the stored row has no video_file or "<unknown>", pin it
@@ -226,6 +259,7 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
     }
     setCommentary(cached)
     setSuggestedMistakes(cachedMistakes)
+    setDetectedLevels(cachedLevels)
 
     // Fire-and-forget backfill. Stamping with the local generated_at is a
     // small lie (this was generated whenever Run commentary originally ran)
@@ -278,8 +312,10 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
       setResult(data)
       const got = data.commentary ?? {}
       const gotMistakes = data.suggested_mistakes ?? {}
+      const gotLevels = data.detected_levels ?? {}
       setCommentary(prev => ({ ...prev, ...got }))
       setSuggestedMistakes(prev => ({ ...prev, ...gotMistakes }))
+      setDetectedLevels(prev => ({ ...prev, ...gotLevels }))
       for (const t of trades) {
         if (got[t.id]) {
           try { localStorage.setItem(cacheKey(t.id), JSON.stringify({ h: hashTradeForCommentary(t, videoFile), s: got[t.id] })) } catch { /* ignore */ }
@@ -321,6 +357,31 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
       setError(`Apply failed: ${e instanceof Error ? e.message : 'unknown'}`)
     } finally {
       setApplyingFor(null)
+    }
+  }
+
+  /** Apply a detected level to the trade's column (stop_price or tp1_price).
+   *  Only used when the trade's current value is null — we never overwrite an
+   *  already-filled field from a vision read. */
+  const applyLevel = async (tradeId: string, field: 'stop_price' | 'tp1_price', value: number) => {
+    const key = `${tradeId}:${field}`
+    setApplyingLevelFor(key)
+    try {
+      const res = await fetch(`/api/trades/${tradeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      })
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string }
+        setError(`Apply failed: ${err.error ?? res.statusText}`)
+        return
+      }
+      onTradesChanged?.()
+    } catch (e) {
+      setError(`Apply failed: ${e instanceof Error ? e.message : 'unknown'}`)
+    } finally {
+      setApplyingLevelFor(null)
     }
   }
 
@@ -437,6 +498,86 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
                 ) : (
                   <p className="text-gray-600 italic">Skipped: {skip}</p>
                 )}
+                {(() => {
+                  const lvls = detectedLevels[t.id]
+                  if (!lvls) return null
+                  const anyLevel = lvls.stop_price != null || lvls.tp1_price != null || lvls.tp2_price != null
+                  if (!anyLevel) return null
+                  const confTone =
+                    lvls.confidence === 'high' ? 'text-emerald-300 bg-emerald-900/40 border-emerald-800'
+                      : lvls.confidence === 'medium' ? 'text-amber-300 bg-amber-900/30 border-amber-800'
+                        : 'text-gray-400 bg-gray-800 border-gray-700'
+                  const fmtP = (p: number | null) => p == null ? '—' : p.toString()
+                  // Adverse / favorable pts from entry, for quick eye-check.
+                  const isLong = t.direction === 'long'
+                  const fromEntry = (p: number | null, kind: 'stop' | 'tp'): string => {
+                    if (p == null || t.entry_price == null) return ''
+                    const raw = p - t.entry_price
+                    const pts = kind === 'stop' ? (isLong ? -raw : raw) : (isLong ? raw : -raw)
+                    return ` (${pts >= 0 ? '+' : ''}${pts.toFixed(2)}p)`
+                  }
+                  const canApplyStop = lvls.stop_price != null && t.stop_price == null
+                  const canApplyTp1  = lvls.tp1_price  != null && t.tp1_price  == null
+                  return (
+                    <div className="mt-2 border border-blue-900/40 rounded-md p-2 bg-blue-950/20">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] uppercase tracking-wider text-blue-300/80">Detected levels</span>
+                        <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${confTone}`}>{lvls.confidence}</span>
+                        <span className="text-[10px] text-gray-500 truncate" title={lvls.reasoning}>· hover for reasoning</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1 text-[11px]">
+                        <div>
+                          <div className="text-gray-500">Entry</div>
+                          <div className="text-gray-200 font-mono">{fmtP(lvls.entry_price)}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Stop</div>
+                          <div className="text-gray-200 font-mono">
+                            {fmtP(lvls.stop_price)}<span className="text-gray-500">{fromEntry(lvls.stop_price, 'stop')}</span>
+                          </div>
+                          {canApplyStop && (
+                            <button
+                              type="button"
+                              disabled={applyingLevelFor !== null}
+                              onClick={() => void applyLevel(t.id, 'stop_price', lvls.stop_price!)}
+                              className="mt-0.5 px-1.5 py-0.5 rounded border border-dashed border-blue-700 text-blue-300 hover:bg-blue-900/40 disabled:opacity-50 text-[10px]"
+                              title="Set this trade's stop_price to the detected level"
+                            >
+                              {applyingLevelFor === `${t.id}:stop_price` ? '…' : 'Apply →'}
+                            </button>
+                          )}
+                          {t.stop_price != null && lvls.stop_price != null && t.stop_price !== lvls.stop_price && (
+                            <div className="text-[10px] text-amber-400/70" title={`Recorded stop: ${t.stop_price}`}>≠ recorded {t.stop_price}</div>
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-gray-500">TP1</div>
+                          <div className="text-gray-200 font-mono">
+                            {fmtP(lvls.tp1_price)}<span className="text-gray-500">{fromEntry(lvls.tp1_price, 'tp')}</span>
+                          </div>
+                          {canApplyTp1 && (
+                            <button
+                              type="button"
+                              disabled={applyingLevelFor !== null}
+                              onClick={() => void applyLevel(t.id, 'tp1_price', lvls.tp1_price!)}
+                              className="mt-0.5 px-1.5 py-0.5 rounded border border-dashed border-blue-700 text-blue-300 hover:bg-blue-900/40 disabled:opacity-50 text-[10px]"
+                              title="Set this trade's tp1_price to the detected level"
+                            >
+                              {applyingLevelFor === `${t.id}:tp1_price` ? '…' : 'Apply →'}
+                            </button>
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-gray-500">TP2</div>
+                          <div className="text-gray-200 font-mono">
+                            {fmtP(lvls.tp2_price)}<span className="text-gray-500">{fromEntry(lvls.tp2_price, 'tp')}</span>
+                          </div>
+                          <div className="text-[10px] text-gray-600" title="TP2 isn't stored on trades — informational only.">info only</div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
                 {liveSuggestions.length > 0 && (
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span className="text-[10px] uppercase tracking-wider text-gray-500 mr-1">Suggested mistakes:</span>

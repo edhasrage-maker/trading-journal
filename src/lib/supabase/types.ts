@@ -248,6 +248,22 @@ export interface RecordingCommentaryData {
   video_file: string          // Source recording filename — lets the UI flag stale commentary if the user re-runs against a different recording
   model: string               // Which Claude model produced it (e.g. claude-sonnet-4-6)
   generated_at: string        // ISO timestamp of when this was saved
+  detected_levels?: DetectedLevels  // Vision-extracted planned levels from the entry frame. Optional — old commentary rows predate this and the model can return all-null when no working orders were visible.
+}
+
+/** Vision-detected planned trade levels read off the entry frame of the OBS
+ *  recording. Populated by /api/video/commentary alongside the text commentary
+ *  (one Claude call returns both). Each price field is nullable — the model
+ *  returns null rather than guess when a level isn't confidently readable.
+ *  The user reviews and applies them to stop_price / tp1 / tp2 fields manually
+ *  via the EOD UI; never auto-written. */
+export interface DetectedLevels {
+  entry_price: number | null
+  stop_price: number | null
+  tp1_price: number | null
+  tp2_price: number | null
+  confidence: 'high' | 'medium' | 'low'
+  reasoning: string
 }
 
 export interface TradeTags {
@@ -366,6 +382,10 @@ export interface ProcessVerdict {
   per_rule: Record<RuleId, RuleStatus>
   /** Convenience copy of breach_count per rule. e.g. { P2: 1, P3: 0, ... } */
   breach_count_vector: Record<RuleId, number>
+  /** Tight headline summarizing the verdict in ≤15 words, one sentence.
+   *  Always visible; the longer notes hide behind "Show details". Optional
+   *  for back-compat with rows that predate this field. */
+  headline?: string
   /** Freeform AI reasoning on the overall verdict. */
   notes?: string
 }
@@ -393,7 +413,15 @@ export interface ExecutionScore {
   /** Number of COMPLIANT trades the execution score was computed across.
    *  v1.3: execution never includes breach trades. */
   compliant_trade_count: number
-  /** AI commentary on execution quality — not a verdict, just diagnostic. */
+  /** Tight headline summarizing WHY the score was what it was — ≤15 words,
+   *  one sentence. Always visible above the per-metric numbers; notes
+   *  hidden behind "Show details". Optional for back-compat with rows that
+   *  predate this field. */
+  headline?: string
+  /** AI commentary on execution quality — not a verdict, just diagnostic.
+   *  Expanded view only; should be a brief diagnostic narrative, NOT a
+   *  calculation trace (those numbers are computed deterministically
+   *  server-side). 2-3 sentences max. */
   notes?: string
   /** Optional: per-criterion pass rate for the Execution Parameters sub-metric.
    *  Lets the UI show which criteria are dragging the score down across the

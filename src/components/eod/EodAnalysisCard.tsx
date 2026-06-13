@@ -1,6 +1,7 @@
 'use client'
 
-import { Brain, AlertTriangle, CheckCircle, Loader2, TrendingUp, Target, ShieldCheck, ShieldX, Activity } from 'lucide-react'
+import { useState } from 'react'
+import { Brain, AlertTriangle, CheckCircle, Loader2, TrendingUp, Target, ShieldCheck, ShieldX, Activity, RefreshCw } from 'lucide-react'
 import type { EodAiAnalysis, ProcessVerdict, ExecutionScore, RuleId, RuleStatus } from '@/lib/supabase/types'
 
 interface Props {
@@ -8,6 +9,12 @@ interface Props {
   loading: boolean
   onAnalyze: () => void
   disabled?: boolean
+  /** ISO timestamp of the most recently updated trade on the day. When this
+   *  is AFTER analysis.analyzed_at, the analysis's per-rule verdicts may no
+   *  longer reflect current trade state (the user backfilled tags / stops /
+   *  applied detected levels after running the AI). Surfaces a stale badge
+   *  so the verdict isn't trusted blindly. */
+  latestTradeUpdate?: string | null
 }
 
 // v1.4 (2026-06-08 amendment 3): 5 hard safety-rail rules. Stop validity
@@ -36,10 +43,20 @@ const RULE_DESCRIPTIONS: Record<RuleId, string> = {
 
 const RULE_ORDER: RuleId[] = ['P1', 'P2', 'P3', 'P4', 'P5']
 
-export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled }: Props) {
+export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled, latestTradeUpdate }: Props) {
   // v1.3-era analyses populate `process` + `execution`. Pre-v1.3 rows only
   // have the legacy `score`. UI prefers v1.3 when present, falls back otherwise.
   const hasV13 = !!(analysis?.process || analysis?.execution)
+  // Stale = a trade was modified after the analysis ran. The verdict was
+  // computed against an older snapshot of the data, so any per-rule reason
+  // that cites missing fields (no stop, no setup tag) may be silently wrong
+  // by now. Threshold a few seconds to avoid false positives from the EOD
+  // route's own updated_at touches on the trading_day row.
+  const isStale = !!(
+    analysis?.analyzed_at &&
+    latestTradeUpdate &&
+    Date.parse(latestTradeUpdate) > Date.parse(analysis.analyzed_at) + 2000
+  )
   const legacyScore = analysis?.score ?? 0
   const legacyColor = !analysis
     ? ''
@@ -51,15 +68,26 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Brain className="w-4 h-4 text-blue-400" />
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Brain className="w-4 h-4 text-blue-400 shrink-0" />
           <h3 className="font-medium text-white text-sm">Session Analysis</h3>
+          {isStale && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-amber-700/60 bg-amber-950/40 text-amber-300"
+              title={`Trades were modified after this analysis ran (${analysis?.analyzed_at ? new Date(analysis.analyzed_at).toLocaleString() : '—'}). Per-rule reasons may cite fields you've since backfilled. Re-run Analyze Session for an accurate verdict.`}
+            >
+              <RefreshCw className="w-3 h-3" />
+              Stale — re-run
+            </span>
+          )}
         </div>
         <button
           onClick={onAnalyze}
           disabled={loading || disabled}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+          className={`flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${
+            isStale ? 'bg-amber-600 hover:bg-amber-500' : 'bg-blue-600 hover:bg-blue-500'
+          }`}
         >
           {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Brain className="w-3 h-3" />}
           {loading ? 'Analyzing...' : 'Analyze Session'}
@@ -174,11 +202,21 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
 }
 
 function ProcessCard({ process: p }: { process: ProcessVerdict }) {
+  const [notesOpen, setNotesOpen] = useState(false)
   const isCompliant = p.verdict === 'Compliant'
   const Icon = isCompliant ? ShieldCheck : ShieldX
   const verdictColor = isCompliant ? 'text-green-400' : 'text-red-400'
   const borderColor = isCompliant ? 'border-green-800/60' : 'border-red-800/60'
   const bgColor = isCompliant ? 'bg-green-950/20' : 'bg-red-950/20'
+
+  // Legacy rows have `notes` but no `headline`. Surface the notes' first
+  // sentence as a faux-headline so the always-visible line still says
+  // something useful for those days. New rows (post-headline prompt) will
+  // have a proper headline.
+  const fauxHeadline = !p.headline && p.notes
+    ? p.notes.split(/(?<=[.!?])\s+/)[0]
+    : null
+  const visible = p.headline ?? fauxHeadline
 
   return (
     <div className={`${bgColor} ${borderColor} border rounded-lg p-3 space-y-2`}>
@@ -192,8 +230,22 @@ function ProcessCard({ process: p }: { process: ProcessVerdict }) {
           <RuleChip key={id} id={id} status={p.per_rule?.[id]} />
         ))}
       </div>
-      {p.notes && (
-        <p className="text-[11px] text-gray-400 leading-snug pt-1">{p.notes}</p>
+      {visible && (
+        <p className="text-[11px] text-gray-300 leading-snug pt-1">{visible}</p>
+      )}
+      {p.notes && p.notes !== visible && (
+        <div>
+          {notesOpen && (
+            <p className="text-[11px] text-gray-400 leading-snug">{p.notes}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => setNotesOpen(o => !o)}
+            className="text-[10px] text-blue-400 hover:text-blue-300"
+          >
+            {notesOpen ? 'Show less' : 'Show details'}
+          </button>
+        </div>
       )}
     </div>
   )
@@ -242,6 +294,7 @@ function RuleChip({ id, status }: { id: RuleId; status: RuleStatus | undefined }
 }
 
 function ExecutionCard({ execution: e }: { execution: ExecutionScore }) {
+  const [notesOpen, setNotesOpen] = useState(false)
   const composite = e.composite
   const compositeColor = composite == null
     ? 'text-gray-500'
@@ -250,6 +303,23 @@ function ExecutionCard({ execution: e }: { execution: ExecutionScore }) {
       : composite >= 0.4
         ? 'text-yellow-400'
         : 'text-red-400'
+
+  // RR null = no compliant trade had both a stop and a TP1, so planned R
+  // couldn't be computed. The notes typically explain which trades lacked
+  // which fields; surface a tight version in the tooltip so the user
+  // doesn't have to scroll the notes block.
+  const rrNullReason = e.planned_vs_realized_rr == null
+    ? "RR couldn't be computed — at least one compliant trade needs both a stop_price and a tp1_price for planned vs realized R. Fill those in (or apply detected levels from the recording) and re-run."
+    : null
+
+  // Headline is the always-visible "why this score" line; notes hide behind
+  // "Show details". Legacy rows have notes but no headline — surface the
+  // first sentence of notes as a faux-headline so older analyses don't go
+  // blank above the chips.
+  const fauxHeadline = !e.headline && e.notes
+    ? e.notes.split(/(?<=[.!?])\s+/)[0]
+    : null
+  const visible = e.headline ?? fauxHeadline
 
   return (
     <div className="bg-gray-950/40 border border-gray-800 rounded-lg p-3 space-y-2">
@@ -265,23 +335,41 @@ function ExecutionCard({ execution: e }: { execution: ExecutionScore }) {
         <ExecMetric label="MFE Cap" value={e.mfe_capture} weight="20%" />
         <ExecMetric label="Prep" value={e.prep_adherence} weight="20%" />
         <ExecMetric label="MAE Heat" value={e.mae_heat} weight="15%" />
-        <ExecMetric label="RR" value={e.planned_vs_realized_rr} weight="10%" />
+        <ExecMetric label="RR" value={e.planned_vs_realized_rr} weight="10%" nullReason={rrNullReason} />
       </div>
       <p className="text-[10px] text-gray-500">
         Across {e.compliant_trade_count} compliant trade{e.compliant_trade_count === 1 ? '' : 's'} only — diagnostic, never blends with process.
       </p>
-      {e.notes && (
-        <p className="text-[11px] text-gray-400 leading-snug pt-1">{e.notes}</p>
+      {visible && (
+        <p className="text-[11px] text-gray-300 leading-snug pt-1">{visible}</p>
+      )}
+      {e.notes && e.notes !== visible && (
+        <div>
+          {notesOpen && (
+            <p className="text-[11px] text-gray-400 leading-snug">{e.notes}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => setNotesOpen(o => !o)}
+            className="text-[10px] text-blue-400 hover:text-blue-300"
+          >
+            {notesOpen ? 'Show less' : 'Show details'}
+          </button>
+        </div>
       )}
     </div>
   )
 }
 
-function ExecMetric({ label, value, weight }: { label: string; value: number | null; weight: string }) {
+function ExecMetric({ label, value, weight, nullReason }: { label: string; value: number | null; weight: string; nullReason?: string | null }) {
+  const isNull = value == null
+  const tooltip = isNull && nullReason
+    ? `${label} (weight ${weight}) — ${nullReason}`
+    : `${label} (weight ${weight})`
   return (
-    <div title={`${label} (weight ${weight})`}>
+    <div title={tooltip} className={isNull && nullReason ? 'cursor-help' : ''}>
       <div className="text-[10px] text-gray-500">{label}</div>
-      <div className="text-sm font-mono text-gray-200">
+      <div className={`text-sm font-mono ${isNull && nullReason ? 'text-amber-400' : 'text-gray-200'}`}>
         {value == null ? '—' : `${Math.round(value * 100)}%`}
       </div>
     </div>

@@ -160,7 +160,15 @@ export async function POST(req: Request) {
 
   const prompt = `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is what the trader was looking at on the chart at a precise moment.
 
-For each trade you see frames of (an ENTRY frame and, when distinct, an EXIT frame), write 1–3 sentences of HONEST commentary tying what's visibly on screen — chart structure, key levels, order flow, where price was relative to the setup — to the trade the trader actually took. Be specific. If the entry frame doesn't support the tagged setup, say so. If price did something obvious between entry and exit that the trader missed, point it out. The trader is paying you to be direct, not encouraging.${mistakeListBlock}
+For each trade you see frames of (an ENTRY frame and, when distinct, an EXIT frame), do TWO things:
+
+1) Write 1–3 sentences of HONEST commentary tying what's visibly on screen — chart structure, key levels, order flow, where price was relative to the setup — to the trade the trader actually took. Be specific. If the entry frame doesn't support the tagged setup, say so. If price did something obvious between entry and exit that the trader missed, point it out. The trader is paying you to be direct, not encouraging.
+
+2) From the ENTRY frame ONLY (not the exit frame), identify the trader's PLANNED order levels by reading any horizontal lines / DOM order labels visible on the chart at that moment:
+   - entry_price: the price the order was waiting at
+   - stop_price: the working stop line (BELOW entry for longs, ABOVE for shorts). Sierra labels these as "Stop|Child-Client" with a "(-N.NNp)" suffix indicating distance — when you see "(-20.00p)" on a short, the stop is 20 points above entry.
+   - tp1_price / tp2_price: working limit / TP lines (ABOVE entry for longs, BELOW for shorts). TP1 is closer to entry.
+   CRITICAL: return null for any field you cannot confidently read off the price scale or a labeled order line. DO NOT GUESS. A null is far more useful than a hallucinated number — the trader will be using these to backfill missing data. levels_confidence is "high" only if every non-null field came from a clearly-labeled order line at a readable price; "medium" if inferred from line position; "low" if the chart was hard to read.${mistakeListBlock}
 
 The image array above is ordered as follows:
 ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}
@@ -168,7 +176,7 @@ ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}
 Trade context (matches the image labels by trade id):
 ${tradeDescriptions}
 
-Return ONE entry in the trades array per unique trade id (use the id strings exactly as shown above). suggested_mistakes is required but may be an empty array when nothing visible warrants a flag.`
+Return ONE entry in the trades array per unique trade id (use the id strings exactly as shown above). suggested_mistakes is required but may be an empty array when nothing visible warrants a flag. detected_levels is required — set all four price fields to null if no working orders were visible on the entry frame.`
 
   blocks.push({ type: 'text', text: prompt })
 
@@ -182,7 +190,11 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
     // keeps the dynamic-key data without violating the spec.
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
+      // 6000 sized for a busy day (8+ trades each with commentary +
+      // suggested_mistakes + detected_levels). Old cap of 1500 truncated
+      // mid-response once level detection was added to the schema —
+      // structured outputs then fail to parse with "Unterminated string".
+      max_tokens: 6000,
       messages: [{ role: 'user', content: blocks }],
       output_config: {
         format: {
@@ -201,8 +213,21 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
                       type: 'array',
                       items: { type: 'string' },
                     },
+                    detected_levels: {
+                      type: 'object',
+                      properties: {
+                        entry_price: { type: ['number', 'null'] },
+                        stop_price: { type: ['number', 'null'] },
+                        tp1_price: { type: ['number', 'null'] },
+                        tp2_price: { type: ['number', 'null'] },
+                        confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+                        reasoning: { type: 'string' },
+                      },
+                      required: ['entry_price', 'stop_price', 'tp1_price', 'tp2_price', 'confidence', 'reasoning'],
+                      additionalProperties: false,
+                    },
                   },
-                  required: ['id', 'commentary', 'suggested_mistakes'],
+                  required: ['id', 'commentary', 'suggested_mistakes', 'detected_levels'],
                   additionalProperties: false,
                 },
               },
@@ -224,18 +249,34 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
     // With structured outputs, the entire `text` IS the JSON — no need to
     // hunt for braces. Still wrap in try/catch in case Anthropic ever returns
     // a refusal or empty payload.
-    let parsed: { trades?: Array<{ id?: string; commentary?: string; suggested_mistakes?: string[] }> }
+    interface DetectedLevelsPayload {
+      entry_price: number | null
+      stop_price: number | null
+      tp1_price: number | null
+      tp2_price: number | null
+      confidence: 'high' | 'medium' | 'low'
+      reasoning: string
+    }
+    let parsed: {
+      trades?: Array<{
+        id?: string
+        commentary?: string
+        suggested_mistakes?: string[]
+        detected_levels?: DetectedLevelsPayload
+      }>
+    }
     try {
       parsed = JSON.parse(text)
     } catch (parseErr) {
       console.error('[video/commentary] JSON parse failed despite structured outputs:', parseErr, '\nraw text:', text.slice(0, 500))
       return NextResponse.json({
-        commentary: {}, suggested_mistakes: {}, skipped, framesUsed: blocks.length - 1,
+        commentary: {}, suggested_mistakes: {}, detected_levels: {}, skipped, framesUsed: blocks.length - 1,
         note: `Structured-output JSON failed to parse: ${parseErr instanceof Error ? parseErr.message : 'unknown'}`,
       })
     }
     const commentary: Record<string, string> = {}
     const suggested: Record<string, string[]> = {}
+    const detectedLevels: Record<string, DetectedLevelsPayload> = {}
     if (Array.isArray(parsed.trades)) {
       const librarySet = new Set(mistakeLibrary)
       for (const t of parsed.trades) {
@@ -247,6 +288,9 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
           // place to introduce new labels, not the AI.
           const valid = t.suggested_mistakes.filter(s => typeof s === 'string' && librarySet.has(s))
           if (valid.length > 0) suggested[t.id] = valid
+        }
+        if (t.detected_levels && typeof t.detected_levels === 'object') {
+          detectedLevels[t.id] = t.detected_levels
         }
       }
     }
@@ -268,6 +312,10 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
               video_file: safeName,
               model: 'claude-sonnet-4-6',
               generated_at: generatedAt,
+              // Detected levels live inside the same jsonb so we don't need a
+              // schema migration. Undefined when the model couldn't return a
+              // detected_levels block (very rare under structured outputs).
+              detected_levels: detectedLevels[id],
             },
           })
           .eq('id', id),
@@ -284,6 +332,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
     return NextResponse.json({
       commentary,
       suggested_mistakes: suggested,
+      detected_levels: detectedLevels,
       skipped,
       framesUsed: blocks.length - 1,
       recordingStartIso: new Date(info.creationTimeMs).toISOString(),
