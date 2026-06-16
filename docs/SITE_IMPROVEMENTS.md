@@ -66,4 +66,15 @@ tasks. Newest considerations near the top of each section.
   - Confirm time-agnostic metrics (MFE/MAE, capture, P&L, win rate) are unaffected
   - Likely solution: a per-user "session style" (open vs IB) that adapts the read
 
+## Pre-launch hygiene
+
+- [ ] **Hide or stub-fill the empty Settings pages.** `settings/tags` and
+  `settings/stats` are "Coming soon" placeholders — a logged-in public user
+  shouldn't land on a dead page. Either ship minimal versions or hide the nav
+  entries at launch.
+- [ ] **Graceful "no chart data yet" state.** At cloud launch there's no `.scid`
+  bar source, so the live chart won't have candles. Show a clear empty/explanatory
+  state ("chart data coming soon — use screenshot upload for now") instead of a
+  blank or broken chart.
+
 ## (Add new items below)
