@@ -175,7 +175,7 @@ P6 are renumbered to P4 and P5.
   override.
 
 Rule reference (renumbered):
-  • P1 = Daily loss limit (Session Net P&L not past −$500)
+  • P1 = Daily loss limit (Session Net P&L not past −$500, with a $50 slippage buffer — closing between −$500 and −$550 is a stop-fill artifact, not a breach; only −$550 or worse is a true P1 breach)
   • P2 = Size within cap (≤5 MNQ; ≤10 only on Qualifying S&D)
   • P3 = No size-up after loss (post-loss → ≤5 MNQ, no scale to 10)
   • P4 = Cooldown ≥90s after any loss
@@ -638,6 +638,14 @@ export function computeDeterministicRules(
   trades: Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl'>[],
 ): { P1: DeterministicRuleResult; P3: DeterministicRuleResult; P4: DeterministicRuleResult; P5: DeterministicRuleResult } {
   const DAILY_LOSS_LIMIT = -500
+  // Slippage buffer on the DLL. Stop fills aren't perfect — a market stop at
+  // the DLL price routinely fills $5-40 worse than the trigger in fast tape.
+  // Closing at -$507 against a -$500 DLL is a fill artifact, NOT a discipline
+  // breach (the trader DID stop where they planned; the market gapped through).
+  // Only flag P1 when the overshoot exceeds this buffer, which indicates the
+  // trader actually kept trading past the limit rather than just got slipped.
+  const DLL_SLIPPAGE_BUFFER = 50
+  const DLL_HARD_FLOOR = DAILY_LOSS_LIMIT - DLL_SLIPPAGE_BUFFER  // -550
   const POST_LOSS_QTY_CAP = 5
   const COOLDOWN_SEC = 90
   const TRADE_CAP = 7
@@ -646,11 +654,14 @@ export function computeDeterministicRules(
     .filter(t => t.entry_time)
     .sort((a, b) => Date.parse(a.entry_time!) - Date.parse(b.entry_time!))
 
-  // ── P1: daily loss limit ───────────────────────────────────────────────
+  // ── P1: daily loss limit (with slippage buffer) ────────────────────────
   const netPnl = sorted.reduce((s, t) => s + (t.pnl ?? 0), 0)
-  const P1: DeterministicRuleResult = netPnl < DAILY_LOSS_LIMIT
-    ? { status: 'fail', breach_count: 1, reason: `Session net P&L $${netPnl.toFixed(2)} exceeds the $${DAILY_LOSS_LIMIT} daily loss limit.` }
-    : { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} within the $${DAILY_LOSS_LIMIT} daily loss limit.` }
+  const withinBuffer = netPnl < DAILY_LOSS_LIMIT && netPnl >= DLL_HARD_FLOOR
+  const P1: DeterministicRuleResult = netPnl < DLL_HARD_FLOOR
+    ? { status: 'fail', breach_count: 1, reason: `Session net P&L $${netPnl.toFixed(2)} blew through the $${DAILY_LOSS_LIMIT} DLL by more than the $${DLL_SLIPPAGE_BUFFER} slippage buffer (hard floor $${DLL_HARD_FLOOR}).` }
+    : withinBuffer
+      ? { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} is past the $${DAILY_LOSS_LIMIT} DLL but within the $${DLL_SLIPPAGE_BUFFER} slippage buffer — counted as a stop-fill artifact, not a breach.` }
+      : { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} within the $${DAILY_LOSS_LIMIT} daily loss limit.` }
 
   // ── P3 + P4: post-loss checks (size + cooldown) ────────────────────────
   const p3Breaches: string[] = []
