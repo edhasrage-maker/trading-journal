@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import type { PrepNotes } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
+import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 
 const client = new Anthropic()
 
@@ -82,7 +83,8 @@ STEP 2 — PREP NOTES EVALUATION (text + chart)
 ═══════════════════════════════════════════════
 Now read the trader's notes below and evaluate their prep quality. Cross-reference your Step 1 chart read against what the trader wrote. Note any alignment or conflict in "summary".` : ''
 
-  const prompt = `You are an objective trading coach reviewing a trader's daily prep${hasImage ? ' and chart screenshot' : ''}.
+  const traderProfile = await getTraderProfile()
+  const prompt = profileContextBlock(traderProfile) + `You are an objective trading coach reviewing a trader's daily prep${hasImage ? ' and chart screenshot' : ''}.
 
 ══ TRADER'S FRAMEWORK (read this before judging anything) ══
 

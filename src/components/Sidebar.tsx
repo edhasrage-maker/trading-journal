@@ -16,10 +16,12 @@ import {
   Archive,
   Database,
   CandlestickChart,
+  Brain,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const settingsItems = [
+  { href: '/settings/coaching', label: 'Coaching', icon: Brain },
   { href: '/settings/tags', label: 'Tags', icon: Tag },
   { href: '/settings/stats', label: 'Perf Stats', icon: Settings },
   { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database },

@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import type { PrepNotes, MarketContext } from '@/lib/supabase/types'
+import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 
 const client = new Anthropic()
 
@@ -153,7 +154,8 @@ async function handle(req: Request) {
     )
   }
 
-  const prompt = buildPrompt(date, ctx, notes, dayTypeDefs)
+  const traderProfile = await getTraderProfile()
+  const prompt = profileContextBlock(traderProfile) + buildPrompt(date, ctx, notes, dayTypeDefs)
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-6',

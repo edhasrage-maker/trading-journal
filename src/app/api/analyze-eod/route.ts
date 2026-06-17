@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import type { PrepNotes, AiAnalysis, Trade, MarketContext } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { buildEodPrompt, parseEodResponse, computeProfitFactorDeterministic, computeMfeCaptureDeterministic, computeMaeHeatDeterministic, computeDeterministicRules, recomputeExecutionComposite } from '@/lib/eod-prompt'
+import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 
 const client = new Anthropic()
 
@@ -43,7 +44,11 @@ async function handle(req: Request) {
   // Prompt + parser live in src/lib/eod-prompt.ts so the batch-rescore
   // script (scripts/rescore-eod-stale.ts) can use exactly the same logic
   // without HTTP-calling this route (which would require auth cookies).
-  const prompt = buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage })
+  // Coaching preferences (trader profile) are prepended so the AI respects
+  // the trader's standing context — see /settings/coaching.
+  const traderProfile = await getTraderProfile()
+  const prompt = profileContextBlock(traderProfile)
+    + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage })
 
   const userContent: Anthropic.MessageParam['content'] = hasImage
     ? [

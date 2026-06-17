@@ -112,6 +112,11 @@ create table if not exists trades (
   -- being scaled out — so the simple peak × full-qty overstatement is fixed for
   -- multi-leg trades. Populated by scripts/backfill-per-leg-mfe.ts.
   mfe_dollars_per_leg numeric(10,2),
+  -- 5m structure alignment at entry: 'following' (entered with the 5m EMA-20
+  -- trend) | 'fading' (against the trend) | 'neutral' (price within 0.02% of
+  -- EMA). Auto-populated at SC-import time by /api/import-sc-log; backfilled
+  -- by scripts/backfill-structure-5m-alignment.ts for existing trades.
+  structure_5m_alignment text check (structure_5m_alignment is null or structure_5m_alignment in ('following', 'fading', 'neutral')),
   exits_json jsonb, -- array of partial exits: [{ time: ISO-8601, price: number, qty: number }, ...]; null/empty -> fall back to single exit_time/exit_price avg
   tags_json jsonb default '{}',
   -- tags_json shape:
@@ -571,6 +576,26 @@ create index if not exists eod_themes_analysis_range_idx
 alter table eod_themes_analysis enable row level security;
 drop policy if exists "Authenticated full access" on eod_themes_analysis;
 create policy "Authenticated full access" on eod_themes_analysis
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- Trader profile / coaching preferences (2026-06-17)
+-- ============================================================
+-- Standing context the trader provides about their style, system, and
+-- preferences. Injected into every AI prompt so the coach respects the
+-- trader's actual approach instead of generic critiques. Single-row
+-- (single-user app); `id` is a fixed string so updates always upsert
+-- to the same row.
+
+create table if not exists trader_profile (
+  id text primary key default 'default',
+  preferences_md text not null default '',
+  updated_at timestamptz not null default now()
+);
+
+alter table trader_profile enable row level security;
+drop policy if exists "trader_profile_all" on trader_profile;
+create policy "trader_profile_all" on trader_profile
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================

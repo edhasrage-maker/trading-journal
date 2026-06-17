@@ -6,6 +6,7 @@ import { probeVideo, extractFrameJpegBase64 } from '@/lib/video-frames'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { createClient } from '@/lib/supabase/server'
 import { OBS_RECORDINGS_DIR } from '../list/route'
+import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 
 const client = new Anthropic()
 
@@ -158,7 +159,8 @@ export async function POST(req: Request) {
     ? `\n\nAvailable mistake tags (suggest 0–3 per trade, ONLY from this list — copy labels verbatim, do not invent new ones; pick ONLY mistakes clearly visible in the frames, not speculative):\n${mistakeLibrary.map(m => `  - ${m}`).join('\n')}`
     : ''
 
-  const prompt = `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is what the trader was looking at on the chart at a precise moment.
+  const traderProfile = await getTraderProfile()
+  const prompt = profileContextBlock(traderProfile) + `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is what the trader was looking at on the chart at a precise moment.
 
 For each trade you see frames of (an ENTRY frame and, when distinct, an EXIT frame), do TWO things:
 
