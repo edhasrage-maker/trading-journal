@@ -6,7 +6,10 @@ import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
-import { liveAtr, fetchAllBars, type AtrBar } from '@/lib/atr'
+// Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
+// ATR from `ohlcv_bars` on every request. That path was retired in favor of
+// reading the pre-backfilled `trades.entry_atr_1m` column. Imports kept off
+// the file so the bundle doesn't carry unused code.
 import type { TradingDay } from '@/lib/supabase/types'
 
 const PAGE_SIZE = 1000
@@ -19,13 +22,12 @@ export const revalidate = 0
 export default async function DashboardPage() {
   const today = format(new Date(), 'yyyy-MM-dd')
   const supabase = await createClient()
-
-  const { data: todayRecordRaw } = await supabase
-    .from('trading_days')
-    .select('*')
-    .eq('date', today)
-    .single()
-  const todayRecord = todayRecordRaw as TradingDay | null
+  const perf = { phases: [] as Array<{ name: string; ms: number; rows?: number }>, t0: Date.now() }
+  const tick = (name: string, rows?: number) => {
+    const ms = Date.now() - perf.t0
+    perf.phases.push({ name, ms, rows })
+    perf.t0 = Date.now()
+  }
 
   // Two windows:
   //   - past180Start: drives the Recent Days table + the expensive per-trade
@@ -33,20 +35,37 @@ export default async function DashboardPage() {
   //   - statsWindowStart: drives the period-selectable stat cards (Week /
   //     Month / 30d / YTD / Last Year). Walks back to the start of LAST year
   //     so "Last Year" has the full ~365-day window even on Dec 31.
-  const todayDate = new Date()
-  const past30Start = format(subDays(todayDate, 30), 'yyyy-MM-dd')
-  const past180Start = format(subDays(todayDate, 180), 'yyyy-MM-dd')
-  const statsWindowStart = `${todayDate.getFullYear() - 1}-01-01`
-  const { data: recentDaysRaw } = await supabase
-    .from('trading_days')
-    .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
-    .gte('date', statsWindowStart)
-    .order('date', { ascending: false })
-    .limit(PAGE_SIZE)
+  const todayDateForWindows = new Date()
+  const past30StartParallel = format(subDays(todayDateForWindows, 30), 'yyyy-MM-dd')
+  const past180StartParallel = format(subDays(todayDateForWindows, 180), 'yyyy-MM-dd')
+  const statsWindowStartParallel = `${todayDateForWindows.getFullYear() - 1}-01-01`
+
+  // Parallelize the two independent top-level trading_days queries.
+  // Pre-fix: serial — paid the full Supabase round-trip cost twice on cold
+  // navigations (e.g. EOD → Dashboard switch after sitting idle on EOD).
+  // Post-fix: max(today, recent) instead of sum — ~300ms saved on cold loads,
+  // zero cost on warm loads. The two queries don't depend on each other.
+  const [todayResult, recentResult] = await Promise.all([
+    supabase.from('trading_days').select('*').eq('date', today).single(),
+    supabase
+      .from('trading_days')
+      .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
+      .gte('date', statsWindowStartParallel)
+      .order('date', { ascending: false })
+      .limit(PAGE_SIZE),
+  ])
+  const todayRecord = (todayResult.data ?? null) as TradingDay | null
+  tick('todayRecord + recentDays (parallel)')
+
+  // Reuse the window constants computed for the parallel fetch above so we
+  // don't recompute Date math (and so the labels in the perf log stay correct).
+  const past30Start = past30StartParallel
+  const past180Start = past180StartParallel
+
   // SELECT '*' would give us day_types automatically; we list columns explicitly,
   // so we also need to coerce day_types to a typed array (it's a Postgres text[]
   // but the supabase-js type only surfaces it when the column exists).
-  const recentDaysBase = (recentDaysRaw ?? []).map(d => {
+  const recentDaysBase = (recentResult.data ?? []).map(d => {
     const row = d as Record<string, unknown> & Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>
     return {
       ...row,
@@ -74,9 +93,14 @@ export default async function DashboardPage() {
     low_during_position: number | null
     quantity: number | null
     symbol: string | null
+    // Per-trade Wilder ATR-10 at entry minute, populated by
+    // scripts/backfill-entry-metrics.ts. Replaces the dashboard's old
+    // bars-fetch-and-recompute pass (which paid 500-600ms cold latency per
+    // load). When null (e.g. pre-2025 trades), falls back to day-level
+    // market_context.atr_1m via the same precedence the dashboard had before.
+    entry_atr_1m: number | null
   }
   const dayIds = recentDaysBase.map(d => d.id)
-  const dayDateById = new Map<string, string>(recentDaysBase.map(d => [d.id, d.date]))
   // Chunk trading_day_ids for the .in() — 50 UUIDs per chunk to stay under
   // PostgREST URL-length limits (same pattern as /api/metric-buckets).
   // Trades pagination per chunk: range() up to PAGE_SIZE per loop because a
@@ -90,7 +114,7 @@ export default async function DashboardPage() {
       for (let p = 0; p < 50; p++) {
         const { data, error } = await supabase
           .from('trades')
-          .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol')
+          .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m')
           .in('trading_day_id', slice)
           .order('id', { ascending: true })
           .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
@@ -117,6 +141,7 @@ export default async function DashboardPage() {
     return out
   }
   const [tradesAll, contextsRaw] = await Promise.all([fetchTradesAll(), fetchContexts()])
+  tick('tradesAll + contexts', tradesAll.length)
   const tradesRaw: TradeSlim[] = tradesAll
   const tradesByDay = new Map<string, TradeSlim[]>()
   for (const t of (tradesRaw ?? []) as TradeSlim[]) {
@@ -129,46 +154,22 @@ export default async function DashboardPage() {
     prepAtrByDay.set(c.trading_day_id, c.atr_1m)
   }
 
-  // Per-trade LIVE ATR: compute ATR-10 Wilder from 1-min bars at each trade's
-  // entry_time. The dashboard's "in ATR" display previously divided MFE/MAE
-  // by the day's prep ATR (one value, possibly hours stale by trade time);
-  // this replaces that with the actual ATR reading at the trade's moment.
-  //
-  // Fetch strategy: one query per distinct (symbol, date) that actually has
-  // trades. ~390 1-min bars per RTH day, well under the 1000-row Supabase
-  // cap. Concurrent fetches via Promise.all so 30 days of bar loads run in
-  // parallel instead of serialized. Falls back silently to prep_atr when bars
-  // are missing for that date+symbol (e.g., historical data before SCID
-  // import) so the dashboard always renders something.
-  const symbolDatePairs = new Set<string>()
-  const tradesNeedingAtr: TradeSlim[] = []
-  for (const t of (tradesRaw ?? []) as TradeSlim[]) {
-    if (!t.symbol || !t.entry_time) continue
-    const date = dayDateById.get(t.trading_day_id)
-    if (!date) continue
-    // Skip ATR for days outside the Recent Days window — the older days
-    // only feed the stats cards, which don't use ATR. Avoids dozens of
-    // wasted bars/ATR fetches for the YTD/Last-Year period.
-    if (date < past180Start) continue
-    symbolDatePairs.add(`${t.symbol}|${date}`)
-    tradesNeedingAtr.push(t)
-  }
-  const barsBySymbolDate = new Map<string, AtrBar[]>()
-  await Promise.all(
-    Array.from(symbolDatePairs).map(async key => {
-      const [symbol, date] = key.split('|')
-      const bars = await fetchAllBars(supabase, symbol, date)
-      barsBySymbolDate.set(key, bars)
-    }),
-  )
+  // Per-trade LIVE ATR: read from trades.entry_atr_1m, populated by
+  // scripts/backfill-entry-metrics.ts (Wilder ATR-10 at the trade's entry
+  // minute, computed from 1m bars at backfill time). Previously the
+  // dashboard fetched 14+ sym-day bars-of-day from `ohlcv_bars` and
+  // recomputed `liveAtr()` per-trade on every request — paid 500-600ms cold
+  // latency per load for a value that already lives in the DB. New SC
+  // imports also populate this column at insert time. Falls back silently to
+  // prep_atr (market_context.atr_1m) when entry_atr_1m is null (pre-2025
+  // trades that predate the backfill cutoff).
   const liveAtrByTradeId = new Map<string, number>()
-  for (const t of tradesNeedingAtr) {
-    const date = dayDateById.get(t.trading_day_id)!
-    const bars = barsBySymbolDate.get(`${t.symbol}|${date}`)
-    if (!bars || bars.length === 0) continue
-    const value = liveAtr(bars, new Date(t.entry_time!), 10)
-    if (value != null) liveAtrByTradeId.set(t.id, value)
+  for (const t of (tradesRaw ?? []) as TradeSlim[]) {
+    if (t.entry_atr_1m != null && t.entry_atr_1m > 0) {
+      liveAtrByTradeId.set(t.id, t.entry_atr_1m)
+    }
   }
+  tick('liveAtr from entry_atr_1m', liveAtrByTradeId.size)
 
   const recentDays = recentDaysBase.map(d => {
     const trades = tradesByDay.get(d.id) ?? []
@@ -378,6 +379,8 @@ export default async function DashboardPage() {
   // Recent Days table still scopes to the 180d window — keeps the table fast
   // and matches the user's "recent" expectation.
   const recentDaysForTable = recentDays.filter(d => d.date >= past180Start)
+  tick('per-day computation loop')
+  console.log('[dashboard perf]', perf.phases.map(p => `${p.name}=${p.ms}ms${p.rows != null ? ` (${p.rows})` : ''}`).join(' | '))
 
   return (
     <div className="max-w-5xl mx-auto">
