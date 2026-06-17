@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { parseSierraChartLog, mapRowToTrade } from '@/lib/sc-importer'
 import { resilientUpsert, resilientBulkUpsert, resilientUpdate } from '@/lib/resilient-upsert'
 import { perLegMaxDollars, type BarLike } from '@/lib/analytics'
+import { computeStructure5mAlignment } from '@/lib/structure-5m'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -82,61 +83,79 @@ export async function POST(req: Request) {
     inserted = insertedRows?.length ?? 0
     skippedDuplicates = payload.length - inserted
 
-    // 4b. Auto-populate mfe_dollars_per_leg for multi-leg (scale-out) trades.
-    // Previously a manual backfill step (scripts/backfill-per-leg-mfe.ts);
-    // now runs at import time so the scaling-aware MFE Capture is correct
-    // in the dashboard / EOD recap immediately, instead of being null until
-    // the backfill is re-run.
-    //
-    // Uses ohlcv_bars (populated by BarWatcher every ~3 min, so today's bars
-    // exist by the time SC log is uploaded). Skips silently per-trade if
-    // bars are missing — those rows stay null and read-time falls back to
-    // the simple peak × full-qty formula.
-    const multiLegRows = payload.filter(r => Array.isArray(r.exits_json) && r.exits_json.length > 1 && !!r.symbol)
-    if (multiLegRows.length > 0) {
-      // Day window for bar fetch: from earliest entry to last exit + 1 min.
-      // ohlcv_bars stores timestamptz; rely on the (symbol, ts) index.
+    // 4b. Auto-populate per-trade derived fields from ohlcv_bars (which
+    // BarWatcher refreshes every ~3 min, so today's bars exist by the time
+    // SC log is uploaded). Fetches bars ONCE per traded symbol, then runs:
+    //   - mfe_dollars_per_leg for multi-leg (scale-out) trades — scaling-
+    //     aware MFE max-possible. Previously a manual backfill; runs now
+    //     so dashboard / EOD capture % is correct immediately.
+    //   - structure_5m_alignment for every trade — was the entry following
+    //     or fading the 5m EMA-20 trend at entry minute.
+    // Skips silently per-trade if bars are missing for that symbol; those
+    // rows stay null and the UI shows the simple-formula fallback or "—".
+    if (payload.length > 0) {
       const dayStart = `${date}T00:00:00Z`
       const dayEnd = `${date}T23:59:59Z`
-      const symbols = Array.from(new Set(multiLegRows.map(r => r.symbol!)))
+      const symbols = Array.from(new Set(payload.map(r => r.symbol).filter((s): s is string => !!s)))
       const barsBySymbol = new Map<string, BarLike[]>()
       for (const symbol of symbols) {
         const { data: barRows } = await supabase
           .from('ohlcv_bars')
-          .select('ts, high, low')
+          .select('ts, high, low, close')
           .eq('symbol', symbol)
           .gte('ts', dayStart)
           .lte('ts', dayEnd)
           .order('ts', { ascending: true })
         if (barRows && barRows.length > 0) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          barsBySymbol.set(symbol, (barRows as any[]).map(b => ({ ts: b.ts, high: Number(b.high), low: Number(b.low) })))
+          barsBySymbol.set(symbol, (barRows as any[]).map(b => ({
+            ts: b.ts, high: Number(b.high), low: Number(b.low), close: Number(b.close),
+          })))
         }
       }
-      let computed = 0
-      let barsGap = 0
+
+      // Per-leg MFE for scale-out trades.
+      const multiLegRows = payload.filter(r => Array.isArray(r.exits_json) && r.exits_json.length > 1 && !!r.symbol)
+      let mfeComputed = 0
+      let mfeBarsGap = 0
       for (const r of multiLegRows) {
         const bars = barsBySymbol.get(r.symbol!)
-        if (!bars || bars.length === 0) { barsGap++; continue }
-        // Cast: perLegMaxDollars only reads entry_price/direction/quantity/
-        // symbol/exits_json/entry_time/high|low_during_position. The full
-        // TradeWithExcursion type wants more fields the SC importer doesn't
-        // produce yet (pnl is here but stop_price etc. aren't); the cast is
-        // safe because the function's read-set is a subset.
+        if (!bars || bars.length === 0) { mfeBarsGap++; continue }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const value = perLegMaxDollars(r as any, bars)
-        if (value == null) { barsGap++; continue }
-        // Update via sierra_trade_id since that's the row's stable key in
-        // resilientBulkUpsert above. Fire-and-forget — one trade missing
-        // mfe_dollars_per_leg doesn't fail the whole import.
+        if (value == null) { mfeBarsGap++; continue }
         const rounded = Math.round(value * 100) / 100
         await supabase.from('trades')
           .update({ mfe_dollars_per_leg: rounded })
           .eq('sierra_trade_id', r.sierra_trade_id)
-        computed++
+        mfeComputed++
       }
-      if (computed > 0 || barsGap > 0) {
-        console.log(`[import-sc-log] mfe_dollars_per_leg: computed=${computed}, bars-gap=${barsGap}, single-leg-skipped=${payload.length - multiLegRows.length}`)
+      if (mfeComputed > 0 || mfeBarsGap > 0) {
+        console.log(`[import-sc-log] mfe_dollars_per_leg: computed=${mfeComputed}, bars-gap=${mfeBarsGap}, single-leg-skipped=${payload.length - multiLegRows.length}`)
+      }
+
+      // 5m structure alignment for every trade (long, short, single- or
+      // multi-leg). Needs the day's 1m bars before entry to seed the EMA.
+      let structComputed = 0
+      let structNoData = 0
+      const counts: Record<string, number> = { following: 0, fading: 0, neutral: 0 }
+      for (const r of payload) {
+        if (!r.symbol || !r.entry_time || !r.direction) { structNoData++; continue }
+        const bars = barsBySymbol.get(r.symbol)
+        if (!bars || bars.length === 0) { structNoData++; continue }
+        const alignment = computeStructure5mAlignment(
+          { entry_time: r.entry_time, direction: r.direction },
+          bars,
+        )
+        if (alignment == null) { structNoData++; continue }
+        await supabase.from('trades')
+          .update({ structure_5m_alignment: alignment })
+          .eq('sierra_trade_id', r.sierra_trade_id)
+        structComputed++
+        counts[alignment]++
+      }
+      if (structComputed > 0 || structNoData > 0) {
+        console.log(`[import-sc-log] structure_5m_alignment: computed=${structComputed}, no-data=${structNoData}, following=${counts.following}, fading=${counts.fading}, neutral=${counts.neutral}`)
       }
     }
   }

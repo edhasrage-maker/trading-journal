@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
+import CoachChat from '@/components/CoachChat'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -13,6 +14,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <main className="flex-1 ml-60 p-6 overflow-y-auto">
         {children}
       </main>
+      {/* Floating Trade Coach — bottom-right icon on every page; click to expand */}
+      <CoachChat />
     </div>
   )
 }

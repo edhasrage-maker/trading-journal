@@ -81,6 +81,11 @@ export interface Database {
           symbol: string | null
           high_during_position: number | null
           low_during_position: number | null
+          /** 5m structure alignment at entry — was the trade following or
+           *  fading the 5m EMA-20 trend? Auto-populated at SC-import time;
+           *  null when bars are missing or fewer than 20 5m bars exist
+           *  before entry. */
+          structure_5m_alignment: 'following' | 'fading' | 'neutral' | null
           exits_json: TradeExit[] | null
           tags_json: TradeTags
           notes: string | null

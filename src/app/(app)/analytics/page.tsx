@@ -131,12 +131,12 @@ export default async function AnalyticsPage() {
   // entry_atr_1m / entry_rvol added by the 2026-06-09 migration — Supabase
   // generated types haven't been regenerated yet, so we widen the row type
   // locally. When the types are next regenerated, drop the intersection.
-  type TradeRowWithEntryMetrics = Trade & { entry_atr_1m: number | null; entry_rvol: number | null; mfe_dollars_per_leg: number | null }
+  type TradeRowWithEntryMetrics = Trade & { entry_atr_1m: number | null; entry_rvol: number | null; mfe_dollars_per_leg: number | null; structure_5m_alignment: 'following' | 'fading' | 'neutral' | null }
   const trades: TradeRowWithEntryMetrics[] = []
   for (let p = 0; p < 50; p++) {
     const { data, error } = await supabase
       .from('trades')
-      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg')
+      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment')
       .order('entry_time', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
