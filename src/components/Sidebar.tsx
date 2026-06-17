@@ -42,11 +42,21 @@ export default function Sidebar() {
     return () => clearInterval(id)
   }, [])
 
+  // Monday of the current week → /weekly/<thatMonday>.
+  const currentWeekMonday = (() => {
+    const d = new Date()
+    const day = d.getDay()  // 0=Sun, 1=Mon, ..., 6=Sat
+    const diff = day === 0 ? -6 : 1 - day
+    const monday = new Date(d.getTime() + diff * 24 * 3600 * 1000)
+    return format(monday, 'yyyy-MM-dd')
+  })()
+
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: `/prep/${today}`, label: 'Daily Prep', icon: ClipboardList },
     { href: `/intraday/${today}`, label: 'Intraday', icon: Activity },
     { href: `/eod/${today}`, label: 'EOD Recap', icon: BarChart2 },
+    { href: `/weekly/${currentWeekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp },
   ]

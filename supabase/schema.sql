@@ -599,6 +599,26 @@ create policy "trader_profile_all" on trader_profile
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================
+-- Weekly recap (2026-06-17)
+-- ============================================================
+-- One row per week keyed by Monday's date. AI synthesis cached so the
+-- trader doesn't re-spend tokens per page load. Same buildCoachContext
+-- helper as the chatbox so the recap and chatbox stay consistent.
+
+create table if not exists weekly_recap (
+  week_start_date date primary key,
+  ai_synthesis_json jsonb,
+  notes_md text not null default '',
+  generated_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+alter table weekly_recap enable row level security;
+drop policy if exists "weekly_recap_all" on weekly_recap;
+create policy "weekly_recap_all" on weekly_recap
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
 -- Storage buckets (run separately in Supabase dashboard or CLI)
 -- ============================================================
 -- Bucket: 'screenshots'  (for chart + trade entry screenshots)
