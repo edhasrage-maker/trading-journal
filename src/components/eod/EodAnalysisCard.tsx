@@ -304,12 +304,10 @@ function ExecutionCard({ execution: e }: { execution: ExecutionScore }) {
         ? 'text-yellow-400'
         : 'text-red-400'
 
-  // RR null = no compliant trade had both a stop and a TP1, so planned R
-  // couldn't be computed. The notes typically explain which trades lacked
-  // which fields; surface a tight version in the tooltip so the user
-  // doesn't have to scroll the notes block.
-  const rrNullReason = e.planned_vs_realized_rr == null
-    ? "RR couldn't be computed — at least one compliant trade needs both a stop_price and a tp1_price for planned vs realized R. Fill those in (or apply detected levels from the recording) and re-run."
+  // Profit Factor null = no eligible trades (every trade scratched or no
+  // stop_price logged). Tooltip explains what's needed to fix.
+  const pfNullReason = e.profit_factor == null && e.planned_vs_realized_rr == null
+    ? "Profit Factor couldn't be computed — needs at least one trade with stop_price + pnl. Log stops on the trades and re-run Analyze Session."
     : null
 
   // Headline is the always-visible "why this score" line; notes hide behind
@@ -335,7 +333,16 @@ function ExecutionCard({ execution: e }: { execution: ExecutionScore }) {
         <ExecMetric label="MFE Cap" value={e.mfe_capture} weight="20%" />
         <ExecMetric label="Prep" value={e.prep_adherence} weight="20%" />
         <ExecMetric label="MAE Heat" value={e.mae_heat} weight="15%" />
-        <ExecMetric label="RR" value={e.planned_vs_realized_rr} weight="10%" nullReason={rrNullReason} />
+        {/* Profit Factor: post-2026-06-15 the canonical 10%-weight metric.
+            Legacy rows (no profit_factor field) fall back to the old
+            planned_vs_realized_rr display. PF renders as a decimal (0.64)
+            with > 1 green / < 1 red; legacy RR renders as a percentage
+            with positive green / negative red. */}
+        {e.profit_factor != null ? (
+          <PfMetric value={e.profit_factor} weight="10%" />
+        ) : (
+          <ExecMetric label="RR (legacy)" value={e.planned_vs_realized_rr} weight="10%" nullReason={pfNullReason} />
+        )}
       </div>
       <p className="text-[10px] text-gray-500">
         Across {e.compliant_trade_count} compliant trade{e.compliant_trade_count === 1 ? '' : 's'} only — diagnostic, never blends with process.
@@ -372,6 +379,24 @@ function ExecMetric({ label, value, weight, nullReason }: { label: string; value
       <div className={`text-sm font-mono ${isNull && nullReason ? 'text-amber-400' : 'text-gray-200'}`}>
         {value == null ? '—' : `${Math.round(value * 100)}%`}
       </div>
+    </div>
+  )
+}
+
+/** Profit Factor cell — different formatting from the other 0..1 sub-metrics:
+ *  PF is a ratio (1.0 = break-even), so we render as a decimal "0.64" with
+ *  color tied to break-even rather than 70%/40% bands. Cap display at 9.99 to
+ *  avoid the "PF = 10" sentinel from showing absurd values. */
+function PfMetric({ value, weight }: { value: number; weight: string }) {
+  const color = value >= 1.5 ? 'text-green-400'
+    : value >= 1.0 ? 'text-emerald-300'
+    : value >= 0.7 ? 'text-yellow-400'
+    : 'text-red-400'
+  const display = value >= 9.99 ? '9.99+' : value.toFixed(2)
+  return (
+    <div title={`Profit Factor (weight ${weight}) — sum(winning R) ÷ sum(losing R). > 1 = net profitable, 1.0 = break-even, < 1 = net losing.`}>
+      <div className="text-[10px] text-gray-500">PF</div>
+      <div className={`text-sm font-mono ${color}`}>{display}</div>
     </div>
   )
 }

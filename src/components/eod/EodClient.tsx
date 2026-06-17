@@ -15,7 +15,6 @@ import TradeList from './TradeList'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
-import DeleteDayDangerZone from './DeleteDayDangerZone'
 import RecordingCommentary from './RecordingCommentary'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import { avgCaptureRatio, avgMaeHeatRatio, type BarLike } from '@/lib/analytics'
@@ -994,13 +993,9 @@ export default function EodClient({
         }, null)}
       />
 
-      {/* Danger zone — delete entire day */}
-      <DeleteDayDangerZone
-        date={date}
-        hasData={day != null}
-        tradesCount={trades.length}
-        onError={msg => showToast(msg, 'error')}
-      />
+      {/* Danger Zone delete moved exclusively to the dashboard's per-row
+          trash button + bulk-delete — duplicate entry point on the EOD page
+          was easy to mis-click and added clutter. */}
 
       {/* Cursor-following hover popup removed — the live chart already pops
           up the same trade details (+ screenshot, + tags) on the chart

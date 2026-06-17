@@ -202,8 +202,19 @@ Compute each sub-metric on 0..1 (higher = better):
 
     - execution_parameters (weight 35%): a 9-criterion per-trade checklist
       averaged across compliant trades. See breakdown below.
-    - mfe_capture (weight 20%): realized PnL ÷ peak favorable move. Use
-      high_during_position / low_during_position if provided per trade.
+    - mfe_capture (weight 20%): realized PnL ÷ peak FAVORABLE move WHILE
+      THE POSITION WAS OPEN. Use high_during_position /
+      low_during_position per trade — these are the extremes during the
+      hold ONLY, NOT what price did after exit. This measures execution
+      directly: of the unrealized profit you had on screen while
+      holding, how much did you take home. For scale-out trades, use
+      mfe_dollars_per_leg when present (scaling-aware: each leg can
+      only capture up to the peak in its own hold window, not the
+      cumulative peak — exited contracts cannot capture moves that
+      happened after they were closed). Falls back to peak × full-qty
+      otherwise. DO NOT frame "price kept running after exit" as a
+      failure here — that's a separate metric (post-exit drift), not
+      this one.
     - prep_adherence (weight 20%): did the trades taken match what was
       planned? Compare prep.bias to trade direction; prep.trade_plans[] to
       actual entries (was each entry a documented plan, or improvised?);
@@ -214,11 +225,16 @@ Compute each sub-metric on 0..1 (higher = better):
       when prep notes are entirely blank.
     - mae_heat (weight 15%): 1 - (peak adverse / planned risk). Lower heat
       taken = higher score.
-    - planned_vs_realized_rr (weight 10%): realized_rr ÷ reward_ratio
-      (when both available). Compute from per-trade TP1/exit/stop in the
-      trade block above.
+    - profit_factor (weight 10%): industry-standard PF in DOLLARS — gross
+      profit ÷ gross loss. Sum the $pnl of winning trades, divide by the
+      absolute value of summed losers. 1.0 = break-even; > 1.0 = net
+      profitable; < 1.0 = net losing. Computed deterministically server-
+      side, but include your read in the schema. Use ALL trades — no
+      stop-price requirement — since PF is a $-pnl metric.
 
-- Composite = 0.35*exec_params + 0.20*mfe + 0.20*prep + 0.15*mae + 0.10*rr.
+- Composite = 0.35*exec_params + 0.20*mfe + 0.20*prep + 0.15*mae + 0.10*pf_score
+  (pf_score maps profit_factor onto a 0..1 score: clamp(pf/2, 0, 1) —
+  PF ≥ 2 maxes out the score, PF = 1 is neutral at 0.5, PF = 0 scores 0).
   Null any sub-metric you can't compute; if all are null, composite is null.
 - compliant_trade_count = number of trades you included in the calc.
 - If there are zero compliant trades, all execution sub-metrics are null.
@@ -421,7 +437,7 @@ ${useV13 ? `Respond with ONLY valid JSON in this exact structure (no markdown, n
     "mfe_capture": <0..1 or null>,
     "prep_adherence": <0..1 or null>,
     "mae_heat": <0..1 or null>,
-    "planned_vs_realized_rr": <0..1 or null>,
+    "profit_factor": <0..∞ or null — winning R ÷ losing R; 1.0 = break-even>,
     "composite": <0..1 or null>,
     "compliant_trade_count": <number>,
     "execution_parameter_breakdown": {
@@ -463,46 +479,47 @@ Be direct. If the day was poor, say so.`}`
 // ─── Response parsing ────────────────────────────────────────────────────────
 
 /**
- * Compute planned-vs-realized RR deterministically from the trade rows. We
- * found Claude misreads its own per-trade block sometimes (claims TP1 is
- * missing when it's right there in the prompt) and either skips trades or
- * returns null. For purely-arithmetic metrics there's no judgment to defer
- * to the model — compute it ourselves and override.
+ * Compute Profit Factor deterministically. Industry-standard formula in
+ * DOLLARS (NOT R-units) — gross profit ÷ gross loss:
  *
- * Formula (matches the spec at line ~216 of buildEodPrompt):
- *   planned_R  = |tp1 − entry| ÷ |stop − entry|
- *   realized_R = pnl ÷ (|stop − entry| × qty × multiplier)
- *   RR         = sum(realized_R) ÷ sum(planned_R)  across eligible trades
+ *   PF > 1.0  → net profitable ("made more than lost")
+ *   PF = 1.0  → break-even
+ *   PF < 1.0  → net losing
+ *   PF = 0    → no winning trades at all
  *
- * Eligible = has entry_price, stop_price, tp1_price, quantity, pnl, and
- * stop_dist > 0. We deliberately don't apply the AI's "compliant trades"
- * filter — that filter requires structured per-trade P-rule outcomes the
- * response doesn't expose. Computing RR over the full eligible set is
- * a stable, well-defined metric on its own and dodges the AI's data-misread
- * bugs entirely.
+ * Earlier implementation required stop_price (to convert pnl to R), which
+ * silently dropped trades that lacked a logged stop — on a day with $479
+ * + $219 winners (stops logged) but $181/$120/$103 losers (stops missing),
+ * the loss sum collapsed to 0 and PF returned the infinity sentinel (10).
+ * Dollars formula needs only pnl, which every trade has.
  *
- * Returns null when no trades qualify or planned_sum is zero/negative.
+ * Returns null when no eligible trades. With losers but no winners, returns 0.
+ * With winners but no losers, returns the sentinel 10 (displayed as "9.99+").
  */
-export function computeRrDeterministic(
-  trades: Pick<Trade, 'entry_price' | 'stop_price' | 'tp1_price' | 'quantity' | 'pnl' | 'symbol'>[],
+export function computeProfitFactorDeterministic(
+  trades: Pick<Trade, 'pnl'>[],
 ): { value: number | null; eligibleCount: number } {
-  let plannedSum = 0
-  let realizedSum = 0
+  let winSum = 0
+  let lossSum = 0
   let n = 0
   for (const t of trades) {
-    if (t.entry_price == null || t.stop_price == null || t.tp1_price == null) continue
-    if (t.quantity == null || t.pnl == null) continue
-    const stopDist = Math.abs(t.entry_price - t.stop_price)
-    if (stopDist === 0) continue
-    const tpDist = Math.abs(t.tp1_price - t.entry_price)
-    const mult = symbolToMultiplier(t.symbol ?? '')
-    if (mult === 0) continue
-    plannedSum += tpDist / stopDist
-    realizedSum += t.pnl / (stopDist * t.quantity * mult)
+    if (t.pnl == null) continue
+    if (t.pnl > 0) winSum += t.pnl
+    else if (t.pnl < 0) lossSum += -t.pnl
     n++
   }
-  if (n === 0 || plannedSum <= 0) return { value: null, eligibleCount: 0 }
-  return { value: realizedSum / plannedSum, eligibleCount: n }
+  if (n === 0) return { value: null, eligibleCount: 0 }
+  if (lossSum === 0) return winSum > 0 ? { value: 10, eligibleCount: n } : { value: null, eligibleCount: 0 }
+  return { value: winSum / lossSum, eligibleCount: n }
+}
+
+/** Map a Profit Factor value (0..∞, 1.0 = break-even) onto the 0..1
+ *  sub-metric scale used by the execution composite. PF ≥ 2.0 maxes out
+ *  the score at 1.0 (you doubled what you lost); PF = 1.0 sits in the
+ *  middle at 0.5 (break-even is neutral); PF = 0 scores 0. */
+export function profitFactorToSubMetric(pf: number | null): number | null {
+  if (pf == null) return null
+  return Math.max(0, Math.min(1, pf / 2))
 }
 
 /**
@@ -682,14 +699,24 @@ export function recomputeExecutionComposite(e: {
   mfe_capture: number | null
   prep_adherence: number | null
   mae_heat: number | null
-  planned_vs_realized_rr: number | null
+  // New post-2026-06-15: profit_factor is the canonical 10%-weight metric.
+  // planned_vs_realized_rr stays in the type so legacy rows that haven't
+  // been re-analyzed still contribute to composite via the fallback below.
+  profit_factor?: number | null
+  planned_vs_realized_rr?: number | null
 }): number | null {
+  // Prefer profit_factor (mapped to 0..1 via clamp(pf/2, 0, 1)); fall back
+  // to legacy RR for un-re-analyzed days. Whichever is present, the weight
+  // stays at 10% so the composite is comparable across days.
+  const pfScore = profitFactorToSubMetric(e.profit_factor ?? null)
+  const rrLegacy = e.planned_vs_realized_rr ?? null
+  const tenPctValue = pfScore != null ? pfScore : rrLegacy
   const weights: Array<[number | null, number]> = [
     [e.execution_parameters, 0.35],
     [e.mfe_capture, 0.20],
     [e.prep_adherence, 0.20],
     [e.mae_heat, 0.15],
-    [e.planned_vs_realized_rr, 0.10],
+    [tenPctValue, 0.10],
   ]
   let num = 0, den = 0
   for (const [v, w] of weights) {

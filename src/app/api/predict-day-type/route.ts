@@ -223,7 +223,10 @@ function buildPrompt(date: string, ctx: MarketContext | null, notes: PrepNotes, 
   const ctxLines: string[] = []
   if (ctx) {
     if (ctx.symbol) ctxLines.push(`- Symbol: ${ctx.symbol}`)
-    if (ctx.rvol != null) ctxLines.push(`- RVOL: ${ctx.rvol}${ctx.rvol_flag ? ` (${ctx.rvol_flag})` : ''}`)
+    // RVOL is stored as a PERCENTAGE in this DB (100 = avg, 80 = 80% of avg, 130 = 130% of avg).
+    // The unit suffix is critical — without it the model treats 25 as "25× avg" instead of "25% of avg"
+    // and flips Low Participation days into "High Action".
+    if (ctx.rvol != null) ctxLines.push(`- RVOL: ${ctx.rvol}% of average volume${ctx.rvol_flag ? ` (${ctx.rvol_flag})` : ''}`)
     if (ctx.adr != null) ctxLines.push(`- ADR: ${ctx.adr}${ctx.adr_flag ? ` (${ctx.adr_flag})` : ''}`)
     if (ctx.gbx_pct_adr != null) ctxLines.push(`- Globex move as % of ADR: ${ctx.gbx_pct_adr}`)
     if (ctx.ib_size != null) {
@@ -314,13 +317,13 @@ These are signal-driven priors. Treat them as weighted inputs — not absolutes.
 
    Distinguishing (a) from (b) is critical. The KEY test: is there a visible pivot AWAY from the overnight extreme, or is price just chopping inside the overnight envelope?
 
-2. **High participation regime** — RVOL ≥ 1.3 COMBINED with elevated ATR-1m vs typical OR an IB expansion. Signals expansion, fast structure, sustained imbalance. Look for a label whose description emphasizes high action, expansion, or directional pressure. This signal can CO-EXIST with #1 — a session can be both "GBX Reversal" AND "High Action Market" when the reversal is happening with heavy participation. In your reasoning, name both signals if both fit; the trader can multi-tag.
+2. **High participation regime** — RVOL ≥ 130% COMBINED with elevated ATR-1m vs typical OR an IB expansion. Signals expansion, fast structure, sustained imbalance. Look for a label whose description emphasizes high action, expansion, or directional pressure. This signal can CO-EXIST with #1 — a session can be both "GBX Reversal" AND "High Action Market" when the reversal is happening with heavy participation. In your reasoning, name both signals if both fit; the trader can multi-tag. (RVOL is a percentage: 100 = average, 130 = 30% above average, 50 = half of average. A value LESS than 100 means BELOW-average participation — never use it as a "high action" signal regardless of how the number looks numerically large.)
 
-3. **Low participation regime** — RVOL < 0.8 with tight ATR and IB narrow vs 10-day avg. Signals compression, slow tape, contracted range. Look for a label describing low participation or compression.
+3. **Low participation regime** — RVOL < 80% with tight ATR and IB narrow vs 10-day avg. Signals compression, slow tape, contracted range. Look for a label describing low participation or compression.
 
 4. **Double-inside structure** — RTH opens INSIDE both prior day's range (PDL ≤ price ≤ PDH) AND overnight range (ONL ≤ price ≤ ONH). Strongly favors a "Double Inside" labeled day — fully contained inside both envelopes means rotation/compression until one envelope breaks. Trend-type labels require breaking one envelope first.
 
-5. **Middle-of-the-road regime** — RVOL ~0.8-1.2, ATR near 10-day average, no decisive structural break. Default to a label describing balanced / indecisive / mush behavior.
+5. **Middle-of-the-road regime** — RVOL ~80-120% (i.e. within 20 points of average in either direction), ATR near 10-day average, no decisive structural break. Default to a label describing balanced / indecisive / mush behavior.
 
 6. **Failure to take out PDH (for longs) or PDL (for shorts) despite a strong overnight extension**: rotation / distribution risk. Strongly reinforces a reversal or range call over any trend label. Don't predict trend continuation without a CONFIRMED level break — "if it breaks IB highs" is conditional and doesn't count.
 

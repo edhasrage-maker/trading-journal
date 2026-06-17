@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import type { PrepNotes, AiAnalysis, Trade, MarketContext } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
-import { buildEodPrompt, parseEodResponse, computeRrDeterministic, computeMfeCaptureDeterministic, computeMaeHeatDeterministic, computeDeterministicRules, recomputeExecutionComposite } from '@/lib/eod-prompt'
+import { buildEodPrompt, parseEodResponse, computeProfitFactorDeterministic, computeMfeCaptureDeterministic, computeMaeHeatDeterministic, computeDeterministicRules, recomputeExecutionComposite } from '@/lib/eod-prompt'
 
 const client = new Anthropic()
 
@@ -132,9 +132,15 @@ async function handle(req: Request) {
       touched = true
     }
 
-    const rr = computeRrDeterministic(trades)
-    overrideIfDifferent('RR', parsed.execution.planned_vs_realized_rr, rr.value,
-      v => { parsed.execution!.planned_vs_realized_rr = v }, rr.eligibleCount)
+    const pf = computeProfitFactorDeterministic(trades)
+    // Always write profit_factor (the canonical post-2026-06-15 metric).
+    // Null out the legacy planned_vs_realized_rr so the UI doesn't show
+    // both stale RR + fresh PF on a re-analyzed row.
+    overrideIfDifferent('profit_factor', parsed.execution.profit_factor ?? null, pf.value,
+      v => {
+        parsed.execution!.profit_factor = v
+        parsed.execution!.planned_vs_realized_rr = null
+      }, pf.eligibleCount)
 
     const mfe = computeMfeCaptureDeterministic(trades)
     overrideIfDifferent('mfe_capture', parsed.execution.mfe_capture, mfe.value,

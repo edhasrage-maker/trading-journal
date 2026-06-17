@@ -400,6 +400,13 @@ export interface ExecutionScore {
   mae_heat: number | null
   /** Did taken trades match the prep (bias, plans, day-character read)? */
   prep_adherence: number | null
+  /** Profit Factor — sum(winning realized R) ÷ sum(|losing realized R|).
+   *  1.0 = break-even; > 1.0 = net profitable; < 1.0 = net losing.
+   *  Replaces planned_vs_realized_rr as of 2026-06-15. */
+  profit_factor?: number | null
+  /** @deprecated Use profit_factor. Kept for back-compat with rows analyzed
+   *  before 2026-06-15. The composite recompute will fall back to this when
+   *  profit_factor is missing. */
   planned_vs_realized_rr: number | null
   /** 9-criterion checklist scored 0..1 — mean of per-trade pass rates.
    *  Replaces both the old duration_to_thesis sub-metric AND the moved-out
