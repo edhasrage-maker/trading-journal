@@ -542,18 +542,34 @@ export interface TagPerf {
   stats: PerformanceStats
 }
 
+/** Virtual bucket label for trades with no setup tag — surfaced under
+ *  the 'setups' category only. Display-only: the trade row's tags_json
+ *  stays empty in the DB. Lets the trader see honest performance of their
+ *  un-planned / improvised entries as its own bucket instead of dropping
+ *  out of the analytics entirely. */
+const DISCRETIONARY_SETUP_LABEL = 'Discretionary/No Setup'
+
 export function aggregateByTag(trades: TradeLike[], category: TagCategoryKey): TagPerf[] {
   const buckets = new Map<string, TradeLike[]>()
   for (const t of trades) {
     const tags = t.tags_json as TradeTags | null
-    if (!tags) continue
-    const arr = tags[category] as string[] | undefined
-    if (!Array.isArray(arr)) continue
-    for (const label of arr) {
-      const trimmed = label.trim()
-      if (!trimmed) continue
-      if (!buckets.has(trimmed)) buckets.set(trimmed, [])
-      buckets.get(trimmed)!.push(t)
+    const arr = tags ? (tags[category] as string[] | undefined) : undefined
+    const labels = Array.isArray(arr) ? arr.map(l => l.trim()).filter(Boolean) : []
+    // Setups-only: trades without any setup tag fall into a virtual
+    // "Discretionary/No Setup" bucket so improvised entries get scored
+    // alongside the playbook setups. Other categories (confluences,
+    // order_flow, mistakes, emotions) can legitimately be empty — we
+    // don't bucketize their absence.
+    if (labels.length === 0) {
+      if (category === 'setups') {
+        if (!buckets.has(DISCRETIONARY_SETUP_LABEL)) buckets.set(DISCRETIONARY_SETUP_LABEL, [])
+        buckets.get(DISCRETIONARY_SETUP_LABEL)!.push(t)
+      }
+      continue
+    }
+    for (const label of labels) {
+      if (!buckets.has(label)) buckets.set(label, [])
+      buckets.get(label)!.push(t)
     }
   }
   const out: TagPerf[] = []

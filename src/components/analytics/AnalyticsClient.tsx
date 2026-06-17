@@ -57,9 +57,82 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
     return today > defaultEndDate ? today : defaultEndDate
   }, [rangeMonths, customTo, today, defaultEndDate])
 
-  const filtered = useMemo(() => {
+  const dateFiltered = useMemo(() => {
     return trades.filter(t => t.date >= startDate && t.date <= endDate)
   }, [trades, startDate, endDate])
+
+  // Cross-tab tag filter: pick a category + label and every aggregation
+  // below (setup table, day-type table, period comparison, etc.) re-scopes
+  // to just trades carrying that tag. Lets the trader ask things like
+  // "of my delta-flip trades, how do they distribute across day types?"
+  // or "S&D win rate on Range days only" without exporting to a spreadsheet.
+  //
+  // Categories supported:
+  //   - 'setups' / 'confluences' / 'order_flow' / 'trade_management' /
+  //     'mistakes' / 'emotions' — read from t.tags_json[category]
+  //   - 'day_type' — read from t.day_types[] (or legacy t.day_type) — a
+  //     trade-level property derived from the day's labels.
+  type FilterCategory = 'setups' | 'confluences' | 'order_flow' | 'trade_management' | 'mistakes' | 'emotions' | 'day_type' | 'structure_5m'
+  const FILTER_CATEGORY_LABELS: Record<FilterCategory, string> = {
+    setups: 'Setup',
+    confluences: 'Confluence',
+    order_flow: 'Orderflow',
+    trade_management: 'Trade Mgmt',
+    mistakes: 'Mistake',
+    emotions: 'Emotion',
+    day_type: 'Day Type',
+    structure_5m: '5m Structure',
+  }
+  const [filterCategory, setFilterCategory] = useState<FilterCategory | ''>('')
+  const [filterLabel, setFilterLabel] = useState<string>('')
+
+  // Available labels for the current filter category — computed from the
+  // date-filtered set so the dropdown only offers labels actually present
+  // in the chosen window.
+  const availableLabels = useMemo(() => {
+    if (!filterCategory) return []
+    const set = new Set<string>()
+    for (const t of dateFiltered) {
+      if (filterCategory === 'day_type') {
+        const types = t.day_types.length > 0 ? t.day_types : (t.day_type ? [t.day_type] : [])
+        for (const raw of types) {
+          const trimmed = raw?.trim()
+          if (trimmed) set.add(trimmed)
+        }
+      } else if (filterCategory === 'structure_5m') {
+        const v = (t as unknown as { structure_5m_alignment?: string | null }).structure_5m_alignment
+        if (v === 'following' || v === 'fading' || v === 'neutral') set.add(v)
+      } else {
+        const tags = t.tags_json as { [k: string]: string[] | undefined } | null
+        const arr = tags ? tags[filterCategory] : undefined
+        if (!Array.isArray(arr)) continue
+        for (const raw of arr) {
+          const trimmed = raw?.trim()
+          if (trimmed) set.add(trimmed)
+        }
+      }
+    }
+    return Array.from(set).sort()
+  }, [dateFiltered, filterCategory])
+
+  // The actual narrowed set every downstream aggregation reads from. Falls
+  // through to dateFiltered when no tag filter is active.
+  const filtered = useMemo(() => {
+    if (!filterCategory || !filterLabel) return dateFiltered
+    return dateFiltered.filter(t => {
+      if (filterCategory === 'day_type') {
+        const types = t.day_types.length > 0 ? t.day_types : (t.day_type ? [t.day_type] : [])
+        return types.some(x => x?.trim() === filterLabel)
+      }
+      if (filterCategory === 'structure_5m') {
+        return (t as unknown as { structure_5m_alignment?: string | null }).structure_5m_alignment === filterLabel
+      }
+      const tags = t.tags_json as { [k: string]: string[] | undefined } | null
+      const arr = tags ? tags[filterCategory] : undefined
+      if (!Array.isArray(arr)) return false
+      return arr.some(x => x?.trim() === filterLabel)
+    })
+  }, [dateFiltered, filterCategory, filterLabel])
   // Day stats filtered to the same range so the period-comparison table
   // honors the global range selector at the top of the page.
   const filteredDayStats = useMemo(() => {
@@ -152,6 +225,51 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
             </div>
           )}
         </div>
+      </div>
+
+      {/* Cross-tab tag filter — pick a category + label, every aggregation
+          below re-scopes to just trades carrying that tag. */}
+      <div className="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 flex-wrap">
+        <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Filter trades by tag</span>
+        <select
+          value={filterCategory}
+          onChange={e => {
+            setFilterCategory(e.target.value as FilterCategory | '')
+            setFilterLabel('')   // reset label when category changes
+          }}
+          className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-600"
+        >
+          <option value="">Category…</option>
+          {(Object.keys(FILTER_CATEGORY_LABELS) as FilterCategory[]).map(c => (
+            <option key={c} value={c}>{FILTER_CATEGORY_LABELS[c]}</option>
+          ))}
+        </select>
+        <select
+          value={filterLabel}
+          onChange={e => setFilterLabel(e.target.value)}
+          disabled={!filterCategory || availableLabels.length === 0}
+          className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded px-2 py-1 min-w-[180px] focus:outline-none focus:border-blue-600 disabled:opacity-40"
+        >
+          <option value="">{filterCategory ? `Any ${FILTER_CATEGORY_LABELS[filterCategory]}…` : 'Pick a category first'}</option>
+          {availableLabels.map(label => (
+            <option key={label} value={label}>{label}</option>
+          ))}
+        </select>
+        {(filterCategory || filterLabel) && (
+          <button
+            type="button"
+            onClick={() => { setFilterCategory(''); setFilterLabel('') }}
+            className="text-xs text-gray-500 hover:text-white transition-colors"
+          >
+            Clear filter
+          </button>
+        )}
+        {filterCategory && filterLabel && (
+          <span className="text-xs text-blue-300 ml-auto">
+            Showing <span className="font-bold">{filtered.length}</span> of {dateFiltered.length} trades
+            <span className="text-gray-500"> · {FILTER_CATEGORY_LABELS[filterCategory]}: {filterLabel}</span>
+          </span>
+        )}
       </div>
 
       {/* Overall stats */}
