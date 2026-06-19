@@ -745,6 +745,87 @@ export function recomputeExecutionComposite(e: {
 }
 
 /**
+ * Apply all deterministic overrides to a parsed EOD analysis, in place, and
+ * return it. This is the SINGLE SOURCE OF TRUTH for the override logic so the
+ * live route (/api/analyze-eod) and the batch rescore script
+ * (scripts/rescore-eod-stale.ts) can never drift — previously the route had
+ * the overrides inline and the script didn't, so batch-rescored days came out
+ * with the AI's raw (unreliable) numbers.
+ *
+ * Overrides:
+ *   - P1/P3/P4/P5 mechanical rules (P2 stays AI-driven — setup-conditional cap)
+ *   - verdict re-derived from pass_count (≥4/5 = Compliant)
+ *   - profit_factor (replaces legacy planned_vs_realized_rr)
+ *   - mfe_capture, mae_heat (pure-arithmetic sub-metrics)
+ *   - execution composite recomputed when any sub-metric changed
+ *
+ * `onLog` is an optional callback for the route's per-override console logging;
+ * pass undefined to stay silent (the script prints its own summary).
+ */
+export function applyDeterministicOverrides(
+  parsed: EodAiAnalysis,
+  trades: Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl' | 'entry_price' | 'stop_price' | 'direction' | 'symbol' | 'high_during_position' | 'low_during_position'>[],
+  onLog?: (msg: string) => void,
+): EodAiAnalysis {
+  const log = onLog ?? (() => {})
+
+  if (parsed.process) {
+    const det = computeDeterministicRules(trades)
+    let touchedProcess = false
+    const ruleKeys: Array<'P1' | 'P3' | 'P4' | 'P5'> = ['P1', 'P3', 'P4', 'P5']
+    for (const k of ruleKeys) {
+      const ai = parsed.process.per_rule[k]
+      const calc = det[k]
+      const aiBc = ai?.breach_count ?? 0
+      if (!ai || ai.status !== calc.status || aiBc !== calc.breach_count) {
+        log(`overriding ${k} ${ai?.status ?? 'undef'}/${aiBc} → ${calc.status}/${calc.breach_count}`)
+        parsed.process.per_rule[k] = { status: calc.status, breach_count: calc.breach_count, reason: calc.reason }
+        if (parsed.process.breach_count_vector) parsed.process.breach_count_vector[k] = calc.breach_count
+        touchedProcess = true
+      }
+    }
+    if (touchedProcess) {
+      const passCount = Object.values(parsed.process.per_rule).filter(r => r?.status === 'pass').length
+      const newVerdict: 'Compliant' | 'Breach' = passCount >= 4 ? 'Compliant' : 'Breach'
+      if (parsed.process.verdict !== newVerdict) {
+        log(`verdict re-derived ${parsed.process.verdict} → ${newVerdict} (pass_count ${passCount}/5)`)
+        parsed.process.verdict = newVerdict
+      }
+    }
+  }
+
+  if (parsed.execution) {
+    let touched = false
+    const overrideIfDifferent = (label: string, aiVal: number | null, calcVal: number | null, apply: (v: number) => void, eligibleCount: number) => {
+      if (calcVal == null) return
+      if (aiVal != null && Math.abs(aiVal - calcVal) <= 0.05) return
+      log(`overriding ${label} ${aiVal} → ${calcVal.toFixed(3)} (${eligibleCount} eligible)`)
+      apply(calcVal)
+      touched = true
+    }
+
+    const pf = computeProfitFactorDeterministic(trades)
+    overrideIfDifferent('profit_factor', parsed.execution.profit_factor ?? null, pf.value,
+      v => { parsed.execution!.profit_factor = v; parsed.execution!.planned_vs_realized_rr = null }, pf.eligibleCount)
+
+    const mfe = computeMfeCaptureDeterministic(trades)
+    overrideIfDifferent('mfe_capture', parsed.execution.mfe_capture, mfe.value,
+      v => { parsed.execution!.mfe_capture = v }, mfe.eligibleCount)
+
+    const mae = computeMaeHeatDeterministic(trades)
+    overrideIfDifferent('mae_heat', parsed.execution.mae_heat, mae.value,
+      v => { parsed.execution!.mae_heat = v }, mae.eligibleCount)
+
+    if (touched) {
+      const recomputed = recomputeExecutionComposite(parsed.execution)
+      if (recomputed != null) parsed.execution.composite = recomputed
+    }
+  }
+
+  return parsed
+}
+
+/**
  * Parses Claude's raw text response into a typed EodAiAnalysis. Tolerates:
  *   - Leading/trailing ```json fences (stripped)
  *   - Mid-string truncation (falls back to a stub with the raw text in `summary`)

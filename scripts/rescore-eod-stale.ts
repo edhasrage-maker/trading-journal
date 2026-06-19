@@ -31,7 +31,7 @@ import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 // Explicit .ts extensions — Node's --experimental-strip-types in ESM mode
 // requires them; tsconfig path resolution doesn't apply here.
-import { buildEodPrompt, parseEodResponse } from '../src/lib/eod-prompt.ts'
+import { buildEodPrompt, parseEodResponse, applyDeterministicOverrides } from '../src/lib/eod-prompt.ts'
 import type { Trade, PrepNotes, AiAnalysis, MarketContext, EodAiAnalysis, TradingDay } from '../src/lib/supabase/types.ts'
 
 // ─── env + clients ───────────────────────────────────────────────────────────
@@ -229,6 +229,13 @@ async function rescoreOne(d: StaleDay): Promise<{ ok: boolean; verdict?: string;
 
   const text = message.content[0].type === 'text' ? message.content[0].text : ''
   const parsed = parseEodResponse(text)
+
+  // Apply the SAME deterministic overrides the live route applies (P1-P5
+  // rules incl. the $50 DLL buffer, verdict re-derive, profit factor, MFE
+  // capture, MAE heat, composite). Without this the batch rescore would
+  // write the AI's raw unreliable numbers — the exact drift this shared
+  // function exists to prevent.
+  applyDeterministicOverrides(parsed, payload.trades)
 
   const { error: upErr } = await sb
     .from('trading_days')
