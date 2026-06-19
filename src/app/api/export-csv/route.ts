@@ -56,6 +56,31 @@ const DAY_HEADERS = [
   'rvol', 'ib_size', 'adr', 'atr_1m',
 ]
 
+/**
+ * Fetch every row from a table, paging past Supabase's 1000-row cap.
+ * Without this an export of `trades` (5k+ rows) silently returned only the
+ * oldest 1000 — so any recent date range came back empty.
+ */
+async function fetchAll(
+  supabase: AnyClient,
+  table: string,
+  select: string,
+  orderCols: string[],
+): Promise<any[]> {  // eslint-disable-line @typescript-eslint/no-explicit-any
+  const PAGE = 1000
+  const all: unknown[] = []
+  for (let p = 0; ; p++) {
+    let q = supabase.from(table).select(select)
+    for (const c of orderCols) q = q.order(c, { ascending: true })
+    const { data, error } = await q.range(p * PAGE, p * PAGE + PAGE - 1)
+    if (error) throw error
+    const rows = data ?? []
+    all.push(...rows)
+    if (rows.length < PAGE) break
+  }
+  return all
+}
+
 /** Count P1-P5 passes in an EOD analysis. */
 function passCount(eod: EodAiAnalysis | null | undefined): string {
   const per = eod?.process?.per_rule
@@ -75,14 +100,9 @@ export async function GET(req: Request) {
 
   // ── DAY SUMMARY EXPORT ───────────────────────────────────────────────────
   if (type === 'days') {
-    const [{ data: daysRaw }, { data: ctxRaw }] = await Promise.all([
-      supabase
-        .from('trading_days')
-        .select('id, date, day_types, day_type, eod_pnl, eod_ai_analysis_json')
-        .order('date', { ascending: true }) as Promise<{ data: Array<Pick<TradingDay, 'id' | 'date' | 'day_types' | 'day_type' | 'eod_pnl'> & { eod_ai_analysis_json: EodAiAnalysis | null }> | null }>,
-      supabase
-        .from('market_context')
-        .select('trading_day_id, rvol, ib_size, adr, atr_1m') as Promise<{ data: Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'adr' | 'atr_1m'>[] | null }>,
+    const [daysRaw, ctxRaw] = await Promise.all([
+      fetchAll(supabase, 'trading_days', 'id, date, day_types, day_type, eod_pnl, eod_ai_analysis_json', ['date', 'id']) as Promise<Array<Pick<TradingDay, 'id' | 'date' | 'day_types' | 'day_type' | 'eod_pnl'> & { eod_ai_analysis_json: EodAiAnalysis | null }>>,
+      fetchAll(supabase, 'market_context', 'trading_day_id, rvol, ib_size, adr, atr_1m', ['trading_day_id']) as Promise<Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'adr' | 'atr_1m'>[]>,
     ])
     const ctxByDay = new Map((ctxRaw ?? []).map(c => [c.trading_day_id, c]))
     const lines: string[] = [DAY_HEADERS.join(',')]
@@ -125,22 +145,15 @@ export async function GET(req: Request) {
   }
 
   // ── PER-TRADE EXPORT (default) ───────────────────────────────────────────
-  const [{ data: tradesRaw }, { data: daysRaw }, { data: ctxRaw }] = await Promise.all([
-    supabase
-      .from('trades')
-      .select('*')
-      .order('entry_time', { ascending: true }) as Promise<{ data: Trade[] | null }>,
-    supabase
-      .from('trading_days')
-      .select('id, date, day_type, eod_ai_analysis_json') as Promise<{ data: Array<Pick<TradingDay, 'id' | 'date' | 'day_type'> & { eod_ai_analysis_json: EodAiAnalysis | null }> | null }>,
-    supabase
-      .from('market_context')
-      .select('trading_day_id, symbol, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m') as Promise<{ data: Pick<MarketContext, 'trading_day_id' | 'symbol' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>[] | null }>,
+  const [tradesRaw, daysRaw, ctxRaw] = await Promise.all([
+    fetchAll(supabase, 'trades', '*', ['entry_time', 'id']) as Promise<Trade[]>,
+    fetchAll(supabase, 'trading_days', 'id, date, day_type, eod_ai_analysis_json', ['id']) as Promise<Array<Pick<TradingDay, 'id' | 'date' | 'day_type'> & { eod_ai_analysis_json: EodAiAnalysis | null }>>,
+    fetchAll(supabase, 'market_context', 'trading_day_id, symbol, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m', ['trading_day_id']) as Promise<Pick<MarketContext, 'trading_day_id' | 'symbol' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>[]>,
   ])
 
-  const trades = tradesRaw ?? []
-  const dayById = new Map((daysRaw ?? []).map(d => [d.id, d]))
-  const ctxByDay = new Map((ctxRaw ?? []).map(c => [c.trading_day_id, c]))
+  const trades = tradesRaw
+  const dayById = new Map(daysRaw.map(d => [d.id, d]))
+  const ctxByDay = new Map(ctxRaw.map(c => [c.trading_day_id, c]))
 
   const lines: string[] = [TRADE_HEADERS.join(',')]
 
