@@ -14,10 +14,14 @@
  *      the same note in backfill-market-context-from-csv.ts).
  *   3. For every minute of every RTH session, snapshot { atr10, cumVolFromOpen }
  *      into a Map<date, Map<sec, …>>.
- *   4. For each trade with entry_time ≥ 2025-01-01 and entry_time inside
- *      RTH, look up the corresponding snapshot:
- *         entry_atr_1m = atr10 at (date, sec)
- *         entry_rvol   = today.cumVol / mean(prior-10-days.cumVol at same sec) × 100
+ *   4. For each trade with entry_time ≥ 2025-01-01, look up the snapshot:
+ *         entry_atr_1m = atr10 at (date, sec) — computed for EVERY session
+ *                        (RTH + overnight/Globex); ATR-10 is continuous and
+ *                        session-agnostic, so overnight trades get a live ATR
+ *                        without needing an RTH prep.
+ *         entry_rvol   = today.cumVol / mean(prior-10-days.cumVol at same sec)
+ *                        × 100 — RTH trades only (RVOL is anchored to the RTH
+ *                        open; overnight trades get a null RVOL).
  *   5. Write both fields. Trades outside 2025+ stay null (deliberate scope
  *      cut — pre-2025 trades predate the TZ workflow and aren't analytically
  *      important enough to justify the multi-contract .scid plumbing).
@@ -98,10 +102,12 @@ function utcMsToPtParts(ms: number): { date: string; sec: number } {
   return { date: `${p.year}-${p.month}-${p.day}`, sec }
 }
 
-/** Per-minute snapshot kept for every RTH bar in every covered trading day. */
+/** Per-minute snapshot kept for EVERY bar (RTH + overnight) so non-RTH/Globex
+ *  trades still get a live ATR. cumVol is RTH-only (null overnight) since RVOL
+ *  is anchored to the RTH open. */
 interface MinuteSnapshot {
-  atr10: number | null      // running Wilder ATR-10 (post-seed)
-  cumVol: number            // cumulative volume since RTH open today
+  atr10: number | null      // running Wilder ATR-10 (post-seed) — session-agnostic
+  cumVol: number | null     // cumulative volume since RTH open; null outside RTH
 }
 
 /**
@@ -164,17 +170,21 @@ async function streamCsvSnapshots(path: string, snapshots: SnapshotMap): Promise
 
     updateAtr(state, high, low, close)
 
-    // Reset cumulative volume tracker each time we cross into a new RTH session
-    if (sec >= RTH_OPEN_SEC && sec < RTH_CLOSE_SEC) {
+    // Track cumulative RTH volume (for RVOL) only inside the RTH window,
+    // resetting at each new RTH session.
+    const inRth = sec >= RTH_OPEN_SEC && sec < RTH_CLOSE_SEC
+    if (inRth) {
       if (state.currentDate !== date) {
         state.currentDate = date
         state.cumVolToday = 0
       }
       state.cumVolToday += Number.isFinite(vol) ? vol : 0
-      let dayMap = snapshots.get(date)
-      if (!dayMap) { dayMap = new Map(); snapshots.set(date, dayMap) }
-      dayMap.set(sec, { atr10: state.atr10, cumVol: state.cumVolToday })
     }
+    // Snapshot the running ATR for EVERY minute so overnight/Globex trades get
+    // a live ATR too; cumVol is null outside RTH (RVOL stays RTH-anchored).
+    let dayMap = snapshots.get(date)
+    if (!dayMap) { dayMap = new Map(); snapshots.set(date, dayMap) }
+    dayMap.set(sec, { atr10: state.atr10, cumVol: inRth ? state.cumVolToday : null })
 
     if (lineCount % 100000 === 0) {
       process.stdout.write(`  ${lineCount.toLocaleString()} lines, ${snapshots.size} RTH days so far\r`)
@@ -204,18 +214,19 @@ function streamScidSnapshots(
     if (!Number.isFinite(ms)) continue
     updateAtr(state, bar.high, bar.low, bar.close)
     const { date, sec } = utcMsToPtParts(ms)
-    if (sec >= RTH_OPEN_SEC && sec < RTH_CLOSE_SEC) {
+    const inRth = sec >= RTH_OPEN_SEC && sec < RTH_CLOSE_SEC
+    if (inRth) {
       if (state.currentDate !== date) {
         state.currentDate = date
         state.cumVolToday = 0
       }
       state.cumVolToday += Number.isFinite(bar.volume) ? bar.volume : 0
-      let dayMap = snapshots.get(date)
-      if (!dayMap) { dayMap = new Map(); snapshots.set(date, dayMap); added++ }
-      dayMap.set(sec, { atr10: state.atr10, cumVol: state.cumVolToday })
     }
+    let dayMap = snapshots.get(date)
+    if (!dayMap) { dayMap = new Map(); snapshots.set(date, dayMap); added++ }
+    dayMap.set(sec, { atr10: state.atr10, cumVol: inRth ? state.cumVolToday : null })
   }
-  console.log(`  .scid contributed ${added} new RTH days`)
+  console.log(`  .scid contributed ${added} new days`)
 }
 
 /** Find the nearest covered minute at or before `sec` on `date`. Trades' entry
@@ -242,7 +253,7 @@ function meanPriorCumVolAtSec(
     const prior = snapshots.get(sortedDates[i])
     if (!prior) continue
     const snap = prior.get(minuteSec)
-    if (!snap) continue
+    if (!snap || snap.cumVol == null) continue
     samples.push(snap.cumVol)
   }
   if (samples.length < n) return null  // need full window for an honest comparison
@@ -334,7 +345,7 @@ async function main() {
 
   const sortedDatesAfterScid = Array.from(snapshots.keys()).sort()
   const dateIdx = new Map(sortedDatesAfterScid.map((d, i) => [d, i]))
-  console.log(`Total covered RTH days: ${sortedDatesAfterScid.length}`)
+  console.log(`Total covered days: ${sortedDatesAfterScid.length}`)
   console.log()
 
   // Step 3: Fetch trades to backfill
@@ -345,21 +356,24 @@ async function main() {
 
   // Step 4: Per-trade lookup
   const updates: Array<{ table: 'trades' | 'historical_trades'; id: string; entry_atr_1m: number | null; entry_rvol: number | null }> = []
-  let skippedOutOfRange = 0, skippedNonRth = 0, skippedNoSnap = 0
+  let skippedOutOfRange = 0, overnightAtrOnly = 0, skippedNoSnap = 0
   let processed = 0
   let samplesPrinted = 0
   const SAMPLE_N = 5
   for (const t of trades) {
     if (processed >= limit) break
     const { date, sec } = utcMsToPtParts(t.entry_ms)
-    if (sec < RTH_OPEN_SEC || sec >= RTH_CLOSE_SEC) { skippedNonRth++; continue }
+    const isRth = sec >= RTH_OPEN_SEC && sec < RTH_CLOSE_SEC
     const todayIdx = dateIdx.get(date)
     if (todayIdx == null) { skippedOutOfRange++; continue }
     const snap = lookupSnapshot(snapshots, date, sec)
     if (!snap) { skippedNoSnap++; continue }
-    const meanPrior = meanPriorCumVolAtSec(snapshots, sortedDatesAfterScid, todayIdx, sec, 10)
+    if (!isRth) overnightAtrOnly++
+    // ATR is session-agnostic → always available. RVOL needs the RTH-open
+    // anchor → only computed for RTH entries (null for overnight/Globex).
+    const meanPrior = isRth ? meanPriorCumVolAtSec(snapshots, sortedDatesAfterScid, todayIdx, sec, 10) : null
     const entryAtr = snap.atr10
-    const entryRvol = (meanPrior != null && meanPrior > 0)
+    const entryRvol = (isRth && snap.cumVol != null && meanPrior != null && meanPrior > 0)
       ? (snap.cumVol / meanPrior) * 100
       : null
     updates.push({
@@ -378,7 +392,7 @@ async function main() {
   console.log()
   console.log(`Candidates: ${updates.length}`)
   console.log(`  skipped — entry outside CSV/.scid date range: ${skippedOutOfRange}`)
-  console.log(`  skipped — entry outside RTH (06:30–13:00 PT):  ${skippedNonRth}`)
+  console.log(`  overnight trades (live ATR, null RVOL):        ${overnightAtrOnly}`)
   console.log(`  skipped — no snapshot at that exact minute:    ${skippedNoSnap}`)
 
   if (dryRun) {
