@@ -259,9 +259,15 @@ across the session — so the UI can show which criteria are dragging.
   4. clear_area_of_interest — the trade is anchored to a specific
      structural level (PDH/PDL, IBH/IBL, ONH/ONL, HTF zone, LVN,
      demand/supply cluster). Generic mid-range entries fail.
-  5. two_thirds_orderflow — trade has ≥2 of 3 strong orderflow signals:
-     delta flip, absorption (delta bubble failure), delta fade. 0 or 1
-     OF signals = fail.
+  5. two_thirds_orderflow — applies ONLY to trades sized UP to 10 MNQ.
+     2/3 OF (delta flip, absorption / delta-bubble failure, delta fade)
+     is the GATE FOR THE SIZE-UP, not a requirement for a trade to be
+     valid. So:
+       • quantity > 5 (sized up): needs ≥2 of 3 OF signals → pass; 0-1 = fail.
+       • quantity ≤ 5 (standard size): N/A — SKIP this criterion entirely
+         (do not count it in the per-trade denominator). A 5-lot trade
+         with 1/3 OF is a perfectly valid trade; it was simply ineligible
+         for the size-up exception. Never score it as a #5 fail.
   6. break_of_cluster_or_bubble_entry — the trigger was a structural break
      (price breaking through a cluster of orders or breaking a bubble),
      NOT a discretionary price entry. Discretionary entries fail.
