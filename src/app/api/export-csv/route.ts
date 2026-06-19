@@ -1,6 +1,24 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { writeFileSync, mkdirSync } from 'fs'
+import { join } from 'path'
 import type { Trade, TradingDay, MarketContext, TradeTags, EodAiAnalysis } from '@/lib/supabase/types'
+
+/**
+ * Drop a copy of every export into the project's exports/ folder. The dev
+ * server runs locally (see CLAUDE.md), so this writes straight to D: alongside
+ * the streamed download. The filename carries the date range so different
+ * ranges don't clobber each other. Best-effort — a disk error must never break
+ * the download the user actually clicked for.
+ */
+function saveLocalCopy(kind: 'trades' | 'day-summary', from: string | null, to: string | null, csv: string): void {
+  try {
+    const range = `${from ?? 'all'}_to_${to ?? 'all'}`
+    const dir = join(process.cwd(), 'exports')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, `${kind}_${range}.csv`), csv, 'utf8')
+  } catch { /* non-fatal: the HTTP download still streams */ }
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -134,6 +152,7 @@ export async function GET(req: Request) {
     }
     const csv = lines.join('\r\n') + '\r\n'
     const today = new Date().toISOString().slice(0, 10)
+    saveLocalCopy('day-summary', fromParam, toParam, csv)
     return new NextResponse(csv, {
       status: 200,
       headers: {
@@ -216,6 +235,7 @@ export async function GET(req: Request) {
   const csv = lines.join('\r\n') + '\r\n'
   const today = new Date().toISOString().slice(0, 10)
   const filename = `trades-${today}.csv`
+  saveLocalCopy('trades', fromParam, toParam, csv)
 
   return new NextResponse(csv, {
     status: 200,

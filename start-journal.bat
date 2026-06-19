@@ -18,6 +18,13 @@ REM overrides .env.local and makes every AI route 503 with
 REM "ANTHROPIC_API_KEY is not configured". Clearing it here is the fix.
 set "ANTHROPIC_API_KEY="
 
+REM Keep this process's scratch files inside the project (on D:) instead of
+REM C:\Users\…\AppData\Local\Temp. Scoped to the dev server only — does not
+REM change the system temp. The .next build cache already lives in-project.
+if not exist "%~dp0.cache\tmp" mkdir "%~dp0.cache\tmp"
+set "TMP=%~dp0.cache\tmp"
+set "TEMP=%~dp0.cache\tmp"
+
 REM Skip if another instance is already listening on port 3000
 netstat -ano | findstr /R /C:":3000 .*LISTENING" >nul 2>&1
 if %errorlevel% equ 0 (

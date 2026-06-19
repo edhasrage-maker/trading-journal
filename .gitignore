@@ -46,3 +46,9 @@ start-journal.log
 
 # trading-journal — local scratch dir used for ad-hoc exports/imports
 Transfer/
+
+# trading-journal — machine-local caches & outputs kept inside the project
+# folder (on D:) instead of C:. All git-ignored — none of this should sync.
+.cache/
+.npmrc
+exports/
