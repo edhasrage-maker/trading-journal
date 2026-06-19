@@ -49,6 +49,9 @@ interface TradeContextRow {
   pnl: number | null
   entry_price: number | null
   stop_price: number | null
+  high_during_position: number | null  // tick-precise high while in trade — long MFE source
+  low_during_position: number | null   // tick-precise low while in trade — short MFE source
+  mfe_dollars_per_leg: number | null   // scaling-aware best-case $ (peak per leg) — primary capture basis
   quantity: number | null
   symbol: string | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -86,7 +89,7 @@ NO TRADE DATA — no trading days in this window.
   for (let p = 0; p < 10; p++) {
     const { data } = await supabase
       .from('trades')
-      .select('id, trading_day_id, entry_time, direction, pnl, entry_price, stop_price, quantity, symbol, tags_json, structure_5m_alignment')
+      .select('id, trading_day_id, entry_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, quantity, symbol, tags_json, structure_5m_alignment')
       .in('trading_day_id', dayIds)
       .order('entry_time', { ascending: false })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -112,12 +115,26 @@ NO TRADE DATA — the trader logged no trades in this window.
   const sumL = trades.filter(t => (t.pnl ?? 0) < 0).reduce((s, t) => s + Math.abs(t.pnl ?? 0), 0)
   const profitFactor = sumL > 0 ? sumW / sumL : (sumW > 0 ? Infinity : 0)
 
-  const setupBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number; rs: number[] }>()
+  const setupBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number; rs: number[]; capPcts: number[]; lefts: number[] }>()
   const mistakeCounts = new Map<string, { count: number; pnl: number }>()
   const dayTypeBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
   const ofBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
   const structureBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
   const monthBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
+
+  // Exit efficiency (MFE capture) — answers "am I leaving runners on the table /
+  // should I hold for a TP2?". PRIMARY basis is DOLLARS: mfe_dollars_per_leg
+  // (best-case $ if every leg had exited at its in-trade peak) vs realized pnl.
+  // It needs no stop, so it covers ~all trades. SECONDARY basis is R-multiples
+  // (mfeR = favorable excursion ÷ stop distance) — only computable when a stop
+  // was logged, but it quantifies whether a ≥2R/≥3R TP2 was actually reachable.
+  const exitEff = {
+    dollar: { n: 0, sumCapPct: 0, sumLeft: 0, sumRealized: 0, sumMfe: 0 },   // winners, $ basis
+    r: { withStop: 0, ge2R: 0, ge3R: 0, winners: 0, winGe2R: 0, winGe3R: 0 }, // trades w/ a stop
+  }
+  // Per-trade derived metrics keyed by id so the recent-trades list can show
+  // realized R, mfeR, and $ capture% without recomputing.
+  const derived = new Map<string, { r: number | null; mfeR: number | null; capPct: number | null }>()
 
   for (const t of trades) {
     const pnl = t.pnl ?? 0
@@ -125,16 +142,46 @@ NO TRADE DATA — the trader logged no trades in this window.
     const stopDist = (t.entry_price != null && t.stop_price != null) ? Math.abs(t.entry_price - t.stop_price) : null
     const r = (stopDist && t.quantity) ? pnl / (stopDist * t.quantity * mult(t.symbol)) : null
 
-    const setups = (t.tags_json?.setups as string[]) ?? []
-    if (setups.length === 0) {
-      const b = setupBuckets.get('Discretionary/No Setup') ?? { count: 0, wins: 0, losers: 0, pnl: 0, rs: [] }
-      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl; if (r != null) b.rs.push(r)
-      setupBuckets.set('Discretionary/No Setup', b)
-    } else for (const s of setups) {
-      const b = setupBuckets.get(s) ?? { count: 0, wins: 0, losers: 0, pnl: 0, rs: [] }
-      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl; if (r != null) b.rs.push(r)
-      setupBuckets.set(s, b)
+    // Dollar-basis capture (primary; no stop needed). mfe_dollars_per_leg is the
+    // best-case $ if each leg exited at its peak; capPct = the share a winner
+    // actually banked, left = $ given back. Winners only — capture on a loser is
+    // meaningless. Capped at 100% for the rare avg-exit-past-peak rounding case.
+    const mfeUsd = t.mfe_dollars_per_leg
+    let capPct: number | null = null
+    if (isWin && mfeUsd != null && mfeUsd > 0) {
+      capPct = Math.min(1, pnl / mfeUsd)
+      const dl = exitEff.dollar
+      dl.n++; dl.sumCapPct += capPct; dl.sumLeft += Math.max(0, mfeUsd - pnl); dl.sumRealized += pnl; dl.sumMfe += mfeUsd
     }
+
+    // R-basis reachability (secondary; needs a logged stop). Long → high, short →
+    // low gives the favorable extreme; ÷ stop distance = MFE in risk units.
+    let mfeR: number | null = null
+    if (stopDist && stopDist > 0 && t.entry_price != null) {
+      const mfePts = t.direction === 'short'
+        ? (t.low_during_position != null ? t.entry_price - t.low_during_position : null)
+        : (t.high_during_position != null ? t.high_during_position - t.entry_price : null)
+      if (mfePts != null && mfePts >= 0) mfeR = mfePts / stopDist
+    }
+    if (mfeR != null) {
+      const rb = exitEff.r
+      rb.withStop++; if (mfeR >= 2) rb.ge2R++; if (mfeR >= 3) rb.ge3R++
+      if (isWin) { rb.winners++; if (mfeR >= 2) rb.winGe2R++; if (mfeR >= 3) rb.winGe3R++ }
+    }
+
+    derived.set(t.id, { r, mfeR, capPct })
+
+    const setups = (t.tags_json?.setups as string[]) ?? []
+    const pushSetup = (key: string) => {
+      const b = setupBuckets.get(key) ?? { count: 0, wins: 0, losers: 0, pnl: 0, rs: [], capPcts: [], lefts: [] }
+      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+      if (r != null) b.rs.push(r)
+      if (capPct != null) b.capPcts.push(capPct)
+      if (isWin && mfeUsd != null && mfeUsd > 0) b.lefts.push(Math.max(0, mfeUsd - pnl))
+      setupBuckets.set(key, b)
+    }
+    if (setups.length === 0) pushSetup('Discretionary/No Setup')
+    else for (const s of setups) pushSetup(s)
 
     const mistakes = (t.tags_json?.mistakes as string[]) ?? []
     for (const m of mistakes) {
@@ -180,9 +227,11 @@ NO TRADE DATA — the trader logged no trades in this window.
     const dir = t.direction?.[0]?.toUpperCase() ?? '?'
     const setups = ((t.tags_json?.setups as string[]) ?? []).join(',') || '—'
     const mistakes = ((t.tags_json?.mistakes as string[]) ?? []).join(',') || '—'
-    const stopDist = (t.entry_price != null && t.stop_price != null) ? Math.abs(t.entry_price - t.stop_price) : null
-    const r = (stopDist && t.quantity && t.pnl != null) ? t.pnl / (stopDist * t.quantity * mult(t.symbol)) : null
-    return `${date} ${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
+    const d = derived.get(t.id)
+    const r = d?.r ?? null
+    const mfeR = d?.mfeR ?? null
+    const cap = d?.capPct ?? null
+    return `${date} ${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
   }).join('\n')
 
   // Optional week-over-week comparison — only meaningful for the chatbox's
@@ -210,6 +259,18 @@ THIS WEEK vs PRIOR WEEK:
   Prior week (${past14} → ${past7}): ${tradesPriorWeek.length} trades · ${fmt(wkPnl(tradesPriorWeek))} · WR ${wkWR(tradesPriorWeek) ?? '—'}%`
   }
 
+  // Exit-efficiency summary. Dollar basis is the headline (covers ~all trades);
+  // R basis adds TP2-reachability where a stop was logged.
+  const dl = exitEff.dollar
+  const rb = exitEff.r
+  const pct = (num: number, den: number) => den > 0 ? Math.round((num / den) * 100) : 0
+  const usd = (n: number) => '$' + Math.round(n).toLocaleString()
+  const exitEffBlock = (dl.n === 0 && rb.withStop === 0)
+    ? '  (no MFE data on trades in this window)'
+    : `  WINNERS scored ($ basis, no stop needed): ${dl.n} of ${winners} winners
+  Captured ${pct(dl.sumCapPct, dl.n)}% of the available favorable move on avg · left ${dl.n > 0 ? usd(dl.sumLeft / dl.n) : '—'}/win on the table (avg realized ${dl.n > 0 ? usd(dl.sumRealized / dl.n) : '—'} vs avg peak ${dl.n > 0 ? usd(dl.sumMfe / dl.n) : '—'})
+  TP2 reachability (R basis, ${rb.withStop} trades w/ a logged stop): any ran ≥2R ${pct(rb.ge2R, rb.withStop)}% · ≥3R ${pct(rb.ge3R, rb.withStop)}% · winners ≥2R ${pct(rb.winGe2R, rb.winners)}% · ≥3R ${pct(rb.winGe3R, rb.winners)}%`
+
   return `═══ TRADER DATA SUMMARY ═══
 Window: ${windowLabel} (${startDate} → ${endDate}). Total trades: ${total}.
 
@@ -224,8 +285,16 @@ ${Array.from(monthBuckets.entries()).sort((a, b) => a[0].localeCompare(b[0])).ma
     return `  ${ym}: ${b.count} trades · ${fmt(b.pnl)} · WR ${wr}%`
   }).join('\n') || '  (no trades in window)'}
 
-SETUP PERFORMANCE (by total PnL, top 10):
-${sortByPnl(setupBuckets).map(([s, b]) => `  ${s}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}% · avgR ${b.rs.length > 0 ? (b.rs.reduce((s, r) => s + r, 0) / b.rs.length).toFixed(2) : '—'}`).join('\n')}
+EXIT EFFICIENCY — MFE CAPTURE (how much of the favorable move you keep; informs whether to hold for a TP2 / runner vs take TP1):
+${exitEffBlock}
+
+SETUP PERFORMANCE (by total PnL, top 10) — avgR realized; captured%/left$ = winners' $ MFE capture (TP2 headroom per setup):
+${sortByPnl(setupBuckets).map(([s, b]) => {
+    const avgR = b.rs.length > 0 ? (b.rs.reduce((a, r) => a + r, 0) / b.rs.length).toFixed(2) : '—'
+    const avgCap = b.capPcts.length > 0 ? Math.round((b.capPcts.reduce((a, c) => a + c, 0) / b.capPcts.length) * 100) : null
+    const avgLeft = b.lefts.length > 0 ? b.lefts.reduce((a, x) => a + x, 0) / b.lefts.length : null
+    return `  ${s}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}% · avgR ${avgR}${avgCap != null ? ` · winners captured ${avgCap}%` : ''}${avgLeft != null ? ` · left ${usd(avgLeft)}/win` : ''}`
+  }).join('\n')}
 
 DAY TYPE PERFORMANCE (by total PnL, top 10):
 ${sortByPnl(dayTypeBuckets).map(([d, b]) => `  ${d}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / b.count) * 100)}%`).join('\n') || '  (no day_types tagged in window)'}
