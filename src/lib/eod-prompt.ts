@@ -669,26 +669,54 @@ export function computeDeterministicRules(
       ? { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} is past the $${DAILY_LOSS_LIMIT} DLL but within the $${DLL_SLIPPAGE_BUFFER} slippage buffer — counted as a stop-fill artifact, not a breach.` }
       : { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} within the $${DAILY_LOSS_LIMIT} daily loss limit.` }
 
-  // ── P3 + P4: post-loss checks (size + cooldown) ────────────────────────
+  // ── P3 + P4: post-loss checks (size + cooldown), REALIZED-LOSS aware ────
+  // Both rules react to a loss that has actually CLOSED. Earlier versions
+  // used entry-time adjacency ("the trade before this one was a loss"),
+  // which mis-fired on scale-ins / overlapping positions: if you open the
+  // next trade BEFORE the prior one closes, no loss has been realized yet,
+  // so there was no post-loss decision to violate. Example that exposed
+  // this (2026-06-18): a 10-lot winner opened at 01:29:00 while a separate
+  // 10-lot stop-out was still open (it closed at 01:29:10). Entry-adjacency
+  // flagged the winner as a "size-up after a loss" and the −11s gap as a
+  // "cooldown breach" — both wrong, because the loss hadn't happened when
+  // the winner was opened.
+  //
+  // Fix: for each trade, find the most recent OTHER trade that CLOSED at or
+  // before this trade OPENED. Only if THAT trade was a loss do P3/P4 apply.
   const p3Breaches: string[] = []
   const p4Breaches: string[] = []
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1]
+  for (let i = 0; i < sorted.length; i++) {
     const curr = sorted[i]
-    const prevWasLoss = (prev.pnl ?? 0) < 0
-    if (!prevWasLoss) continue
+    if (!curr.entry_time) continue
+    const openMs = Date.parse(curr.entry_time)
+    if (!Number.isFinite(openMs)) continue
 
-    // P3 — quantity must be ≤ POST_LOSS_QTY_CAP after a loss
+    // Most recent trade that had already closed when `curr` opened.
+    let lastClosed: typeof curr | null = null
+    let lastClosedExitMs = -Infinity
+    for (let j = 0; j < sorted.length; j++) {
+      if (j === i) continue
+      const o = sorted[j]
+      if (!o.exit_time) continue
+      const exitMs = Date.parse(o.exit_time)
+      if (!Number.isFinite(exitMs)) continue
+      if (exitMs <= openMs && exitMs > lastClosedExitMs) {
+        lastClosed = o
+        lastClosedExitMs = exitMs
+      }
+    }
+    // P3/P4 only react when the immediately-preceding REALIZED trade was a loss.
+    if (!lastClosed || (lastClosed.pnl ?? 0) >= 0) continue
+
+    // P3 — size after a realized loss must be ≤ POST_LOSS_QTY_CAP
     if (curr.quantity != null && curr.quantity > POST_LOSS_QTY_CAP) {
-      p3Breaches.push(`T${i + 1} sized ${curr.quantity} after T${i} loss`)
+      p3Breaches.push(`T${i + 1} sized ${curr.quantity} after a realized loss`)
     }
 
-    // P4 — gap from prev exit to curr entry must be ≥ COOLDOWN_SEC
-    if (prev.exit_time && curr.entry_time) {
-      const gapSec = (Date.parse(curr.entry_time) - Date.parse(prev.exit_time)) / 1000
-      if (Number.isFinite(gapSec) && gapSec < COOLDOWN_SEC) {
-        p4Breaches.push(`T${i}→T${i + 1} gap ${gapSec.toFixed(0)}s (loss → re-entry)`)
-      }
+    // P4 — gap from the loss closing to this trade opening must be ≥ COOLDOWN_SEC
+    const gapSec = (openMs - lastClosedExitMs) / 1000
+    if (Number.isFinite(gapSec) && gapSec < COOLDOWN_SEC) {
+      p4Breaches.push(`T${i + 1} opened ${gapSec.toFixed(0)}s after the prior loss closed`)
     }
   }
   const P3: DeterministicRuleResult = p3Breaches.length === 0
@@ -777,12 +805,18 @@ export function applyDeterministicOverrides(
       const ai = parsed.process.per_rule[k]
       const calc = det[k]
       const aiBc = ai?.breach_count ?? 0
-      if (!ai || ai.status !== calc.status || aiBc !== calc.breach_count) {
+      const changed = !ai || ai.status !== calc.status || aiBc !== calc.breach_count
+      if (changed) {
         log(`overriding ${k} ${ai?.status ?? 'undef'}/${aiBc} → ${calc.status}/${calc.breach_count}`)
-        parsed.process.per_rule[k] = { status: calc.status, breach_count: calc.breach_count, reason: calc.reason }
-        if (parsed.process.breach_count_vector) parsed.process.breach_count_vector[k] = calc.breach_count
         touchedProcess = true
       }
+      // ALWAYS write the deterministic result — even when the AI's status
+      // happened to match, its reason text can be garbled or self-
+      // contradictory (e.g. status="pass" with a reason that argues "P3
+      // breach"). These rules are fully deterministic, so the clean computed
+      // reason is authoritative and always wins.
+      parsed.process.per_rule[k] = { status: calc.status, breach_count: calc.breach_count, reason: calc.reason }
+      if (parsed.process.breach_count_vector) parsed.process.breach_count_vector[k] = calc.breach_count
     }
     if (touchedProcess) {
       const passCount = Object.values(parsed.process.per_rule).filter(r => r?.status === 'pass').length
