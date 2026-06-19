@@ -76,6 +76,13 @@ const dryRun = argv.includes('--dry-run')
 const force = argv.includes('--force')
 const limitArg = argv.find(a => a.startsWith('--limit='))
 const limit = limitArg ? parseInt(limitArg.split('=')[1]) : Infinity
+// --date=YYYY-MM-DD scopes the WRITE to trades whose entry falls on that UTC
+// day (the snapshot series is still built in full). Use to fix a single day
+// without touching others.
+const dateArg = argv.find(a => a.startsWith('--date='))?.split('=')[1] ?? null
+function nextUtcDay(d: string): string {
+  return new Date(Date.parse(d + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10)
+}
 
 function normalizeDate(raw: string): string {
   const [y, m, d] = raw.trim().split('-')
@@ -230,13 +237,20 @@ function streamScidSnapshots(
 }
 
 /** Find the nearest covered minute at or before `sec` on `date`. Trades' entry
- *  times are seconds-precise but bars are minute-aligned, so we floor. */
+ *  times are seconds-precise but bars are minute-aligned, so we floor — then
+ *  walk back up to 30 min, since overnight/thin sessions (e.g. a near-expiry
+ *  contract) can have minutes with no bar at all. ATR-10 moves slowly, so the
+ *  last available value is a fine proxy; a >30-min gap is treated as genuinely
+ *  uncovered (returns null). */
 function lookupSnapshot(snapshots: SnapshotMap, date: string, sec: number): MinuteSnapshot | null {
   const dayMap = snapshots.get(date)
   if (!dayMap) return null
-  // Floor to the minute bar containing `sec`.
   const minuteSec = Math.floor(sec / 60) * 60
-  return dayMap.get(minuteSec) ?? null
+  for (let back = 0; back <= 30; back++) {
+    const snap = dayMap.get(minuteSec - back * 60)
+    if (snap) return snap
+  }
+  return null
 }
 
 /** Compute mean cumVol at `sec` across the prior `n` covered trading days. */
@@ -268,18 +282,21 @@ interface TradeRow {
   entry_rvol: number | null
 }
 
-async function fetchTrades(): Promise<TradeRow[]> {
+async function fetchTrades(dateFilter: string | null): Promise<TradeRow[]> {
   const PAGE = 1000
   const out: TradeRow[] = []
+  const lo = dateFilter ? `${dateFilter}T00:00:00Z` : `${MIN_TRADE_DATE}T00:00:00Z`
+  const hi = dateFilter ? `${nextUtcDay(dateFilter)}T00:00:00Z` : null
   // Native trades — entry_time is the source of truth.
   for (let p = 0; p < 50; p++) {
     let q = sb
       .from('trades')
       .select('id, entry_time, entry_atr_1m, entry_rvol')
-      .gte('entry_time', `${MIN_TRADE_DATE}T00:00:00Z`)
+      .gte('entry_time', lo)
       .order('entry_time', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (hi) q = q.lt('entry_time', hi)
     if (!force) q = q.is('entry_atr_1m', null)
     const { data, error } = await q
     if (error) { console.error('  fetch trades page', p, error.message); break }
@@ -297,10 +314,11 @@ async function fetchTrades(): Promise<TradeRow[]> {
     let q = sb
       .from('historical_trades')
       .select('id, open_at, entry_atr_1m, entry_rvol')
-      .gte('open_at', `${MIN_TRADE_DATE}T00:00:00Z`)
+      .gte('open_at', lo)
       .order('open_at', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (hi) q = q.lt('open_at', hi)
     if (!force) q = q.is('entry_atr_1m', null)
     const { data, error } = await q
     if (error) { console.error('  fetch historical_trades page', p, error.message); break }
@@ -350,7 +368,7 @@ async function main() {
 
   // Step 3: Fetch trades to backfill
   console.log('Fetching trades…')
-  const trades = await fetchTrades()
+  const trades = await fetchTrades(dateArg)
   console.log(`Loaded ${trades.length} trade(s) needing backfill${force ? ' (--force: all matching trades)' : ' (only nulls)'}`)
   console.log()
 
