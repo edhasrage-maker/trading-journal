@@ -4,6 +4,7 @@ import { parseSierraChartLog, mapRowToTrade } from '@/lib/sc-importer'
 import { resilientUpsert, resilientBulkUpsert, resilientUpdate } from '@/lib/resilient-upsert'
 import { perLegMaxDollars, type BarLike } from '@/lib/analytics'
 import { computeStructure5mAlignment } from '@/lib/structure-5m'
+import { isOutsideRth } from '@/lib/rth'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -156,6 +157,45 @@ export async function POST(req: Request) {
       }
       if (structComputed > 0 || structNoData > 0) {
         console.log(`[import-sc-log] structure_5m_alignment: computed=${structComputed}, no-data=${structNoData}, following=${counts.following}, fading=${counts.fading}, neutral=${counts.neutral}`)
+      }
+
+      // 4c. Auto-tag GBX (Globex / overnight). Any trade entered outside RTH
+      // (06:30–13:00 PT) gets a per-trade day_type='GBX' (session attribute;
+      // never clobbers an existing day_type). A PURE-GBX day (every trade that
+      // day was outside RTH) also gets a day-level GBX chip; that chip is
+      // dropped again if a later import turns the day mixed. Re-reads the whole
+      // day's trades so pre-existing rows are covered and pure/mixed is exact.
+      {
+        const { data: dayTrades } = await supabase
+          .from('trades').select('id, entry_time, tags_json').eq('trading_day_id', day.id)
+        const all = (dayTrades ?? []) as { id: string; entry_time: string | null; tags_json: Record<string, unknown> | null }[]
+        let gbxTagged = 0, outCount = 0
+        for (const t of all) {
+          if (!t.entry_time || !isOutsideRth(t.entry_time)) continue
+          outCount++
+          const tj = (t.tags_json && typeof t.tags_json === 'object') ? t.tags_json : {}
+          if (tj.day_type) continue  // respect an existing day_type (incl already-GBX)
+          await supabase.from('trades').update({ tags_json: { ...tj, day_type: 'GBX' } }).eq('id', t.id)
+          gbxTagged++
+        }
+        // Day-level chip: keep GBX in day_types iff the day is pure-GBX.
+        const pureGbx = all.length > 0 && outCount === all.length
+        const { data: td } = await supabase.from('trading_days').select('day_type, day_types').eq('id', day.id).single()
+        const cur: string[] = Array.isArray(td?.day_types) ? td.day_types : []
+        const hasGbx = cur.includes('GBX')
+        if (pureGbx && !hasGbx) {
+          const upd: { day_types: string[]; day_type?: string } = { day_types: [...cur, 'GBX'] }
+          if (!td?.day_type && cur.length === 0) upd.day_type = 'GBX'
+          await supabase.from('trading_days').update(upd).eq('id', day.id)
+        } else if (!pureGbx && hasGbx) {
+          const next = cur.filter(x => x !== 'GBX')
+          const upd: { day_types: string[]; day_type?: string | null } = { day_types: next }
+          if (td?.day_type === 'GBX') upd.day_type = next[0] ?? null
+          await supabase.from('trading_days').update(upd).eq('id', day.id)
+        }
+        if (gbxTagged > 0 || pureGbx) {
+          console.log(`[import-sc-log] GBX: tagged ${gbxTagged} out-of-RTH trade(s); pureGbxDay=${pureGbx}`)
+        }
       }
     }
   }
