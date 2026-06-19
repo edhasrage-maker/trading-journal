@@ -117,6 +117,7 @@ NO TRADE DATA — the trader logged no trades in this window.
   const dayTypeBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
   const ofBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
   const structureBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
+  const monthBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
 
   for (const t of trades) {
     const pnl = t.pnl ?? 0
@@ -160,6 +161,16 @@ NO TRADE DATA — the trader logged no trades in this window.
       const b = structureBuckets.get(t.structure_5m_alignment) ?? { count: 0, wins: 0, pnl: 0 }
       b.count++; if (isWin) b.wins++; b.pnl += pnl
       structureBuckets.set(t.structure_5m_alignment, b)
+    }
+
+    // Per-calendar-month bucket (key = YYYY-MM) so the coach can answer
+    // month-over-month questions. Uses the trade's entry_time, NOT the
+    // day-id, so it works regardless of trading_days join state.
+    const ym = (t.entry_time ?? '').slice(0, 7)
+    if (ym) {
+      const b = monthBuckets.get(ym) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+      monthBuckets.set(ym, b)
     }
   }
 
@@ -206,6 +217,12 @@ OVERALL:
   Win rate: ${winRate.toFixed(0)}% (${winners}W / ${losers}L)
   Total PnL: ${fmt(totalPnl)}
   Profit factor: ${Number.isFinite(profitFactor) ? profitFactor.toFixed(2) : '∞'}${weekOverWeekBlock}
+
+MONTH-BY-MONTH (chronological — each month's trade count, PnL, win rate, profit factor):
+${Array.from(monthBuckets.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([ym, b]) => {
+    const wr = (b.wins + b.losers) > 0 ? Math.round((b.wins / (b.wins + b.losers)) * 100) : 0
+    return `  ${ym}: ${b.count} trades · ${fmt(b.pnl)} · WR ${wr}%`
+  }).join('\n') || '  (no trades in window)'}
 
 SETUP PERFORMANCE (by total PnL, top 10):
 ${sortByPnl(setupBuckets).map(([s, b]) => `  ${s}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}% · avgR ${b.rs.length > 0 ? (b.rs.reduce((s, r) => s + r, 0) / b.rs.length).toFixed(2) : '—'}`).join('\n')}

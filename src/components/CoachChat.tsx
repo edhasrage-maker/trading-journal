@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { X, Send, Loader2, Brain, Trash2 } from 'lucide-react'
+import { X, Send, Loader2, Brain, Trash2, Download } from 'lucide-react'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -126,6 +126,26 @@ export default function CoachChat() {
     try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
   }
 
+  /** Download the conversation as a markdown transcript. Browser-side only —
+   *  builds a Blob and triggers a download via a temporary anchor. */
+  const exportTranscript = () => {
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ')
+    const body = messages
+      .filter(m => !m.streaming && m.content.trim())
+      .map(m => `### ${m.role === 'user' ? 'You' : 'Coach'}\n\n${m.content.trim()}`)
+      .join('\n\n---\n\n')
+    const md = `# Trade Coach conversation\n\nExported ${stamp}\n\n---\n\n${body}\n`
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `coach-chat-${new Date().toISOString().slice(0, 10)}.md`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   // Bottom-right floating launcher
   if (!open) {
     return (
@@ -145,41 +165,54 @@ export default function CoachChat() {
     <div className="fixed bottom-6 right-6 z-40 w-[420px] max-w-[calc(100vw-3rem)] h-[600px] max-h-[calc(100vh-3rem)] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl shadow-black/60 flex flex-col">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-800">
-        <Brain className="w-4 h-4 text-blue-400" />
+        <Brain className="w-4 h-4 text-blue-400 shrink-0" />
         <span className="font-semibold text-white text-sm">Trade Coach</span>
-        <span className="ml-2 text-[10px] text-gray-500">Asks your data — answers from your actual trades</span>
-        {messages.length > 0 && (
+        <span className="ml-1 text-[10px] text-gray-500 truncate hidden sm:inline">Answers from your actual trades</span>
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+          {messages.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={exportTranscript}
+                className="text-gray-500 hover:text-blue-400 transition-colors"
+                title="Download this conversation as a text file"
+                aria-label="Export transcript"
+              >
+                <Download className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={clearChat}
+                className="text-gray-500 hover:text-red-400 transition-colors"
+                title="Clear chat history"
+                aria-label="Clear chat"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
           <button
             type="button"
-            onClick={clearChat}
-            className="ml-auto text-gray-500 hover:text-red-400 transition-colors"
-            title="Clear chat history"
-            aria-label="Clear chat"
+            onClick={() => setOpen(false)}
+            className="text-gray-500 hover:text-white transition-colors"
+            title="Close"
+            aria-label="Close chat"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className={messages.length > 0 ? "text-gray-500 hover:text-white transition-colors" : "ml-auto text-gray-500 hover:text-white transition-colors"}
-          title="Close"
-          aria-label="Close chat"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        </div>
       </div>
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-sm">
         {messages.length === 0 && (
           <div className="text-gray-500 text-xs space-y-2">
-            <p>Ask me anything about your trading. I have access to your last 180 days of trades, setups, mistakes, day types, and orderflow tags.</p>
+            <p>Ask me anything about your trading. I have your last 180 days — month-by-month performance, setups, mistakes, day types, orderflow, 5m structure, and your last 150 trades in detail.</p>
             <p className="text-gray-600">Try:</p>
             <ul className="list-disc pl-4 space-y-1 text-gray-600">
-              <li>&ldquo;What setups have been working this week?&rdquo;</li>
+              <li>&ldquo;How did I do month over month?&rdquo;</li>
               <li>&ldquo;What are my patterns when I trade poorly?&rdquo;</li>
-              <li>&ldquo;How does my win rate compare on Range days vs Trend days?&rdquo;</li>
+              <li>&ldquo;Am I better following or fading 5m structure?&rdquo;</li>
               <li>&ldquo;Which mistakes cost me the most money?&rdquo;</li>
             </ul>
           </div>

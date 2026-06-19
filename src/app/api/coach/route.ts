@@ -65,7 +65,11 @@ export async function POST(req: Request) {
     endDate: today,
     windowLabel: 'last 180 days',
     includeWeekOverWeek: true,
-    recentTradesLimit: 50,
+    // 150 recent trades in row-level detail (was 50). Plus the monthly
+    // breakdown + all the aggregate sections, the coach can now answer
+    // month-over-month questions AND recall individual trades deeper into
+    // the history. ~150 terse rows is well within sonnet's context budget.
+    recentTradesLimit: 150,
   })
   const traderProfile = await getTraderProfile()
 
