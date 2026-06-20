@@ -117,6 +117,11 @@ create table if not exists trades (
   -- EMA). Auto-populated at SC-import time by /api/import-sc-log; backfilled
   -- by scripts/backfill-structure-5m-alignment.ts for existing trades.
   structure_5m_alignment text check (structure_5m_alignment is null or structure_5m_alignment in ('following', 'fading', 'neutral')),
+  -- Pivot market-structure regime at entry (HH-HL zig-zag over a continuous NQ
+  -- front-month 5m series). Richer than the EMA structure_5m_alignment; follow/
+  -- fade derives from (direction, regime). Backfilled by
+  -- scripts/backfill-structure-regime.ts; algorithm in src/lib/market-structure.ts.
+  structure_5m_regime text check (structure_5m_regime is null or structure_5m_regime in ('bull', 'bear', 'neutral', 'insufficient')),
   exits_json jsonb, -- array of partial exits: [{ time: ISO-8601, price: number, qty: number }, ...]; null/empty -> fall back to single exit_time/exit_price avg
   tags_json jsonb default '{}',
   -- tags_json shape:
@@ -530,6 +535,8 @@ create table if not exists historical_trades (
   -- time). When the importer is upgraded to capture multi-leg exits this
   -- column can be backfilled the same way as native trades.
   mfe_dollars_per_leg numeric(10,2),
+  -- Pivot market-structure regime at entry (mirrors trades.structure_5m_regime).
+  structure_5m_regime text check (structure_5m_regime is null or structure_5m_regime in ('bull', 'bear', 'neutral', 'insufficient')),
   duration_sec numeric,
   rating numeric,
   zella_score numeric,
