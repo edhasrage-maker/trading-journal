@@ -445,7 +445,7 @@ export default function RecentDaysList({ initialDays }: Props) {
             type="button"
             onClick={() => setRealizedInfoOpen(o => !o)}
             className={`transition-colors ${realizedInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-            title="What are MFE Realized % and MAE Heat %?"
+            title="What is MFE Realized %?"
           >
             <HelpCircle className="w-3 h-3" />
           </button>
@@ -458,7 +458,6 @@ export default function RecentDaysList({ initialDays }: Props) {
               {realizedUnit === '%' ? 'MFE Realized %' : 'MFE Realized'}
               {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
             </span>
-            <span>{realizedUnit === '%' ? 'MAE Heat %' : 'MAE Heat'}</span>
           </button>
         </div>
         <select
@@ -466,7 +465,7 @@ export default function RecentDaysList({ initialDays }: Props) {
           onChange={e => setRealizedUnit(e.target.value as MfeUnit | '%')}
           onClick={e => e.stopPropagation()}
           className="bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 mt-0.5 focus:outline-none focus:border-blue-500 leading-tight normal-case"
-          title="Unit for MFE Realized / MAE Heat columns"
+          title="Unit for the MFE Realized column"
         >
           <option value="%">%</option>
           <option value="pts">pts</option>
@@ -479,13 +478,13 @@ export default function RecentDaysList({ initialDays }: Props) {
             className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
           >
             <div className="flex items-start justify-between mb-2">
-              <p className="font-semibold text-white">MFE Realized % / MAE Heat %</p>
+              <p className="font-semibold text-white">MFE Realized %</p>
               <button type="button" onClick={() => setRealizedInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
             <p className="mb-2">
-              Two execution-quality metrics averaged across the day&apos;s trades. Both bounded by <strong>entry â†’ exit</strong> — they measure what happened <em>while you held the position</em>, not after.
+              An execution-quality metric averaged across the day&apos;s trades, bounded by <strong>entry â†’ exit</strong> — it measures what happened <em>while you held the position</em>, not after.
             </p>
             <p className="mb-1"><strong className="text-green-300">MFE Realized %</strong></p>
             <p className="mb-2 text-gray-400">
@@ -496,17 +495,8 @@ export default function RecentDaysList({ initialDays }: Props) {
               <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
               <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — trade went green then closed at a loss</li>
             </ul>
-            <p className="mb-1"><strong className="text-red-300">MAE Heat %</strong></p>
-            <p className="mb-2 text-gray-400">
-              = peak adverse excursion Ã· planned stop distance — &ldquo;how much of my planned risk did I sit through?&rdquo;
-            </p>
-            <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
-              <li><strong>0–50%</strong>: clean entry, light pressure</li>
-              <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
-              <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — you moved it, slipped, or trade reversed in time to save you</li>
-            </ul>
             <p className="mb-2 text-gray-500">
-              <strong>Color rule:</strong> gray by default; red bold only on standout days — when the day averaged a give-back (capture &lt; 0) or sat past planned stop (heat &gt; 100%). Other days stay gray on purpose so the eye lands on what needs review.
+              <strong>Color rule:</strong> gray by default; red bold only on give-back days (capture &lt; 0). Other days stay gray on purpose so the eye lands on what needs review.
             </p>
             <p className="mb-1 text-gray-500">Trades excluded from the average:</p>
             <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-500">
@@ -773,7 +763,7 @@ function DayRowItem({
           ),
           capture: (
             <td key="capture" className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-              <CaptureHeatCell day={day} realizedUnit={realizedUnit} />
+              <MfeRealizedCell day={day} realizedUnit={realizedUnit} />
             </td>
           ),
           win_rate: (
@@ -855,25 +845,20 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
 }
 
 /**
- * Capture % / Heat % per day. Gray-by-default; only standout values
- * (give-back day average, or sat-past-stop day average) get a color so the
- * eye lands on days that need review.
- *
- * Both shown as percentages for uniformity:
- *   Capture %  = realized PnL Ã· peak favorable in $ during the position
- *   Heat %     = peak MAE Ã· planned stop distance in pts (100% = touched stop)
+ * MFE Realized % per day (capture efficiency). Gray-by-default; only give-back
+ * day averages (capture < 0) get a color so the eye lands on days that need
+ * review. = realized PnL ÷ peak favorable in $ during the position. (MAE Heat
+ * was removed 2026-06 — it penalized correct stop-outs; the descriptive MAE
+ * aggregate still lives in analytics.)
  */
-function CaptureHeatCell({ day, realizedUnit }: { day: DayRowData; realizedUnit: MfeUnit | '%' }) {
-  if (day.avg_capture == null && day.avg_heat == null) {
+function MfeRealizedCell({ day, realizedUnit }: { day: DayRowData; realizedUnit: MfeUnit | '%' }) {
+  if (day.avg_capture == null) {
     return <span className="text-gray-700">—</span>
   }
-  // Standout rules — bound to capture < 0 / heat > 100% regardless of unit
-  // since those crossings are semantic (give-back, past stop) and don't
-  // change with display unit.
+  // Give-back days (capture < 0) get a color regardless of display unit, since
+  // the crossing is semantic and unit-independent.
   const capStandout = day.avg_capture != null && day.avg_capture < 0
-  const heatStandout = day.avg_heat != null && day.avg_heat > 1.0
   const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
-  const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
 
   // Non-% units: show "realized / max" for MFE and "adverse / stop" for MAE.
   // Per-leg precision (e.g., trader exits 3 lots @ +20 then 2 lots @ +20
@@ -886,11 +871,7 @@ function CaptureHeatCell({ day, realizedUnit }: { day: DayRowData; realizedUnit:
     const peakMfe = isDollars ? day.avg_mfe_dollars
       : isAtr ? (day.avg_mfe_pts != null && atrRef ? day.avg_mfe_pts / atrRef : null)
       : day.avg_mfe_pts
-    const peakMae = isDollars ? day.avg_mae_dollars
-      : isAtr ? (day.avg_mae_pts != null && atrRef ? day.avg_mae_pts / atrRef : null)
-      : day.avg_mae_pts
     const realizedMfe = peakMfe != null && day.avg_capture != null ? peakMfe * day.avg_capture : null
-    const stopMae = peakMae != null && day.avg_heat != null && day.avg_heat !== 0 ? peakMae / day.avg_heat : null
     const fmt = (v: number | null, signed: boolean): string => {
       if (v == null) return '—'
       const abs = Math.abs(v)
@@ -901,16 +882,11 @@ function CaptureHeatCell({ day, realizedUnit }: { day: DayRowData; realizedUnit:
     return (
       <span
         className="flex flex-col items-center leading-tight whitespace-nowrap text-[10px]"
-        title={`Realized excursion in ${realizedUnit === 'dollars' ? '$' : realizedUnit === 'atr' ? '×ATR' : 'pts'}. Per-leg scaling approximated using avg peak × avg capture; switch to % for the exact ratio.`}
+        title={`Realized MFE in ${realizedUnit === 'dollars' ? '$' : realizedUnit === 'atr' ? '×ATR' : 'pts'}. Per-leg scaling approximated using avg peak × avg capture; switch to % for the exact ratio.`}
       >
         <span className={capCls}>
           {fmt(realizedMfe, true)}{peakMfe != null && (
             <span className="text-gray-600">{` / ${fmt(peakMfe, false)}`}</span>
-          )}
-        </span>
-        <span className={heatCls}>
-          -{fmt(peakMae, false)}{stopMae != null && (
-            <span className="text-gray-600">{` / -${fmt(stopMae, false)}`}</span>
           )}
         </span>
       </span>
@@ -920,10 +896,9 @@ function CaptureHeatCell({ day, realizedUnit }: { day: DayRowData; realizedUnit:
   return (
     <span
       className="flex flex-col items-center leading-tight whitespace-nowrap"
-      title="MFE Realized % = avg realized PnL Ã· peak favorable $ per trade (during position, not after exit). MAE Heat % = avg peak MAE Ã· planned stop distance per trade (100% = touched stop level; > 100% = blew past it). Red bold means the day averaged a give-back (capture < 0) or sat past planned stop (heat > 100%)."
+      title="MFE Realized % = avg realized PnL Ã· peak favorable $ per trade (during position, not after exit). Red bold means the day averaged a give-back (capture < 0)."
     >
       <span className={capCls}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
-      <span className={heatCls}>{day.avg_heat == null ? '—' : `${(day.avg_heat * 100).toFixed(0)}%`}</span>
     </span>
   )
 }
