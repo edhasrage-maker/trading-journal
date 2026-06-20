@@ -5,6 +5,7 @@ import { resilientUpsert, resilientBulkUpsert, resilientUpdate } from '@/lib/res
 import { perLegMaxDollars, type BarLike } from '@/lib/analytics'
 import { computeStructure5mAlignment } from '@/lib/structure-5m'
 import { isOutsideRth } from '@/lib/rth'
+import { buildDayRegimeSeries, regimeAtEntry } from '@/lib/nq-front-month'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -196,6 +197,31 @@ export async function POST(req: Request) {
         if (gbxTagged > 0 || pureGbx) {
           console.log(`[import-sc-log] GBX: tagged ${gbxTagged} out-of-RTH trade(s); pureGbxDay=${pureGbx}`)
         }
+      }
+
+      // 4d. Pivot market-structure regime (structure_5m_regime). Build ONE 5m
+      // series for the day's front-month contract, then tag each trade. Best-
+      // effort and wrapped — a missing/slow .scid never breaks the import; the
+      // backfill (scripts/backfill-structure-regime.ts) is authoritative.
+      try {
+        const dataDir = process.env.SIERRA_DATA_DIR || 'D:\\SierraCharts\\Data'
+        const series = buildDayRegimeSeries(dataDir, date)
+        if (series) {
+          const { data: regimeTrades } = await supabase
+            .from('trades').select('id, entry_time, structure_5m_regime').eq('trading_day_id', day.id)
+          let regimeTagged = 0
+          for (const t of (regimeTrades ?? []) as { id: string; entry_time: string | null; structure_5m_regime: string | null }[]) {
+            if (!t.entry_time) continue
+            const regime = regimeAtEntry(series, Date.parse(t.entry_time))
+            if (regime && t.structure_5m_regime !== regime) {
+              await supabase.from('trades').update({ structure_5m_regime: regime }).eq('id', t.id)
+              regimeTagged++
+            }
+          }
+          if (regimeTagged > 0) console.log(`[import-sc-log] structure_5m_regime: tagged ${regimeTagged}`)
+        }
+      } catch (e) {
+        console.warn('[import-sc-log] regime tagging skipped:', e instanceof Error ? e.message : 'unknown')
       }
     }
   }
