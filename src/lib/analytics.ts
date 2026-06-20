@@ -39,6 +39,9 @@ export interface TradeWithContext extends TradeWithExcursion {
   // multiplier). Populated by scripts/backfill-per-leg-mfe.ts. When present,
   // captureComponents uses this instead of the simple peak × full-qty formula.
   mfe_dollars_per_leg: number | null
+  // Pivot market-structure regime at entry (scripts/backfill-structure-regime.ts).
+  // follow/fade derives from (direction, regime).
+  structure_5m_regime: 'bull' | 'bear' | 'neutral' | 'insufficient' | null
 }
 
 export interface DaySummary {
@@ -599,6 +602,30 @@ export function aggregateByDayType(trades: TradeWithContext[]): TagPerf[] {
     .sort((a, b) => b.stats.total_pnl - a.stats.total_pnl)
 }
 
+/** Follow vs Fade by the pivot 5m structure regime at entry. long+bull /
+ *  short+bear = following the HH-HL trend; long+bear / short+bull = fading it;
+ *  neutral / insufficient structure are their own buckets. Trades without a
+ *  regime (no .scid coverage) are skipped. Mirrors the follow/fade study. */
+export function aggregateByStructureFollowFade(trades: TradeWithContext[]): TagPerf[] {
+  const buckets = new Map<string, TradeLike[]>()
+  for (const t of trades) {
+    const r = t.structure_5m_regime
+    if (!r) continue
+    let label: string
+    if (r === 'bull' || r === 'bear') {
+      if (!t.direction) continue
+      const withTrend = (t.direction === 'long' && r === 'bull') || (t.direction === 'short' && r === 'bear')
+      label = withTrend ? 'Follow' : 'Fade'
+    } else {
+      label = r === 'neutral' ? 'Neutral structure' : 'No structure'
+    }
+    if (!buckets.has(label)) buckets.set(label, [])
+    buckets.get(label)!.push(t)
+  }
+  return Array.from(buckets, ([label, ts]) => ({ label, stats: computeStats(ts) }))
+    .sort((a, b) => b.stats.total_pnl - a.stats.total_pnl)
+}
+
 /** Comparison of "trades WITH this tag" vs "trades WITHOUT this tag". */
 export interface TagImpact {
   label: string
@@ -789,7 +816,7 @@ export function maxDrawdown(points: { cum_pnl: number }[]): number {
  *  2026-06-09 migration; until the generated Supabase types catch up, the
  *  caller widens the row type locally and we tolerate them being missing. */
 export function joinTradesWithContext(
-  trades: (TradeWithExcursion & { entry_atr_1m?: number | null; entry_rvol?: number | null; mfe_dollars_per_leg?: number | null })[],
+  trades: (TradeWithExcursion & { entry_atr_1m?: number | null; entry_rvol?: number | null; mfe_dollars_per_leg?: number | null; structure_5m_regime?: 'bull' | 'bear' | 'neutral' | 'insufficient' | null })[],
   days: Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types'>[],
   contexts: Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>[],
 ): TradeWithContext[] {
@@ -814,6 +841,7 @@ export function joinTradesWithContext(
       entry_atr_1m: t.entry_atr_1m ?? null,
       entry_rvol: t.entry_rvol ?? null,
       mfe_dollars_per_leg: t.mfe_dollars_per_leg ?? null,
+      structure_5m_regime: t.structure_5m_regime ?? null,
     }
   })
 }

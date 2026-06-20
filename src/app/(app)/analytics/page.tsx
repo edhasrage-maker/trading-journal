@@ -29,6 +29,7 @@ interface HistRow {
   entry_rvol: number | null
   // Scaling-aware MFE max-possible (backfilled by scripts/backfill-per-leg-mfe.ts).
   mfe_dollars_per_leg: number | null
+  structure_5m_regime: 'bull' | 'bear' | 'neutral' | 'insufficient' | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tags_json: any
 }
@@ -78,6 +79,7 @@ function histToContext(h: HistRow, ctxByDate: ContextByDate, dayTypesByDate: Day
     stop_price: stop,
     quantity: qty,
     direction: (h.side as 'long' | 'short' | null) ?? null,
+    structure_5m_regime: h.structure_5m_regime ?? null,
     entry_time: h.open_at,
     tags_json: h.tags_json ?? {},
     trading_day_id: '',
@@ -131,12 +133,12 @@ export default async function AnalyticsPage() {
   // entry_atr_1m / entry_rvol added by the 2026-06-09 migration — Supabase
   // generated types haven't been regenerated yet, so we widen the row type
   // locally. When the types are next regenerated, drop the intersection.
-  type TradeRowWithEntryMetrics = Trade & { entry_atr_1m: number | null; entry_rvol: number | null; mfe_dollars_per_leg: number | null; structure_5m_alignment: 'following' | 'fading' | 'neutral' | null }
+  type TradeRowWithEntryMetrics = Trade & { entry_atr_1m: number | null; entry_rvol: number | null; mfe_dollars_per_leg: number | null; structure_5m_alignment: 'following' | 'fading' | 'neutral' | null; structure_5m_regime: 'bull' | 'bear' | 'neutral' | 'insufficient' | null }
   const trades: TradeRowWithEntryMetrics[] = []
   for (let p = 0; p < 50; p++) {
     const { data, error } = await supabase
       .from('trades')
-      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment')
+      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment, structure_5m_regime')
       .order('entry_time', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -154,7 +156,7 @@ export default async function AnalyticsPage() {
   for (let p = 0; p < 50; p++) {
     const { data, error } = await supabase
       .from('historical_trades')
-      .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, tags_json')
+      .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_regime, tags_json')
       .order('trade_date', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)

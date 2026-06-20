@@ -13,6 +13,7 @@ import TradeListModal, { type ModalCategory } from './TradeListModal'
 import {
   aggregateByTag,
   aggregateByDayType,
+  aggregateByStructureFollowFade,
   tagImpact,
   computeStats,
   type TradeWithContext,
@@ -146,6 +147,7 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
   const orderFlowPerf = useMemo(() => aggregateByTag(filtered, 'order_flow'), [filtered])
   const mgmtPerf = useMemo(() => aggregateByTag(filtered, 'trade_management'), [filtered])
   const dayTypePerf = useMemo(() => aggregateByDayType(filtered), [filtered])
+  const structurePerf = useMemo(() => aggregateByStructureFollowFade(filtered), [filtered])
 
   // Drilldown modal state — which (category, label) pair the user clicked
   // on. Click any tag label in any of the five performance tables to open
@@ -340,6 +342,11 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
         description="Performance by the day type set during prep"
         data={dayTypePerf}
         onTagClick={openCategory('day_types')}
+      />
+      <TagPerformanceTable
+        title="Structure (Follow / Fade)"
+        description="Pivot 5m market structure at entry — trading with vs against the HH-HL trend"
+        data={structurePerf}
       />
       <TagPerformanceTable
         title="Trade Management"
