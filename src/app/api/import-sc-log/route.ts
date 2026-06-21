@@ -5,7 +5,7 @@ import { resilientUpsert, resilientBulkUpsert, resilientUpdate } from '@/lib/res
 import { perLegMaxDollars, type BarLike } from '@/lib/analytics'
 import { computeStructure5mAlignment } from '@/lib/structure-5m'
 import { isOutsideRth } from '@/lib/rth'
-import { buildDayRegimeSeries, regimeAtEntry } from '@/lib/nq-front-month'
+import { buildDayRegimeSeries, regimeAtEntry, buildDayAtrSeries, atrAtEntry } from '@/lib/nq-front-month'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -222,6 +222,31 @@ export async function POST(req: Request) {
         }
       } catch (e) {
         console.warn('[import-sc-log] regime tagging skipped:', e instanceof Error ? e.message : 'unknown')
+      }
+
+      // 4e. Live entry ATR-10 (entry_atr_1m) so the dashboard ×ATR shows a live
+      // value instead of the prep-ATR fallback ("prep" tag). Best-effort; only
+      // fills nulls — a prior backfill value (computed over a longer continuous
+      // series) is authoritative and left in place.
+      try {
+        const dataDir = process.env.SIERRA_DATA_DIR || 'D:\\SierraCharts\\Data'
+        const atrSeries = buildDayAtrSeries(dataDir, date)
+        if (atrSeries) {
+          const { data: atrTrades } = await supabase
+            .from('trades').select('id, entry_time, entry_atr_1m').eq('trading_day_id', day.id)
+          let atrTagged = 0
+          for (const t of (atrTrades ?? []) as { id: string; entry_time: string | null; entry_atr_1m: number | null }[]) {
+            if (!t.entry_time || t.entry_atr_1m != null) continue
+            const atr = atrAtEntry(atrSeries, Date.parse(t.entry_time))
+            if (atr != null) {
+              await supabase.from('trades').update({ entry_atr_1m: Math.round(atr * 100) / 100 }).eq('id', t.id)
+              atrTagged++
+            }
+          }
+          if (atrTagged > 0) console.log(`[import-sc-log] entry_atr_1m: tagged ${atrTagged}`)
+        }
+      } catch (e) {
+        console.warn('[import-sc-log] entry_atr_1m skipped:', e instanceof Error ? e.message : 'unknown')
       }
     }
   }

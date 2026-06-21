@@ -84,3 +84,55 @@ export function regimeAtEntry(series: RegimeSeries, entryMs: number): Regime | n
   if (T < 0 || ts - series.times[T] > 900) return null
   return structureAt(series.pivots, series.confirmIdx, series.seg, T)
 }
+
+const ATR_PERIOD = 10  // matches scripts/backfill-entry-metrics.ts
+
+export interface AtrSeries { times: number[]; atr: (number | null)[] }  // Wilder ATR-10 per 1m bar
+
+/**
+ * Build a per-1m-bar Wilder ATR-10 series for `date`'s front-month contract,
+ * from a bounded warmup window up to the end of `date`. Mirrors the backfill's
+ * ATR math; warmup ≥ a few days is ample since Wilder ATR-10 has short memory.
+ * Returns null if the .scid is missing/empty or too short to seed.
+ */
+export function buildDayAtrSeries(dataDir: string, date: string, warmupDays = 7): AtrSeries | null {
+  const file = contractFileForDate(date)
+  if (!file) return null
+  const rollIn = rollInForDate(date)
+  const warmStart = new Date(Date.parse(date + 'T00:00:00Z') - warmupDays * 86400000).toISOString().slice(0, 10)
+  const start = rollIn && rollIn > warmStart ? rollIn : warmStart
+  const endMs = Date.parse(date + 'T00:00:00Z') + 86400000
+  let res
+  try { res = readScidBars(join(dataDir, file), Date.parse(start + 'T00:00:00Z'), endMs, { priceDivisor: 100, bucketMs: 60_000 }) }
+  catch { return null }
+  if (res.bars.length < ATR_PERIOD + 2) return null
+  const times: number[] = []
+  const atr: (number | null)[] = []
+  let cur: number | null = null
+  const seed: number[] = []
+  let prevClose: number | null = null
+  for (const b of res.bars) {
+    const tr = prevClose == null ? b.high - b.low : Math.max(b.high - b.low, Math.abs(b.high - prevClose), Math.abs(b.low - prevClose))
+    if (cur == null) {
+      seed.push(tr)
+      if (seed.length === ATR_PERIOD) cur = seed.reduce((s, v) => s + v, 0) / ATR_PERIOD
+    } else {
+      cur = ((ATR_PERIOD - 1) * cur + tr) / ATR_PERIOD
+    }
+    prevClose = b.close
+    times.push(Math.floor(Date.parse(b.ts) / 1000))
+    atr.push(cur)
+  }
+  return { times, atr }
+}
+
+/** Wilder ATR-10 at an entry instant against a prebuilt day series. Null when
+ *  before the series, >15 min from the nearest bar, or still in the seed window. */
+export function atrAtEntry(series: AtrSeries, entryMs: number): number | null {
+  const ts = Math.floor(entryMs / 1000)
+  let lo = 0, hi = series.times.length
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (series.times[mid] <= ts) lo = mid + 1; else hi = mid }
+  const T = lo - 1
+  if (T < 0 || ts - series.times[T] > 900) return null
+  return series.atr[T]
+}
