@@ -29,6 +29,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+# All .log files are local run/debug output — never tracked.
+*.log
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -56,3 +58,5 @@ exports/
 # trading-journal — large local market-data CSVs the backfill scripts read.
 # These exceed GitHub's 100MB file limit; never commit (keep local / use LFS).
 docs/NQ_1m*.csv
+
+docs/*.csv

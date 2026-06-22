@@ -1,26 +1,0 @@
-Loaded 915 trades with parseable entry + side + P&L
-Deduped 7 duplicate contract file(s):
-  kept NQH4.CME.scid, dropped NQH24-CME.scid
-  kept NQH5.CME.scid, dropped NQH25-CME.scid
-  kept NQM24-CME.scid, dropped NQM4.CME.scid
-  kept NQM6.CME.scid, dropped NQM26-CME.scid
-  kept NQU24-CME.scid, dropped NQU4.CME.scid
-  kept NQZ23-CME.scid, dropped NQZ3.CME.scid
-  kept NQZ4.CME.scid, dropped NQZ24-CME.scid
-Mapped to 181 (contract, day) groups; 0 trades unmapped (outside .scid coverage)
-  ...50/181 groups  ...100/181 groups  ...150/181 groups
-Evaluated 915 trades against NQ delta.
-Flip = study signal (str 1, floor 100, imp 0.8).
-  ALL mapped n= 915  win%= 35.8  avg$=    22.36  total$=   20460  avgPts=   1.41  avgRR=  0.41
-
-══════════ WINDOW A: 5m BEFORE entry ══════════
-  NO flip    n= 761  win%= 35.0  avg$=    18.01  total$=   13703  avgPts=   1.20  avgRR=  0.40
-  ANY flip   n= 154  win%= 40.3  avg$=    43.88  total$=    6757  avgPts=   2.48  avgRR=  0.48
-  aligned    n= 100  win%= 37.0  avg$=    25.40  total$=    2540  avgPts=   1.19  avgRR=  0.35
-  OPPOSING   n=  67  win%= 43.3  avg$=    70.71  total$=    4738  avgPts=   4.24  avgRR=  0.64
-
-══════════ WINDOW B: ±5m around entry (incl. after) ══════════
-  NO flip    n= 649  win%= 35.1  avg$=    18.10  total$=   11744  avgPts=   1.23  avgRR=  0.37
-  ANY flip   n= 266  win%= 37.6  avg$=    32.77  total$=    8716  avgPts=   1.86  avgRR=  0.51
-  aligned    n= 173  win%= 35.3  avg$=    20.65  total$=    3573  avgPts=   1.05  avgRR=  0.34
-  OPPOSING   n= 130  win%= 42.3  avg$=    60.01  total$=    7802  avgPts=   3.76  avgRR=  0.79
