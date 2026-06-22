@@ -1,0 +1,56 @@
+args: {"from":null,"to":null,"scidDir":"D:\\SierraCharts\\Data","tfMin":1,"atrPeriod":14,"session":"rth","horizons":[5,10,20],"bracketK":1} 
+params: {
+  emaLength: 30,
+  minDeltaFloor: 100,
+  maxDeltaFloor: 100,
+  impulseMult: 0.8,
+  unwindStrThresh: 1,
+  requireLongCloseGE0: true,
+  shortCloseMode: 0,
+  shortCloseFrac: 0.1
+}
+Deduped 7 duplicate contract file(s):
+  kept NQH4.CME.scid, dropped NQH24-CME.scid
+  kept NQH5.CME.scid, dropped NQH25-CME.scid
+  kept NQM24-CME.scid, dropped NQM4.CME.scid
+  kept NQM6.CME.scid, dropped NQM26-CME.scid
+  kept NQU24-CME.scid, dropped NQU4.CME.scid
+  kept NQZ23-CME.scid, dropped NQZ3.CME.scid
+  kept NQZ4.CME.scid, dropped NQZ24-CME.scid
+Found 18 NQ contracts in D:\SierraCharts\Data
+  NQH22    2021-12-14 → 2022-03-14  bars=  86515
+  NQM22    2022-03-14 → 2022-06-14  bars=  89369
+  NQU22    2022-06-14 → 2022-09-14  bars=  90410
+  NQZ22    2022-09-14 → 2022-12-14  bars=  89169
+  NQH23    2022-12-14 → 2023-03-14  bars=  85124
+  NQM23    2023-03-14 → 2023-06-14  bars=  90351
+  NQU23    2023-06-14 → 2023-09-14  bars=  90046
+  NQZ23    2023-09-14 → 2023-12-14  [divisor=1] bars=  89153
+  NQH24    2023-12-14 → 2024-03-14  bars=  86454
+  NQM24    2024-03-14 → 2024-06-14  [divisor=1] bars=  89447
+  NQU24    2024-06-14 → 2024-09-14  [divisor=1] bars=  89995
+  NQZ24    2024-09-14 → 2024-12-14  bars=  89217
+  NQH25    2024-12-14 → 2025-03-14  bars=  84518
+  NQM25    2025-03-14 → 2025-06-14  bars=  89205
+  NQU25    2025-06-14 → 2025-09-14  bars=  88746
+  NQZ25    2025-09-14 → 2025-12-14  bars=  88582
+  NQH26    2025-12-14 → 2026-03-14  bars=  86226
+  NQM26    2026-03-14 → 2026-06-11  bars=  86697
+
+Total 1m bars processed: 1589224
+Session filter: RTH   ATR period: 14   bracket: 1xATR
+MFE/MAE are forward excursion in ATR units (entry = next bar open). "lift" = signal medMFE − baseline medMFE.
+
+=== LONG (delta-dive reabsorbed)  (signals: 9264, baseline bars: 444159) ===
+  horizon      medMFE   medMAE  MFE/MAE  baseMFE  baseMAE    lift
+  5b/5m          0.98     0.98     1.00     0.93     0.93   +0.05
+  10b/10m        1.38     1.38     1.00     1.33     1.33   +0.05
+  20b/20m        1.88     1.88     1.00     1.88     1.88   +0.00
+  bracket race  signal WR 49.0% (W4529/L4713/—22)   baseline WR 49.9%   edge -0.9pp
+
+=== SHORT (delta-spike given back)  (signals: 9837, baseline bars: 444159) ===
+  horizon      medMFE   medMAE  MFE/MAE  baseMFE  baseMAE    lift
+  5b/5m          0.98     0.98     1.00     0.93     0.93   +0.05
+  10b/10m        1.38     1.38     1.00     1.33     1.33   +0.05
+  20b/20m        1.93     1.93     1.00     1.88     1.88   +0.05
+  bracket race  signal WR 49.5% (W4862/L4957/—18)   baseline WR 49.6%   edge -0.1pp

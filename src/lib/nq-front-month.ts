@@ -182,10 +182,14 @@ export function atrAtEntry(series: EntryMetricsSeries, entryMs: number): number 
 
 /** RVOL at entry = today's cumulative RTH volume at the entry minute ÷ mean of
  *  the prior 10 RTH days' cumVol at the same minute × 100. RTH entries only
- *  (overnight → null); requires a full 10-day prior window (matches backfill). */
+ *  (overnight → null); requires a full 10-day prior window. Also null within
+ *  ~10 trading days of a contract roll: the new front-month's volume ramp-up
+ *  pollutes the baseline, so any ratio there is misleading — null is honest. */
 export function rvolAtEntry(series: EntryMetricsSeries, entryMs: number): number | null {
   const { date: pd, sec } = ptDateMinSec(entryMs)
   if (sec < RTH_OPEN_SEC || sec >= RTH_CLOSE_SEC) return null
+  const rollIn = rollInForDate(pd)
+  if (rollIn && Date.parse(pd + 'T00:00:00Z') - Date.parse(rollIn + 'T00:00:00Z') < 15 * 86400000) return null
   const minuteSec = Math.floor(sec / 60) * 60
   const today = series.cumVolByDate.get(pd)?.get(minuteSec)
   if (today == null) return null

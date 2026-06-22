@@ -1,0 +1,36 @@
+Deduped 7 duplicate contract file(s):
+  kept NQH4.CME.scid, dropped NQH24-CME.scid
+  kept NQH5.CME.scid, dropped NQH25-CME.scid
+  kept NQM24-CME.scid, dropped NQM4.CME.scid
+  kept NQM6.CME.scid, dropped NQM26-CME.scid
+  kept NQU24-CME.scid, dropped NQU4.CME.scid
+  kept NQZ23-CME.scid, dropped NQZ3.CME.scid
+  kept NQZ4.CME.scid, dropped NQZ24-CME.scid
+Found 18 NQ contracts. EMA9, slope lb 3
+  NQH22    2021-12-14 → 2022-03-14  bars=  86515
+  NQM22    2022-03-14 → 2022-06-14  bars=  89369
+  NQU22    2022-06-14 → 2022-09-14  bars=  90410
+  NQZ22    2022-09-14 → 2022-12-14  bars=  89169
+  NQH23    2022-12-14 → 2023-03-14  bars=  85124
+  NQM23    2023-03-14 → 2023-06-14  bars=  90351
+  NQU23    2023-06-14 → 2023-09-14  bars=  90046
+  NQZ23    2023-09-14 → 2023-12-14  bars=  89153
+  NQH24    2023-12-14 → 2024-03-14  bars=  86454
+  NQM24    2024-03-14 → 2024-06-14  bars=  89447
+  NQU24    2024-06-14 → 2024-09-14  bars=  89995
+  NQZ24    2024-09-14 → 2024-12-14  bars=  89217
+  NQH25    2024-12-14 → 2025-03-14  bars=  84518
+  NQM25    2025-03-14 → 2025-06-14  bars=  89205
+  NQU25    2025-06-14 → 2025-09-14  bars=  88746
+  NQZ25    2025-09-14 → 2025-12-14  bars=  88582
+  NQH26    2025-12-14 → 2026-03-14  bars=  86226
+  NQM26    2026-03-14 → 2026-06-11  bars=  86750
+
+Candidate SHORT (str1.5/floor150), RTH, EMA9 slope-lb 3, horizon 20, bracket 1xATR
+Baseline short WR: 49.6%   |   No-filter candidate short: 52.3% +2.6 (1310)
+
+Cells = race WR / edge-vs-baseline(pp) / n
+  slope\loc          above-EMA   straddle(touch)         below-EMA       ALL (slope)
+  RISING      57.5% +7.9 (414)  53.7% +4.0 (288)             — (0)  55.9% +6.3 (702)
+  FALLING       0.0% -49.6 (3)  45.4% -4.2 (362)  52.5% +2.9 (243)  48.0% -1.6 (608)
+  ALL (loc)   57.1% +7.5 (417)  49.1% -0.5 (650)  52.5% +2.9 (243) 52.3% +2.6 (1310)

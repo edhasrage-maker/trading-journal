@@ -133,8 +133,27 @@ NO TRADE DATA — the trader logged no trades in this window.
     r: { withStop: 0, ge2R: 0, ge3R: 0, winners: 0, winGe2R: 0, winGe3R: 0 }, // trades w/ a stop
   }
   // Per-trade derived metrics keyed by id so the recent-trades list can show
-  // realized R, mfeR, and $ capture% without recomputing.
-  const derived = new Map<string, { r: number | null; mfeR: number | null; capPct: number | null }>()
+  // realized R, mfeR, $ capture%, and MAE% without recomputing.
+  const derived = new Map<string, { r: number | null; mfeR: number | null; capPct: number | null; maePct: number | null }>()
+
+  // MAE / HEAT TAKEN — the adverse twin of exit efficiency. "Planned" heat = the
+  // stop distance (entry→stop, i.e. the max adverse you signed up for); "taken"
+  // heat = how far price actually went against the trade (long→low, short→high)
+  // before it resolved. taken ÷ planned = the share of the stop budget price
+  // chewed through. Surfaces the trader's core claim — winners take little heat,
+  // losers take a lot — and whether stops are sized to the heat trades take.
+  const maeAgg = {
+    win: { n: 0, sumPts: 0, sumPct: 0 },
+    loss: { n: 0, sumPts: 0, sumPct: 0 },
+  }
+  const maeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number; rs: number[] }>()
+  const MAE_BUCKETS: Array<[string, (p: number) => boolean]> = [
+    ['0-25% of stop', p => p < 0.25],
+    ['25-50% of stop', p => p >= 0.25 && p < 0.5],
+    ['50-75% of stop', p => p >= 0.5 && p < 0.75],
+    ['75-100% of stop', p => p >= 0.75 && p <= 1],
+    ['>100% (stop hit / exceeded)', p => p > 1],
+  ]
 
   for (const t of trades) {
     const pnl = t.pnl ?? 0
@@ -169,7 +188,31 @@ NO TRADE DATA — the trader logged no trades in this window.
       if (isWin) { rb.winners++; if (mfeR >= 2) rb.winGe2R++; if (mfeR >= 3) rb.winGe3R++ }
     }
 
-    derived.set(t.id, { r, mfeR, capPct })
+    // MAE (heat taken) — adverse excursion in points (long→low, short→high),
+    // and as a fraction of the planned stop distance. Needs entry + a known
+    // direction + the adverse extreme; the % needs a logged stop.
+    let maePts: number | null = null
+    if (t.entry_price != null && t.direction) {
+      maePts = t.direction === 'short'
+        ? (t.high_during_position != null ? Math.max(0, t.high_during_position - t.entry_price) : null)
+        : (t.low_during_position != null ? Math.max(0, t.entry_price - t.low_during_position) : null)
+    }
+    const maePct = (maePts != null && stopDist && stopDist > 0) ? maePts / stopDist : null
+    if (maePct != null && maePts != null) {
+      const side = isWin ? maeAgg.win : (pnl < 0 ? maeAgg.loss : null)
+      if (side) { side.n++; side.sumPts += maePts; side.sumPct += maePct }
+      for (const [label, test] of MAE_BUCKETS) {
+        if (test(maePct)) {
+          const b = maeBuckets.get(label) ?? { count: 0, wins: 0, losers: 0, pnl: 0, rs: [] }
+          b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+          if (r != null) b.rs.push(r)
+          maeBuckets.set(label, b)
+          break
+        }
+      }
+    }
+
+    derived.set(t.id, { r, mfeR, capPct, maePct })
 
     const setups = (t.tags_json?.setups as string[]) ?? []
     const pushSetup = (key: string) => {
@@ -231,7 +274,8 @@ NO TRADE DATA — the trader logged no trades in this window.
     const r = d?.r ?? null
     const mfeR = d?.mfeR ?? null
     const cap = d?.capPct ?? null
-    return `${date} ${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
+    const mae = d?.maePct ?? null
+    return `${date} ${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
   }).join('\n')
 
   // Optional week-over-week comparison — only meaningful for the chatbox's
@@ -271,6 +315,26 @@ THIS WEEK vs PRIOR WEEK:
   Captured ${pct(dl.sumCapPct, dl.n)}% of the available favorable move on avg · left ${dl.n > 0 ? usd(dl.sumLeft / dl.n) : '—'}/win on the table (avg realized ${dl.n > 0 ? usd(dl.sumRealized / dl.n) : '—'} vs avg peak ${dl.n > 0 ? usd(dl.sumMfe / dl.n) : '—'})
   TP2 reachability (R basis, ${rb.withStop} trades w/ a logged stop): any ran ≥2R ${pct(rb.ge2R, rb.withStop)}% · ≥3R ${pct(rb.ge3R, rb.withStop)}% · winners ≥2R ${pct(rb.winGe2R, rb.winners)}% · ≥3R ${pct(rb.winGe3R, rb.winners)}%`
 
+  // MAE / heat-taken summary — the adverse twin of exit efficiency. Headline is
+  // winners-vs-losers avg heat (the trader's strongest winner/loser separator);
+  // the heat-bucket table is the win-rate-by-heat-taken cross-tab.
+  const maeScored = maeAgg.win.n + maeAgg.loss.n
+  const avgPts = (a: { n: number; sumPts: number }) => a.n > 0 ? (a.sumPts / a.n).toFixed(1) : '—'
+  const avgPctOf = (a: { n: number; sumPct: number }) => a.n > 0 ? Math.round((a.sumPct / a.n) * 100) + '%' : '—'
+  const maeBlock = maeScored === 0
+    ? '  (no trades with both a logged stop and in-trade extremes in this window)'
+    : `  Scored ${maeScored} trades (had a logged stop + in-trade high/low).
+  Winners: avg heat ${avgPts(maeAgg.win)} pts (${avgPctOf(maeAgg.win)} of planned stop) across ${maeAgg.win.n} wins
+  Losers:  avg heat ${avgPts(maeAgg.loss)} pts (${avgPctOf(maeAgg.loss)} of planned stop) across ${maeAgg.loss.n} losses
+  WIN RATE BY HEAT TAKEN (share of the planned stop distance price used before the trade resolved):
+${MAE_BUCKETS.map(([label]) => {
+    const b = maeBuckets.get(label)
+    if (!b) return `    ${label}: 0 trades`
+    const wr = (b.wins + b.losers) > 0 ? Math.round((b.wins / (b.wins + b.losers)) * 100) : 0
+    const avgR = b.rs.length > 0 ? (b.rs.reduce((a, x) => a + x, 0) / b.rs.length).toFixed(2) : '—'
+    return `    ${label}: ${b.count} trades · WR ${wr}% · avgR ${avgR} · ${fmt(b.pnl)}`
+  }).join('\n')}`
+
   return `═══ TRADER DATA SUMMARY ═══
 Window: ${windowLabel} (${startDate} → ${endDate}). Total trades: ${total}.
 
@@ -287,6 +351,9 @@ ${Array.from(monthBuckets.entries()).sort((a, b) => a[0].localeCompare(b[0])).ma
 
 EXIT EFFICIENCY — MFE CAPTURE (how much of the favorable move you keep; informs whether to hold for a TP2 / runner vs take TP1):
 ${exitEffBlock}
+
+MAE — HEAT TAKEN (adverse excursion before the trade resolved; "planned" heat = your stop distance, "taken" = the actual move against you. Speaks to entry timing, stop sizing, and risk management — low heat on winners = clean entries; high heat that still won = nearly stopped out):
+${maeBlock}
 
 SETUP PERFORMANCE (by total PnL, top 10) — avgR realized; captured%/left$ = winners' $ MFE capture (TP2 headroom per setup):
 ${sortByPnl(setupBuckets).map(([s, b]) => {

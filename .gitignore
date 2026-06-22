@@ -52,3 +52,7 @@ Transfer/
 .cache/
 .npmrc
 exports/
+
+# trading-journal — large local market-data CSVs the backfill scripts read.
+# These exceed GitHub's 100MB file limit; never commit (keep local / use LFS).
+docs/NQ_1m*.csv

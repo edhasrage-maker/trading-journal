@@ -1,0 +1,60 @@
+Deduped 7 duplicate contract file(s):
+  kept NQH4.CME.scid, dropped NQH24-CME.scid
+  kept NQH5.CME.scid, dropped NQH25-CME.scid
+  kept NQM24-CME.scid, dropped NQM4.CME.scid
+  kept NQM6.CME.scid, dropped NQM26-CME.scid
+  kept NQU24-CME.scid, dropped NQU4.CME.scid
+  kept NQZ23-CME.scid, dropped NQZ3.CME.scid
+  kept NQZ4.CME.scid, dropped NQZ24-CME.scid
+Found 18 NQ contracts
+Rule: SHORT · str1.5 · floor150 · bar above RISING EMA9 (lb3)
+Stops(ATR): 1,1.5   Targets(R): 1.5,2,3
+  NQH22    2021-12-14 → 2022-03-14  bars=  86515  signals=  28
+  NQM22    2022-03-14 → 2022-06-14  bars=  89369  signals=  30
+  NQU22    2022-06-14 → 2022-09-14  bars=  90410  signals=  24
+  NQZ22    2022-09-14 → 2022-12-14  bars=  89169  signals=  27
+  NQH23    2022-12-14 → 2023-03-14  bars=  85124  signals=  28
+  NQM23    2023-03-14 → 2023-06-14  bars=  90351  signals=  23
+  NQU23    2023-06-14 → 2023-09-14  bars=  90046  signals=  28
+  NQZ23    2023-09-14 → 2023-12-14  bars=  89153  signals=  32
+  NQH24    2023-12-14 → 2024-03-14  bars=  86454  signals=  20
+  NQM24    2024-03-14 → 2024-06-14  bars=  89447  signals=  27
+  NQU24    2024-06-14 → 2024-09-14  bars=  89995  signals=  21
+  NQZ24    2024-09-14 → 2024-12-14  bars=  89217  signals=  17
+  NQH25    2024-12-14 → 2025-03-14  bars=  84518  signals=  15
+  NQM25    2025-03-14 → 2025-06-14  bars=  89205  signals=  11
+  NQU25    2025-06-14 → 2025-09-14  bars=  88746  signals=  13
+  NQZ25    2025-09-14 → 2025-12-14  bars=  88582  signals=  21
+  NQH26    2025-12-14 → 2026-03-14  bars=  86226  signals=  32
+  NQM26    2026-03-14 → 2026-06-11  bars=  86756  signals=  17
+
+Total raw signals: 414
+
+══════════════════════════ FIT (2022–2024) vs HOLDOUT (2025–2026) ══════════════════════════
+
+stop 1xATR / target 1.5R
+  FIT    n= 284  WR= 47.5%  avgR=  0.190  PF= 1.36  totR=   54.1  t/day=1.29
+  HOLD   n= 101  WR= 43.6%  avgR=  0.089  PF= 1.16  totR=    9.0  t/day=1.33
+
+stop 1xATR / target 2R
+  FIT    n= 284  WR= 42.3%  avgR=  0.270  PF= 1.47  totR=   76.6  t/day=1.29
+  HOLD   n= 101  WR= 35.6%  avgR=  0.069  PF= 1.11  totR=    7.0  t/day=1.33
+
+stop 1xATR / target 3R
+  FIT    n= 284  WR= 32.0%  avgR=  0.277  PF= 1.41  totR=   78.6  t/day=1.29
+  HOLD   n= 101  WR= 23.8%  avgR= -0.050  PF= 0.94  totR=   -5.0  t/day=1.33
+
+stop 1.5xATR / target 1.5R
+  FIT    n= 284  WR= 46.1%  avgR=  0.160  PF= 1.30  totR=   45.4  t/day=1.29
+  HOLD   n= 101  WR= 37.6%  avgR= -0.058  PF= 0.91  totR=   -5.9  t/day=1.33
+
+stop 1.5xATR / target 2R
+  FIT    n= 284  WR= 38.0%  avgR=  0.144  PF= 1.24  totR=   41.0  t/day=1.29
+  HOLD   n= 101  WR= 29.7%  avgR= -0.108  PF= 0.85  totR=  -10.9  t/day=1.33
+
+stop 1.5xATR / target 3R
+  FIT    n= 284  WR= 30.3%  avgR=  0.177  PF= 1.26  totR=   50.1  t/day=1.29
+  HOLD   n= 101  WR= 23.8%  avgR= -0.072  PF= 0.91  totR=   -7.2  t/day=1.33
+
+PASS CRITERIA: positive avgR (expectancy) on HOLDOUT across MOST stop/target combos.
+(avg R is per-trade in stop-distance units; $ at 1 NQ contract ≈ avgR × stopDist × 20.)

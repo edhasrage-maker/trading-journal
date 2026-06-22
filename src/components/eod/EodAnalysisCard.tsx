@@ -328,20 +328,21 @@ function ExecutionCard({ execution: e }: { execution: ExecutionScore }) {
           {composite == null ? '—' : `${Math.round(composite * 100)}%`}
         </span>
       </div>
-      <div className="grid grid-cols-5 gap-2 text-center">
-        <ExecMetric label="Exec Params" value={e.execution_parameters} weight="35%" />
-        <ExecMetric label="MFE Cap" value={e.mfe_capture} weight="20%" />
-        <ExecMetric label="Prep" value={e.prep_adherence} weight="20%" />
-        <ExecMetric label="MAE Heat" value={e.mae_heat} weight="15%" />
-        {/* Profit Factor: post-2026-06-15 the canonical 10%-weight metric.
+      {/* Amendment 4 (2026-06-20): MAE Heat dropped from the composite —
+          four sub-metrics now, renormalized to 41 / 24 / 24 / 11. */}
+      <div className="grid grid-cols-4 gap-2 text-center">
+        <ExecMetric label="Exec Params" value={e.execution_parameters} weight="41%" />
+        <ExecMetric label="MFE Cap" value={e.mfe_capture} weight="24%" />
+        <ExecMetric label="Prep" value={e.prep_adherence} weight="24%" />
+        {/* Profit Factor: post-2026-06-15 the canonical PF-weight metric.
             Legacy rows (no profit_factor field) fall back to the old
             planned_vs_realized_rr display. PF renders as a decimal (0.64)
             with > 1 green / < 1 red; legacy RR renders as a percentage
             with positive green / negative red. */}
         {e.profit_factor != null ? (
-          <PfMetric value={e.profit_factor} weight="10%" />
+          <PfMetric value={e.profit_factor} weight="11%" />
         ) : (
-          <ExecMetric label="RR (legacy)" value={e.planned_vs_realized_rr} weight="10%" nullReason={pfNullReason} />
+          <ExecMetric label="RR (legacy)" value={e.planned_vs_realized_rr} weight="11%" nullReason={pfNullReason} />
         )}
       </div>
       <p className="text-[10px] text-gray-500">

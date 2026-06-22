@@ -597,6 +597,9 @@ create policy "Authenticated full access" on eod_themes_analysis
 create table if not exists trader_profile (
   id text primary key default 'default',
   preferences_md text not null default '',
+  -- Short, high-priority steering list injected LAST in the coach prompt
+  -- (highest-recency slot). Migration: 20260620_trader_profile_focus.sql.
+  focus_md text not null default '',
   updated_at timestamptz not null default now()
 );
 

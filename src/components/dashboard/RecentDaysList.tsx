@@ -76,7 +76,7 @@ export default function RecentDaysList({ initialDays }: Props) {
   const [sortColumn, setSortColumn] = useState<SortColumn>('date')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
-  const [mfeUnit, setMfeUnit] = useState<MfeUnit>('pts')
+  const [mfeUnit, setMfeUnit] = useState<MfeUnit>('atr')
   const mfeInfoRef = useRef<HTMLDivElement>(null)
   const [realizedInfoOpen, setRealizedInfoOpen] = useState(false)
   const realizedInfoRef = useRef<HTMLDivElement>(null)

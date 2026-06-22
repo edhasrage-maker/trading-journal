@@ -1,7 +1,15 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, Save, AlertCircle, CheckCircle2, Brain, Lightbulb } from 'lucide-react'
+import { Loader2, Save, AlertCircle, CheckCircle2, Brain, Lightbulb, Target } from 'lucide-react'
+
+const FOCUS_PLACEHOLDER = `A short, high-priority list of what the coach should weight MOST right now. This is injected last — right before your question — so it gets the most attention. Keep it to a few sharp bullets:
+
+- Lead with my risk management: compare MAE planned (stop) vs MAE taken (actual heat), and my win rate by heat taken.
+- Watch my post-loss window — the 1-3 trades after a loss are where I do damage.
+- Flag playbook deviations vs named setups.
+
+Edit this often. It's your steering wheel; the profile below is the standing context.`
 
 const PLACEHOLDER = `Write standing context the AI coach should know about you. A few examples:
 
@@ -16,14 +24,17 @@ Be specific. The more concrete the rules, the better the coach respects them.`
 
 interface Profile {
   preferences_md: string
+  focus_md?: string
   updated_at: string | null
   migration_pending?: boolean
+  focus_migration_pending?: boolean
   hint?: string
 }
 
 export default function CoachingPreferencesClient() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [text, setText] = useState('')
+  const [focus, setFocus] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,6 +50,7 @@ export default function CoachingPreferencesClient() {
         if (cancelled) return
         setProfile(data)
         setText(data.preferences_md ?? '')
+        setFocus(data.focus_md ?? '')
         setLoading(false)
       })
       .catch(e => {
@@ -56,14 +68,14 @@ export default function CoachingPreferencesClient() {
       const res = await fetch('/api/trader-profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences_md: text }),
+        body: JSON.stringify({ preferences_md: text, focus_md: focus }),
       })
       const data = await res.json()
       if (!res.ok) {
         setError(data.error ?? `Save failed (${res.status})`)
         return
       }
-      setProfile({ preferences_md: data.preferences_md, updated_at: data.updated_at })
+      setProfile({ preferences_md: data.preferences_md, focus_md: data.focus_md, updated_at: data.updated_at })
       setDirty(false)
       setToast('Saved')
       setTimeout(() => setToast(null), 2500)
@@ -102,6 +114,36 @@ export default function CoachingPreferencesClient() {
           <div>{error}</div>
         </div>
       )}
+
+      {profile?.focus_migration_pending && !profile?.migration_pending && (
+        <div className="bg-amber-950/40 border border-amber-800/60 rounded-lg p-3 text-sm text-amber-200 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <div>
+            <strong>Focus field migration pending.</strong> Apply{' '}
+            <code className="text-amber-100 font-mono text-xs">supabase/migrations/20260620_trader_profile_focus.sql</code>{' '}
+            in the Supabase dashboard to enable saving the Coaching Focus list. Standing context still saves normally.
+          </div>
+        </div>
+      )}
+
+      {/* Coaching Focus — short, high-priority steering list. Injected LAST in the
+          coach prompt (highest-recency slot) so it gets the most attention. */}
+      <div className="bg-amber-950/10 border border-amber-800/40 rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-2 text-sm">
+          <Target className="w-4 h-4 text-amber-400" />
+          <span className="font-medium text-white">Coaching Focus</span>
+          <span className="text-xs text-amber-300/70 ml-1">— what to weight most, injected right before your question</span>
+        </div>
+        <textarea
+          value={focus}
+          onChange={e => { setFocus(e.target.value); setDirty(true) }}
+          placeholder={FOCUS_PLACEHOLDER}
+          spellCheck
+          autoCorrect="on"
+          className="w-full h-44 bg-gray-950 border border-amber-800/40 text-gray-200 rounded-lg px-3 py-2 text-sm font-mono leading-relaxed placeholder-gray-600 focus:outline-none focus:border-amber-500 resize-vertical"
+        />
+        <p className="text-xs text-gray-500">{focus.length.toLocaleString()} chars · keep it short — a few sharp bullets beat paragraphs here.</p>
+      </div>
 
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
         <div className="flex items-center gap-2 text-sm">

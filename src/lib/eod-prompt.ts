@@ -184,6 +184,10 @@ Rule reference (renumbered):
 **Execution layer (continuous, diagnostic, per-trade aggregation):**
 Per v1.4 amendment 3 (2026-06-08): Duration-to-thesis REMOVED; a 9-criterion
 Execution Parameters sub-metric REPLACES it at 35%. All weights rebalanced.
+Per amendment 4 (2026-06-20): MAE heat REMOVED from the composite — getting
+stopped (especially when price runs past the stop) is correct execution
+validating an invalidated idea, so scoring it as "heat" penalizes a good
+decision. The remaining four sub-metrics renormalize to 41 / 24 / 24 / 11.
 
 **Critical:** Execution is computed PER-TRADE and aggregated across trades
 that INDIVIDUALLY passed every per-trade rule:
@@ -200,9 +204,9 @@ state that explicitly in execution.notes when it happens.
 
 Compute each sub-metric on 0..1 (higher = better):
 
-    - execution_parameters (weight 35%): a 9-criterion per-trade checklist
+    - execution_parameters (weight 41%): a 9-criterion per-trade checklist
       averaged across compliant trades. See breakdown below.
-    - mfe_capture (weight 20%): realized PnL ÷ peak FAVORABLE move WHILE
+    - mfe_capture (weight 24%): realized PnL ÷ peak FAVORABLE move WHILE
       THE POSITION WAS OPEN. Use high_during_position /
       low_during_position per trade — these are the extremes during the
       hold ONLY, NOT what price did after exit. This measures execution
@@ -215,7 +219,7 @@ Compute each sub-metric on 0..1 (higher = better):
       otherwise. DO NOT frame "price kept running after exit" as a
       failure here — that's a separate metric (post-exit drift), not
       this one.
-    - prep_adherence (weight 20%): did the trades taken match what was
+    - prep_adherence (weight 24%): did the trades taken match what was
       planned? Compare prep.bias to trade direction; prep.trade_plans[] to
       actual entries (was each entry a documented plan, or improvised?);
       prep.ib_behaviour / volume_profile_shape predictions to what played
@@ -223,16 +227,14 @@ Compute each sub-metric on 0..1 (higher = better):
       every entry mapped to a documented plan on a correctly-read day. 0.0
       = trades off-bias, no plan match, day character misread. Null only
       when prep notes are entirely blank.
-    - mae_heat (weight 15%): 1 - (peak adverse / planned risk). Lower heat
-      taken = higher score.
-    - profit_factor (weight 10%): industry-standard PF in DOLLARS — gross
+    - profit_factor (weight 11%): industry-standard PF in DOLLARS — gross
       profit ÷ gross loss. Sum the $pnl of winning trades, divide by the
       absolute value of summed losers. 1.0 = break-even; > 1.0 = net
       profitable; < 1.0 = net losing. Computed deterministically server-
       side, but include your read in the schema. Use ALL trades — no
       stop-price requirement — since PF is a $-pnl metric.
 
-- Composite = 0.35*exec_params + 0.20*mfe + 0.20*prep + 0.15*mae + 0.10*pf_score
+- Composite = 0.41*exec_params + 0.24*mfe + 0.24*prep + 0.11*pf_score
   (pf_score maps profit_factor onto a 0..1 score: clamp(pf/2, 0, 1) —
   PF ≥ 2 maxes out the score, PF = 1 is neutral at 0.5, PF = 0 scores 0).
   Null any sub-metric you can't compute; if all are null, composite is null.
@@ -442,7 +444,6 @@ ${useV13 ? `Respond with ONLY valid JSON in this exact structure (no markdown, n
     "execution_parameters": <0..1 or null>,
     "mfe_capture": <0..1 or null>,
     "prep_adherence": <0..1 or null>,
-    "mae_heat": <0..1 or null>,
     "profit_factor": <0..∞ or null — winning R ÷ losing R; 1.0 = break-even>,
     "composite": <0..1 or null>,
     "compliant_trade_count": <number>,
@@ -579,43 +580,6 @@ export function computeMfeCaptureDeterministic(
 }
 
 /**
- * Compute MAE Heat sub-metric deterministically.
- *
- *   heat_ratio   = peak_adverse_pts ÷ planned_risk_pts
- *   heat_submetric = 1 − heat_ratio   (clamped to [0, 1])
- *   MAE Heat       = mean(heat_submetric) across eligible trades
- *
- * Eligible: has direction, entry_price, stop_price, AND the relevant adverse
- * extreme (low_during_position for longs, high_during_position for shorts).
- * Unlike MFE Cap, no minimum-magnitude filter — small MAE is meaningful (it
- * means you didn't sit through heat) and should score well.
- *
- * Clamping at 0 means trades that ran past their planned stop contribute 0
- * to the average rather than negative values that would drown the day. A day
- * where every trade ran past stop deserves a 0, not a deeply-negative score.
- */
-export function computeMaeHeatDeterministic(
-  trades: Pick<Trade, 'entry_price' | 'stop_price' | 'direction' | 'high_during_position' | 'low_during_position'>[],
-): { value: number | null; eligibleCount: number } {
-  let sum = 0
-  let n = 0
-  for (const t of trades) {
-    if (t.entry_price == null || t.stop_price == null || t.direction == null) continue
-    const isLong = t.direction === 'long'
-    const adversePrice = isLong ? t.low_during_position : t.high_during_position
-    if (adversePrice == null) continue
-    const maePts = isLong ? t.entry_price - adversePrice : adversePrice - t.entry_price
-    const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
-    if (plannedRiskPts === 0) continue
-    const heatRatio = Math.max(0, maePts) / plannedRiskPts  // negative MAE (trade never went red) treated as 0 heat
-    const sub = Math.max(0, Math.min(1, 1 - heatRatio))
-    sum += sub
-    n++
-  }
-  return { value: n > 0 ? sum / n : null, eligibleCount: n }
-}
-
-/**
  * Compute the four mechanical P-rule outcomes deterministically. The AI has
  * been observed to hallucinate per-rule status — returning "pass" while its
  * own reason text says "Breach", or returning a non-zero breach_count_vector
@@ -743,25 +707,29 @@ export function recomputeExecutionComposite(e: {
   execution_parameters: number | null
   mfe_capture: number | null
   prep_adherence: number | null
-  mae_heat: number | null
-  // New post-2026-06-15: profit_factor is the canonical 10%-weight metric.
+  // New post-2026-06-15: profit_factor is the canonical PF-weight metric.
   // planned_vs_realized_rr stays in the type so legacy rows that haven't
   // been re-analyzed still contribute to composite via the fallback below.
   profit_factor?: number | null
   planned_vs_realized_rr?: number | null
 }): number | null {
+  // Amendment 4 (2026-06-20): mae_heat dropped from the composite. The four
+  // remaining sub-metrics renormalize to 41 / 24 / 24 / 11. (Because null
+  // sub-metrics already drop out of both numerator and denominator below, a
+  // stored mae_heat on a legacy row no longer influences the score — it's
+  // simply absent from this weight table.)
+  //
   // Prefer profit_factor (mapped to 0..1 via clamp(pf/2, 0, 1)); fall back
   // to legacy RR for un-re-analyzed days. Whichever is present, the weight
-  // stays at 10% so the composite is comparable across days.
+  // stays at 11% so the composite is comparable across days.
   const pfScore = profitFactorToSubMetric(e.profit_factor ?? null)
   const rrLegacy = e.planned_vs_realized_rr ?? null
-  const tenPctValue = pfScore != null ? pfScore : rrLegacy
+  const pfWeightValue = pfScore != null ? pfScore : rrLegacy
   const weights: Array<[number | null, number]> = [
-    [e.execution_parameters, 0.35],
-    [e.mfe_capture, 0.20],
-    [e.prep_adherence, 0.20],
-    [e.mae_heat, 0.15],
-    [tenPctValue, 0.10],
+    [e.execution_parameters, 0.41],
+    [e.mfe_capture, 0.24],
+    [e.prep_adherence, 0.24],
+    [pfWeightValue, 0.11],
   ]
   let num = 0, den = 0
   for (const [v, w] of weights) {
@@ -784,7 +752,7 @@ export function recomputeExecutionComposite(e: {
  *   - P1/P3/P4/P5 mechanical rules (P2 stays AI-driven — setup-conditional cap)
  *   - verdict re-derived from pass_count (≥4/5 = Compliant)
  *   - profit_factor (replaces legacy planned_vs_realized_rr)
- *   - mfe_capture, mae_heat (pure-arithmetic sub-metrics)
+ *   - mfe_capture (pure-arithmetic sub-metric; mae_heat dropped in amendment 4)
  *   - execution composite recomputed when any sub-metric changed
  *
  * `onLog` is an optional callback for the route's per-override console logging;
@@ -845,10 +813,6 @@ export function applyDeterministicOverrides(
     const mfe = computeMfeCaptureDeterministic(trades)
     overrideIfDifferent('mfe_capture', parsed.execution.mfe_capture, mfe.value,
       v => { parsed.execution!.mfe_capture = v }, mfe.eligibleCount)
-
-    const mae = computeMaeHeatDeterministic(trades)
-    overrideIfDifferent('mae_heat', parsed.execution.mae_heat, mae.value,
-      v => { parsed.execution!.mae_heat = v }, mae.eligibleCount)
 
     if (touched) {
       const recomputed = recomputeExecutionComposite(parsed.execution)

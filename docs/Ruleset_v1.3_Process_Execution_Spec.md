@@ -5,6 +5,9 @@
   2. Execution gains Prep adherence sub-metric — see §EXECUTION QUALITY (now superseded by amendment 3).
   3. **Major restructure:** P4 (Stop valid) and P7 (Setup valid) moved out of Process into a new Execution sub-metric "Execution Parameters" (35% weight, 9-criterion checklist). Process drops to 5 hard safety-rail rules with renumbered IDs; verdict threshold becomes "4 of 5 pass." Duration-to-thesis sub-metric removed; weights rebalanced across the remaining 5 Execution sub-metrics. See §VERDICT and §EXECUTION QUALITY.
 
+**Amended 2026-06-20 (amendment 4):**
+  4. **MAE / heat control removed from the Execution composite.** Getting stopped — especially when price runs past the stop — is correct execution validating an invalidated idea; scoring it as "heat → 0" penalizes a good decision. The four remaining Execution sub-metrics renormalize: Execution Parameters 41%, MFE capture 24%, Prep adherence 24%, Realized-vs-planned RR (Profit Factor) 11%. MAE/heat survives elsewhere only as a descriptive, **non-graded** entry-timing stat in analytics. See §EXECUTION QUALITY.
+
 ## INSTRUCTION TO THE JOURNAL ASSISTANT
 Replace in full any prior ruleset, sizing model, or scoring logic. Adopt the below verbatim. Do not infer, soften, merge, or average rules. Evaluate each rule only against the data field named.
 
@@ -64,14 +67,15 @@ Verdict ∈ {Compliant, Breach}. All 5 rules are hard quantitative safety rails 
 ## EXECUTION QUALITY (weekly, compliant trades only, diagnostic)
 | Metric | Source | Weight |
 |--------|--------|--------|
-| Execution Parameters | 9-criterion checklist (see below) | 35% |
-| MFE capture / exit efficiency | exit efficiency, position MFE, best exit | 20% |
-| Prep adherence | prep notes (bias, trade plans, expected day character) vs taken trades | 20% |
-| MAE / heat control | position MAE, price MAE | 15% |
-| Realized vs planned RR | realized RR vs planned reward ratio | 10% |
+| Execution Parameters | 9-criterion checklist (see below) | 41% |
+| MFE capture / exit efficiency | exit efficiency, position MFE, best exit | 24% |
+| Prep adherence | prep notes (bias, trade plans, expected day character) vs taken trades | 24% |
+| Realized vs planned RR | realized RR vs planned reward ratio (Profit Factor in $) | 11% |
 Composite is diagnostic only. Never combined with process.
 
 **Amended 2026-06-08 (amendment 3):** Duration-to-thesis sub-metric DROPPED entirely — too coarse a signal that wasn't producing actionable feedback. New "Execution Parameters" sub-metric absorbs what used to be P4 (stop validity) and P7 (setup validity) plus 7 additional quality criteria, weighted 35%. Other weights rebalanced.
+
+**Amended 2026-06-20 (amendment 4):** MAE / heat control (was 15%) DROPPED from the composite — getting stopped, especially when price runs past the stop, is correct execution validating an invalidated idea, so scoring it heat→0 penalizes a good decision. The four remaining sub-metrics renormalize to 41 / 24 / 24 / 11. MAE/heat is retained in analytics only as a descriptive, non-graded entry-timing statistic; it no longer touches the Execution score.
 
 ### Execution Parameters — 9-criterion checklist
 Each criterion is binary per trade (pass = 1, fail = 0, N/A = skipped). Per-trade score = passes ÷ (passes + fails). Sub-metric score = mean across compliant trades.

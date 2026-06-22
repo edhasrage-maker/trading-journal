@@ -20,7 +20,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
-import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
+import { getTraderProfile, profileContextBlock, focusContextBlock } from '@/lib/trader-profile'
 import { buildCoachContext } from '@/lib/coach-context'
 
 const client = new Anthropic()
@@ -79,7 +79,7 @@ When the data doesn't support a confident answer, say so explicitly ("I don't ha
 
 Keep responses tight. 2-4 sentences for simple questions; bullet points or a short table when listing things. No preamble ("Great question!"), no closing platitudes. Get to the point.
 
-${contextBlock}`
+${contextBlock}${focusContextBlock(traderProfile)}`
 
   // Build the messages array — trader's prior history + new message.
   const history = Array.isArray(body.history) ? body.history.slice(-20) : []  // cap at 20 turns to stay sensible

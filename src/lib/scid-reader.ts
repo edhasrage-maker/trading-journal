@@ -151,3 +151,53 @@ export function readScidBars(
     closeSync(fd)
   }
 }
+
+/**
+ * Random-access tick reader. Keeps the file open so the same handle can be
+ * re-queried cheaply (binary-search by time) for many small windows — used to
+ * resolve the *true intrabar order* of price within a single 1-minute bar
+ * (e.g. did a limit-entry fill before or after the target was tagged?).
+ * `read(startMs, endMs)` returns the trade prices in [startMs, endMs), in order.
+ */
+export function makeTickReader(path: string, priceDivisor = 100): {
+  read(startMs: number, endMs: number): number[]
+  close(): void
+} {
+  const fd = openSync(path, 'r')
+  const size = fstatSync(fd).size
+  const recCount = size >= HEADER_SIZE + RECORD_SIZE ? Math.floor((size - HEADER_SIZE) / RECORD_SIZE) : 0
+
+  const firstAtOrAfter = (targetMs: number): number => {
+    let lo = 0, hi = recCount
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (recordTimeMs(fd, mid) < targetMs) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+
+  return {
+    read(startMs: number, endMs: number): number[] {
+      const out: number[] = []
+      if (recCount === 0) return out
+      let idx = firstAtOrAfter(startMs)
+      const CHUNK = 4096
+      const buf = Buffer.alloc(CHUNK * RECORD_SIZE)
+      while (idx < recCount) {
+        const toRead = Math.min(CHUNK, recCount - idx)
+        readSync(fd, buf, 0, toRead * RECORD_SIZE, HEADER_SIZE + idx * RECORD_SIZE)
+        for (let i = 0; i < toRead; i++) {
+          const off = i * RECORD_SIZE
+          const tMs = (Number(buf.readBigInt64LE(off)) - SCID_EPOCH_OFFSET_US) / 1000
+          if (tMs >= endMs) return out
+          const px = buf.readFloatLE(off + 20) / priceDivisor
+          if (Number.isFinite(px) && px > 0) out.push(px)
+        }
+        idx += toRead
+      }
+      return out
+    },
+    close() { closeSync(fd) },
+  }
+}

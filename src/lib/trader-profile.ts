@@ -22,21 +22,36 @@ type AnyClient = any
 
 export interface TraderProfile {
   preferences_md: string
+  /** Short, high-priority "pay close attention to this" list. Distinct from
+   *  preferences_md: this is injected LAST in the coach prompt (highest-recency
+   *  slot, right before the question) so the model weights it heavily. */
+  focus_md: string
   updated_at: string | null
 }
 
-const EMPTY_PROFILE: TraderProfile = { preferences_md: '', updated_at: null }
+const EMPTY_PROFILE: TraderProfile = { preferences_md: '', focus_md: '', updated_at: null }
 
 /** Fetch the trader profile from Supabase. Returns the empty profile if the
  *  table doesn't exist (migration not applied) or the row is missing. */
 export async function getTraderProfile(): Promise<TraderProfile> {
   try {
     const supabase: AnyClient = await createClient()
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('trader_profile')
-      .select('preferences_md, updated_at')
+      .select('preferences_md, focus_md, updated_at')
       .eq('id', 'default')
       .maybeSingle()
+    // focus_md column absent (migration not yet applied) → PostgREST reports an
+    // unknown selected column as 42703 / PGRST204. Retry without it so the
+    // existing preferences_md still loads; focus just stays empty until the
+    // migration runs. (Table-missing is handled below.)
+    if (error && (error.code === '42703' || error.code === 'PGRST204')) {
+      ;({ data, error } = await supabase
+        .from('trader_profile')
+        .select('preferences_md, updated_at')
+        .eq('id', 'default')
+        .maybeSingle())
+    }
     if (error) {
       // Table-missing error: PostgREST returns PGRST205 ("not found in schema cache").
       // Swallow silently — caller treats no-profile as empty-profile.
@@ -47,6 +62,7 @@ export async function getTraderProfile(): Promise<TraderProfile> {
     if (!data) return EMPTY_PROFILE
     return {
       preferences_md: typeof data.preferences_md === 'string' ? data.preferences_md : '',
+      focus_md: typeof data.focus_md === 'string' ? data.focus_md : '',
       updated_at: data.updated_at ?? null,
     }
   } catch (e) {
@@ -78,5 +94,26 @@ ${text}
 END TRADER PROFILE
 ═══════════════════════════════════════════════
 
+`
+}
+
+/** Build the high-priority "focus" block. Unlike the profile (prepended at the
+ *  top), this is meant to be appended at the very END of the prompt — the
+ *  highest-recency slot, right before the trader's question — so the model
+ *  weights it heavily. Returns empty string when no focus is set. */
+export function focusContextBlock(profile: TraderProfile): string {
+  const text = profile.focus_md.trim()
+  if (!text) return ''
+  return `
+═══════════════════════════════════════════════
+COACHING FOCUS — weight these most in your reply
+═══════════════════════════════════════════════
+The trader has flagged the following as their current priorities. When the
+question touches these, LEAD with them and cite the specific numbers in the
+data above that speak to them. These guide emphasis only — never fabricate or
+assume data you weren't given.
+
+${text}
+═══════════════════════════════════════════════
 `
 }

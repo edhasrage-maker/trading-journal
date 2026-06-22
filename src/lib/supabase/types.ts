@@ -397,12 +397,18 @@ export interface ProcessVerdict {
 
 export interface ExecutionScore {
   /** Each sub-metric is 0..1 (higher = better) or null if not computable.
-   *  Per v1.3 (amended 2026-06-08, amendment 3) weights:
-   *  Execution Parameters 35%, MFE capture 20%, Prep adherence 20%,
-   *  MAE heat 15%, planned_vs_realized_rr 10%. Duration-to-thesis was
-   *  dropped entirely in amendment 3. */
+   *  Per v1.3 amendment 4 (2026-06-20) weights:
+   *  Execution Parameters 41%, MFE capture 24%, Prep adherence 24%,
+   *  profit_factor 11%. Duration-to-thesis was dropped in amendment 3;
+   *  MAE heat was dropped from the composite in amendment 4. */
   mfe_capture: number | null
-  mae_heat: number | null
+  /** @deprecated Removed from the execution composite in amendment 4
+   *  (2026-06-20) — getting stopped, especially when price runs past the
+   *  stop, is correct execution validating an invalidated idea, so scoring
+   *  it as "heat" penalized a good decision. Kept on the interface because
+   *  pre-amendment-4 rows still carry the stored value; it is no longer
+   *  weighted, displayed, or computed. Re-run Analyze Session to drop it. */
+  mae_heat?: number | null
   /** Did taken trades match the prep (bias, plans, day-character read)? */
   prep_adherence: number | null
   /** Profit Factor — sum(winning realized R) ÷ sum(|losing realized R|).
@@ -420,7 +426,8 @@ export interface ExecutionScore {
    *  clear AOI noted, 2/3 OF reads, Break of Cluster/Bubble entry,
    *  chart-not-emotion management, no mistakes tagged, Stable emotion. */
   execution_parameters: number | null
-  /** Weighted composite of the five sub-metrics. Null if all inputs are null. */
+  /** Weighted composite of the four sub-metrics (exec params, MFE, prep, PF).
+   *  Null if all inputs are null. */
   composite: number | null
   /** Number of COMPLIANT trades the execution score was computed across.
    *  v1.3: execution never includes breach trades. */

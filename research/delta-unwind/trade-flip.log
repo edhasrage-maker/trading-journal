@@ -1,0 +1,26 @@
+Loaded 915 trades with parseable entry + side + P&L
+Deduped 7 duplicate contract file(s):
+  kept NQH4.CME.scid, dropped NQH24-CME.scid
+  kept NQH5.CME.scid, dropped NQH25-CME.scid
+  kept NQM24-CME.scid, dropped NQM4.CME.scid
+  kept NQM6.CME.scid, dropped NQM26-CME.scid
+  kept NQU24-CME.scid, dropped NQU4.CME.scid
+  kept NQZ23-CME.scid, dropped NQZ3.CME.scid
+  kept NQZ4.CME.scid, dropped NQZ24-CME.scid
+Mapped to 181 (contract, day) groups; 0 trades unmapped (outside .scid coverage)
+  ...50/181 groups  ...100/181 groups  ...150/181 groups
+Evaluated 915 trades against NQ delta.
+Flip = study signal (str 1, floor 100, imp 0.8), within 5m before entry.
+
+── ANY flip (either direction) in the 5m before entry ──
+  NO flip    n= 761  win%= 35.0  avg$=    18.01  total$=   13703  avgPts=   1.20  avgRR=  0.40
+  WITH flip  n= 154  win%= 40.3  avg$=    43.88  total$=    6757  avgPts=   2.48  avgRR=  0.48
+
+── ALIGNED flip (same direction as the trade) ──
+  no aligned n= 815  win%= 35.7  avg$=    21.99  total$=   17920  avgPts=   1.44  avgRR=  0.42
+  ALIGNED    n= 100  win%= 37.0  avg$=    25.40  total$=    2540  avgPts=   1.19  avgRR=  0.35
+
+── OPPOSING flip (opposite direction to the trade) ──
+  OPPOSING   n=  67  win%= 43.3  avg$=    70.71  total$=    4738  avgPts=   4.24  avgRR=  0.64
+
+  ALL mapped n= 915  win%= 35.8  avg$=    22.36  total$=   20460  avgPts=   1.41  avgRR=  0.41

@@ -5,7 +5,9 @@ import { loadOhlcBars, pickBestSymbol, type OhlcBar } from './load'
 import { aggregate1mTo5m, isRTH, ptDateKey } from './aggregate'
 import { atrWilder } from './atr'
 import { listNqContracts } from './scid-discovery'
-import { readScidBars } from '../../src/lib/scid-reader'
+import { readScidBars, makeTickReader } from '../../src/lib/scid-reader'
+
+type TickReader = (startMs: number, endMs: number) => number[]
 
 if (existsSync('.env.local')) {
   for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
@@ -21,17 +23,26 @@ type Args = {
   symbol: string | null
   scidDir: string
   entry: 'pullback' | 'break' | 'zone'
+  decisionTfMin: number // timeframe (minutes) the EMA/slope/bias run on (default 5)
   ema: number
   ema2: number
   lookback: number
   atrPeriod: number
   targetR: number
+  stopMult: number // scale the ATR stop/TP distance (1 = 1× ATR; ~2 ≈ 5m-ATR scale)
   side: 'long' | 'short' | 'both'
   contracts: number
   mult: number
   rearmAtrFrac: number
   triggerExpireBars: number
   minSlope: number
+  minSep: number // min |price − EMA| in ATR at signal (extension/separation floor)
+  minSpread: number // min |9 EMA − 20 EMA| in ATR at signal, direction-aligned (trend-strength floor)
+  maxSep: number // max |price − EMA| in ATR at signal — reject over-extended (exhaustion) entries
+  minTrendDay: number // require the session to have moved ≥ this many ATR from the RTH open, in the trade's direction (trend-day filter)
+  fillbarTarget: boolean // allow the target to be hit on the fill bar (1) or not (0, pessimistic)
+  tickResolve: boolean // resolve true intrabar order of fill/stop/target from .scid ticks
+  entryTrigger: 'limit' | 'stop' // limit = fade into the EMA; stop = break of prior 1m bar after pullback
   entryStartMin: number | null
   entryEndMin: number | null
   scaleQty: number // contracts to book at +1R; remainder runs to EMA-close (0 = disabled)
@@ -104,17 +115,26 @@ function parseArgs(): Args {
     symbol: a.symbol ?? null,
     scidDir: a['scid-dir'] ?? process.env.SIERRA_DATA_DIR ?? 'D:\\SierraCharts\\Data',
     entry: (a.entry ?? 'pullback') as 'pullback' | 'break' | 'zone',
+    decisionTfMin: Number(a['decision-tf'] ?? 5),
     ema: Number(a.ema ?? 9),
     ema2: Number(a.ema2 ?? 20),
     lookback: Number(a.lookback ?? 3),
     atrPeriod: Number(a.atr ?? 10),
     targetR: Number(a.target ?? 2),
+    stopMult: Number(a['stop-mult'] ?? 1),
     side: (a.side ?? 'both') as Args['side'],
     contracts: Number(a.contracts ?? 5),
     mult: Number(a.mult ?? 2),
     rearmAtrFrac: Number(a.rearm ?? 0.5),
     triggerExpireBars: a['trigger-expire'] != null ? Number(a['trigger-expire']) : Number.POSITIVE_INFINITY,
     minSlope: Number(a['min-slope'] ?? 0),
+    minSep: Number(a['min-sep'] ?? 0),
+    minSpread: Number(a['min-spread'] ?? 0),
+    maxSep: a['max-sep'] != null ? Number(a['max-sep']) : Number.POSITIVE_INFINITY,
+    minTrendDay: Number(a['min-trend-day'] ?? 0),
+    fillbarTarget: (a['fillbar-target'] ?? '1') === '1',
+    tickResolve: (a['tick-resolve'] ?? '0') === '1',
+    entryTrigger: (a['entry-trigger'] ?? 'limit') as 'limit' | 'stop',
     entryStartMin: parseHM(a['time-start']),
     entryEndMin: parseHM(a['time-end']),
     scaleQty: Number(a['scale-qty'] ?? 0),
@@ -140,6 +160,11 @@ type OpenPos = {
   emaDistAtSignal: number
   mfe: number // running max favorable excursion (points), over the holding period
   mae: number // running max adverse excursion (points)
+  atrAtSignal?: number
+  spreadDir?: number
+  accelDir?: number
+  crossCount?: number
+  entryIsStop?: boolean // stop-breakout entry (fills going with the move) vs limit fade
   scaled?: boolean // scale-out mode: partial booked at +1R, runner active
   runnerStopPrice?: number // stop on the runner leg after the scale
   debugExample?: number
@@ -160,6 +185,10 @@ export type Trade = {
   emaDistAtSignal: number
   mfeAtr: number // max favorable excursion in ATR units (1.0 = stop distance)
   maeAtr: number // max adverse excursion in ATR units
+  atrAtSignal?: number  // ATR(10) at the signal bar — normalizer for the metrics below
+  spreadDir?: number    // direction-aligned (9 EMA − 20 EMA) at signal, in points
+  accelDir?: number     // direction-aligned change in slope (slope[i] − slope[i−1])
+  crossCount?: number   // # of price-vs-EMA closes that flipped side in the last 10 bars
 }
 
 type DebugCtx = { remaining: number }
@@ -210,10 +239,10 @@ function checkExit(
   return null
 }
 
-function simulate(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades: Trade[]; unresolved: number } {
+function simulate(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx, tickReader?: TickReader): { trades: Trade[]; unresolved: number } {
   if (args.entry === 'break') return simulateBreak(bars1m, args, dbg)
   if (args.entry === 'zone') return simulateZone(bars1m, args)
-  return simulatePullback(bars1m, args)
+  return simulatePullback(bars1m, args, tickReader)
 }
 
 // Pullback-to-EMA mode: limit fill at the prior 5m bar's EMA value, 1x ATR stop.
@@ -221,18 +250,20 @@ function simulate(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades: Trad
 // the line during those 5 minutes, the setup dies and we wait for fresh ARMED.
 // 2 consecutive 1m closes on the wrong side of the EMA disarm (same rule as break mode).
 // Post-exit / post-2-against re-arm requires compress-then-separate.
-function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresolved: number } {
+function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader): { trades: Trade[]; unresolved: number } {
   if (bars1m.length < args.atrPeriod + 10) return { trades: [], unresolved: 0 }
+  const useTicks = args.tickResolve && !!tickReader
 
   const isRTH1m = bars1m.map(b => isRTH(b.ts))
   const ptDate1m = bars1m.map(b => ptDateKey(b.ts))
   const atr1m = atrWilder(bars1m, args.atrPeriod)
 
-  const { bars5m, ranges } = aggregate1mTo5m(bars1m)
+  const { bars5m, ranges } = aggregate1mTo5m(bars1m, args.decisionTfMin * 60 * 1000)
   const rthMask5m = ranges.map(r => isRTH1m[r.start])
 
   const closes5m = bars5m.map(b => b.close)
   const ema5m = emaSeries(closes5m, args.ema)
+  const ema20s = emaSeries(closes5m, args.ema2) // companion EMA for the 9-20 spread metric
   const slope5m: (number | null)[] = bars5m.map((_, i) =>
     i >= args.lookback ? (ema5m[i] - ema5m[i - args.lookback]) / args.lookback : null,
   )
@@ -273,7 +304,10 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
   // riding the same continuous trend.
   let needCompress = false
   let consecAgainst = 0
-  let pendingLimit: { side: Side; price: number; slopeAtSignal: number; emaDistAtSignal: number; signalTs5m: string } | null = null
+  let pendingLimit: { side: Side; price: number; slopeAtSignal: number; emaDistAtSignal: number; signalTs5m: string; atrAtSignal: number; spreadDir: number; accelDir: number; crossCount: number } | null = null
+  let pulledBack = false // (stop mode) price has retested the EMA since arming
+  let prevBar1m: OhlcBar | null = null // (stop mode) prior 1m bar — the breakout trigger
+  let rthOpen = NaN // RTH open price for the current session (trend-day filter anchor)
   let posOpen: OpenPos | null = null
   let prevPtDate: string | null = null
   let lastRthIdx = -1 // last RTH 1m bar seen — runner EOD force-flatten reference
@@ -297,6 +331,10 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
       emaDistAtSignal: posOpen.emaDistAtSignal,
       mfeAtr: posOpen.stopDist > 0 ? posOpen.mfe / posOpen.stopDist : 0,
       maeAtr: posOpen.stopDist > 0 ? posOpen.mae / posOpen.stopDist : 0,
+      atrAtSignal: posOpen.atrAtSignal,
+      spreadDir: posOpen.spreadDir,
+      accelDir: posOpen.accelDir,
+      crossCount: posOpen.crossCount,
     })
     posOpen = null
     armed = false
@@ -314,6 +352,39 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
     return true
   }
 
+  // Resolve the TRUE intrabar order of stop vs target within bar j from ticks.
+  // On the fill bar, only ticks at/after the fill (price reaching the entry) count —
+  // this is what kills the "got the target same-bar as the fill" optimism.
+  const tickExit = (pos: OpenPos, j: number, isFill: boolean): 'stop' | 'target' | 'open' => {
+    const barMs = new Date(bars1m[j].ts).getTime()
+    const ticks = tickReader!(barMs, barMs + 60_000)
+    let start = 0
+    if (isFill) {
+      let f = -1
+      for (let t = 0; t < ticks.length; t++) {
+        // Limit fades INTO the level (long fills on a tick ≤ entry); a stop breaks
+        // through it WITH the move (long fills on a tick ≥ entry).
+        const reached = pos.entryIsStop
+          ? (pos.side === 'long' ? ticks[t] >= pos.entry : ticks[t] <= pos.entry)
+          : (pos.side === 'long' ? ticks[t] <= pos.entry : ticks[t] >= pos.entry)
+        if (reached) { f = t; break }
+      }
+      if (f < 0) return 'open' // no tick reached the fill price this bar (guard)
+      start = f
+    }
+    for (let t = start; t < ticks.length; t++) {
+      const p = ticks[t]
+      if (pos.side === 'long') {
+        if (p <= pos.stop) return 'stop'
+        if (p >= pos.target) return 'target'
+      } else {
+        if (p >= pos.stop) return 'stop'
+        if (p <= pos.target) return 'target'
+      }
+    }
+    return 'open'
+  }
+
   // Process one 1m bar for the open position. Returns true if the trade fully closed.
   const stepExit = (j: number): boolean => {
     const pos = posOpen!
@@ -323,20 +394,28 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
     if (fav > pos.mfe) pos.mfe = fav
     if (adv > pos.mae) pos.mae = adv
     if (!pos.scaled) {
-      // Pre-scale (or no-scale): original stop = full loss; target = scale event or full win.
-      if (pos.side === 'long') {
-        if (b.low <= pos.stop) { finalize(j, pos.stop, -1); return true }
-        if (b.high >= pos.target) {
-          if (scaleActive) { pos.scaled = true; pos.runnerStopPrice = args.runnerStop === 'be' ? pos.entry : pos.stop; return false }
-          finalize(j, pos.target, (pos.target - pos.entry) / pos.stopDist); return true
-        }
-      } else {
-        if (b.high >= pos.stop) { finalize(j, pos.stop, -1); return true }
-        if (b.low <= pos.target) {
-          if (scaleActive) { pos.scaled = true; pos.runnerStopPrice = args.runnerStop === 'be' ? pos.entry : pos.stop; return false }
-          finalize(j, pos.target, (pos.entry - pos.target) / pos.stopDist); return true
-        }
+      const stopIn = pos.side === 'long' ? b.low <= pos.stop : b.high >= pos.stop
+      const tgtIn = pos.side === 'long' ? b.high >= pos.target : b.low <= pos.target
+      if (!stopIn && !tgtIn) return false
+      const isFill = j === pos.fillIdx1m
+      const hitTarget = (): boolean => {
+        if (scaleActive) { pos.scaled = true; pos.runnerStopPrice = args.runnerStop === 'be' ? pos.entry : pos.stop; return false }
+        finalize(j, pos.target, pos.side === 'long' ? (pos.target - pos.entry) / pos.stopDist : (pos.entry - pos.target) / pos.stopDist)
+        return true
       }
+      // Tick resolution when the order matters: the fill bar (fill-vs-target), or any
+      // bar whose range straddles BOTH stop and target. Other bars are unambiguous via OHLC.
+      if (useTicks && (isFill || (stopIn && tgtIn))) {
+        const r = tickExit(pos, j, isFill)
+        if (r === 'stop') { finalize(j, pos.stop, -1); return true }
+        if (r === 'target') return hitTarget()
+        return false
+      }
+      // OHLC fallback: pessimistic stop-first; on the fill bar honor --fillbar-target.
+      const allowTarget = args.fillbarTarget || !isFill
+      if (stopIn) { finalize(j, pos.stop, -1); return true }
+      if (allowTarget && tgtIn) return hitTarget()
+      return false
     } else {
       // Runner: exit on runner stop (intrabar) or first 1m close back through the EMA.
       const emaRef = emaFor1m[j]
@@ -370,11 +449,15 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
       needCompress = false
       consecAgainst = 0
       pendingLimit = null
+      pulledBack = false
+      prevBar1m = null
+      rthOpen = NaN
       posOpen = null
       prevPtDate = ptDate
     }
 
     if (!inRTH) continue
+    if (Number.isNaN(rthOpen)) rthOpen = bar5m.open // first RTH bar of the session
 
     // EMA reference used by 1m bars inside bar i = prior 5m bar's EMA (current
     // 5m bar hasn't closed yet, so its EMA isn't known to a real-time trader).
@@ -398,38 +481,48 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
         continue
       }
 
-      // Try to fill the pending limit on this 1m bar.
-      if (pendingLimit) {
-        const lim = pendingLimit
-        const fp = lim.side === 'long' ? fillLong(sub, lim.price) : fillShort(sub, lim.price)
-        if (fp != null) {
-          const atrIdx = j - 1
-          if (atrIdx >= 0 && Number.isFinite(atr1m[atrIdx]) && atr1m[atrIdx] > 0) {
-            const stopDist = atr1m[atrIdx]
-            const entry = fp
-            const stop = lim.side === 'long' ? entry - stopDist : entry + stopDist
-            const target = lim.side === 'long' ? entry + stopDist * args.targetR : entry - stopDist * args.targetR
-            posOpen = {
-              side: lim.side,
-              entry,
-              stop,
-              target,
-              stopDist,
-              fillIdx1m: j,
-              scanStart1m: j,
-              signalTs: lim.signalTs5m,
-              slopeAtSignal: lim.slopeAtSignal,
-              emaDistAtSignal: lim.emaDistAtSignal,
-              mfe: 0,
-              mae: 0,
+      // ENTRY. `lim` carries the armed-signal metrics (set at the prior 5m close).
+      const lim = pendingLimit
+      if (lim) {
+        const atrIdx = j - 1
+        const atrOk = atrIdx >= 0 && Number.isFinite(atr1m[atrIdx]) && atr1m[atrIdx] > 0
+        let entry: number | null = null
+        let isStop = false
+        if (args.entryTrigger === 'limit') {
+          // LIMIT: fade into the EMA — fill on touch.
+          const fp = lim.side === 'long' ? fillLong(sub, lim.price) : fillShort(sub, lim.price)
+          if (fp != null) entry = fp
+        } else {
+          // STOP: require a pullback to the EMA, then enter on a break of the prior
+          // 1m bar's extreme (going WITH the resumption, not fading into it).
+          if (Number.isFinite(emaForBar) && (lim.side === 'long' ? sub.low <= emaForBar : sub.high >= emaForBar)) pulledBack = true
+          if (pulledBack && prevBar1m) {
+            const trig = lim.side === 'long' ? prevBar1m.high + 0.25 : prevBar1m.low - 0.25
+            if (lim.side === 'long' ? sub.high >= trig : sub.low <= trig) {
+              entry = lim.side === 'long' ? Math.max(sub.open, trig) : Math.min(sub.open, trig)
+              isStop = true
             }
-            const closed = stepExit(j)
-            if (!closed) posOpen.scanStart1m = j + 1
-            pendingLimit = null
-            consecAgainst = 0
-            continue
           }
         }
+        if (entry != null && atrOk) {
+          const stopDist = atr1m[atrIdx] * args.stopMult
+          const stop = lim.side === 'long' ? entry - stopDist : entry + stopDist
+          const target = lim.side === 'long' ? entry + stopDist * args.targetR : entry - stopDist * args.targetR
+          posOpen = {
+            side: lim.side, entry, stop, target, stopDist, fillIdx1m: j, scanStart1m: j,
+            signalTs: lim.signalTs5m, slopeAtSignal: lim.slopeAtSignal, emaDistAtSignal: lim.emaDistAtSignal,
+            mfe: 0, mae: 0, atrAtSignal: lim.atrAtSignal, spreadDir: lim.spreadDir, accelDir: lim.accelDir,
+            crossCount: lim.crossCount, entryIsStop: isStop,
+          }
+          const closed = stepExit(j)
+          if (!closed) posOpen.scanStart1m = j + 1
+          pendingLimit = null
+          pulledBack = false
+          consecAgainst = 0
+          prevBar1m = sub
+          continue
+        }
+        prevBar1m = sub // (stop mode) advance the breakout reference each armed bar
       }
 
       // 2-bars-against tracking: 2 consecutive 1m closes on the wrong side of the
@@ -441,6 +534,7 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
         if (consecAgainst >= 2) {
           armed = false
           pendingLimit = null
+          pulledBack = false
           needCompress = true
           consecAgainst = 0
         }
@@ -469,11 +563,24 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
         else if (newBias === 'short' && bar5m.close >= v) newBias = null
       }
     }
+    // Trend-day filter: require the session to have travelled ≥ minTrendDay ATR
+    // from the RTH open, in the trade's direction (no lookahead — open + now).
+    if (newBias != null && args.minTrendDay > 0) {
+      const sigAtr = atr1m[range.end - 1]
+      if (Number.isFinite(rthOpen) && Number.isFinite(sigAtr) && sigAtr > 0) {
+        const dayMoveAtr = (bar5m.close - rthOpen) / sigAtr
+        if (newBias === 'long' && dayMoveAtr < args.minTrendDay) newBias = null
+        else if (newBias === 'short' && dayMoveAtr > -args.minTrendDay) newBias = null
+      } else {
+        newBias = null
+      }
+    }
 
     if (newBias !== bias) {
       armed = false
       bias = newBias
       pendingLimit = null
+      pulledBack = false
       needCompress = false
       consecAgainst = 0
     }
@@ -493,12 +600,36 @@ function simulatePullback(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unr
     }
 
     if (bias && armed && !posOpen) {
-      pendingLimit = {
-        side: bias,
-        price: ema,
-        slopeAtSignal: bias === 'long' ? slope : -slope,
-        emaDistAtSignal: Math.abs(bar5m.close - ema),
-        signalTs5m: bar5m.ts,
+      // Candidate quality metrics, captured at signal time (direction-aligned: + = with the trade).
+      const sigAtr = atr1m[range.end - 1]
+      const sepNow = Number.isFinite(sigAtr) && sigAtr > 0 ? Math.abs(bar5m.close - ema) / sigAtr : 0
+      // Separation floor (minSep) + 9-20 spread floor (minSpread): only arm when price is
+      // extended >= minSep ATR from the 9 EMA AND the 9 EMA is >= minSpread ATR from the 20 EMA
+      // (in the trend direction). The spread floor is the "is the trend strong enough to look at" gate.
+      const dirSpread = bias === 'long' ? ema - ema20s[i] : ema20s[i] - ema
+      const spreadAtr = Number.isFinite(ema20s[i]) && sigAtr > 0 ? dirSpread / sigAtr : 0
+      if (sepNow < args.minSep || sepNow > args.maxSep || spreadAtr < args.minSpread) {
+        pendingLimit = null
+      } else {
+        const prevSlope = i >= 1 ? slope5m[i - 1] : null
+        const rawAccel = prevSlope != null ? slope - prevSlope : 0
+        let crosses = 0
+        for (let k = Math.max(1, i - 9); k <= i; k++) {
+          const a = Math.sign(closes5m[k] - ema5m[k])
+          const b = Math.sign(closes5m[k - 1] - ema5m[k - 1])
+          if (a !== 0 && b !== 0 && a !== b) crosses++
+        }
+        pendingLimit = {
+          side: bias,
+          price: ema,
+          slopeAtSignal: bias === 'long' ? slope : -slope,
+          emaDistAtSignal: Math.abs(bar5m.close - ema),
+          signalTs5m: bar5m.ts,
+          atrAtSignal: Number.isFinite(sigAtr) ? sigAtr : 0,
+          spreadDir: Number.isFinite(ema20s[i]) ? dirSpread : 0,
+          accelDir: bias === 'long' ? rawAccel : -rawAccel,
+          crossCount: crosses,
+        }
       }
     } else {
       pendingLimit = null
@@ -1000,7 +1131,15 @@ async function loadAllTradesFromScid(args: Args): Promise<{ trades: Trade[]; unr
       continue
     }
     if (priceDivisor !== 100) process.stdout.write(`[divisor=${priceDivisor}] `)
-    const { trades, unresolved } = simulate(bars as OhlcBar[], args, dbg)
+    // Tick reader for intrabar-order resolution (only when --tick-resolve 1).
+    const tr = args.tickResolve ? makeTickReader(c.path, priceDivisor) : null
+    if (tr) process.stdout.write('[ticks] ')
+    let trades: Trade[], unresolved: number
+    try {
+      ;({ trades, unresolved } = simulate(bars as OhlcBar[], args, dbg, tr ? tr.read : undefined))
+    } finally {
+      if (tr) tr.close()
+    }
     allTrades.push(...trades)
     totalUnresolved += unresolved
     perContract.push({
@@ -1039,7 +1178,7 @@ function printTradeList(trades: Trade[]) {
       `  ${fill} PT  ${t.side.toUpperCase().padEnd(5)} `
       + `entry=${t.entry.toFixed(2)}  stop=${t.stop.toFixed(2)}  target=${t.target.toFixed(2)}  `
       + `risk=${t.stopDist.toFixed(2)}pts  exit=${exit} PT @ ${t.exit.toFixed(2)}  R=${t.R.toFixed(2)}  `
-      + `slope=${t.slope.toFixed(2)} pts/5m  MFE=${t.mfeAtr.toFixed(2)} MAE=${t.maeAtr.toFixed(2)} ATR`,
+      + `slope=${t.slope.toFixed(2)}  sep=${(t.atrAtSignal ? t.emaDistAtSignal / t.atrAtSignal : 0).toFixed(2)}ATR  MFE=${t.mfeAtr.toFixed(2)} MAE=${t.maeAtr.toFixed(2)}`,
     )
   }
 }
@@ -1160,6 +1299,51 @@ function printReport(trades: Trade[], unresolved: number, args: Args) {
   printYearReport(trades, dollarPerPoint)
   printSideReport(trades, dollarPerPoint)
   printExcursionReport(trades)
+  printMetricSeparation(trades, dollarPerPoint)
+}
+
+// Horse race: which signal-time metric best separates winners from losers?
+// For each candidate, sort trades by the metric, split into terciles, and report
+// PF per tercile + the Pearson correlation of the metric with trade R. The best
+// predictor has the steepest monotonic PF gradient and the largest |corr|.
+function printMetricSeparation(trades: Trade[], dollarPerPoint: number) {
+  const ts = trades.filter(t => t.atrAtSignal != null && t.atrAtSignal > 0)
+  if (ts.length === 0) return
+  const metrics: Array<{ name: string; f: (t: Trade) => number }> = [
+    { name: 'raw slope (pts/bar)', f: t => t.slope },
+    { name: 'slope / ATR', f: t => t.slope / (t.atrAtSignal as number) },
+    { name: '9-20 spread / ATR', f: t => (t.spreadDir as number) / (t.atrAtSignal as number) },
+    { name: 'slope accel (dir)', f: t => t.accelDir as number },
+    { name: 'EMA crosses last10', f: t => t.crossCount as number },
+    { name: 'EMA dist / ATR', f: t => t.emaDistAtSignal / (t.atrAtSignal as number) },
+  ]
+  const pnl = (t: Trade) => t.R * t.stopDist * dollarPerPoint
+  const stat = (arr: Trade[]) => {
+    const n = arr.length
+    const w = arr.filter(t => t.R > 0)
+    const wp = w.reduce((a, t) => a + pnl(t), 0)
+    const lp = Math.abs(arr.filter(t => t.R <= 0).reduce((a, t) => a + pnl(t), 0))
+    return { wr: w.length / n, pf: lp > 0 ? wp / lp : Infinity }
+  }
+  const corr = (f: (t: Trade) => number) => {
+    const xs = ts.map(f), ys = ts.map(t => t.R)
+    const n = xs.length
+    const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n
+    let sxy = 0, sxx = 0, syy = 0
+    for (let k = 0; k < n; k++) { const dx = xs[k] - mx, dy = ys[k] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy }
+    return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : 0
+  }
+  const pf = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : '∞').padStart(6)
+  console.log(`\nMetric separation (${ts.length} trades) — tercile PF sorted low→high by metric, + corr with R:\n`)
+  console.log(`${'metric'.padEnd(20)} ${'corrR'.padStart(7)}  ${'botPF'.padStart(6)} ${'midPF'.padStart(6)} ${'topPF'.padStart(6)}  ${'topWR'.padStart(6)}`)
+  for (const m of metrics) {
+    const sorted = [...ts].sort((a, b) => m.f(a) - m.f(b))
+    const n = sorted.length, t1 = Math.floor(n / 3), t2 = Math.floor(2 * n / 3)
+    const bot = stat(sorted.slice(0, t1)), mid = stat(sorted.slice(t1, t2)), top = stat(sorted.slice(t2))
+    console.log(`${m.name.padEnd(20)} ${corr(m.f).toFixed(3).padStart(7)}  ${pf(bot.pf)} ${pf(mid.pf)} ${pf(top.pf)}  ${(top.wr * 100).toFixed(1).padStart(5)}%`)
+  }
+  console.log(`\n(corrR = Pearson corr of metric vs R. Bigger |corr| AND a monotonic bot→top PF rise = better predictor.`)
+  console.log(` EMA-crosses should HURT, so expect a negative corr and topPF < botPF there.)`)
 }
 
 // 30-minute PT entry-time buckets across the RTH session (06:30 → 13:00 PT).

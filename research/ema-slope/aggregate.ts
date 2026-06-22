@@ -4,9 +4,11 @@ const FIVE_MIN_MS = 5 * 60 * 1000
 
 export type Range1m = { start: number; end: number } // half-open; bars1m[start..end-1]
 
-// Roll 1-minute OHLC bars into 5-minute OHLC bars, aligned to wall-clock 5-minute boundaries.
-// Also returns the 1m index range that fed each 5m bar so callers can walk sub-bars.
-export function aggregate1mTo5m(bars1m: OhlcBar[]): { bars5m: OhlcBar[]; ranges: Range1m[] } {
+// Roll 1-minute OHLC bars into N-minute OHLC bars, aligned to wall-clock boundaries.
+// Also returns the 1m index range that fed each bucket so callers can walk sub-bars.
+// tfMs defaults to 5 minutes (the original behavior). tfMs = 60_000 makes each 1m
+// bar its own bucket (decision timeframe == execution timeframe).
+export function aggregate1mTo5m(bars1m: OhlcBar[], tfMs: number = FIVE_MIN_MS): { bars5m: OhlcBar[]; ranges: Range1m[] } {
   if (bars1m.length === 0) return { bars5m: [], ranges: [] }
   const bars5m: OhlcBar[] = []
   const ranges: Range1m[] = []
@@ -15,7 +17,7 @@ export function aggregate1mTo5m(bars1m: OhlcBar[]): { bars5m: OhlcBar[]; ranges:
   let bucketStart = 0
   for (let i = 0; i < bars1m.length; i++) {
     const b = bars1m[i]
-    const k = Math.floor(new Date(b.ts).getTime() / FIVE_MIN_MS)
+    const k = Math.floor(new Date(b.ts).getTime() / tfMs)
     if (k !== bucketKey) {
       if (bucket) {
         bars5m.push(bucket)
@@ -24,7 +26,7 @@ export function aggregate1mTo5m(bars1m: OhlcBar[]): { bars5m: OhlcBar[]; ranges:
       bucketKey = k
       bucketStart = i
       bucket = {
-        ts: new Date(k * FIVE_MIN_MS).toISOString(),
+        ts: new Date(k * tfMs).toISOString(),
         open: b.open,
         high: b.high,
         low: b.low,
