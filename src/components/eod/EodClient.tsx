@@ -17,6 +17,7 @@ import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import DeleteDayDangerZone from './DeleteDayDangerZone'
 import RecordingCommentary from './RecordingCommentary'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { avgCaptureRatio, avgMaeHeatRatio } from '@/lib/analytics'
 import type {
   TradingDay,
@@ -658,14 +659,18 @@ export default function EodClient({
           </div>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <SCFolderWatcher
-            onActivity={(msg, type) => showToast(msg, type)}
-            onImported={refreshTrades}
-          />
-          <BarWatcher
-            activeDate={date}
-            onRefresh={() => setBarsVersion(v => v + 1)}
-          />
+          {LOCAL_FEATURES_ENABLED && (
+            <>
+              <SCFolderWatcher
+                onActivity={(msg, type) => showToast(msg, type)}
+                onImported={refreshTrades}
+              />
+              <BarWatcher
+                activeDate={date}
+                onRefresh={() => setBarsVersion(v => v + 1)}
+              />
+            </>
+          )}
           <ImportTradesButton
             date={date}
             onImported={handleImported}
@@ -937,7 +942,9 @@ export default function EodClient({
         postExitByTradeId={postExitByTradeId}
       />
 
-      <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
+      {LOCAL_FEATURES_ENABLED && (
+        <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
+      )}
 
       {/* EOD Notes */}
       <EodNotesForm

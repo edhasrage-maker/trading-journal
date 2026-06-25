@@ -15,6 +15,7 @@ import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
 import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import BarWatcher from '@/components/charts/BarWatcher'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
 import type { SpellCheckCorrection } from '@/app/api/spell-check/route'
@@ -714,7 +715,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             {chartView === 'screenshot' ? 'Chart Screenshot (with MGI levels marked)' : 'Live Chart'}
           </h2>
           <div className="flex items-center gap-3">
-            {chartView === 'live' && (
+            {chartView === 'live' && LOCAL_FEATURES_ENABLED && (
               <BarWatcher
                 activeDate={date}
                 onRefresh={() => setBarsVersion(v => v + 1)}
