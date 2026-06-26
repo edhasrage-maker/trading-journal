@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { format } from 'date-fns'
-import { Video, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Video, Loader2, AlertCircle, CheckCircle2, Film } from 'lucide-react'
+import FrameNudge from '@/components/FrameNudge'
 import type { Trade, DetectedLevels } from '@/lib/supabase/types'
 
 interface VideoFile { name: string; sizeBytes: number; mtimeMs: number }
@@ -10,6 +11,8 @@ interface CommentaryResponse {
   commentary: Record<string, string>
   suggested_mistakes?: Record<string, string[]>
   detected_levels?: Record<string, DetectedLevels>
+  /** id → public URL of an entry frame auto-saved as the trade's screenshot. */
+  auto_screenshots?: Record<string, string>
   skipped: Array<{ id: string; reason: string }>
   framesUsed?: number
   recordingStartIso?: string
@@ -119,6 +122,8 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
   const [videoFile, setVideoFile] = useState<string>('')
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<CommentaryResponse | null>(null)
+  // Which trade's frame-nudge scrubber is open (one at a time).
+  const [nudgeOpenId, setNudgeOpenId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [commentary, setCommentary] = useState<Record<string, string>>({})
   const [suggestedMistakes, setSuggestedMistakes] = useState<Record<string, string[]>>({})
@@ -300,6 +305,7 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
           trades: trades.map(t => ({
             id: t.id, direction: t.direction, entry_price: t.entry_price, exit_price: t.exit_price,
             quantity: t.quantity, pnl: t.pnl, entry_time: t.entry_time, exit_time: t.exit_time,
+            screenshot_url: t.screenshot_url,
             tags_json: t.tags_json, notes: t.notes,
           })),
         }),
@@ -324,12 +330,17 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
           try { localStorage.setItem(mistakeKey(t.id), JSON.stringify({ h: hashTradeForCommentary(t, videoFile), m: gotMistakes[t.id] })) } catch { /* ignore */ }
         }
       }
+      // If the run auto-filled any missing screenshots, re-fetch trades so the
+      // new images appear in the log / chart / form immediately.
+      if (data.auto_screenshots && Object.keys(data.auto_screenshots).length > 0) {
+        onTradesChanged?.()
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Network error')
     } finally {
       setRunning(false)
     }
-  }, [videoFile, trades])
+  }, [videoFile, trades, onTradesChanged])
 
   const canRun = !!videoFile && trades.length > 0 && !running
   const skippedById = new Map((result?.skipped ?? []).map(s => [s.id, s.reason]))
@@ -497,6 +508,29 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
                   <p className="text-gray-200 leading-snug">{c}</p>
                 ) : (
                   <p className="text-gray-600 italic">Skipped: {skip}</p>
+                )}
+                {/* Frame-nudge scrubber: re-pick the entry frame and save it as
+                    this trade's screenshot (only when a recording is selected). */}
+                {videoFile && t.entry_time && (
+                  nudgeOpenId === t.id ? (
+                    <div className="mt-2">
+                      <FrameNudge
+                        videoFile={videoFile}
+                        entryTimeIso={t.entry_time}
+                        tradeId={t.id}
+                        onSaved={() => { setNudgeOpenId(null); onTradesChanged?.() }}
+                        onClose={() => setNudgeOpenId(null)}
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setNudgeOpenId(t.id)}
+                      className="mt-2 flex items-center gap-1 text-[10px] text-purple-300/80 hover:text-purple-200 transition-colors"
+                    >
+                      <Film className="w-3 h-3" /> Adjust entry frame
+                    </button>
+                  )
                 )}
                 {(() => {
                   const lvls = detectedLevels[t.id]

@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { format, subDays } from 'date-fns'
-import Link from 'next/link'
-import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
+import { todayPT } from '@/lib/pt-time'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
+import DashboardCharts from '@/components/dashboard/DashboardCharts'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
 // Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
@@ -20,7 +20,10 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 export default async function DashboardPage() {
-  const today = format(new Date(), 'yyyy-MM-dd')
+  // PT-anchored, not machine-local — see todayPT(). Prevents a mis-set OS
+  // timezone on either synced machine from filing today's prep/intraday/EOD
+  // under the wrong calendar day.
+  const today = todayPT()
   const supabase = await createClient()
   const perf = { phases: [] as Array<{ name: string; ms: number; rows?: number }>, t0: Date.now() }
   const tick = (name: string, rows?: number) => {
@@ -40,22 +43,17 @@ export default async function DashboardPage() {
   const past180StartParallel = format(subDays(todayDateForWindows, 180), 'yyyy-MM-dd')
   const statsWindowStartParallel = `${todayDateForWindows.getFullYear() - 1}-01-01`
 
-  // Parallelize the two independent top-level trading_days queries.
-  // Pre-fix: serial — paid the full Supabase round-trip cost twice on cold
-  // navigations (e.g. EOD → Dashboard switch after sitting idle on EOD).
-  // Post-fix: max(today, recent) instead of sum — ~300ms saved on cold loads,
-  // zero cost on warm loads. The two queries don't depend on each other.
-  const [todayResult, recentResult] = await Promise.all([
-    supabase.from('trading_days').select('*').eq('date', today).single(),
-    supabase
-      .from('trading_days')
-      .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
-      .gte('date', statsWindowStartParallel)
-      .order('date', { ascending: false })
-      .limit(PAGE_SIZE),
-  ])
-  const todayRecord = (todayResult.data ?? null) as TradingDay | null
-  tick('todayRecord + recentDays (parallel)')
+  // Single top-level trading_days query: the period stats + Recent Days table
+  // + the new top-of-page charts all derive from this one window (start-of-
+  // last-year → today). The separate per-date "today" fetch was dropped along
+  // with the Today quick-action tiles it fed.
+  const recentResult = await supabase
+    .from('trading_days')
+    .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
+    .gte('date', statsWindowStartParallel)
+    .order('date', { ascending: false })
+    .limit(PAGE_SIZE)
+  tick('recentDays')
 
   // Reuse the window constants computed for the parallel fetch above so we
   // don't recompute Date math (and so the labels in the perf log stay correct).
@@ -99,6 +97,13 @@ export default async function DashboardPage() {
     // load). When null (e.g. pre-2025 trades), falls back to day-level
     // market_context.atr_1m via the same precedence the dashboard had before.
     entry_atr_1m: number | null
+    // Needed by the scaling-aware MFE-capture calc (captureComponents): the
+    // per-leg exits + any backfilled per-leg $. Without exits_json the dashboard
+    // silently fell back to the harsh full-qty capture, so a scaled-out trade
+    // read LOWER here than on the EOD recap (which has the full trade data).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    exits_json: any
+    mfe_dollars_per_leg: number | null
   }
   const dayIds = recentDaysBase.map(d => d.id)
   // Chunk trading_day_ids for the .in() — 50 UUIDs per chunk to stay under
@@ -114,7 +119,7 @@ export default async function DashboardPage() {
       for (let p = 0; p < 50; p++) {
         const { data, error } = await supabase
           .from('trades')
-          .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m')
+          .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
           .in('trading_day_id', slice)
           .order('id', { ascending: true })
           .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
@@ -216,12 +221,15 @@ export default async function DashboardPage() {
       let mfeSum = 0, maeSum = 0, mfeDollarSum = 0, maeDollarSum = 0
       for (const t of mfeMaeTrades) {
         const isLong = t.direction === 'long'
-        const mfe = isLong
+        // Floor at 0 — MFE/MAE are non-negative excursion magnitudes. A trade
+        // that never went adverse has MAE = 0, not a negative value that would
+        // cancel out real heat in the day's average. Mirrors mfeMaePoints().
+        const mfe = Math.max(0, isLong
           ? (t.high_during_position! - t.entry_price!)
-          : (t.entry_price! - t.low_during_position!)
-        const mae = isLong
+          : (t.entry_price! - t.low_during_position!))
+        const mae = Math.max(0, isLong
           ? (t.entry_price! - t.low_during_position!)
-          : (t.high_during_position! - t.entry_price!)
+          : (t.high_during_position! - t.entry_price!))
         mfeSum += mfe
         maeSum += mae
         const mult = symbolToMultiplier(t.symbol ?? '')
@@ -254,6 +262,31 @@ export default async function DashboardPage() {
       if (v != null) { liveAtrSum += v; liveAtrCount++ }
     }
     if (liveAtrCount > 0) avgLiveAtr1m = liveAtrSum / liveAtrCount
+
+    // ×ATR average that MATCHES the EOD recap's AvgMfeMaeCard: the mean of
+    // per-trade (excursion / that trade's OWN entry_atr_1m), skipping trades
+    // without a live entry ATR. The dashboard historically divided the day's
+    // AVG points by the AVG ATR (ratio-of-averages) over a mismatched trade
+    // set — numerator counted every excursion trade, denominator only the
+    // ATR-bearing ones — so it diverged from the EOD card whenever ATR varied
+    // across trades or a no-ATR (e.g. GBX) trade was present. Average-of-ratios
+    // over the same skip-null set reconciles the two surfaces exactly.
+    let avgMfeAtr: number | null = null
+    let avgMaeAtr: number | null = null
+    {
+      let mfeAtrSum = 0, maeAtrSum = 0, n = 0
+      for (const t of mfeMaeTrades) {
+        const atr = liveAtrByTradeId.get(t.id)
+        if (atr == null || atr <= 0) continue
+        const isLong = t.direction === 'long'
+        const mfe = Math.max(0, isLong ? (t.high_during_position! - t.entry_price!) : (t.entry_price! - t.low_during_position!))
+        const mae = Math.max(0, isLong ? (t.entry_price! - t.low_during_position!) : (t.high_during_position! - t.entry_price!))
+        mfeAtrSum += mfe / atr
+        maeAtrSum += mae / atr
+        n++
+      }
+      if (n > 0) { avgMfeAtr = mfeAtrSum / n; avgMaeAtr = maeAtrSum / n }
+    }
 
     return {
       id: d.id,
@@ -339,6 +372,10 @@ export default async function DashboardPage() {
       atr_1m: prepAtrByDay.get(d.id) ?? null,
       avg_live_atr_1m: avgLiveAtr1m,
       live_atr_count: liveAtrCount,
+      // Per-trade average-of-ratios ×ATR (matches the EOD AvgMfeMaeCard).
+      // Null when no trade on the day had a live entry ATR.
+      avg_mfe_atr: avgMfeAtr,
+      avg_mae_atr: avgMaeAtr,
     }
   })
 
@@ -387,40 +424,13 @@ export default async function DashboardPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-gray-400 text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
+          <p className="text-gray-400 text-sm mt-1">{format(new Date(`${today}T12:00:00`), 'EEEE, MMMM d, yyyy')}</p>
         </div>
       </div>
 
-      {/* Today's quick actions */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-white">Today</h2>
-          <span className="text-xs text-gray-500">{format(new Date(), 'MM/dd/yyyy')}</span>
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          <TodayAction
-            href={`/prep/${today}`}
-            icon={<ClipboardList className="w-5 h-5" />}
-            label="Daily Prep"
-            status={todayRecord?.prep_notes_json && Object.keys(todayRecord.prep_notes_json).length > 0 ? 'done' : 'pending'}
-          />
-          <TodayAction
-            href={`/intraday/${today}`}
-            icon={<Activity className="w-5 h-5" />}
-            label="Intraday"
-            // Cascade: once the day is wrapped (EOD notes saved), intraday is
-            // implicitly done — you can't be in the session anymore. Tile flips
-            // green so the Today row visually reads "fully closed out".
-            status={todayRecord?.eod_notes ? 'done' : todayRecord?.id ? 'available' : 'locked'}
-          />
-          <TodayAction
-            href={`/eod/${today}`}
-            icon={<BarChart2 className="w-5 h-5" />}
-            label="EOD Recap"
-            status={todayRecord?.eod_notes ? 'done' : todayRecord?.id ? 'available' : 'locked'}
-          />
-        </div>
-      </div>
+      {/* Top-of-page performance charts: cumulative equity curve + per-day
+          net P&L bars. Replaces the old "Today" quick-action tiles. */}
+      <DashboardCharts days={statsDays} />
 
       {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,
           Median Process. Filters by Week / Month / 30d / YTD / Last Year. */}
@@ -438,38 +448,6 @@ export default async function DashboardPage() {
         />
       </div>
     </div>
-  )
-}
-
-function TodayAction({ href, icon, label, status }: {
-  href: string
-  icon: React.ReactNode
-  label: string
-  status: 'done' | 'pending' | 'available' | 'locked'
-}) {
-  const styles = {
-    done: 'border-green-800 bg-green-950/30 text-green-400',
-    pending: 'border-blue-700 bg-blue-950/30 text-blue-400 hover:bg-blue-950/50',
-    available: 'border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700',
-    locked: 'border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed opacity-50',
-  }
-
-  if (status === 'locked') {
-    return (
-      <div className={`flex flex-col items-center gap-2 p-4 rounded-lg border ${styles[status]}`}>
-        {icon}
-        <span className="text-sm font-medium">{label}</span>
-        <span className="text-xs opacity-60">Complete prep first</span>
-      </div>
-    )
-  }
-
-  return (
-    <Link href={href} className={`flex flex-col items-center gap-2 p-4 rounded-lg border transition-colors ${styles[status]}`}>
-      {icon}
-      <span className="text-sm font-medium">{label}</span>
-      <span className="text-xs opacity-60">{status === 'done' ? 'Completed' : 'Start'}</span>
-    </Link>
   )
 }
 

@@ -1,4 +1,5 @@
 import { readScidBars } from './scid-reader'
+import { sessionUtcWindow } from './pt-time'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
 
@@ -55,8 +56,10 @@ export async function importScidDay(
     return { ok: false, status: 404, error: `File not found: ${fullPath}` }
   }
 
-  const startMs = Date.parse(`${opts.date}T00:00:00Z`)
-  const endMs = startMs + 86_400_000
+  // PT-session bounds (not raw UTC day) so the overnight / post-RTH (GBX)
+  // bars for this journal date land in ohlcv_bars — otherwise GBX trades have
+  // no candles to compute MFE/capture against. DST-exact via pt-time.
+  const { startMs, endMs } = sessionUtcWindow(opts.date)
 
   let result
   try {

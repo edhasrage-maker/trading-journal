@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
-import type { Trade, TradingDay, MarketContext, TradeTags, EodAiAnalysis } from '@/lib/supabase/types'
+import { normalizeTagArray, type Trade, type TradingDay, type MarketContext, type TradeTags, type EodAiAnalysis } from '@/lib/supabase/types'
 
 /**
  * Drop a copy of every export into the project's exports/ folder. The dev
@@ -184,7 +184,11 @@ export async function GET(req: Request) {
 
     const ctx = ctxByDay.get(t.trading_day_id)
     const tags = (t.tags_json ?? {}) as TradeTags
-    const joinTags = (arr: string[] | undefined) => (arr ?? []).join('; ')
+    // Normalise every tag field through normalizeTagArray: tags_json is loosely
+    // typed JSON, and some categories (notably day_type) are stored as a single
+    // string on legacy/auto-tagged rows. A raw `.join` on a string throws and
+    // 500s the whole export — which is exactly how the GBX day_type tag broke it.
+    const joinTags = (value: unknown) => normalizeTagArray(value).join('; ')
     const { mfe, mae } = mfeMaePts(t)
     const eod = day.eod_ai_analysis_json
     const tx = t as Trade & { mfe_dollars_per_leg?: number | null; entry_atr_1m?: number | null; entry_rvol?: number | null; structure_5m_alignment?: string | null }

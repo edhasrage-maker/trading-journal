@@ -376,6 +376,7 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
             title={effectivePick === 'median' ? 'Median view' : 'Tertile view'}
             match={effectiveMatch}
             picked={true}
+            baselineEv={outcome.baseline_ev}
           />
         )}
 
@@ -526,7 +527,7 @@ function ConsolidatedVerdict({
   )
 }
 
-function MatchCard({ title, match, picked }: { title: string; match: MatchResult | null; picked: boolean }) {
+function MatchCard({ title, match, picked, baselineEv }: { title: string; match: MatchResult | null; picked: boolean; baselineEv?: number | null }) {
   if (!match) {
     return (
       <div className="bg-gray-950 border border-gray-800 rounded-lg p-3">
@@ -575,6 +576,25 @@ function MatchCard({ title, match, picked }: { title: string; match: MatchResult
           {r.ev_ci_lo != null && r.ev_ci_hi != null && (
             <div className="text-gray-600 font-normal">[{r.ev_ci_lo.toFixed(0)} to {r.ev_ci_hi.toFixed(0)}]</div>
           )}
+          {/* EV vs the trader's own baseline EV — flags whether THIS environment
+              runs above/below your average. Bold when the bucket's EV CI clears
+              the baseline entirely (statistically distinct), faint otherwise. */}
+          {baselineEv != null && r.ev_per_trade != null && (() => {
+            const delta = r.ev_per_trade - baselineEv
+            const sigAbove = r.ev_ci_lo != null && r.ev_ci_lo > baselineEv
+            const sigBelow = r.ev_ci_hi != null && r.ev_ci_hi < baselineEv
+            const cls = sigAbove ? 'text-green-400' : sigBelow ? 'text-red-400' : delta >= 0 ? 'text-green-500/60' : 'text-gray-500'
+            const weight = sigAbove || sigBelow ? 'font-semibold' : 'font-normal'
+            return (
+              <div
+                className={`text-[10px] ${cls} ${weight}`}
+                title={`Your overall baseline EV is ${baselineEv >= 0 ? '+' : ''}$${baselineEv.toFixed(2)}/trade. ${sigAbove ? 'This environment is statistically ABOVE it — a favorable regime for you.' : sigBelow ? 'Statistically BELOW it — you underperform your average here.' : 'Within range of your average — no clear edge either way.'}`}
+              >
+                {delta >= 0 ? '↑' : '↓'} {delta >= 0 ? '+' : '−'}${Math.abs(delta).toFixed(0)} vs your avg
+                {!sigAbove && !sigBelow && ' (within range)'}
+              </div>
+            )
+          })()}
         </dd>
         <dt className="text-gray-500">Profit factor</dt>
         <dd className="text-right text-gray-200">{r.profit_factor != null ? r.profit_factor.toFixed(2) : '—'}</dd>

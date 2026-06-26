@@ -73,6 +73,8 @@ Verdict ∈ {Compliant, Breach}. All 5 rules are hard quantitative safety rails 
 | Realized vs planned RR | realized RR vs planned reward ratio (Profit Factor in $) | 11% |
 Composite is diagnostic only. Never combined with process.
 
+**Prep adherence — scope (amended 2026-06-26):** Grade adherence ONLY against what was actually planned for the RTH session. (a) EXEMPT GBX / overnight trades (`tags_json.day_type` "GBX", or entered outside 06:30–13:00 PT) — the morning prep describes the RTH session and does not apply to them; exclude them from the comparison (null the sub-metric if every trade was GBX). (b) A BLANK prep field is not an adherence miss — there's nothing to adhere to; that's a prep-quality gap the Prep score already covers. Never dock prep_adherence for prep incompleteness.
+
 **Amended 2026-06-08 (amendment 3):** Duration-to-thesis sub-metric DROPPED entirely — too coarse a signal that wasn't producing actionable feedback. New "Execution Parameters" sub-metric absorbs what used to be P4 (stop validity) and P7 (setup validity) plus 7 additional quality criteria, weighted 35%. Other weights rebalanced.
 
 **Amended 2026-06-20 (amendment 4):** MAE / heat control (was 15%) DROPPED from the composite — getting stopped, especially when price runs past the stop, is correct execution validating an invalidated idea, so scoring it heat→0 penalizes a good decision. The four remaining sub-metrics renormalize to 41 / 24 / 24 / 11. MAE/heat is retained in analytics only as a descriptive, non-graded entry-timing statistic; it no longer touches the Execution score.
@@ -81,11 +83,11 @@ Composite is diagnostic only. Never combined with process.
 Each criterion is binary per trade (pass = 1, fail = 0, N/A = skipped). Per-trade score = passes ÷ (passes + fails). Sub-metric score = mean across compliant trades.
 
 1. **Setup in playbook.** The setup tag on the trade exists in the trader's curated `setups` tag library. Discretionary one-off setups not in the library fail.
-2. **Stop in 0.5–1.5 ATR band** (formerly P4). Stop ÷ ATR-10 mult between 0.5 and 1.5 inclusive. Sub-0.5 needs `tight_stop_reason` logged. 10-MNQ trades: ≤1.25 ATR AND total campaign risk ≤$200.
+2. **Stop in 0.5–1.5 ATR band** (formerly P4). Stop ÷ ATR-10 mult between 0.5 and 1.5 inclusive, using the **trade's own entry ATR** — never the day/RTH session ATR. If the trade has no per-trade entry ATR (e.g. a GBX/overnight trade with no bars), mark **N/A and skip** — the RTH ATR regime does not apply outside RTH. Sub-0.5 needs `tight_stop_reason` logged. 10-MNQ trades: ≤1.25 ATR AND total campaign risk ≤$200.
 3. **TP1 ≥ 2R, or reason logged.** Planned TP1 is at least 2× the planned risk distance. If TP1 < 2R, the EOD recap must explain why (one-off structural target, day-character, etc.). Missing reason = fail.
 4. **Clear area of interest noted.** The trade is anchored to a specific structural level (PDH/PDL, IBH/IBL, ONH/ONL, HTF zone, LVN, demand/supply cluster). "Random mid-range entry" or "felt right" = fail.
 5. **2/3 orderflow reads = A+.** Trade has at least 2 of 3 strong orderflow signals: delta flip, absorption (delta bubble failure), delta fade. Trades with 0 or 1 OF signals fail this criterion.
-6. **Entry was Break of Cluster or Break of Bubble.** The trigger was a structural break (price breaking through a cluster of orders or breaking a bubble), NOT a discretionary price-based entry ("looked like a good price"). Discretionary entries fail.
+6. **Entry was Break of Cluster or Break of Bubble.** The trigger was a structural break (price breaking through a cluster of orders, or breaking above/below a delta bubble), NOT a discretionary price-based entry ("looked like a good price"). **PASS automatically when the trade's `entry_model` tag includes "Break of Clusters/Bubbles" — that tag IS the trader declaring the trigger; trust it over a prose read. Never re-judge a tagged break-of-bubble entry as "location-based/discretionary" and fail it.** Only an untagged, purely discretionary price entry fails.
 7. **Management based on chart, not emotion.** Exits driven by clear technical / structural triggers pass. Exit examples:
    • PASS: "Exited long because a HUGE buyer came in above me but did NOT get rewarded" — that's a structural read that the level isn't holding.
    • FAIL: "Exited early because I was scared to give back profits before my target" — PnL-anchored emotional decision, not structural.

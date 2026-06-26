@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
@@ -102,6 +102,18 @@ export default function EodClient({
   })
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  // Deep-link: /eod/<date>?trade=<id> (e.g. double-clicking a chart arrow from
+  // another page) scrolls to + highlights that trade's row once it's rendered.
+  const searchParams = useSearchParams()
+  const deepLinkTradeId = searchParams.get('trade')
+  useEffect(() => {
+    if (!deepLinkTradeId) return
+    const el = document.getElementById(`eod-trade-${deepLinkTradeId}`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- deep-link highlight: mark the linked trade so its row + chart arrow stand out on arrival
+    setHoveredTradeId(deepLinkTradeId)
+  }, [deepLinkTradeId, trades])
   // Chart view mode: 'screenshot' = legacy ChartScreenshotPanel +
   // calibration + TradeArrowOverlay; 'live' = native lightweight-charts
   // rendering from imported OHLCV bars. Default to screenshot for backward
@@ -661,11 +673,14 @@ export default function EodClient({
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">EOD Recap</h1>
-          <div className="flex items-center gap-3 mt-1">
+      {/* Header — single row. Left (title + date) is shrink-0 so it never gets
+          compressed; the gap-4 guarantees clear space before the action buttons
+          (no more date sitting under the Watch-folder button). */}
+      <div className="flex items-end justify-between gap-4">
+        <div className="shrink-0">
+          <h1 className="text-xl font-bold text-white">EOD Recap</h1>
+          {/* Date + action buttons share one row, aligned under the title. */}
+          <div className="flex items-center gap-2 mt-1">
             <input
               type="date"
               value={date}
@@ -673,50 +688,48 @@ export default function EodClient({
                 const next = e.target.value
                 if (next && next !== date) router.push(`/eod/${next}`)
               }}
-              className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
+              className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
               title="Switch to a different day's recap"
             />
-            <span className="text-gray-400 text-sm">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</span>
+            <SCFolderWatcher
+              onActivity={(msg, type) => showToast(msg, type)}
+              onImported={refreshTrades}
+            />
+            <BarWatcher
+              activeDate={date}
+              onRefresh={() => setBarsVersion(v => v + 1)}
+            />
+            <ImportTradesButton
+              date={date}
+              onImported={handleImported}
+              onError={msg => showToast(msg, 'error')}
+            />
           </div>
         </div>
-        <div className="flex items-center gap-3 text-sm">
-          <SCFolderWatcher
-            onActivity={(msg, type) => showToast(msg, type)}
-            onImported={refreshTrades}
-          />
-          <BarWatcher
-            activeDate={date}
-            onRefresh={() => setBarsVersion(v => v + 1)}
-          />
-          <ImportTradesButton
-            date={date}
-            onImported={handleImported}
-            onError={msg => showToast(msg, 'error')}
-          />
-          <div className="border-l border-gray-700 h-10" />
+        <div className="flex items-center gap-2 text-sm">
           {/* Stats strip: tightened font + gap so the row fits on one line.
               All labels carry `whitespace-nowrap` so "W/L" and "MAE Heat %"
               never wrap onto two lines when the viewport narrows. */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
           <div>
-            <div className="text-[11px] text-gray-500 whitespace-nowrap">Trades</div>
-            <div className="font-mono text-white text-base">{trades.length}</div>
+            <div className="text-[10px] text-gray-500 whitespace-nowrap">Trades</div>
+            <div className="font-mono text-white text-sm">{trades.length}</div>
           </div>
           <div>
-            <div className="text-[11px] text-gray-500 whitespace-nowrap">Win Rate</div>
-            <div className="font-mono text-white text-base">{winRate.toFixed(0)}%</div>
+            <div className="text-[10px] text-gray-500 whitespace-nowrap">Win Rate</div>
+            <div className="font-mono text-white text-sm">{winRate.toFixed(0)}%</div>
           </div>
           <div>
-            <div className="text-[11px] text-gray-500 whitespace-nowrap">W / L</div>
-            <div className="font-mono text-base whitespace-nowrap">
+            <div className="text-[10px] text-gray-500 whitespace-nowrap">W / L</div>
+            <div className="font-mono text-sm whitespace-nowrap">
               <span className="text-green-400">{winCount}</span>
               <span className="text-gray-600">/</span>
               <span className="text-red-400">{lossCount}</span>
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-gray-500 whitespace-nowrap">PnL</div>
-            <div className={`font-mono text-base whitespace-nowrap ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+            <div className="text-[10px] text-gray-500 whitespace-nowrap">PnL</div>
+            <div className={`font-mono text-sm whitespace-nowrap ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
               {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
             </div>
           </div>
@@ -724,7 +737,7 @@ export default function EodClient({
               Uses pts/$/×ATR toggle synced with the Dashboard card via localStorage. */}
           <AvgMfeMaeCard trades={trades} variant="inline" />
           <div className="relative">
-            <div className="text-[11px] text-gray-500 whitespace-nowrap flex items-center gap-1">
+            <div className="text-[10px] text-gray-500 whitespace-nowrap flex items-center gap-1">
               MFE Realized %
               <button
                 type="button"
@@ -735,7 +748,7 @@ export default function EodClient({
                 <HelpCircle className="w-3 h-3" />
               </button>
             </div>
-            <div className={`font-mono text-base ${captureStats.avg == null ? 'text-gray-500'
+            <div className={`font-mono text-sm ${captureStats.avg == null ? 'text-gray-500'
               : captureStats.avg < 0 ? 'text-red-400 font-bold'
               : 'text-gray-400'}`}>
               {captureStats.avg == null ? '—' : `${(captureStats.avg * 100).toFixed(0)}%`}
@@ -767,7 +780,7 @@ export default function EodClient({
             )}
           </div>
           <div className="relative">
-            <div className="text-[11px] text-gray-500 whitespace-nowrap flex items-center gap-1">
+            <div className="text-[10px] text-gray-500 whitespace-nowrap flex items-center gap-1">
               MAE Heat %
               <button
                 type="button"
@@ -778,7 +791,7 @@ export default function EodClient({
                 <HelpCircle className="w-3 h-3" />
               </button>
             </div>
-            <div className={`font-mono text-base ${heatStats.avg == null ? 'text-gray-500'
+            <div className={`font-mono text-sm ${heatStats.avg == null ? 'text-gray-500'
               : heatStats.avg > 1.0 ? 'text-red-400 font-bold'
               : 'text-gray-400'}`}>
               {heatStats.avg == null ? '—' : `${(heatStats.avg * 100).toFixed(0)}%`}
@@ -847,6 +860,12 @@ export default function EodClient({
           trades={trades}
           refreshKey={barsVersion}
           hoverTradeId={hoveredTradeId}
+          // Double-click an arrow → scroll to + highlight that trade's row in
+          // the log below (the chart and list are on the same page here).
+          onTradeActivate={id => {
+            setHoveredTradeId(id)
+            document.getElementById(`eod-trade-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }}
         />
       ) : (
       <ChartScreenshotPanel

@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
+import { todayPT } from '@/lib/pt-time'
 import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle, Layers, Image as ImageIcon, CandlestickChart } from 'lucide-react'
 import ScreenshotUpload from './ScreenshotUpload'
 import ConditionFilterPanel from '@/components/condition/ConditionFilterPanel'
@@ -17,6 +18,7 @@ import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import BarWatcher from '@/components/charts/BarWatcher'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
+import type { SessionLevels } from '@/lib/session-levels'
 import type { SpellCheckCorrection } from '@/app/api/spell-check/route'
 
 interface Props {
@@ -119,6 +121,31 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       price_in_gbx_range: initialContext.price_in_gbx_range ?? undefined,
     } : { symbol: 'NQ' }
   )
+  // Auto-fill the Market Context form from the Live chart's computed session
+  // levels — the chart already draws PDH/PDL/IBH/IBL/ONH/ONL deterministically
+  // from the .scid, so on "Live chart" view the form no longer stays empty.
+  // Each field is filled at most once and only when blank, so a value the user
+  // typed (or one loaded from a saved prep) is never clobbered, and a refresh
+  // every 3 min won't re-fill a field the user later cleared.
+  const levelsAutoFilledRef = useRef<Set<string>>(new Set())
+  const handleLevels = useCallback((lvls: SessionLevels | null) => {
+    if (!lvls) return
+    const map: Record<string, number | null> = {
+      pdh: lvls.pdh, pdl: lvls.pdl, ibh: lvls.ibh, ibl: lvls.ibl, onh: lvls.onh, onl: lvls.onl,
+    }
+    setContext(prev => {
+      const next = { ...prev }
+      let changed = false
+      for (const [k, v] of Object.entries(map)) {
+        if (levelsAutoFilledRef.current.has(k)) continue
+        levelsAutoFilledRef.current.add(k) // handle each field once, fill or skip
+        if (v == null) { levelsAutoFilledRef.current.delete(k); continue } // no value yet — retry next refresh
+        const cur = (prev as Record<string, unknown>)[k]
+        if (cur == null || cur === '') { (next as Record<string, unknown>)[k] = v; changed = true }
+      }
+      return changed ? next : prev
+    })
+  }, [])
   const [prepNotes, setPrepNotes] = useState<PrepNotes>(initialDay?.prep_notes_json ?? {})
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(
     initialDay?.ai_analysis_json && Object.keys(initialDay.ai_analysis_json).length > 0
@@ -130,7 +157,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // Used to track "time at desk" vs subsequent PnL.
   const [prepStartedAt, setPrepStartedAt] = useState<string | null>(initialDay?.prep_started_at ?? null)
   const [prepCompletedAt, setPrepCompletedAt] = useState<string | null>(initialDay?.prep_completed_at ?? null)
-  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  // PT-anchored so "is this today?" matches the PT-anchored nav links (todayPT).
+  // Machine-local would mis-flag the live-chart default + prep-timing capture
+  // on a host whose OS timezone is wrong.
+  const todayStr = todayPT()
   const isToday = date === todayStr
 
   // Mark dirty on any field change (skip the very first render).
@@ -767,6 +797,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             symbol={chartSymbol}
             trades={initialTrades}
             refreshKey={barsVersion}
+            onLevels={handleLevels}
           />
         )}
       </div>

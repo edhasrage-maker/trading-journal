@@ -279,10 +279,12 @@ export default function TradeList({
               return (
                 <tr
                   key={t.id}
+                  id={`eod-trade-${t.id}`}
                   onMouseEnter={e => onHoverEnter(t.id, e)}
                   onMouseLeave={onHoverLeave}
                   onClick={() => onRowOpen?.(t.id)}
                   title="Open this trade's log in the intraday page"
+                  style={{ scrollMarginTop: 80 }}
                   className={`group border-b border-gray-800 transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${
                     isSelected
                       ? 'bg-blue-900/30'

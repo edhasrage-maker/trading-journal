@@ -96,9 +96,18 @@ export function buildEodPrompt({
         const pnl = t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '--'
         const setups = t.tags_json?.setups?.join(', ') || '—'
         const confluences = t.tags_json?.confluences?.join(', ') || '—'
+        // entry_model carries the trigger tag (e.g. "Break of Clusters/Bubbles")
+        // that criterion #6 keys on. Was previously omitted from the block, so
+        // the AI scored #6 off prose and missed the explicit tag.
+        const entryModel = (t.tags_json as { entry_model?: string[] } | null | undefined)?.entry_model?.join(', ') || '—'
         const mistakes = t.tags_json?.mistakes?.join(', ') || '—'
         const emotions = t.tags_json?.emotions?.join(', ') || '—'
         const mgmt = t.tags_json?.trade_management?.join(', ') || '—'
+        // Precomputed planned TP1 R so the AI doesn't have to do the division
+        // for criterion #3 (it kept miscounting trades that clearly clear 2R).
+        const risk = (t.entry_price != null && t.stop_price != null) ? Math.abs(t.entry_price - t.stop_price) : null
+        const reward = (t.entry_price != null && t.tp1_price != null) ? Math.abs(t.tp1_price - t.entry_price) : null
+        const plannedR = (risk && reward && risk > 0) ? `${(reward / risk).toFixed(2)}R` : '?'
         const notes = t.notes?.trim()
         const rc = t.recording_commentary
         const commentaryText = typeof rc === 'string'
@@ -117,9 +126,17 @@ export function buildEodPrompt({
         // sees the gap explicitly.
         const hdp = t.high_during_position != null ? t.high_during_position : '?'
         const ldp = t.low_during_position != null ? t.low_during_position : '?'
+        // Per-trade entry ATR (live ATR-10 at the fill) — the stop-band check
+        // must use THIS, not the day/RTH session ATR. GBX/overnight trades have
+        // no per-trade ATR (no bars) and the RTH regime doesn't apply to them.
+        const atr = (t as { entry_atr_1m?: number | null }).entry_atr_1m
+        const dtRaw = (t.tags_json as { day_type?: unknown } | null | undefined)?.day_type
+        const dts = Array.isArray(dtRaw) ? dtRaw : (dtRaw ? [dtRaw] : [])
+        const isGbx = dts.some(d => typeof d === 'string' && d.toUpperCase().includes('GBX'))
         return `  ${i + 1}. open ${time} → close ${exitTime} | ${dir} @ ${t.entry_price ?? '?'} stop ${t.stop_price ?? '?'} TP1 ${tp1} exit ${exit} qty ${t.quantity ?? '?'} | PnL ${pnl}
        intra-trade extremes: high=${hdp} low=${ldp}
-       setups: ${setups} | confluences: ${confluences}
+       entry ATR-10(1m): ${atr ?? 'N/A'} | planned TP1: ${plannedR} | session: ${isGbx ? 'GBX/overnight — exempt from prep_adherence + the ATR stop-band check ONLY; STILL execution-scored on every other criterion' : 'RTH'}
+       setups: ${setups} | entry_model: ${entryModel} | confluences: ${confluences}
        management: ${mgmt} | mistakes: ${mistakes} | emotions: ${emotions}${notesLine}${commentaryLine}`
       }).join('\n')
 
@@ -202,6 +219,14 @@ every per-trade rule above STILL get scored for Execution. Only return
 null sub-metrics when ZERO trades passed all the per-trade rules — and
 state that explicitly in execution.notes when it happens.
 
+**GBX / overnight trades are NOT excluded from execution scoring.** A GBX
+trade that passed the per-trade rules is scored on Execution Parameters like
+any other compliant trade — setup, order-flow, AOI, break-of-cluster, chart-
+not-emotion management, mistakes, emotion all still apply. The GBX exemption is
+NARROW: it removes a GBX trade from ONLY (a) prep_adherence and (b) the
+stop-in-ATR-band criterion (RTH ATR regime doesn't apply). Do NOT drop a GBX
+trade from the Execution Parameters average wholesale.
+
 Compute each sub-metric on 0..1 (higher = better):
 
     - execution_parameters (weight 41%): a 9-criterion per-trade checklist
@@ -227,6 +252,18 @@ Compute each sub-metric on 0..1 (higher = better):
       every entry mapped to a documented plan on a correctly-read day. 0.0
       = trades off-bias, no plan match, day character misread. Null only
       when prep notes are entirely blank.
+      EXEMPT GBX / OVERNIGHT TRADES: the morning prep (bias, IB behaviour,
+      volume profile, RTH trade_plans) describes the RTH session — it does NOT
+      apply to a trade taken outside RTH. EXCLUDE any trade with
+      tags_json.day_type "GBX" (or entered outside 06:30–13:00 PT) from the
+      prep_adherence comparison entirely; grade ONLY the RTH trades against the
+      prep. If EVERY trade was GBX, prep_adherence is null (no RTH trade to
+      score against the RTH prep) — do not penalize the session for it.
+      A BLANK prep field is NOT an adherence miss: a field the trader never
+      filled (blank ib_behaviour, blank volume_profile_shape) is nothing to
+      "adhere" to — that's a prep-quality gap the separate Prep score already
+      covers. Grade adherence ONLY against what was actually planned; never dock
+      prep_adherence for prep INCOMPLETENESS.
     - profit_factor (weight 11%): industry-standard PF in DOLLARS — gross
       profit ÷ gross loss. Sum the $pnl of winning trades, divide by the
       absolute value of summed losers. 1.0 = break-even; > 1.0 = net
@@ -252,9 +289,13 @@ across the session — so the UI can show which criteria are dragging.
   1. setup_in_playbook — the setup tag on the trade exists in the trader's
      curated 'setups' tag library. Improvised one-off setups not in the
      library fail. N/A if no setup tag at all on the trade.
-  2. stop_in_atr_band — stop ÷ ATR-10 mult is in [0.5, 1.5]. Sub-0.5
-     needs tight_stop_reason logged. 10-MNQ trades: ≤1.25 ATR AND ≤$200
-     campaign risk. Mechanical — formerly P4, no "marginal" soft zone.
+  2. stop_in_atr_band — stop ÷ ATR-10 mult is in [0.5, 1.5], using the TRADE'S
+     OWN entry ATR ("entry ATR-10(1m)" on each trade line), NOT the day/session
+     ATR in Market Context. If a trade shows entry ATR "N/A" (e.g. a GBX/
+     overnight trade with no bars), mark this criterion N/A and SKIP it — do
+     NOT fall back to the RTH session ATR; that volatility regime does not apply
+     outside RTH. Sub-0.5 needs tight_stop_reason logged. 10-MNQ trades: ≤1.25
+     ATR AND ≤$200 campaign risk. Mechanical — formerly P4, no "marginal" soft zone.
   3. tp1_at_2r_or_reasoned — planned TP1 distance ÷ planned stop distance
      ≥ 2.0. If TP1 < 2R, the EOD recap or trade notes must explicitly
      explain why (one-off structural target etc.). Missing reason = fail.
@@ -271,8 +312,14 @@ across the session — so the UI can show which criteria are dragging.
          with 1/3 OF is a perfectly valid trade; it was simply ineligible
          for the size-up exception. Never score it as a #5 fail.
   6. break_of_cluster_or_bubble_entry — the trigger was a structural break
-     (price breaking through a cluster of orders or breaking a bubble),
-     NOT a discretionary price entry. Discretionary entries fail.
+     (price breaking through a cluster of orders, or breaking ABOVE/BELOW a
+     delta bubble), NOT a discretionary price entry. PASS AUTOMATICALLY when the
+     trade's entry_model tag includes "Break of Clusters/Bubbles" — that tag IS
+     the trader declaring this trigger; trust it over your read of the prose.
+     NEVER re-judge a tagged break-of-bubble entry as "location-based /
+     discretionary" and score it 0. Only an UNtagged, purely discretionary price
+     entry (no break-of-cluster/bubble in entry_model, order_flow, or notes)
+     fails.
   7. chart_not_emotion_management — exits driven by clear technical /
      structural triggers pass. Worked examples:
        PASS: "Exited long because a HUGE buyer came in above me but
@@ -377,7 +424,23 @@ BEFORE giving the pass/fail. Don't summarize — name them.
 
 This applies inside execution_parameter_breakdown reasoning AND when citing
 trades in process.notes or execution.notes. Trader needs to AUDIT your read
-against their own — they can only do that if you enumerate.` : ''
+against their own — they can only do that if you enumerate.
+
+**6. Time-of-day is NOT a scored rule — and get the IB clock right.** The
+ruleset deliberately has NO entry-time gate (no pre-IB rule, no pre-9am rule,
+no post-9:30 rule — all explicitly removed by design). NEVER list the time a
+trade was taken as a "mistake" or a rule breach.
+  • The Initial Balance (IB) is the first hour of RTH: 06:30–07:30 PT. IB CLOSE
+    is 07:30 PT. A trade entered after 07:30 PT is POST-IB. Do NOT call a
+    post-07:30 entry "pre-IB" — that is a factual error, and pre-IB vs pre-09:00
+    are 90 minutes apart; never conflate them.
+  • If the trader's profile documents a timing TENDENCY (e.g. "pre-09:00
+    bleeds," "edge is 10:00–12:00 PT"), you MAY surface it — but ONLY in
+    patterns[] or next_session_focus[], framed explicitly as the trader's own
+    edge data ("your data shows pre-09:00 underperforms"), NEVER in mistakes[]
+    and never as a rule violation. The trade can still be a mistake for OTHER
+    reasons (FOMO, against-structure, cognitive-freeze hold) — judge those on
+    their merits; just don't let the clock be the offense.` : ''
 
   const legacyFrameworkBlock = useV13 ? '' : `
 ══ TRADER'S FRAMEWORK (read this before judging anything) ══
@@ -410,7 +473,8 @@ Market Context:
 - PDH/PDL: ${marketContext?.pdh ?? 'N/A'} / ${marketContext?.pdl ?? 'N/A'}
 - IBH/IBL: ${marketContext?.ibh ?? 'N/A'} / ${marketContext?.ibl ?? 'N/A'}
 
-Session Summary (all timestamps America/Los_Angeles; cite them in PT in your reasoning):
+Session Summary (all timestamps America/Los_Angeles; cite them in PT in your reasoning).
+Session clock for reference: RTH 06:30–13:00 PT; Initial Balance 06:30–07:30 PT (IB CLOSE = 07:30 PT). A trade entered after 07:30 PT is POST-IB. There is NO entry-time rule — timing is never a process breach (see narrative discipline #6).
 - Trades: ${trades.length} (W ${wins} / L ${losses})
 - Total PnL: ${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
 

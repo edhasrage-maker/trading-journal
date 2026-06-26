@@ -94,7 +94,7 @@ export default function BarWatcher({ activeDate, onRefresh }: Props) {
 
   return (
     <div
-      className="flex items-center gap-1.5 text-xs text-gray-400 select-none"
+      className="flex items-center gap-1.5 text-xs text-gray-400 select-none whitespace-nowrap shrink-0"
       title={`Bar auto-import (every ${POLL_MS / 60000} min)\n${lastInfo}`}
     >
       {status === 'working'

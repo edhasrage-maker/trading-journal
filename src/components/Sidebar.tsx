@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { format } from 'date-fns'
+import { todayPT } from '@/lib/pt-time'
 import {
   TrendingUp,
   LayoutDashboard,
@@ -31,24 +31,27 @@ const settingsItems = [
 
 export default function Sidebar() {
   const pathname = usePathname()
-  // Recompute `today` on each render so the date links stay current across midnight.
-  // Also tick every minute so the links update if the tab stays open through midnight.
-  const [today, setToday] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'))
+  // `today` is the PT session date (todayPT), not machine-local — a mis-set OS
+  // timezone on either synced machine would otherwise point these links at the
+  // wrong calendar day. Tick every minute so links roll over if the tab stays
+  // open across midnight PT.
+  const [today, setToday] = useState<string>(() => todayPT())
   useEffect(() => {
     const id = setInterval(() => {
-      const next = format(new Date(), 'yyyy-MM-dd')
+      const next = todayPT()
       setToday(prev => (prev === next ? prev : next))
     }, 60_000)
     return () => clearInterval(id)
   }, [])
 
-  // Monday of the current week → /weekly/<thatMonday>.
+  // Monday of the current week → /weekly/<thatMonday>. Derived from the PT
+  // `today` string at noon UTC so the weekday is TZ-safe (noon dodges DST edges).
   const currentWeekMonday = (() => {
-    const d = new Date()
-    const day = d.getDay()  // 0=Sun, 1=Mon, ..., 6=Sat
+    const noon = new Date(`${today}T12:00:00Z`)
+    const day = noon.getUTCDay()  // 0=Sun, 1=Mon, ..., 6=Sat
     const diff = day === 0 ? -6 : 1 - day
-    const monday = new Date(d.getTime() + diff * 24 * 3600 * 1000)
-    return format(monday, 'yyyy-MM-dd')
+    const monday = new Date(noon.getTime() + diff * 24 * 3600 * 1000)
+    return monday.toISOString().slice(0, 10)
   })()
 
   const navItems = [

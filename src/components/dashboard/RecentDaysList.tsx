@@ -49,6 +49,12 @@ export interface DayRowData {
   avg_live_atr_1m: number | null
   /** How many of the day's trades fed avg_live_atr_1m. Powers a tooltip noting partial coverage. */
   live_atr_count: number
+  /** Per-trade average-of-ratios ×ATR (mean of each trade's excursion / its own
+   *  entry_atr_1m), matching the EOD recap's AvgMfeMaeCard exactly. Preferred
+   *  for the ×ATR display; null on legacy days with no live entry ATR, where
+   *  the cell falls back to the ratio-of-averages on avg_live_atr_1m ?? atr_1m. */
+  avg_mfe_atr?: number | null
+  avg_mae_atr?: number | null
 }
 
 interface Props {
@@ -802,10 +808,24 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
   // express the excursion in "how many ATRs of typical 1m range." Falls back
   // to em-dash when the day's market_context.atr_1m wasn't filled in.
   if (unit === 'atr') {
-    // Prefer live ATR (avg of per-trade ATR computed from 1-min bars at each
-    // trade's entry_time) over the prep snapshot when available. Bar coverage
-    // exists for SCID-imported days, ~since the start of the import; older
-    // days fall back to prep_atr_1m so they don't silently render as em-dash.
+    // Preferred path — per-trade average-of-ratios, identical to the EOD recap
+    // AvgMfeMaeCard (mean of each trade's excursion / its OWN entry ATR). Using
+    // the same method here keeps the dashboard row and the EOD header in lock-
+    // step instead of the old ratio-of-averages, which drifted apart whenever
+    // ATR varied across the day's trades or a no-ATR trade was in the mix.
+    if (day.avg_mfe_atr != null && day.avg_mae_atr != null) {
+      const fmtA = (v: number) => `${v.toFixed(2)}×`
+      return (
+        <span title={`Per-trade ×ATR (each trade's excursion ÷ its own entry ATR-10), averaged across ${day.live_atr_count} trade${day.live_atr_count === 1 ? '' : 's'} — matches the EOD recap.`}>
+          <span className="text-green-400">+{fmtA(day.avg_mfe_atr)}</span>
+          <span className="text-gray-600"> / </span>
+          <span className="text-red-400">-{fmtA(day.avg_mae_atr)}</span>
+        </span>
+      )
+    }
+    // Legacy fallback (no per-trade entry ATR on this day): ratio-of-averages
+    // on the prep ATR so older pre-SCID days still render something instead of
+    // an em-dash. These days have no EOD card ×ATR to disagree with anyway.
     const atrRef = day.avg_live_atr_1m ?? day.atr_1m
     const isLive = day.avg_live_atr_1m != null
     if (day.avg_mfe_pts == null || day.avg_mae_pts == null || !atrRef) {

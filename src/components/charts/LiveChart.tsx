@@ -1,20 +1,20 @@
 'use client'
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { Loader2, AlertCircle, Database, Settings2, X } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Loader2, AlertCircle, Database, Settings2, X, Activity } from 'lucide-react'
 import {
   createChart,
   CandlestickSeries,
   LineSeries,
-  createSeriesMarkers,
   TickMarkType,
   type IChartApi,
   type ISeriesApi,
-  type ISeriesMarkersPluginApi,
   type IPriceLine,
   type Time,
   type AutoscaleInfo,
 } from 'lightweight-charts'
+import { TradeArrowsPrimitive, type TradeArrow } from './TradeArrowsPrimitive'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
 import { migrateChartPrefs, schedulePushChartPref, pullChartPref } from '@/lib/chart-prefs'
@@ -28,6 +28,14 @@ interface Props {
   refreshKey?: number
   /** Trade currently hovered in the EOD list — highlight it on the chart + show its popup. */
   hoverTradeId?: string | null
+  /** Double-click on a trade arrow. When provided (e.g. the EOD page, where the
+   *  trade list is on-screen), the parent scrolls to that trade's row. When
+   *  omitted, LiveChart falls back to navigating to /eod/<date>?trade=<id>. */
+  onTradeActivate?: (tradeId: string) => void
+  /** Fires whenever the computed session levels load/refresh — the prep page
+   *  uses this to auto-fill the Market Context form (PDH/PDL/IBH/IBL/ONH/ONL)
+   *  from the same values the chart draws, for fields the user hasn't edited. */
+  onLevels?: (levels: SessionLevels | null) => void
 }
 
 interface ApiBar {
@@ -193,7 +201,7 @@ export interface LiveChartHandle {
 /**
  * Native chart (lightweight-charts v5) shared by the EOD + Intraday pages.
  * Renders the day's 1m bars with VWAP + EMA(9) + EMA(20) overlays, plus
- * entry/exit markers via the v5 createSeriesMarkers primitive. Replaces the
+ * entry/exit arrows via a custom TradeArrowsPrimitive. Replaces the
  * screenshot + calibration flow for days where bars have been imported.
  *
  * Empty states:
@@ -202,7 +210,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, height = 480, refreshKey = 0, hoverTradeId = null },
+  { date, symbol, trades, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onLevels },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -214,8 +222,22 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   const vwapRef = useRef<ISeriesApi<'Line'> | null>(null)
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema20Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  // v5 moved markers off the series API into a separate primitive.
-  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  // Trade entry/exit arrows — custom series primitive (real left/right
+  // triangles, which the built-in marker shapes can't draw).
+  const tradeArrowsRef = useRef<TradeArrowsPrimitive | null>(null)
+  // Screen hit-targets for the arrows (one per drawn arrow) so double/right
+  // click can map a click position back to a trade. Kept in sync with the
+  // primitive's data in the render effect.
+  const arrowHitsRef = useRef<Array<{ tradeId: string; time: Time; price: number }>>([])
+  const router = useRouter()
+  // Right-click-on-arrow context menu (container-relative px + the trade it hit).
+  const [arrowMenu, setArrowMenu] = useState<{ x: number; y: number; tradeId: string } | null>(null)
+  useEffect(() => {
+    if (!arrowMenu) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setArrowMenu(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [arrowMenu])
   // Static session-level horizontal lines (recreated each data update).
   const priceLinesRef = useRef<IPriceLine[]>([])
   // Parallel record of the currently-drawn levels (key + price) so the
@@ -434,16 +456,55 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // drawn level's screen coordinate (priceToCoordinate); if one is within ~8px
   // we suppress the browser menu and add its key to hiddenLevels. Re-show via
   // the settings popover's "Hidden levels" chips or "Show all".
-  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!candleRef.current || levelLinesRef.current.length === 0) return
+  // Map a container-relative click (px, py) to the nearest trade arrow within
+  // ~16px. Returns the trade id, or null if the click didn't land on an arrow.
+  const arrowAt = (px: number, py: number): string | null => {
+    const candle = candleRef.current
+    const ts = chartRef.current?.timeScale()
+    if (!candle || !ts) return null
+    let bestId: string | null = null
+    let bestDist = Infinity
+    for (const h of arrowHitsRef.current) {
+      const ax = ts.timeToCoordinate(h.time)
+      const ay = candle.priceToCoordinate(h.price)
+      if (ax == null || ay == null) continue
+      const d = Math.hypot(ax - px, ay - py)
+      if (d < bestDist) { bestDist = d; bestId = h.tradeId }
+    }
+    return bestDist <= 16 ? bestId : null
+  }
+
+  // Double-click an arrow → jump to that trade. On the EOD page the parent
+  // scrolls to the trade row (onTradeActivate); elsewhere we navigate to it.
+  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
-    const y = e.clientY - rect.top
+    const id = arrowAt(e.clientX - rect.left, e.clientY - rect.top)
+    if (!id) return
+    setArrowMenu(null)
+    if (onTradeActivate) onTradeActivate(id)
+    else router.push(`/eod/${date}?trade=${id}`)
+  }
+
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const px = e.clientX - rect.left
+    const py = e.clientY - rect.top
+    // Right-click on a trade arrow opens the trade menu — takes priority over
+    // the level-hide behavior below.
+    const tradeId = arrowAt(px, py)
+    if (tradeId) {
+      e.preventDefault()
+      setArrowMenu({ x: px, y: py, tradeId })
+      return
+    }
+    // Otherwise: right-click near a session level hides it.
+    if (!candleRef.current || levelLinesRef.current.length === 0) return
     let bestKey: string | null = null
     let bestDelta = Infinity
     for (const lvl of levelLinesRef.current) {
       const coord = candleRef.current.priceToCoordinate(lvl.price)
       if (coord == null) continue
-      const d = Math.abs(coord - y)
+      const d = Math.abs(coord - py)
       if (d < bestDelta) { bestDelta = d; bestKey = lvl.key }
     }
     if (bestKey && bestDelta <= 8) {
@@ -460,12 +521,20 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // Session levels (static lines) + study-matched VWAP/EMA series, computed
   // server-side from the SCID over an 8-day lookback.
   const [levels, setLevels] = useState<{ levels: SessionLevels | null; series: LevelSeriesPoint[] } | null>(null)
+  // Ref so firing the onLevels callback doesn't re-run the fetch effect when the
+  // parent passes a new callback identity each render.
+  const onLevelsRef = useRef(onLevels)
+  useEffect(() => { onLevelsRef.current = onLevels }, [onLevels])
   useEffect(() => {
-    if (!symbol) { setLevels(null); return }
+    if (!symbol) { setLevels(null); onLevelsRef.current?.(null); return }
     let cancelled = false
     fetch(`/api/bars/levels?symbol=${encodeURIComponent(symbol)}&date=${date}&emaTf=${prefs.emaTimeframeMins}`)
       .then(r => r.json())
-      .then(d => { if (!cancelled) setLevels({ levels: d.levels ?? null, series: d.series ?? [] }) })
+      .then(d => {
+        if (cancelled) return
+        setLevels({ levels: d.levels ?? null, series: d.series ?? [] })
+        onLevelsRef.current?.(d.levels ?? null)
+      })
       .catch(() => { if (!cancelled) setLevels(null) })
     return () => { cancelled = true }
   }, [symbol, date, prefs.emaTimeframeMins, refreshKey])
@@ -577,6 +646,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         return { priceRange: { minValue: min - pad, maxValue: max + pad } }
       },
     })
+    // Trade arrows live as a primitive on the candle series — created once here,
+    // fed via setData() in the data/markers effect below.
+    tradeArrowsRef.current = new TradeArrowsPrimitive()
+    candleRef.current.attachPrimitive(tradeArrowsRef.current)
     // VWAP/EMA overlays must NOT drive the price axis — on a trend day the
     // session-anchored VWAP sits far from the candles and would blow out the
     // vertical scale (squashing the candles). Returning null keeps the price
@@ -644,7 +717,6 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     return () => {
       if (LIVECHART_DEBUG) console.log('[livechart] CHART-DESTROY', { tf: chartTfMins })
       obs.disconnect()
-      markersRef.current = null
       priceLinesRef.current = []
       levelLinesRef.current = []
       tradeLinesRef.current = []
@@ -654,6 +726,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       vwapRef.current = null
       ema9Ref.current = null
       ema20Ref.current = null
+      tradeArrowsRef.current = null
     }
   }, [height, chartTfMins])
 
@@ -752,7 +825,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       vwapRef.current.setData([])
       ema9Ref.current.setData([])
       ema20Ref.current.setData([])
-      markersRef.current?.setMarkers([])
+      tradeArrowsRef.current?.setData([])
       for (const pl of priceLinesRef.current) candleRef.current.removePriceLine(pl)
       priceLinesRef.current = []
       levelLinesRef.current = []
@@ -860,51 +933,46 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       L.iblExt.forEach((v, i) => addLine(v, `IBL-${pcts[i]}%`, dim, true))
     }
 
-    // Trade markers — entries are direction-shaped arrows; exits are
-    // OPPOSITE-direction arrows (LONG exits show arrowDown above the bar — a
-    // sell; SHORT exits show arrowUp below the bar — a buy-to-cover). Exits
-    // are GROUPED by display-TF time bucket so multiple fills landing in the
-    // same bucket render as ONE marker.
-    //
-    // Label strategy (kept minimal — lightweight-charts can't lay out
-    // multi-marker labels cleanly when they cluster, so we don't try):
-    //   - Entry default: qty only. Direction is encoded by arrow shape, price
-    //     by the bar y-position. Hover swaps in the full "SHORT 5@29489" form.
-    //   - Exit (always): total qty across all fills in that bucket. NO
-    //     qty@price swap on hover — the full per-fill list lives in the hover
-    //     popup, stacked vertically where there's room. Trying to render
-    //     "1@29456.5, 2@29456.75" labels on adjacent markers at similar
-    //     prices was producing stacks that the user couldn't read.
-    //   - Size bump (1 → 2) on entry + exits of the hovered trade so the
-    //     full ribbon visually pops out of any cluster.
-    type Marker = {
-      time: Time
-      position: 'belowBar' | 'aboveBar'
-      color: string
-      shape: 'arrowUp' | 'arrowDown' | 'circle'
-      text: string
-      size?: number
-    }
+    // Trade arrows (custom primitive — see TradeArrowsPrimitive). Two
+    // orthogonal encodings so direction and leg read independently:
+    //   - COLOR = DIRECTION: green = long, red = short (a trade's entry AND
+    //     exits share its color). Favorability is NOT colored here — it lives
+    //     in the connector-line color + the hover popup.
+    //   - ARROW = LEG: ▶ (right) = entry; ◀ (left) = exit.
+    // Arrows sit ON the candle at the fill price (vertical = true price, so a
+    // long stopped out lower shows its exit ◀ BELOW its entry ▶) and are BLANK
+    // by default (just the haloed shape). Hovering a trade enlarges its arrows
+    // and reveals labels: the entry shows DIR + size @ price, exits show
+    // size @ price. Exits are GROUPED by display-TF time bucket so multiple
+    // fills in the same bucket render as ONE arrow at the volume-weighted avg.
     const hoveredId = hover?.trade?.id ?? hoverTradeId ?? null
-    const markers: Marker[] = []
+    const fmtPx = (p: number) => (Number.isInteger(p) ? String(p) : String(+p.toFixed(2)))
+    const arrows: TradeArrow[] = []
+    // Parallel hit-targets (same time/price as each arrow) tagged with the trade
+    // id, for double/right-click mapping.
+    const arrowHits: Array<{ tradeId: string; time: Time; price: number }> = []
     for (const t of trades) {
       if (!t.entry_time || !t.direction) continue
       const isLong = t.direction === 'long'
       const entryPrice = t.entry_price ?? null
-      const pnl = t.pnl ?? 0
-      const entryColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#6b7280'
       const isHovered = hoveredId != null && t.id === hoveredId
-      // Entry
-      markers.push({
-        time: displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins),
-        position: isLong ? 'belowBar' : 'aboveBar',
-        color: entryColor,
-        shape: isLong ? 'arrowUp' : 'arrowDown',
-        text: isHovered
-          ? `${t.direction.toUpperCase()} ${t.quantity ?? ''}@${entryPrice ?? '?'}`
-          : String(t.quantity ?? ''),
-        size: isHovered ? 2 : 1,
-      })
+      const dirColor = isLong ? '#22c55e' : '#ef4444'         // fill: green long / red short
+      const dirOutline = isLong ? '#166534' : '#991b1b'       // border: darker green / darker red
+      // Entry (needs a price to place on the axis)
+      if (entryPrice != null) {
+        const entryTime = displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins)
+        arrows.push({
+          time: entryTime,
+          price: entryPrice,
+          leg: 'entry',
+          color: dirColor,
+          outline: dirOutline,
+          // Blank until hovered; then DIR + contract size @ entry price.
+          label: isHovered ? `${t.direction.toUpperCase()} ${t.quantity ?? ''} @ ${fmtPx(entryPrice)}` : '',
+          hovered: isHovered,
+        })
+        arrowHits.push({ tradeId: t.id, time: entryTime, price: entryPrice })
+      }
       // Exits: prefer per-fill array, fall back to aggregated single exit
       const exitList: Array<{ time: string; price: number; qty: number }> =
         Array.isArray(t.exits_json) && t.exits_json.length > 0
@@ -913,9 +981,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             ? [{ time: t.exit_time, price: t.exit_price, qty: t.quantity ?? 0 }]
             : []
       // Group exits by display-TF time bucket — every fill in the same bucket
-      // becomes ONE marker so labels don't stack. Each bucket carries the
-      // total qty for the default label and the comma-joined per-fill detail
-      // for the hover label.
+      // becomes ONE arrow (total qty), placed at the volume-weighted avg price.
       const exitsByBucket = new Map<number, Array<{ price: number; qty: number }>>()
       for (const e of exitList) {
         const bucketSec = displayTimeFromMs(new Date(e.time).getTime(), chartTfMins) as number
@@ -925,46 +991,36 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       }
       for (const [bucketSec, fills] of exitsByBucket) {
         const totalQty = fills.reduce((s, f) => s + f.qty, 0)
-        // Volume-weighted avg price drives the bucket's favorability classification
-        // (and its arrow color). Per-fill prices live in the hover popup, where
-        // they're rendered as a vertical stack instead of fighting for label
-        // space on the chart canvas.
         const avgPrice = totalQty > 0
           ? fills.reduce((s, f) => s + f.price * f.qty, 0) / totalQty
           : fills[0]?.price ?? 0
-        const favorable = entryPrice != null
-          ? (isLong ? avgPrice > entryPrice : avgPrice < entryPrice)
-          : true
-        const exitColor = favorable ? '#22c55e' : '#ef4444'
-        markers.push({
+        arrows.push({
           time: bucketSec as Time,
-          position: isLong ? 'aboveBar' : 'belowBar',
-          color: exitColor,
-          // Opposite-direction arrow vs entry: LONG exits sell (arrowDown
-          // pointing into the bar from above); SHORT exits cover (arrowUp
-          // pointing into the bar from below).
-          shape: isLong ? 'arrowDown' : 'arrowUp',
-          text: String(totalQty), // always just qty — per-fill prices live in the hover popup
-          size: isHovered ? 2 : 1,
+          price: avgPrice,
+          leg: 'exit',
+          color: dirColor, // color is direction, not P&L
+          outline: dirOutline,
+          // Blank until hovered; then contract size @ avg exit price.
+          label: isHovered ? `${totalQty} @ ${fmtPx(avgPrice)}` : '',
+          hovered: isHovered,
         })
+        arrowHits.push({ tradeId: t.id, time: bucketSec as Time, price: avgPrice })
       }
     }
-    markers.sort((a, b) => (a.time as number) - (b.time as number))
-    // v5 markers API: create the primitive once, then update it. (v4's
-    // candleSeries.setMarkers() was removed in v5 and threw here, which
-    // also prevented fitContent() below from running — leaving the chart
-    // looking blank even when candle data was set.)
-    if (markersRef.current) {
-      markersRef.current.setMarkers(markers)
-    } else {
-      markersRef.current = createSeriesMarkers(candleRef.current, markers)
-    }
+    // Hovered arrows drawn last so they (and their labels) sit on top of the
+    // rest when trades cluster.
+    arrows.sort((a, b) => Number(a.hovered) - Number(b.hovered))
+    tradeArrowsRef.current?.setData(arrows)
+    arrowHitsRef.current = arrowHits
 
-    // Entry→exit connector lines: a 2-point dashed line series per trade leg.
-    // Endpoints snapped to the display timeframe so they sit on the candle grid;
-    // legs whose entry and exit fall in the same display bucket are skipped (a line
-    // would collapse to a point). Color matches the exit marker (green if the
-    // partial beat entry, red if not).
+    // Entry→exit connector lines: one dashed 2-point line per scale-out,
+    // fanning from the entry price to EACH exit's actual price (diagonal), so
+    // every TP arrow — including ones far above/below the entry — gets its own
+    // connecting line. Exits are grouped by display-TF bucket (matching the
+    // arrows) so each line ends exactly on an exit arrow; a bucket equal to or
+    // before the entry's is skipped (the line would collapse to a point). Color
+    // reflects favorability (green if the exit beat entry, red if not) — which
+    // is what distinguishes it from the arrows, whose color is direction.
     //
     // HOVER HIGHLIGHT: the hovered trade's connectors render solid (not dashed),
     // thicker (3px vs 1px), and in a brighter color — so when you mouse over an
@@ -978,17 +1034,30 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         if (!t.entry_time || !t.direction || t.entry_price == null) continue
         const isLong = t.direction === 'long'
         const entryMin = displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins)
-        const exitList: Array<{ time: string; price: number }> =
+        const exitList: Array<{ time: string; price: number; qty: number }> =
           Array.isArray(t.exits_json) && t.exits_json.length > 0
             ? t.exits_json
             : t.exit_time && t.exit_price != null
-              ? [{ time: t.exit_time, price: t.exit_price }]
+              ? [{ time: t.exit_time, price: t.exit_price, qty: t.quantity ?? 0 }]
               : []
         const isHovered = hoveredId != null && t.id === hoveredId
+        // Group exits by display-TF bucket exactly like the arrows, so every
+        // connector ends ON an exit arrow (the bucket's volume-weighted avg
+        // price). One line per scale-out, fanning from the entry to each TP.
+        const exitsByBucket = new Map<number, Array<{ price: number; qty: number }>>()
         for (const e of exitList) {
-          const exitMin = displayTimeFromMs(new Date(e.time).getTime(), chartTfMins)
-          if ((exitMin as number) <= (entryMin as number)) continue // same/earlier bucket -> skip
-          const favorable = isLong ? e.price > t.entry_price : e.price < t.entry_price
+          const bucket = displayTimeFromMs(new Date(e.time).getTime(), chartTfMins) as number
+          if (bucket <= (entryMin as number)) continue // same/earlier bucket -> would collapse to a point
+          const arr = exitsByBucket.get(bucket) ?? []
+          arr.push({ price: e.price, qty: e.qty })
+          exitsByBucket.set(bucket, arr)
+        }
+        for (const [bucket, fills] of exitsByBucket) {
+          const totalQty = fills.reduce((s, f) => s + f.qty, 0)
+          const avgPrice = totalQty > 0
+            ? fills.reduce((s, f) => s + f.price * f.qty, 0) / totalQty
+            : fills[0]?.price ?? 0
+          const favorable = isLong ? avgPrice > t.entry_price : avgPrice < t.entry_price
           const baseColor = favorable ? '#22c55e' : '#ef4444'
           // Brighter, fully-opaque highlight color when hovered; default keeps
           // the standard green/red palette.
@@ -1004,9 +1073,11 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             crosshairMarkerVisible: false,
             autoscaleInfoProvider: () => null, // don't let connectors drive the price axis
           })
+          // Diagonal: entry price → this exit's actual price, so each TP arrow
+          // (even ones well above/below the entry) gets its own connecting line.
           line.setData([
             { time: entryMin, value: t.entry_price },
-            { time: exitMin, value: e.price },
+            { time: bucket as Time, value: avgPrice },
           ])
           tradeLinesRef.current.push(line)
         }
@@ -1137,8 +1208,8 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       }
     }
     // hover.trade?.id and hoverTradeId are in the dep list: when the user
-    // hovers a marker (or the EOD row), markers re-render with the hovered
-    // trade's labels back + size bump so it pops out of a cluster.
+    // hovers near a trade (crosshair) or the EOD row, the arrows re-render with
+    // that trade's labels revealed + size bump, and its connector line bolds.
   }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId])
 
   // Row-hover ↔ chart link: when a trade is hovered in the EOD list, drop the
@@ -1378,7 +1449,28 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
 
       {/* Chart container — always rendered so the chart instance can mount */}
       <div className="relative">
-        <div ref={containerRef} onContextMenu={handleContextMenu} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
+        <div ref={containerRef} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
+
+        {/* Right-click-on-arrow menu. Dismisses on outside click / Escape (a
+            full-screen backdrop + the Escape handler below). */}
+        {arrowMenu && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setArrowMenu(null)} onContextMenu={e => { e.preventDefault(); setArrowMenu(null) }} />
+            <div
+              className="absolute z-50 min-w-44 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 text-sm"
+              style={{ left: Math.min(arrowMenu.x, 9999), top: arrowMenu.y }}
+            >
+              <button
+                type="button"
+                onClick={() => { const id = arrowMenu.tradeId; setArrowMenu(null); router.push(`/intraday/${date}?trade=${id}`) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
+              >
+                <Activity className="w-3.5 h-3.5 text-blue-400" />
+                Go to intraday review
+              </button>
+            </div>
+          </>
+        )}
 
         {/* Hover-to-show-trade popup (task 3) */}
         {hover && (() => {

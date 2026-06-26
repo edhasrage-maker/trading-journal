@@ -66,16 +66,16 @@ export default function ImportTradesButton({ date, onImported, onError }: Props)
         onDrop={onDrop}
         disabled={importing}
         title="Click to pick a file, or drag-and-drop a TradeActivityLog .txt"
-        className={`flex items-center gap-2 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-60 ${
+        className={`flex items-center gap-1.5 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-60 whitespace-nowrap shrink-0 ${
           dragging
             ? 'bg-purple-400 ring-2 ring-purple-300'
             : 'bg-purple-600 hover:bg-purple-500'
         }`}
       >
         {importing ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
         ) : (
-          <Upload className="w-4 h-4" />
+          <Upload className="w-3.5 h-3.5" />
         )}
         {importing ? 'Importing...' : dragging ? 'Drop to import' : 'Import SC log'}
       </button>

@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { Loader2, Save, X, ScanLine } from 'lucide-react'
+import { Loader2, Save, X, ScanLine, Sparkles, Film } from 'lucide-react'
 import PinPlacement, { type PinType, type Pin } from './PinPlacement'
+import FrameNudge from '@/components/FrameNudge'
 // PinType / Pin still used by the legacy pin-position fields kept in FormState
 // so existing trades load + save their saved pin coordinates without loss.
 import ScreenshotLightbox from './ScreenshotLightbox'
@@ -121,6 +122,21 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   // Track the originally-saved screenshot URL so we can delete it from storage
   // if the user replaces or removes it on save.
   const [savedScreenshotUrl, setSavedScreenshotUrl] = useState<string | null>(trade?.screenshot_url ?? null)
+  // Frame-nudge scrubber: only for saved trades that have an OBS recording
+  // reference. entry_time anchors the frame; recDelta restores a prior nudge.
+  const [showFrameNudge, setShowFrameNudge] = useState(false)
+  const [shotVersion, setShotVersion] = useState(0) // bump to remount the screenshot img after a nudge save
+  // recording_commentary is jsonb (usually an object) but legacy rows from the
+  // localStorage backfill can come back as a JSON string — tolerate both.
+  const recCommentary = ((): { video_file?: string; screenshot_delta_sec?: number } | null => {
+    const raw = trade?.recording_commentary as unknown
+    if (raw && typeof raw === 'object') return raw as { video_file?: string; screenshot_delta_sec?: number }
+    if (typeof raw === 'string') { try { return JSON.parse(raw) } catch { return null } }
+    return null
+  })()
+  const recVideoFile = recCommentary?.video_file ?? null
+  const recDelta = recCommentary?.screenshot_delta_sec ?? 0
+  const canNudgeFrame = !!(trade?.id && recVideoFile && trade.entry_time)
   // Zoom lightbox state — independent of IntradayClient's lightbox since
   // TradeForm is mounted as a modal/inline form with its own scope.
   const [zoomedScreenshot, setZoomedScreenshot] = useState<string | null>(null)
@@ -153,6 +169,34 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       setForm(f => ({ ...f, tags: mergeTradeTags(f.tags, additions as TradeTags) }))
     }
   }, [notesSuggestions])
+
+  // AI semantic tag suggestion from the notes text. Complements the live
+  // keyword matcher above: that one auto-adds literal word matches; this reads
+  // the *meaning* (paraphrases) and proposes tags as accept-chips via
+  // form.suggestedTags — never auto-added. Fired on blur of the notes box and
+  // by the "Suggest tags" button. `lastSuggestedNotesRef` dedupes so blur after
+  // the button (or no edit) doesn't re-hit the API.
+  const [suggestingTags, setSuggestingTags] = useState(false)
+  const lastSuggestedNotesRef = useRef<string>('')
+  const suggestTagsFromNotes = useCallback(async () => {
+    const notes = form.notes.trim()
+    if (notes.length < 3 || notes === lastSuggestedNotesRef.current) return
+    lastSuggestedNotesRef.current = notes
+    setSuggestingTags(true)
+    try {
+      const res = await fetch('/api/trades/suggest-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes, existing: form.tags }),
+      })
+      if (!res.ok) return
+      const data = await res.json() as { suggestions?: TradeTags }
+      if (data.suggestions && Object.keys(data.suggestions).length > 0) {
+        setForm(f => ({ ...f, suggestedTags: mergeTradeTags(f.suggestedTags, data.suggestions) }))
+      }
+    } catch { /* best-effort: suggestions are optional */ }
+    finally { setSuggestingTags(false) }
+  }, [form.notes, form.tags])
 
   const handleFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
@@ -349,6 +393,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           {form.screenshot_url ? (
             <div className="space-y-3">
               <PinPlacement
+                key={`shot-${shotVersion}`}
                 imageUrl={form.screenshot_url}
                 pins={pins}
                 onZoom={() => setZoomedScreenshot(form.screenshot_url)}
@@ -359,28 +404,77 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
                   {extracting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScanLine className="w-3 h-3" />}
                   {extracting ? 'Reading...' : 'Read Screenshot'}
                 </button>
+                {canNudgeFrame && (
+                  <button type="button" onClick={() => setShowFrameNudge(v => !v)}
+                    className="flex items-center gap-1.5 text-xs text-purple-300 hover:text-purple-200 transition-colors">
+                    <Film className="w-3 h-3" />
+                    Adjust frame
+                  </button>
+                )}
                 <button type="button" onClick={clearScreenshot}
                   className="text-xs text-gray-500 hover:text-red-400 transition-colors">
                   Remove screenshot
                 </button>
               </div>
+              {canNudgeFrame && showFrameNudge && (
+                <FrameNudge
+                  videoFile={recVideoFile!}
+                  entryTimeIso={trade!.entry_time!}
+                  tradeId={trade!.id}
+                  initialDelta={recDelta}
+                  onSaved={url => {
+                    if (savedScreenshotUrl && savedScreenshotUrl !== url) void deleteBlob(savedScreenshotUrl)
+                    setSavedScreenshotUrl(url)
+                    setForm(f => ({ ...f, screenshot_url: url, pendingFile: null }))
+                    setShotVersion(v => v + 1)
+                    setShowFrameNudge(false)
+                  }}
+                  onClose={() => setShowFrameNudge(false)}
+                />
+              )}
             </div>
           ) : (
-            <div
-              tabIndex={0}
-              onClick={() => document.getElementById('trade-file-input')?.click()}
-              onPaste={e => {
-                const item = Array.from(e.clipboardData.items).find(i => i.type.startsWith('image/'))
-                if (item) { const f = item.getAsFile(); if (f) handleFile(f) }
-              }}
-              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
-              onDragOver={e => e.preventDefault()}
-              className="border-2 border-dashed border-gray-700 hover:border-gray-500 rounded-xl p-6 flex flex-col items-center gap-2 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-blue-600 bg-gray-800/30"
-            >
-              <p className="text-sm text-gray-400">Drop, paste, or click to upload trade screenshot</p>
-              <p className="text-xs text-gray-600">PNG, JPG, WebP</p>
-              <input id="trade-file-input" type="file" accept="image/*" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+            <div className="space-y-3">
+              {/* When the trade has a recording but no screenshot yet, offer to
+                  pull a frame from it — without removing the manual upload. */}
+              {canNudgeFrame && (
+                showFrameNudge ? (
+                  <FrameNudge
+                    videoFile={recVideoFile!}
+                    entryTimeIso={trade!.entry_time!}
+                    tradeId={trade!.id}
+                    initialDelta={recDelta}
+                    onSaved={url => {
+                      setSavedScreenshotUrl(url)
+                      setForm(f => ({ ...f, screenshot_url: url, pendingFile: null }))
+                      setShotVersion(v => v + 1)
+                      setShowFrameNudge(false)
+                    }}
+                    onClose={() => setShowFrameNudge(false)}
+                  />
+                ) : (
+                  <button type="button" onClick={() => setShowFrameNudge(true)}
+                    className="flex items-center gap-1.5 text-xs text-purple-300 hover:text-purple-200 transition-colors">
+                    <Film className="w-3 h-3" /> Pull frame from recording
+                  </button>
+                )
+              )}
+              <div
+                tabIndex={0}
+                onClick={() => document.getElementById('trade-file-input')?.click()}
+                onPaste={e => {
+                  const item = Array.from(e.clipboardData.items).find(i => i.type.startsWith('image/'))
+                  if (item) { const f = item.getAsFile(); if (f) handleFile(f) }
+                }}
+                onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
+                onDragOver={e => e.preventDefault()}
+                className="border-2 border-dashed border-gray-700 hover:border-gray-500 rounded-xl p-6 flex flex-col items-center gap-2 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-blue-600 bg-gray-800/30"
+              >
+                <p className="text-sm text-gray-400">Drop, paste, or click to upload trade screenshot</p>
+                <p className="text-xs text-gray-600">PNG, JPG, WebP</p>
+                <input id="trade-file-input" type="file" accept="image/*" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+              </div>
             </div>
           )}
         </div>
@@ -390,17 +484,18 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trade Details</label>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {[
-              { key: 'entry_time', label: 'Entry Time', type: 'time' },
+              { key: 'entry_time', label: 'Entry Time', type: 'text', placeholder: 'HH:MM' },
               { key: 'quantity', label: 'Qty / Contracts', type: 'number' },
               { key: 'entry_price', label: 'Entry Price', type: 'number' },
               { key: 'stop_price', label: 'Stop Price', type: 'number' },
               { key: 'tp1_price', label: 'TP1 Price', type: 'number' },
               { key: 'pnl', label: r ? `P&L (${r})` : 'P&L ($)', type: 'number' },
-            ].map(({ key, label, type }) => (
+            ].map(({ key, label, type, placeholder }) => (
               <div key={key}>
                 <label className="block text-xs text-gray-400 mb-1">{label}</label>
                 <input
                   type={type} step="any"
+                  placeholder={placeholder}
                   value={form[key as keyof FormState] as string}
                   onChange={e => set(key as keyof FormState, e.target.value as never)}
                   className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600"
@@ -415,6 +510,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           <label className="block text-xs text-gray-400 mb-1">Notes</label>
           <textarea rows={2} spellCheck autoCorrect="on" placeholder="Execution notes, observations..."
             value={form.notes} onChange={e => set('notes', e.target.value)}
+            onBlur={suggestTagsFromNotes}
             className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
           />
         </div>
@@ -425,7 +521,19 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             from…" dropdown when other tagged trades exist on the same day. */}
         <div>
           <div className="flex items-center justify-between mb-3 gap-3">
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</label>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</label>
+              <button
+                type="button"
+                onClick={suggestTagsFromNotes}
+                disabled={suggestingTags || form.notes.trim().length < 3}
+                title="Suggest tags from your notes (AI reads the meaning, not just keywords)"
+                className="flex items-center gap-1 text-[10px] text-purple-300/80 hover:text-purple-200 disabled:opacity-40 disabled:cursor-default border border-purple-800/60 hover:border-purple-600 rounded px-1.5 py-0.5 transition-colors"
+              >
+                {suggestingTags ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                Suggest from notes
+              </button>
+            </div>
             {(() => {
               // "Copy tags from..." — list other trades on the same day,
               // ordered by entry_time, so the user can clone a prior trade's

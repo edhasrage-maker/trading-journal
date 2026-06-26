@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { sessionUtcWindow } from '@/lib/pt-time'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -7,14 +8,13 @@ type AnyClient = any
 /**
  * GET /api/bars?symbol=...&date=YYYY-MM-DD
  *
- * Returns bars for a single calendar day (UTC), ascending by timestamp.
+ * Returns bars for a full PT trading session, ascending by timestamp.
  * Used by the EOD page's LiveChart component.
  *
- * Caveat: bounds are UTC-date for v1. RTH session for US futures (typically
- * 06:30-13:00 PT = 13:30-20:00 UTC) fits within a single UTC day, so this is
- * usually correct. Overnight session bars on the previous trading day will
- * appear under the next UTC date — acceptable trade-off for v1; TZ-aware
- * boundaries can be added later if it becomes a friction point.
+ * Bounds are anchored to the PT calendar day (sessionUtcWindow), not the raw
+ * UTC day, so post-RTH / overnight (GBX) entries — which fall in the early
+ * hours of the next UTC day — get their candles instead of silently dropping
+ * off the right edge of the chart.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
@@ -28,10 +28,9 @@ export async function GET(req: Request) {
   }
 
   const supabase: AnyClient = await createClient()
-  const start = `${date}T00:00:00Z`
-  const end = `${date}T23:59:59.999Z`
+  const { start, end } = sessionUtcWindow(date)
 
-  // Paginate past Supabase's default 1000-row response cap. A full UTC day of
+  // Paginate past Supabase's default 1000-row response cap. A full PT session of
   // 1m bars is up to 1440 rows, so this is typically 2 round-trips.
   const PAGE = 1000
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

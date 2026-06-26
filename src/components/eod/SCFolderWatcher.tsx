@@ -173,7 +173,7 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
     return (
       <button
         onClick={connect}
-        className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+        className="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap shrink-0"
         title="Auto-import SC trade logs from a folder while this tab is open"
       >
         <Folder className="w-3 h-3" />
@@ -185,7 +185,7 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
   const folderName = (handle as { name?: string }).name ?? 'folder'
   return (
     <div
-      className="flex items-center gap-2 bg-green-900/20 border border-green-800 text-green-300 text-xs font-medium px-3 py-1.5 rounded-lg"
+      className="flex items-center gap-1.5 bg-green-900/20 border border-green-800 text-green-300 text-xs font-medium px-3 py-1.5 rounded-lg whitespace-nowrap shrink-0"
       title={`Polling ${folderName} every ${POLL_MS / 1000}s`}
     >
       {polling ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderCheck className="w-3 h-3" />}

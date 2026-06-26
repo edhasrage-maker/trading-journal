@@ -90,21 +90,31 @@ export async function probeVideo(path: string): Promise<VideoInfo> {
 
 /**
  * Extract a single JPEG frame at `offsetSec` and return it base64-encoded.
- * Uses `-ss` BEFORE `-i` for fast (keyframe-aligned) seek — accurate to ~1s,
- * which is plenty for screen-recording commentary.
+ *
+ * Fast + frame-accurate hybrid seek: a fast input seek (`-ss` BEFORE `-i`) lands
+ * on the keyframe ~PREROLL seconds before the target, then an output seek
+ * (`-ss` AFTER `-i`) decodes the small remainder to land EXACTLY on the target.
+ * This only decodes ~PREROLL seconds (fast) yet is accurate to the frame — which
+ * matters for the per-second frame-nudge scrubber. PREROLL must exceed the OBS
+ * keyframe interval (default ~2s) so the fast seek always lands before target.
  */
 export async function extractFrameJpegBase64(path: string, offsetSec: number): Promise<string> {
+  const target = Math.max(0, offsetSec)
+  const PREROLL = 6
+  const pre = Math.max(0, target - PREROLL)
+  const post = target - pre
   const args = [
     '-loglevel', 'error',
-    '-ss', String(Math.max(0, offsetSec)),
+    '-ss', String(pre),
     '-i', path,
+    '-ss', String(post),
     '-frames:v', '1',
     '-f', 'mjpeg',
     'pipe:1',
   ]
   const { stdout, stderr, code } = await runCapture(FFMPEG, args)
   if (code !== 0 || stdout.length === 0) {
-    throw new Error(`ffmpeg frame extraction failed at ${offsetSec.toFixed(2)}s (${code}): ${stderr || 'empty output'}`)
+    throw new Error(`ffmpeg frame extraction failed at ${target.toFixed(2)}s (${code}): ${stderr || 'empty output'}`)
   }
   return stdout.toString('base64')
 }

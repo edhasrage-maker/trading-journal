@@ -51,6 +51,9 @@ export interface LookupOutcome {
   }
   conflict: boolean
   conflict_reason: string | null
+  /** Trader's overall EV/trade (the all-conditions baseline row, specificity 0).
+   *  Lets the UI flag whether the matched bucket runs above/below your average. */
+  baseline_ev: number | null
 }
 
 // Ordered metric keys (must match column names on rows)
@@ -271,6 +274,12 @@ export function runLookup(
   const bestMedian = findBestMatch(buckets, lookup, 'median')
   const bestTertile = findBestMatch(buckets, lookup, 'tertile')
   const con = consolidate(bestMedian, bestTertile)
+  // Baseline = the all-conditions row (specificity 0). If several exist (median
+  // + tertile variants) they share the same unconstrained stats; take the one
+  // with the most trades to be safe.
+  const baselineRow = lookup
+    .filter(r => r.specificity === 0)
+    .sort((a, b) => (b.n_trades ?? 0) - (a.n_trades ?? 0))[0]
   return {
     buckets,
     best_median: bestMedian,
@@ -283,6 +292,7 @@ export function runLookup(
     },
     conflict: con.conflict,
     conflict_reason: con.conflict_reason,
+    baseline_ev: baselineRow?.ev_per_trade ?? null,
   }
 }
 

@@ -117,7 +117,7 @@ export default function AvgMfeMaeCard({ trades, dayAtrRef, variant = 'card', cla
             <option value="atr">×ATR</option>
           </select>
         </div>
-        <div className="text-lg font-bold whitespace-nowrap">{valueBlock}</div>
+        <div className="text-sm font-bold whitespace-nowrap">{valueBlock}</div>
       </div>
     )
   }

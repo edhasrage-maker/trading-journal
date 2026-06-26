@@ -22,6 +22,8 @@ interface CommentaryTrade {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tags_json?: any
   notes?: string | null
+  /** Current screenshot, if any. When empty we auto-fill it with the entry frame. */
+  screenshot_url?: string | null
 }
 
 /**
@@ -105,6 +107,9 @@ export async function POST(req: Request) {
   const blocks: Anthropic.MessageParam['content'] = []
   const labels: string[] = []
   const skipped: Array<{ id: string; reason: string }> = []
+  // Entry frames uploaded as screenshots for trades that had none — id → public
+  // URL. Best-effort: a storage failure must never break the commentary run.
+  const autoScreenshots: Record<string, string> = {}
 
   for (let i = 0; i < trades.length; i++) {
     const t = trades[i]
@@ -121,6 +126,25 @@ export async function POST(req: Request) {
       const entryFrame = await extractFrameJpegBase64(fullPath, entryOffset)
       blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: entryFrame } })
       labels.push(`Trade ${i + 1} (id=${t.id}) ENTRY @ ${fmtPT(t.entry_time)}`)
+
+      // Auto-fill a missing screenshot with this entry frame (the trader's
+      // actual screen at the fill). Only when the trade has none — never
+      // overwrite a manual capture. Best-effort: upload failure is swallowed.
+      if (!t.screenshot_url) {
+        try {
+          const buf = Buffer.from(entryFrame, 'base64')
+          // Unique path → always an INSERT (overwriting an existing object hits a
+          // missing storage UPDATE policy). Matches /api/video/frame + the manual
+          // uploader, all of which use fresh filenames.
+          const path = `trades/obs-${t.id}-${Date.now()}.jpg`
+          const { error: upErr } = await supabase.storage
+            .from('screenshots')
+            .upload(path, buf, { contentType: 'image/jpeg' })
+          if (!upErr) {
+            autoScreenshots[t.id] = supabase.storage.from('screenshots').getPublicUrl(path).data.publicUrl
+          }
+        } catch { /* best-effort: screenshot auto-fill is optional */ }
+      }
 
       // Only include an exit frame if exit is meaningfully after entry AND within recording.
       const exitMs = t.exit_time ? Date.parse(t.exit_time) : NaN
@@ -305,23 +329,32 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
     // client; revisit once the redesigned mistake-tagging system lands.
     try {
       const generatedAt = new Date().toISOString()
-      const writes = Object.entries(commentary).map(([id, text]) =>
-        supabase
-          .from('trades')
-          .update({
-            recording_commentary: {
-              text,
-              video_file: safeName,
-              model: 'claude-sonnet-4-6',
-              generated_at: generatedAt,
-              // Detected levels live inside the same jsonb so we don't need a
-              // schema migration. Undefined when the model couldn't return a
-              // detected_levels block (very rare under structured outputs).
-              detected_levels: detectedLevels[id],
-            },
-          })
-          .eq('id', id),
-      )
+      const writes = Object.entries(commentary).map(([id, text]) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const update: Record<string, any> = {
+          recording_commentary: {
+            text,
+            video_file: safeName,
+            model: 'claude-sonnet-4-6',
+            generated_at: generatedAt,
+            // Detected levels live inside the same jsonb so we don't need a
+            // schema migration. Undefined when the model couldn't return a
+            // detected_levels block (very rare under structured outputs).
+            detected_levels: detectedLevels[id],
+            // Flag when the screenshot was auto-derived from the recording so
+            // it's distinguishable from a manual capture.
+            ...(autoScreenshots[id] ? { screenshot_source: 'obs' } : {}),
+          },
+        }
+        if (autoScreenshots[id]) update.screenshot_url = autoScreenshots[id]
+        return supabase.from('trades').update(update).eq('id', id)
+      })
+      // Fallback: any auto-screenshot whose trade got no commentary text still
+      // needs its screenshot_url written (rare — a frame extracted but the model
+      // returned nothing for that id).
+      for (const [id, url] of Object.entries(autoScreenshots)) {
+        if (!commentary[id]) writes.push(supabase.from('trades').update({ screenshot_url: url }).eq('id', id))
+      }
       const results = await Promise.allSettled(writes)
       const firstReject = results.find(r => r.status === 'rejected')
       if (firstReject && firstReject.status === 'rejected') {
@@ -335,6 +368,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
       commentary,
       suggested_mistakes: suggested,
       detected_levels: detectedLevels,
+      auto_screenshots: autoScreenshots,
       skipped,
       framesUsed: blocks.length - 1,
       recordingStartIso: new Date(info.creationTimeMs).toISOString(),

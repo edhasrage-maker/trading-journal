@@ -5,6 +5,7 @@ import { resilientUpsert, resilientBulkUpsert, resilientUpdate } from '@/lib/res
 import { perLegMaxDollars, type BarLike } from '@/lib/analytics'
 import { computeStructure5mAlignment } from '@/lib/structure-5m'
 import { isOutsideRth } from '@/lib/rth'
+import { sessionUtcWindow } from '@/lib/pt-time'
 import { buildDayRegimeSeries, regimeAtEntry, buildDayEntryMetrics, atrAtEntry, rvolAtEntry } from '@/lib/nq-front-month'
 import type { TradingDay } from '@/lib/supabase/types'
 
@@ -96,8 +97,10 @@ export async function POST(req: Request) {
     // Skips silently per-trade if bars are missing for that symbol; those
     // rows stay null and the UI shows the simple-formula fallback or "—".
     if (payload.length > 0) {
-      const dayStart = `${date}T00:00:00Z`
-      const dayEnd = `${date}T23:59:59Z`
+      // PT-session bounds (not raw UTC day) so post-RTH / overnight (GBX)
+      // trades — which land in the early hours of the next UTC day — get bars
+      // for per-leg MFE instead of falling back to the no-bars estimate.
+      const { start: dayStart, end: dayEnd } = sessionUtcWindow(date)
       const symbols = Array.from(new Set(payload.map(r => r.symbol).filter((s): s is string => !!s)))
       const barsBySymbol = new Map<string, BarLike[]>()
       for (const symbol of symbols) {

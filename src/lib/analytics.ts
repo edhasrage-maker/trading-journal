@@ -136,12 +136,18 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
   if (t.entry_price == null || t.direction == null) return null
   if (t.high_during_position == null || t.low_during_position == null) return null
   const isLong = t.direction === 'long'
-  const mfe = isLong
+  // Floor both at 0: MFE/MAE are *excursion magnitudes* and are non-negative by
+  // definition. A trade that never traded below entry (long) has MAE = 0, not a
+  // negative "adverse" move. Without the floor, a never-adverse trade subtracts
+  // from the day's MAE average and can cancel out real heat from other trades
+  // (e.g. one long whose recorded low sits ABOVE entry contributed −55 pts of
+  // "MAE", erasing the day's actual adverse excursion). Same reasoning for MFE.
+  const mfe = Math.max(0, isLong
     ? t.high_during_position - t.entry_price
-    : t.entry_price - t.low_during_position
-  const mae = isLong
+    : t.entry_price - t.low_during_position)
+  const mae = Math.max(0, isLong
     ? t.entry_price - t.low_during_position
-    : t.high_during_position - t.entry_price
+    : t.high_during_position - t.entry_price)
   return { mfe, mae }
 }
 
@@ -188,6 +194,46 @@ export interface CaptureComponents {
   mfeDollars: number
 }
 
+/**
+ * Bars-free scaling-aware MFE-$ ceiling for a SCALED-OUT trade. Mirrors the
+ * intent of perLegMaxDollars() but without 1-minute bars (e.g. overnight/GBX
+ * sessions that have no imported bars). The plain `peak × full-qty` formula is
+ * unfair to a scale-out — it grades every contract against the absolute high,
+ * including lots that were already sold before the high printed.
+ *
+ * Model: earlier exits are treated as planned partials that filled AT the
+ * highest price reachable up to that moment — a resting limit fills the instant
+ * price first touches it, so that leg captured 100% of its own window and is
+ * graded against ITS exit price. The FINAL leg (the runner, usually trailed out
+ * below the high) is graded against the trade's overall peak
+ * (high_during_position / low_during_position), since on a scale-then-trail the
+ * peak almost always prints while the runner is still open. Returns null for
+ * non-scaled trades (≤1 leg) so the caller uses the plain full-qty formula.
+ *
+ * Worked example (the 10-lot long that read 52%): 7 @ +30 then 3 @ +20.75, peak
+ * +52.25 → 7×30 + 3×52.25 = 210 + 156.75 ⇒ $733.5 ceiling vs $544.5 booked = 74%.
+ */
+function noBarsScaledMfeDollars(t: TradeWithExcursion & { exits_json?: ExitLeg[] | null }): number | null {
+  const raw = t.exits_json
+  if (!Array.isArray(raw) || raw.length < 2) return null
+  if (t.entry_price == null || t.direction == null) return null
+  if (t.high_during_position == null || t.low_during_position == null) return null
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  if (mult === 0) return null
+  const isLong = t.direction === 'long'
+  const entry = t.entry_price // narrowed local — closures below don't keep the field narrowing
+  const legs = [...raw].sort((a, b) => a.time.localeCompare(b.time))
+  const overallExc = isLong ? t.high_during_position - entry : entry - t.low_during_position
+  let total = 0
+  legs.forEach((leg, i) => {
+    const exc = i === legs.length - 1
+      ? overallExc                                          // runner → overall peak
+      : (isLong ? leg.price - entry : entry - leg.price)    // partial → its own exit
+    total += Math.max(0, exc) * leg.qty * mult
+  })
+  return total > 0 ? total : null
+}
+
 export function captureComponents(t: TradeWithExcursion): CaptureComponents | null {
   if (t.pnl == null || t.quantity == null) return null
   // Stop is required: without a planned-risk baseline we can't tell whether
@@ -208,12 +254,25 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
   // 2026-06-09 migration. Falls back to the simple peak × full-qty
   // formula for trades that haven't been backfilled yet OR pre-2025
   // trades outside the CSV+SCID bar coverage window.
-  const tx = t as TradeWithExcursion & { mfe_dollars_per_leg?: number | null }
+  const tx = t as TradeWithExcursion & { mfe_dollars_per_leg?: number | null; exits_json?: ExitLeg[] | null }
   if (tx.mfe_dollars_per_leg != null && tx.mfe_dollars_per_leg > 0) {
     return { pnl: t.pnl, mfeDollars: tx.mfe_dollars_per_leg }
   }
+  // Bars-free scaling-aware fallback for scaled-out trades that have neither a
+  // backfilled per-leg value nor 1m bars (e.g. overnight/GBX). Avoids grading a
+  // legitimate scale-out against an impossible hold-all-to-peak ceiling.
+  const scaled = noBarsScaledMfeDollars(tx)
+  if (scaled != null) return { pnl: t.pnl, mfeDollars: scaled }
   const mult = symbolToMultiplier(t.symbol ?? '')
-  const mfeDollars = xc.mfe * mult * t.quantity
+  // Use the qty actually TRADED (sum of exit fills) for the dollar ceiling, not
+  // the trades.quantity field — they can disagree on mis-imported/edited rows
+  // (e.g. quantity=3 but exits_json + pnl reflect 5 contracts), which divides a
+  // 5-lot realized pnl by a 3-lot ceiling and pushes capture past 100%.
+  const exitQty = Array.isArray(tx.exits_json) && tx.exits_json.length > 0
+    ? tx.exits_json.reduce((s, e) => s + (e?.qty ?? 0), 0)
+    : 0
+  const qtyForMfe = exitQty > 0 ? exitQty : t.quantity
+  const mfeDollars = xc.mfe * mult * qtyForMfe
   if (mfeDollars === 0) return null
   return { pnl: t.pnl, mfeDollars }
 }
@@ -308,8 +367,18 @@ export function perLegMaxDollars(
   let windowStartTs = t.entry_time
 
   for (const leg of legs) {
-    const peak = findFavorablePeak(bars, windowStartTs, leg.time, isLong)
-    if (peak == null) return null  // bar coverage gap — caller should fall back
+    const rawPeak = findFavorablePeak(bars, windowStartTs, leg.time, isLong)
+    if (rawPeak == null) return null  // bar coverage gap — caller should fall back
+
+    // Cap the bar-derived peak at the tick-precise in-position extreme. 1-minute
+    // bars include ticks AFTER a mid-bar exit, so the exit bar's high/low can
+    // overshoot what was actually reachable while the position was open — which
+    // UNDERSTATES capture (a TP exit taken AT the high then reading <100% because
+    // price wicked past the TP in the back half of the exit minute, after the
+    // fill). high_during_position / low_during_position are the true extremes.
+    const peak = isLong
+      ? (t.high_during_position != null ? Math.min(rawPeak, t.high_during_position) : rawPeak)
+      : (t.low_during_position != null ? Math.max(rawPeak, t.low_during_position) : rawPeak)
 
     // Excursion is the favorable distance from entry to the leg's peak.
     // Floor at 0 — a leg that never went favorable shouldn't get NEGATIVE
