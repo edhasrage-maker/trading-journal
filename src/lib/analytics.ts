@@ -180,6 +180,29 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
  */
 const MIN_MFE_RATIO_FOR_CAPTURE = 0.5
 
+/**
+ * Volatility-relative noise floor: MFE must reach at least this fraction of the
+ * trade's entry-time ATR before its capture ratio is meaningful. Preferred over
+ * the planned-risk floor because a tight-stop trade can clear 0.5R on a move
+ * that's tiny in ATR terms (pure noise). Falls back to MIN_MFE_RATIO_FOR_CAPTURE
+ * of planned risk when the trade has no entry_atr_1m (GBX / pre-backfill rows).
+ */
+const MIN_MFE_ATR_RATIO = 0.5
+
+/** True when a trade's MFE clears the noise floor (capture worth computing).
+ *  Prefers 0.5×ATR; falls back to 0.5×planned-risk when entry ATR is absent.
+ *  entry_atr_1m isn't on the base TradeWithExcursion type (it's an entry-time
+ *  snapshot column) so it's widened in locally, same pattern as elsewhere. */
+function mfeClearsNoiseFloor(t: TradeWithExcursion & { entry_atr_1m?: number | null }, mfePts: number): boolean {
+  const atr = t.entry_atr_1m
+  if (atr != null && atr > 0) return mfePts >= atr * MIN_MFE_ATR_RATIO
+  const plannedRiskPts = t.entry_price != null && t.stop_price != null
+    ? Math.abs(t.entry_price - t.stop_price)
+    : 0
+  if (plannedRiskPts > 0) return mfePts >= plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE
+  return true // no ATR and no stop — can't gauge noise, don't filter out
+}
+
 /** The two components a capture ratio is built from — PnL on top, peak
  *  favorable move in $ on the bottom. Returned for trades that have all
  *  the inputs to compute it AND pass the MFE noise filter. Aggregating at
@@ -226,9 +249,17 @@ function noBarsScaledMfeDollars(t: TradeWithExcursion & { exits_json?: ExitLeg[]
   const overallExc = isLong ? t.high_during_position - entry : entry - t.low_during_position
   let total = 0
   legs.forEach((leg, i) => {
-    const exc = i === legs.length - 1
-      ? overallExc                                          // runner → overall peak
-      : (isLong ? leg.price - entry : entry - leg.price)    // partial → its own exit
+    const legExc = isLong ? leg.price - entry : entry - leg.price
+    // Final leg (runner) is graded against the overall peak. A non-final leg
+    // is graded against its OWN exit ONLY when that exit was favorable (a real
+    // profit scale-out that locked in a local high). When a non-final leg
+    // exited at a LOSS (legExc ≤ 0 — e.g. the whole position stopped out, or
+    // an exit split into two same-instant fills below entry), it was NOT a
+    // profit-take: those contracts were held through the position's favorable
+    // peak before reversing, so credit them the overall peak like the runner.
+    // Without this, a stopped-out scale-out collapses the MFE ceiling to ~0 and
+    // capture% explodes (e.g. -638% instead of the true -128%).
+    const exc = i === legs.length - 1 || legExc <= 0 ? overallExc : legExc
     total += Math.max(0, exc) * leg.qty * mult
   })
   return total > 0 ? total : null
@@ -243,11 +274,10 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
   const xc = mfeMaePoints(t)
   if (!xc) return null
   if (xc.mfe <= 0) return null
-  // Noise filter: require MFE to be at least MIN_MFE_RATIO_FOR_CAPTURE of
-  // planned risk so we don't print degenerate ratios on trades that barely
-  // tagged green before fading.
-  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
-  if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
+  // Noise filter: require MFE to clear ~0.5×ATR (volatility-relative) so we
+  // don't print degenerate ratios on trades that barely tagged green before
+  // fading. Falls back to 0.5×planned-risk when entry ATR is absent.
+  if (!mfeClearsNoiseFloor(t, xc.mfe)) return null
   // Prefer the per-leg backfilled value when present — that's the
   // scaling-aware ceiling (sum over legs of leg_qty × leg_window_peak ×
   // multiplier). Populated by scripts/backfill-per-leg-mfe.ts after the
@@ -277,13 +307,15 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
   return { pnl: t.pnl, mfeDollars }
 }
 
-/** Per-trade capture ratio = pnl / peak-favorable-$. Bounded [0, 1] for
- *  winners (assuming pnl ≤ MFE in $); can be deeply negative for losers
- *  where pnl is negative and mfeDollars is small. For per-trade display
- *  only — use captureComponents for group aggregation. */
+/** Per-trade capture ratio = pnl / peak-favorable-$, FLOORED at 0. A losing
+ *  give-back captured 0% of its favorable move, not a negative percentage —
+ *  "you gave it all back" reads as 0%, never -128%/-638%. The upper bound is
+ *  left unclamped so a >100% reading still surfaces a data bug (e.g. a stale
+ *  quantity) rather than being silently hidden. For per-trade display only —
+ *  use captureComponents for group aggregation. */
 export function captureRatio(t: TradeWithExcursion): number | null {
   const c = captureComponents(t)
-  return c == null ? null : c.pnl / c.mfeDollars
+  return c == null ? null : Math.max(0, c.pnl / c.mfeDollars)
 }
 
 /** 1-minute (or any TF) OHLC bar shape needed by the per-leg max walk.
@@ -434,8 +466,7 @@ export function captureComponentsScaled(
   const xc = mfeMaePoints(t)
   if (!xc) return null
   if (xc.mfe <= 0) return null
-  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
-  if (plannedRiskPts > 0 && xc.mfe < plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE) return null
+  if (!mfeClearsNoiseFloor(t, xc.mfe)) return null
 
   const mfeDollars = perLegMaxDollars(t, bars)
   if (mfeDollars == null || mfeDollars === 0) return null
@@ -452,7 +483,7 @@ export function captureRatioScaled(
   bars: BarLike[],
 ): number | null {
   const c = captureComponentsScaled(t, bars)
-  return c == null ? null : c.pnl / c.mfeDollars
+  return c == null ? null : Math.max(0, c.pnl / c.mfeDollars)  // floor at 0 — give-backs read as 0%, not negative
 }
 
 /**
@@ -517,8 +548,19 @@ export function avgCaptureRatio(trades: TradeWithExcursion[]): { avg: number | n
   let n = 0
   for (const t of trades) {
     const c = captureComponents(t)
-    if (c != null) { pnlSum += c.pnl; mfeSum += c.mfeDollars; n++ }
+    if (c != null) {
+      // Floor PER TRADE, not on the net. A losing day still realized MFE if any
+      // single trade banked a favorable move — 1 winner + 4 losers is red but
+      // captured positive MFE on the winner. Each loser contributes 0 to the
+      // captured numerator (you can't bank negative favorable $) while its MFE
+      // still counts in the denominator (favorable that WAS available, given
+      // back). So the day reflects the winners' real capture, never negative.
+      pnlSum += Math.max(0, c.pnl)
+      mfeSum += c.mfeDollars
+      n++
+    }
   }
+  // Upper bound left unclamped so a >100% reading still flags a data bug.
   return { avg: mfeSum > 0 ? pnlSum / mfeSum : null, count: n }
 }
 
