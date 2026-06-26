@@ -80,3 +80,49 @@ Vercel free → ~$20/mo if you outgrow hobby · Supabase Pro $25/mo · domain ~$
 - Buy the domain · create accounts (Vercel, prod Supabase, Stripe) · deploy the
   *current* app to a **staging URL** to surface every local-route break early.
 Everything else waits for the validation gate.
+
+---
+
+## Chart data sourcing & configurable levels (Phase 2 — not for testing)
+
+Cloud users don't have local `.scid`, so "automatic, no-upload charts" is a
+Phase-2 build. It's **two separate problems** — solve them independently. For
+testing, **screenshot upload sidesteps both** (the user's image already shows
+their chart with their own levels), so none of this blocks launch.
+
+### Problem 1 — get the bars automatically (no per-session upload)
+"Automatic" = bar data lives server-side, fetched for the symbol+date traded.
+Two ways, differing by *who provides the feed*:
+
+| Approach | User friction | Cost to us | Notes |
+|---|---|---|---|
+| **Data vendor (central)** — Databento (futures), Polygon (FX/stocks) | None | We pay (cache in `ohlcv_bars`, pay once per symbol/day across all users) | Truest "it just works." Databento is futures-strong / FX-weak. |
+| **User connects feed once** — Rithmic/CQG/broker OAuth | One-time "Connect" click | ~$0 (their feed) | Auto-syncs bars **and** fills thereafter. Prop-firm killer feature; biggest build + licensing. |
+| **TradingView embed** | None | ~$0 | Live chart for any asset, but it's TV's chart — **no trade overlays.** |
+
+The alternative to "upload every session" is **"connect once"** (or we pay a vendor) —
+not magic. "Connect once" also solves trade import, not just charts.
+
+### Problem 2 — the right *levels* for users who don't trade like us
+Levels are **math on the bars** (PDH/PDL, IBH/IBL, VWAP, opening range, prior-session
+hi/lo are all `f(bars, session definition)`). So we **compute** levels; we never store
+or impose "our" levels.
+
+> **auto-pull bars → compute levels from bars using the user's *configurable* session/level definitions.**
+
+- Computation is universal; only the **definitions** are personal.
+- Our methodology (IB = first 60m, RTH 6:30–13:00 PT, VWAP/IBH/IBL/PDH/PDL) becomes the
+  default **"Orderflow Futures" preset** — not a hardcoded assumption.
+- ICT FX trader → different preset (killzones, no IB) or self-defined windows.
+- Open-trader (no IB) → flips IB off. **The non-IB session audit (in `SITE_IMPROVEMENTS.md`)
+  is step one of making levels configurable.**
+- Requires parameterizing `src/lib/session-levels.ts` (session windows, IB on/off, which
+  levels) via a per-user/style config — the "universal engine + style preset" pattern.
+
+### Sequencing
+1. **Now / testing:** screenshot upload (built, $0).
+2. **Cheap "live charts for everyone" stopgap:** TradingView embed (loses overlays).
+3. **Keep-your-overlay stopgap:** extend the existing bars-CSV import.
+4. **Post-revenue, futures-first:** Databento (cached) for seamless overlaid charts.
+5. **The prize:** Rithmic/CQG connect-once → auto bars + fills at ~$0 to us.
+Parameterize the levels engine in parallel with whichever bar source you pick.
