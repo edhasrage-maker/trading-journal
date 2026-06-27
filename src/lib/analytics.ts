@@ -607,15 +607,21 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
       if (r > 0) { winnerRSum += r; winnerRCount++ }
       else if (r < 0) { loserRSum += r; loserRCount++ }
     }
-    // Capture / Loss: trades may or may not have high/low_during_position. The
-    // helpers accept TradeWithExcursion but the relevant fields are optional
-    // on Trade and null-handled internally — cast through unknown so callers
-    // that pass TradeLike still type-check, and the helpers null-out trades
-    // that don't have the necessary data.
-    const cap = captureComponents(t as unknown as TradeWithExcursion)
-    if (cap != null) { capPnlSum += cap.pnl; capMfeSum += cap.mfeDollars; capCount++ }
-    const lossR = maeHeatRatio(t as unknown as TradeWithExcursion)
-    if (lossR != null) { lossSum += lossR; lossCount++ }
+    // Capture / Heat — NATIVE trades only. Historical (Tradezella) trades carry
+    // symbol: null (multiplier 1) for realized_rr R-parity, which puts their
+    // capture denominator on a DIFFERENT unit basis than native trades; blending
+    // the two yields a misleading % (and the column tooltip already says native-
+    // only). trading_day_id is empty on historical rows (see isNative). PnL is
+    // floored PER TRADE so a give-back contributes 0 — never a negative that
+    // eats into winners' capture — matching avgCaptureRatio / the EOD MFE
+    // Realized %. The helpers accept TradeWithExcursion but the excursion fields
+    // are optional on Trade and null-handled internally, so cast through unknown.
+    if (t.trading_day_id) {
+      const cap = captureComponents(t as unknown as TradeWithExcursion)
+      if (cap != null) { capPnlSum += Math.max(0, cap.pnl); capMfeSum += cap.mfeDollars; capCount++ }
+      const lossR = maeHeatRatio(t as unknown as TradeWithExcursion)
+      if (lossR != null) { lossSum += lossR; lossCount++ }
+    }
   }
   const decided = wins + losses
   const winRate = decided > 0 ? wins / decided : 0

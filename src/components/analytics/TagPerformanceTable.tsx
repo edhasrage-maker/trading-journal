@@ -194,10 +194,10 @@ export default function TagPerformanceTable({
                   <td
                     className={`py-1.5 pr-3 text-right ${
                       stats.avg_capture == null ? 'text-gray-700'
-                      : stats.avg_capture < 0 ? 'text-red-400 font-bold'
+                      : stats.avg_capture < 0.25 ? 'text-red-400 font-bold'
                       : 'text-gray-400'
                     }`}
-                    title={stats.avg_capture == null ? 'No native trades with MFE data in this group' : `Avg of (realized PnL / peak favorable in $) across ${stats.capture_count} of ${stats.count} trades. Red bold means trades in this group averaged a give-back (negative capture).`}
+                    title={stats.avg_capture == null ? 'No native trades with MFE data in this group' : `Native trades only. Avg of (realized PnL / peak favorable in $), floored at 0 per trade, across ${stats.capture_count} of ${stats.count} trades. Historical (imported) trades are excluded — their capture is on a different unit basis. Red bold means weak capture (<25% of the favorable move banked).`}
                   >
                     {stats.avg_capture == null ? '—' : `${(stats.avg_capture * 100).toFixed(0)}%`}
                   </td>
@@ -207,7 +207,7 @@ export default function TagPerformanceTable({
                       : stats.avg_heat > 1.0 ? 'text-red-400 font-bold'
                       : 'text-gray-400'
                     }`}
-                    title={stats.avg_heat == null ? 'No native trades with stop + MAE data in this group' : `Avg of (peak adverse / planned stop) across ${stats.heat_count} of ${stats.count} trades, as %. 100% = touched stop level. Red bold means trades in this group averaged past their planned stop.`}
+                    title={stats.avg_heat == null ? 'No native trades with stop + MAE data in this group' : `Native trades only. Avg of (peak adverse / planned stop) across ${stats.heat_count} of ${stats.count} trades, as %. 100% = touched stop level. Red bold means trades in this group averaged past their planned stop.`}
                   >
                     {stats.avg_heat == null ? '—' : `${Math.round(stats.avg_heat * 100)}%`}
                   </td>
