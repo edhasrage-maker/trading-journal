@@ -4,7 +4,7 @@ import { useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { X, ExternalLink } from 'lucide-react'
 import type { TradeWithContext } from '@/lib/analytics'
-import { mfeMaePoints, captureRatio, maeHeatRatio } from '@/lib/analytics'
+import { mfeMaePoints, captureRatio, maeHeatRatio, rMultiple } from '@/lib/analytics'
 
 /**
  * Drilldown drawer surfaced from the Analytics tag tables. Click a tag
@@ -180,13 +180,11 @@ function categoryLabel(c: ModalCategory): string {
 function TradeRow({ t }: { t: TradeWithContext }) {
   const native = isNative(t)
   const pnl = t.pnl ?? 0
-  // R-multiple — pnl / |entry - stop| * qty, falls back to null when
-  // the pieces aren't present. Matches what `computeStats` uses for avg_r.
-  let r: number | null = null
-  if (t.pnl != null && t.entry_price != null && t.stop_price != null && t.quantity) {
-    const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity
-    if (risk > 0) r = t.pnl / risk
-  }
+  // R-multiple — use the canonical rMultiple() so this matches Avg R and the
+  // intraday/EOD per-row R. The previous inline calc omitted the contract
+  // multiplier (risk in points×qty vs pnl in dollars), inflating R by the
+  // multiplier — 8.15R for an MNQ trade that's really 4.1R.
+  const r = rMultiple(t)
   const cap = captureRatio(t)
   const heat = maeHeatRatio(t)
   // Show MFE/MAE points alongside for context — pure-ratio is a bit

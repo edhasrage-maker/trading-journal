@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { normalizeTagArray, type Trade, type TradingDay, type MarketContext, type TradeTags, type EodAiAnalysis } from '@/lib/supabase/types'
+import { rMultiple as rMultipleNum } from '@/lib/analytics'
 
 /**
  * Drop a copy of every export into the project's exports/ folder. The dev
@@ -31,11 +32,13 @@ function csvCell(v: unknown): string {
   return s
 }
 
-function rMultiple(t: Pick<Trade, 'entry_price' | 'stop_price' | 'pnl' | 'quantity'>): string {
-  if (t.entry_price == null || t.stop_price == null || t.pnl == null || t.quantity == null) return ''
-  const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity
-  if (risk === 0) return ''
-  return (t.pnl / risk).toFixed(3)
+// Delegate to the canonical rMultiple so the CSV R column is unit-correct
+// (includes the contract multiplier). The previous local copy omitted it,
+// inflating R by the multiplier — same bug that showed 8.15R for a 4.1R MNQ
+// trade in the analytics drilldown.
+function rMultiple(t: Trade): string {
+  const r = rMultipleNum(t)
+  return r == null ? '' : r.toFixed(3)
 }
 
 /** MFE / MAE in points, direction-aware. Long: MFE = high-entry, MAE = entry-low. */
