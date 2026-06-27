@@ -865,19 +865,21 @@ function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
 }
 
 /**
- * MFE Realized % per day (capture efficiency). Gray-by-default; only give-back
- * day averages (capture < 0) get a color so the eye lands on days that need
- * review. = realized PnL ÷ peak favorable in $ during the position. (MAE Heat
- * was removed 2026-06 — it penalized correct stop-outs; the descriptive MAE
- * aggregate still lives in analytics.)
+ * MFE Realized % per day (capture efficiency). Gray-by-default; only weak-
+ * capture days (< 25% of the favorable move banked) get a color so the eye
+ * lands on days that need review. = realized PnL ÷ peak favorable in $ during
+ * the position, floored at 0 per trade (a give-back reads as 0%, never
+ * negative). (MAE Heat was removed 2026-06 — it penalized correct stop-outs;
+ * the descriptive MAE aggregate still lives in analytics.)
  */
 function MfeRealizedCell({ day, realizedUnit }: { day: DayRowData; realizedUnit: MfeUnit | '%' }) {
   if (day.avg_capture == null) {
     return <span className="text-gray-700">—</span>
   }
-  // Give-back days (capture < 0) get a color regardless of display unit, since
-  // the crossing is semantic and unit-independent.
-  const capStandout = day.avg_capture != null && day.avg_capture < 0
+  // Weak-capture days get a color regardless of display unit. Capture is now
+  // floored at 0 (a give-back reads 0%, never negative), so flag low capture
+  // (< 25% of the favorable move banked) rather than the old <0 crossing.
+  const capStandout = day.avg_capture != null && day.avg_capture < 0.25
   const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
 
   // Non-% units: show "realized / max" for MFE and "adverse / stop" for MAE.
@@ -916,7 +918,7 @@ function MfeRealizedCell({ day, realizedUnit }: { day: DayRowData; realizedUnit:
   return (
     <span
       className="flex flex-col items-center leading-tight whitespace-nowrap"
-      title="MFE Realized % = avg realized PnL Ã· peak favorable $ per trade (during position, not after exit). Red bold means the day averaged a give-back (capture < 0)."
+      title="MFE Realized % = avg realized PnL Ã· peak favorable $ per trade (during position, not after exit), floored at 0 per trade. Red bold means weak capture (<25% of the favorable move banked)."
     >
       <span className={capCls}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
     </span>
