@@ -44,10 +44,21 @@ export default function Sidebar() {
     return () => clearInterval(id)
   }, [])
 
-  // Monday of the current week → /weekly/<thatMonday>. Derived from the PT
-  // `today` string at noon UTC so the weekday is TZ-safe (noon dodges DST edges).
-  const currentWeekMonday = (() => {
-    const noon = new Date(`${today}T12:00:00Z`)
+  // The day the user is actually viewing. When the URL is a dated route
+  // (/prep|/intraday|/eod/<date>), keep the day tabs pointed at THAT date so
+  // switching tabs while reviewing a prior session doesn't yank them back to
+  // today — the user picks the day, navigation preserves it. Falls back to
+  // `today` on non-dated routes (dashboard, analytics, calendar, settings).
+  const viewedDate = (() => {
+    const m = /^\/(?:prep|intraday|eod)\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
+    return m ? m[1] : today
+  })()
+
+  // Monday of the viewed week → /weekly/<thatMonday>. Anchored to viewedDate so
+  // the Weekly tab follows the session you're reviewing, not the current week.
+  // Computed at noon UTC so the weekday is TZ-safe (noon dodges DST edges).
+  const weekMonday = (() => {
+    const noon = new Date(`${viewedDate}T12:00:00Z`)
     const day = noon.getUTCDay()  // 0=Sun, 1=Mon, ..., 6=Sat
     const diff = day === 0 ? -6 : 1 - day
     const monday = new Date(noon.getTime() + diff * 24 * 3600 * 1000)
@@ -56,10 +67,10 @@ export default function Sidebar() {
 
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { href: `/prep/${today}`, label: 'Daily Prep', icon: ClipboardList },
-    { href: `/intraday/${today}`, label: 'Intraday', icon: Activity },
-    { href: `/eod/${today}`, label: 'EOD Recap', icon: BarChart2 },
-    { href: `/weekly/${currentWeekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
+    { href: `/prep/${viewedDate}`, label: 'Daily Prep', icon: ClipboardList },
+    { href: `/intraday/${viewedDate}`, label: 'Intraday', icon: Activity },
+    { href: `/eod/${viewedDate}`, label: 'EOD Recap', icon: BarChart2 },
+    { href: `/weekly/${weekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp },
   ]
