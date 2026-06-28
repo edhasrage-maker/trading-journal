@@ -286,7 +286,18 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
   // trades outside the CSV+SCID bar coverage window.
   const tx = t as TradeWithExcursion & { mfe_dollars_per_leg?: number | null; exits_json?: ExitLeg[] | null }
   if (tx.mfe_dollars_per_leg != null && tx.mfe_dollars_per_leg > 0) {
-    return { pnl: t.pnl, mfeDollars: tx.mfe_dollars_per_leg }
+    // Clamp at the tick-precise full-position ceiling. A correct per-leg value
+    // (Σ leg_qty × leg_window_peak) can NEVER exceed full_qty × overall_peak,
+    // since each leg's window peak ≤ the overall favorable extreme. A stored
+    // value above this is corrupt — e.g. the old un-capped backfill walked a bad
+    // bar tick to a spurious peak ($3,715 of "MFE" on a 5-lot MNQ scalp whose
+    // tick-extreme only supports ~$614). Bounding here stops the corruption from
+    // reaching the capture ratio AND the coach's "$ left on the table".
+    const legQty = Array.isArray(tx.exits_json) && tx.exits_json.length > 0
+      ? tx.exits_json.reduce((s, e) => s + (e?.qty ?? 0), 0)
+      : 0
+    const ceiling = xc.mfe * symbolToMultiplier(t.symbol ?? '') * (legQty > 0 ? legQty : t.quantity)
+    return { pnl: t.pnl, mfeDollars: ceiling > 0 ? Math.min(tx.mfe_dollars_per_leg, ceiling) : tx.mfe_dollars_per_leg }
   }
   // Bars-free scaling-aware fallback for scaled-out trades that have neither a
   // backfilled per-leg value nor 1m bars (e.g. overnight/GBX). Avoids grading a

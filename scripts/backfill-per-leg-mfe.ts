@@ -273,8 +273,15 @@ function computePerLegMax(t: TradeRow, bars: Bar[]): ComputeResult {
     for (const leg of legs) {
       const legMs = Date.parse(leg.time)
       if (!Number.isFinite(legMs)) return { ok: false, reason: 'bad_leg_time' }
-      const peak = findFavorablePeak(bars, windowStartMs, legMs, isLong)
-      if (peak == null) return { ok: false, reason: 'bar_gap_multileg' }
+      const rawPeak = findFavorablePeak(bars, windowStartMs, legMs, isLong)
+      if (rawPeak == null) return { ok: false, reason: 'bar_gap_multileg' }
+      // Cap the bar-derived peak at the tick-precise in-position extreme — a bad
+      // bar tick (or a distant tick inside the window) would otherwise inflate
+      // the excursion far past anything reachable, corrupting mfe_dollars_per_leg
+      // (e.g. $3,715 of "MFE" on a 5-lot MNQ scalp). Mirrors perLegMaxDollars().
+      const peak = isLong
+        ? (t.high_during_position != null ? Math.min(rawPeak, t.high_during_position) : rawPeak)
+        : (t.low_during_position != null ? Math.max(rawPeak, t.low_during_position) : rawPeak)
       const exc = isLong ? Math.max(0, peak - t.entry_price) : Math.max(0, t.entry_price - peak)
       total += exc * leg.qty * mult
       windowStartMs = legMs

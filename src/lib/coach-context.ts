@@ -165,7 +165,20 @@ NO TRADE DATA — the trader logged no trades in this window.
     // best-case $ if each leg exited at its peak; capPct = the share a winner
     // actually banked, left = $ given back. Winners only — capture on a loser is
     // meaningless. Capped at 100% for the rare avg-exit-past-peak rounding case.
-    const mfeUsd = t.mfe_dollars_per_leg
+    // Clamp the per-leg MFE-$ at the tick-precise full-position ceiling
+    // (favorable extreme × qty × multiplier). A correct per-leg value can never
+    // exceed it; a stored value above it is corrupt (old un-capped backfill
+    // walking a bad bar tick) and would massively inflate "$ left on the table".
+    let mfeUsd = t.mfe_dollars_per_leg
+    if (mfeUsd != null && t.entry_price != null && t.quantity != null) {
+      const favPts = t.direction === 'short'
+        ? (t.low_during_position != null ? t.entry_price - t.low_during_position : null)
+        : (t.high_during_position != null ? t.high_during_position - t.entry_price : null)
+      if (favPts != null && favPts >= 0) {
+        const ceiling = favPts * t.quantity * mult(t.symbol)
+        if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
+      }
+    }
     let capPct: number | null = null
     if (isWin && mfeUsd != null && mfeUsd > 0) {
       capPct = Math.min(1, pnl / mfeUsd)
