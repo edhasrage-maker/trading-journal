@@ -10,6 +10,7 @@
  * Response shape (matches weekly_recap.ai_synthesis_json):
  *   {
  *     prior_week_overview: string       // 2-3 sentence recap of last week + the shift in
+ *     week_comparison: string[]         // dimension-by-dimension vs prior week (setups/capture/exec/compliance/recurring)
  *     headline: string                  // 1 sentence, ≤15 words
  *     themes: string[]                  // 3-5 cross-day patterns
  *     what_worked: string[]
@@ -33,6 +34,28 @@ const client = new Anthropic()
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
+
+/**
+ * Execution composite + compliance for a date range. These come from the EOD
+ * analysis (trading_days.eod_ai_analysis_json) and are NOT in buildCoachContext,
+ * so the synthesis can't compare them without this. Mirrors how the weekly page
+ * reads them: execution.composite (0-1) and process.verdict ('Compliant'|'Breach').
+ */
+async function weekExecCompliance(supabase: AnyClient, start: string, end: string): Promise<{ execAvg: number | null; compliant: number; verdictDays: number }> {
+  const { data } = await supabase
+    .from('trading_days')
+    .select('eod_ai_analysis_json')
+    .gte('date', start)
+    .lte('date', end)
+  let execSum = 0, execN = 0, compliant = 0, verdictDays = 0
+  for (const d of (data ?? []) as Array<{ eod_ai_analysis_json?: { execution?: { composite?: number }; process?: { verdict?: string } } }>) {
+    const comp = d.eod_ai_analysis_json?.execution?.composite
+    if (typeof comp === 'number') { execSum += comp; execN++ }
+    const v = d.eod_ai_analysis_json?.process?.verdict
+    if (v === 'Compliant' || v === 'Breach') { verdictDays++; if (v === 'Compliant') compliant++ }
+  }
+  return { execAvg: execN > 0 ? execSum / execN : null, compliant, verdictDays }
+}
 
 export async function POST(req: Request) {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -73,6 +96,18 @@ export async function POST(req: Request) {
     recentTradesLimit: 0,
   })
 
+  // Execution + compliance for both weeks — NOT in the context blocks above
+  // (they come from the EOD analysis), so the comparison needs them injected.
+  const [twEC, pwEC] = await Promise.all([
+    weekExecCompliance(supabase, weekStart, endDate),
+    weekExecCompliance(supabase, prevStart, prevEnd),
+  ])
+  const ecPct = (v: number | null) => (v != null ? `${Math.round(v * 100)}%` : 'n/a')
+  const ecDays = (c: number, n: number) => (n > 0 ? `${c}/${n} days` : 'n/a')
+  const execComplianceBlock = `EXECUTION & COMPLIANCE — week over week (from the EOD analysis; not in the data blocks above):
+  This week (${weekLabel(weekStart)}):  avg execution ${ecPct(twEC.execAvg)} · compliance ${ecDays(twEC.compliant, twEC.verdictDays)}
+  PRIOR week (${weekLabel(prevStart)}): avg execution ${ecPct(pwEC.execAvg)} · compliance ${ecDays(pwEC.compliant, pwEC.verdictDays)}`
+
   const systemPrompt = `${profileContextBlock(traderProfile)}You are the trader's personal coach producing a structured weekly recap. You have TWO data blocks below: this week, and the prior week (for trend comparison). Synthesize across the week — patterns, themes, what worked, what didn't, where to focus next week.
 
 Be specific. Cite trade dates, setup names, PnL figures, day types from the actual data. Don't give generic advice. When the data doesn't support a confident call, say so explicitly. Defer to the trader's coaching preferences (above) over any generic best practice.
@@ -81,9 +116,12 @@ ${thisWeekContext}
 
 ${priorWeekContext}
 
+${execComplianceBlock}
+
 Respond with ONLY valid JSON in this exact structure (no markdown fences):
 {
   "prior_week_overview": "<2-3 sentences recapping the PRIOR week's performance — PnL, win rate, execution quality, what defined it — and the single biggest shift INTO this week (improved/worsened, with the number). Use the PRIOR week data block. If there was no prior-week trading data, return an empty string.>",
+  "week_comparison": ["<Dimension-by-dimension comparison of THIS week vs the PRIOR week, citing BOTH weeks' numbers. One bullet for EACH of: (1) setup performance shifts — which setups improved/degraded WR & PnL; (2) MFE capture change — winners' capture % this vs prior; (3) execution change — avg execution this vs prior; (4) compliance change — compliant days this vs prior; (5) any THEME or mistake that recurred in BOTH weeks (the behavioral pattern that didn't resolve). Skip a bullet only if that dimension has no prior-week data. 4-6 bullets.>"],
   "headline": "<1 sentence, ≤15 words — the WHY of the week in one line>",
   "themes": ["<cross-day pattern 1 with specifics>", "<pattern 2>", "<3-5 total>"],
   "what_worked": ["<specific decision/setup/behavior that paid off>", "<up to 4 total>"],
@@ -96,6 +134,7 @@ Respond with ONLY valid JSON in this exact structure (no markdown fences):
 LENGTH DISCIPLINE:
   - headline: ≤15 words
   - prior_week_overview: 2-3 sentences, under 60 words
+  - week_comparison bullets: 1 sentence each, under 30 words, each leading with the dimension (e.g. "Setups:", "Capture:", "Execution:", "Compliance:", "Recurring:")
   - themes / what_worked / what_didnt / focus_next_week bullets: 1 sentence each, under 25 words
   - grade_reasoning: 1-2 sentences
 

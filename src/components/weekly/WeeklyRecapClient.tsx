@@ -29,6 +29,9 @@ export interface AiSynthesis {
   /** 2-3 sentence recap of the PRIOR week's performance + the key shift into
    *  this week (week-over-week context). Empty when there was no prior-week data. */
   prior_week_overview?: string
+  /** Dimension-by-dimension comparison vs the prior week (setups, MFE capture,
+   *  execution, compliance, recurring themes), each bullet citing both weeks. */
+  week_comparison?: string[]
   weekly_grade?: 'A' | 'B' | 'C' | 'D' | 'F'
   grade_reasoning?: string
   generated_at?: string
@@ -292,13 +295,25 @@ function SynthesisView({ s }: { s: AiSynthesis }) {
         </div>
       )}
 
-      {s.prior_week_overview && (
-        <div className="rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2">
-          <div className="flex items-center gap-1.5 mb-1">
+      {(s.prior_week_overview || (s.week_comparison && s.week_comparison.length > 0)) && (
+        <div className="rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2.5">
+          <div className="flex items-center gap-1.5 mb-1.5">
             <History className="w-3.5 h-3.5 text-gray-500" />
-            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Last week</span>
+            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">This week vs last week</span>
           </div>
-          <p className="text-xs text-gray-300 leading-snug">{s.prior_week_overview}</p>
+          {s.prior_week_overview && (
+            <p className="text-xs text-gray-300 leading-snug mb-2">{s.prior_week_overview}</p>
+          )}
+          {s.week_comparison && s.week_comparison.length > 0 && (
+            <ul className="space-y-1">
+              {s.week_comparison.map((c, i) => (
+                <li key={i} className="flex gap-2 text-xs text-gray-300 leading-snug">
+                  <span className="text-gray-600 flex-shrink-0">›</span>
+                  <span>{c}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
