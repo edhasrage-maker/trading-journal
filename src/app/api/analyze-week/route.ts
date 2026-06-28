@@ -9,6 +9,7 @@
  *
  * Response shape (matches weekly_recap.ai_synthesis_json):
  *   {
+ *     prior_week_overview: string       // 2-3 sentence recap of last week + the shift in
  *     headline: string                  // 1 sentence, ≤15 words
  *     themes: string[]                  // 3-5 cross-day patterns
  *     what_worked: string[]
@@ -82,6 +83,7 @@ ${priorWeekContext}
 
 Respond with ONLY valid JSON in this exact structure (no markdown fences):
 {
+  "prior_week_overview": "<2-3 sentences recapping the PRIOR week's performance — PnL, win rate, execution quality, what defined it — and the single biggest shift INTO this week (improved/worsened, with the number). Use the PRIOR week data block. If there was no prior-week trading data, return an empty string.>",
   "headline": "<1 sentence, ≤15 words — the WHY of the week in one line>",
   "themes": ["<cross-day pattern 1 with specifics>", "<pattern 2>", "<3-5 total>"],
   "what_worked": ["<specific decision/setup/behavior that paid off>", "<up to 4 total>"],
@@ -93,6 +95,7 @@ Respond with ONLY valid JSON in this exact structure (no markdown fences):
 
 LENGTH DISCIPLINE:
   - headline: ≤15 words
+  - prior_week_overview: 2-3 sentences, under 60 words
   - themes / what_worked / what_didnt / focus_next_week bullets: 1 sentence each, under 25 words
   - grade_reasoning: 1-2 sentences
 

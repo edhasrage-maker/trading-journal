@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { format, parseISO } from 'date-fns'
 import {
   Brain, Save, Loader2, ChevronLeft, ChevronRight, Sparkles,
-  CheckCircle2, AlertTriangle, Target, TrendingUp, TrendingDown,
+  CheckCircle2, AlertTriangle, Target, TrendingUp, TrendingDown, History,
 } from 'lucide-react'
 import { previousWeekStart, nextWeekStart } from '@/lib/week-dates'
 
@@ -26,6 +26,9 @@ export interface AiSynthesis {
   what_worked?: string[]
   what_didnt?: string[]
   focus_next_week?: string[]
+  /** 2-3 sentence recap of the PRIOR week's performance + the key shift into
+   *  this week (week-over-week context). Empty when there was no prior-week data. */
+  prior_week_overview?: string
   weekly_grade?: 'A' | 'B' | 'C' | 'D' | 'F'
   grade_reasoning?: string
   generated_at?: string
@@ -286,6 +289,16 @@ function SynthesisView({ s }: { s: AiSynthesis }) {
             {s.headline && <p className="text-sm font-semibold text-white leading-snug">{s.headline}</p>}
             {s.grade_reasoning && <p className="text-xs text-gray-400 mt-1">{s.grade_reasoning}</p>}
           </div>
+        </div>
+      )}
+
+      {s.prior_week_overview && (
+        <div className="rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2">
+          <div className="flex items-center gap-1.5 mb-1">
+            <History className="w-3.5 h-3.5 text-gray-500" />
+            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Last week</span>
+          </div>
+          <p className="text-xs text-gray-300 leading-snug">{s.prior_week_overview}</p>
         </div>
       )}
 
