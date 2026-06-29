@@ -17,6 +17,12 @@ export async function POST(req: Request) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
 
+  // The generated Supabase types resolve inserts/upserts on these tables to
+  // `never` (a known supabase-js typing quirk the rest of the codebase also
+  // works around). Use an untyped handle for the data calls; auth stays typed.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any
+
   let csvText = ''
   const ctype = req.headers.get('content-type') || ''
   try {
@@ -48,10 +54,10 @@ export async function POST(req: Request) {
   const dates = Array.from(new Set(trades.map(t => t.trade_date)))
   const dayIdByDate = new Map<string, string>()
   for (const date of dates) {
-    const { data: existing } = await supabase
+    const { data: existing } = await db
       .from('trading_days').select('id').eq('date', date).maybeSingle()
     if (existing?.id) { dayIdByDate.set(date, existing.id as string); continue }
-    const { data: created, error } = await supabase
+    const { data: created, error } = await db
       .from('trading_days').insert({ date }).select('id').single()
     if (error || !created) {
       return NextResponse.json(
@@ -80,7 +86,7 @@ export async function POST(req: Request) {
     sierra_trade_id: t.dedup_key,
   }))
 
-  const { data: inserted, error: insErr } = await supabase
+  const { data: inserted, error: insErr } = await db
     .from('trades')
     .upsert(rows, { onConflict: 'user_id,sierra_trade_id', ignoreDuplicates: true })
     .select('id')
