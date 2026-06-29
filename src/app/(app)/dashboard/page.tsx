@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { format, subDays } from 'date-fns'
 import Link from 'next/link'
-import { ClipboardList, Activity, BarChart2 } from 'lucide-react'
+import { ClipboardList, Activity, BarChart2, Upload, PlusCircle } from 'lucide-react'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
@@ -329,6 +329,42 @@ export default async function DashboardPage() {
           <p className="text-gray-400 text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
         </div>
       </div>
+
+      {/* First-run welcome — shown only when the account has no data yet */}
+      {recentDays.length === 0 && (
+        <div className="bg-blue-950/20 border border-blue-800/60 rounded-xl p-6 mb-6">
+          <h2 className="text-lg font-semibold text-white">Welcome — let&apos;s get your trades in</h2>
+          <p className="text-gray-300 text-sm mt-1">
+            Your analytics, capture %, and MFE/MAE light up as soon as you add trades. Two ways to start:
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+            <Link
+              href="/import"
+              className="flex items-start gap-3 p-4 rounded-lg border border-blue-700 bg-blue-950/30 hover:bg-blue-950/50 transition-colors"
+            >
+              <Upload className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+              <span>
+                <span className="block text-sm font-medium text-white">Import trades</span>
+                <span className="block text-xs text-gray-400 mt-0.5">
+                  Upload a CSV from NinjaTrader, Tradovate, or a Sierra Chart log — keeps entries, exits, and MFE/MAE.
+                </span>
+              </span>
+            </Link>
+            <Link
+              href={`/intraday/${today}`}
+              className="flex items-start gap-3 p-4 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 transition-colors"
+            >
+              <PlusCircle className="w-5 h-5 text-gray-300 flex-shrink-0 mt-0.5" />
+              <span>
+                <span className="block text-sm font-medium text-white">Log a trade manually</span>
+                <span className="block text-xs text-gray-400 mt-0.5">
+                  Start today&apos;s session and add trades by hand.
+                </span>
+              </span>
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Today's quick actions */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">

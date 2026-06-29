@@ -11,21 +11,23 @@ import {
   Activity,
   BarChart2,
   CalendarDays,
-  Settings,
-  Tag,
+  Upload,
   Archive,
   Database,
   CandlestickChart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 
+// Tags & Perf Stats are "Coming soon" stubs — omitted until built.
+// Condition Lookup / Bar Data / SC Archives are owner/local-only tooling
+// (Bar Data + SC Archives read local files; Condition Lookup writes the shared
+// reference tables that are read-only for normal users) — shown only locally.
 const settingsItems = [
-  { href: '/settings/tags', label: 'Tags', icon: Tag },
-  { href: '/settings/stats', label: 'Perf Stats', icon: Settings },
-  { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database },
-  { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart },
-  { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive },
-]
+  { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database, show: LOCAL_FEATURES_ENABLED },
+  { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart, show: LOCAL_FEATURES_ENABLED },
+  { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive, show: LOCAL_FEATURES_ENABLED },
+].filter(i => i.show)
 
 export default function Sidebar() {
   const pathname = usePathname()
@@ -45,6 +47,7 @@ export default function Sidebar() {
     { href: `/prep/${today}`, label: 'Daily Prep', icon: ClipboardList },
     { href: `/intraday/${today}`, label: 'Intraday', icon: Activity },
     { href: `/eod/${today}`, label: 'EOD Recap', icon: BarChart2 },
+    { href: '/import', label: 'Import', icon: Upload },
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp },
   ]
@@ -81,7 +84,8 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Settings */}
+      {/* Settings — hidden entirely when no items remain (e.g. cloud build) */}
+      {settingsItems.length > 0 && (
       <div className="px-3 py-4 border-t border-gray-800 space-y-0.5">
         <p className="px-3 text-xs text-gray-600 uppercase tracking-wider mb-2">Settings</p>
         {settingsItems.map(({ href, label, icon: Icon }) => {
@@ -103,6 +107,7 @@ export default function Sidebar() {
           )
         })}
       </div>
+      )}
     </aside>
   )
 }
