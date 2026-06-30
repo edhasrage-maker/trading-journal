@@ -1,11 +1,14 @@
 import { createClient } from '@/lib/supabase/server'
 import PrepClient from '@/components/prep/PrepClient'
 import { computeDrAdr } from '@/lib/dr-adr'
+import { fetchHighImpactNews } from '@/lib/economic-calendar'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 export default async function PrepPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params
   const supabase = await createClient()
+  // Red-folder economic news for the day (server-fetched, cached, never throws).
+  const highImpactNews = await fetchHighImpactNews(date)
 
   const { data: dayRaw } = await supabase
     .from('trading_days').select('*').eq('date', date).single()
@@ -91,6 +94,7 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
       drAdrAuto={drAdrAuto}
       chartSymbol={chartSymbol}
       initialTrades={trades}
+      highImpactNews={highImpactNews}
     />
   )
 }

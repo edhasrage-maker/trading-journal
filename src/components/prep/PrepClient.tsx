@@ -14,6 +14,8 @@ import DiscordDashboard from './DiscordDashboard'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
+import HighImpactNews from './HighImpactNews'
+import type { NewsEvent } from '@/lib/economic-calendar'
 import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import BarWatcher from '@/components/charts/BarWatcher'
 import { deleteBlob } from '@/lib/storage'
@@ -40,9 +42,11 @@ interface Props {
   /** Trades already taken on this date (may be empty during morning prep).
    *  Powers the chart's entry/exit markers. */
   initialTrades: Trade[]
+  /** High-impact ("red folder") economic news for the day, server-fetched. */
+  highImpactNews: NewsEvent[]
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades, highImpactNews }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -674,6 +678,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           {toast.type === 'success' ? '✓' : '✕'} {toast.msg}
         </div>
       )}
+      {/* Red-folder economic news for the day — pinned to the very top. */}
+      <HighImpactNews events={highImpactNews} />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
