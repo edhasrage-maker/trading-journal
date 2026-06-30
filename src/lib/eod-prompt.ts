@@ -398,6 +398,19 @@ structural reasoning behind the exit decision.
   wanted to lock it in, no structural reason given" — that's purely PnL-
   anchored with no chart backing.
 
+  RISK-OFF SCRATCHES ARE VALID EXECUTION, NOT MISTAKES. Exiting because the
+  TAPE WENT TWO-WAY / order flow is no longer in your favor / directional
+  conviction has left IS a read-based exit — the trader read the order flow
+  deteriorate in real time. That is NOT "pure uncertainty management" and NOT a
+  structural-trigger-less exit; two-way tape is itself the order-flow read.
+  A disciplined scratch passes criterion #7 and must NOT appear in mistakes[].
+  And NEVER judge the exit by what price did AFTER the trader was out:
+  "subsequently moved 1.5 ATR in favor", "would have hit target", "scratched a
+  winner" is POST-EXIT information the trader did not have at the decision. A
+  sound risk-off exit on a deteriorating read is correct process regardless of
+  the counterfactual — framing it as an error is outcome bias (see rule #1) and
+  is forbidden. Cutting a trade when your edge is gone is good risk management.
+
 **4. Structural terminology — be literal, don't inflate.** Reserve these
 specific terms for their specific structural conditions:
   • "Active downtrend" requires BOTH lower highs AND lower lows. A single

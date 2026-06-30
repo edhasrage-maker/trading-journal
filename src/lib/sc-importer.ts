@@ -24,7 +24,7 @@ export interface ParsedSCRow {
   exit_time_iso?: string | null   // ISO timestamp (last closing fill)
   exit_price?: number | null      // weighted average of closing fills
   direction: 'long' | 'short'
-  quantity: number                // peak position size during the trade
+  quantity: number                // total contracts round-tripped (matchedQty), keeps quantity ↔ pnl ↔ R consistent
   pnl: number | null              // dollar P&L using contract multiplier
   // Tick-level extremes during the position. Sierra writes these on closing
   // fills (HighDuringPosition / LowDuringPosition columns). For MFE/MAE, the
@@ -317,7 +317,12 @@ export function parseSierraChartLog(text: string): ParseOutcome {
       exit_time_iso: closes[closes.length - 1].ts.toISOString(),
       exit_price: round2(exitAvg),
       direction: g.direction,
-      quantity: g.peak,
+      // Total contracts round-tripped, NOT peak net position. When Sierra splits
+      // an order into separate brackets, the net-position walk can under-count
+      // peak (e.g. peak=1 on a trade that traded 3), leaving quantity out of sync
+      // with pnl (which uses matchedQty) and inflating R. matchedQty is the size
+      // the trade actually carried and keeps quantity ↔ pnl ↔ R consistent.
+      quantity: matchedQty,
       pnl: round2(pnl),
       high_during_position: high_during_position != null ? round2(high_during_position) : null,
       low_during_position: low_during_position != null ? round2(low_during_position) : null,

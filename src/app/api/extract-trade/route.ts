@@ -72,10 +72,20 @@ async function handle(req: Request) {
           text: `You are reading a Sierra Chart trade screenshot. Extract trade levels AND identify visual signals for tag suggestions.
 
 PART 1 — TRADE LEVELS
-- Entry price: "Trade: Qty@PRICE" text, order fill marker, or highlighted axis price
-- Stop price: stop-loss line (red/orange) or "Stop" label
-- TP1 price: take-profit line (green/teal) or "Target"/"TP" label
-- Direction: stop BELOW entry = long, stop ABOVE entry = short
+
+Step 1 — DIRECTION FIRST, before assigning any level:
+- A long is a BUY (entry fill often green / ▲). A short is a SELL (entry fill often red / ▼).
+- The stop-loss always sits on the LOSING side of entry: BELOW entry for a long, ABOVE entry for a short. The target sits on the WINNING side: above entry for a long, below entry for a short.
+
+Step 2 — Entry price: read the ACTUAL fill — the "Trade: Qty@PRICE" text, the order-fill marker, or the highlighted axis price at the fill. This is the anchor. Do NOT infer entry from the stop/target lines.
+
+Step 3 — Stop price: stop-loss line (red/orange) or "Stop" label. TP1 price: take-profit line (green/teal) or "Target"/"TP" label.
+
+Step 4 — VALIDATE geometry against direction. The three prices ALWAYS order as:
+- LONG:   stop  <  entry  <  TP1   (stop below, target above)
+- SHORT:  TP1   <  entry  <  stop   (target below, stop above)
+If a value lands on the WRONG side of entry for the direction (e.g. a "stop" below entry on a SHORT), you have misread that line — re-examine it. If you still cannot place it confidently on the correct side, return null for that field rather than emitting a wrong-sided value. NEVER output a short with its stop below entry, or a long with its stop above entry.
+
 - Entry time: time at bottom axis at entry point (HH:MM, 24h)
 - Quantity: contracts shown in order marker or stats overlay
 
@@ -135,6 +145,26 @@ Return ONLY valid JSON with no other text:
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     const data = jsonMatch ? JSON.parse(jsonMatch[0]) : {}
+
+    // Geometry guard — stop/TP1 must sit on the correct side of entry for the
+    // direction (long: stop<entry<TP1; short: TP1<entry<stop). The vision model
+    // sometimes lays a short's levels out long-style (stop below entry). Null
+    // any clearly wrong-sided value rather than handing the user a backwards
+    // stop/target to clean up — a stop below entry on a short is never right.
+    {
+      const dir = data.direction
+      const e = typeof data.entry_price === 'number' ? data.entry_price : null
+      if (e != null && (dir === 'long' || dir === 'short')) {
+        if (typeof data.stop_price === 'number') {
+          const wrong = dir === 'long' ? data.stop_price >= e : data.stop_price <= e
+          if (wrong) data.stop_price = null
+        }
+        if (typeof data.tp1_price === 'number') {
+          const wrong = dir === 'long' ? data.tp1_price <= e : data.tp1_price >= e
+          if (wrong) data.tp1_price = null
+        }
+      }
+    }
 
     // Defensive: drop any suggested labels not in the allowed library so the UI doesn't
     // silently miss them, and so we never inject novel tag names.
