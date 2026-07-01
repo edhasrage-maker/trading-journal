@@ -65,17 +65,42 @@ export { symbolToMultiplier, symbolRoot, MULTIPLIERS } from './futures-symbols'
 import { symbolToMultiplier } from './futures-symbols'
 
 /**
- * Parse a Sierra Chart DateTime string. Format: "YYYY-MM-DD  HH:MM:SS[.fraction]"
- * (two spaces between date and time, microsecond fraction optional). Interpreted
- * in the browser/server local timezone — SC writes fills in the trader's local TZ
- * with no offset marker.
+ * Interpret a naive wall-clock time (SC writes fills with no zone marker) AS IF
+ * it were in `tz`, and return the corresponding UTC Date. Uses the Intl offset
+ * trick so DST is handled at the actual instant. When `tz` is omitted, falls
+ * back to the server's local timezone — correct for the LOCAL importer (server
+ * === the trader's PT machine). The cloud importer passes the browser's IANA
+ * zone so a hosted (UTC) server still lands the times in the trader's clock.
  */
-function parseDateTime(raw: string): Date | null {
+function naiveToUtc(y: number, mo: number, d: number, h: number, mi: number, s: number, ms: number, tz?: string): Date {
+  if (!tz) return new Date(y, mo - 1, d, h, mi, s, ms)
+  const asUtc = Date.UTC(y, mo - 1, d, h, mi, s, ms)
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+    const g = (t: string) => Number(dtf.formatToParts(new Date(asUtc)).find(p => p.type === t)?.value)
+    // How `asUtc` renders in tz → the zone's offset at that instant.
+    const shown = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second'))
+    return new Date(asUtc - (shown - asUtc))
+  } catch {
+    return new Date(y, mo - 1, d, h, mi, s, ms) // unknown/invalid tz → server-local
+  }
+}
+
+/**
+ * Parse a Sierra Chart DateTime string. Format: "YYYY-MM-DD  HH:MM:SS[.fraction]"
+ * (two spaces between date and time, microsecond fraction optional). `tz` is the
+ * zone the naive time should be read in (see naiveToUtc).
+ */
+function parseDateTime(raw: string, tz?: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/.exec(raw.trim())
   if (!m) return null
   const [, y, mo, d, h, min, s, frac] = m
   const ms = frac ? Math.floor(Number(`0.${frac.padEnd(6, '0').slice(0, 6)}`) * 1000) : 0
-  const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(min), Number(s), ms)
+  const dt = naiveToUtc(Number(y), Number(mo), Number(d), Number(h), Number(min), Number(s), ms, tz)
   return Number.isNaN(dt.getTime()) ? null : dt
 }
 
@@ -129,7 +154,7 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-export function parseSierraChartLog(text: string): ParseOutcome {
+export function parseSierraChartLog(text: string, tz?: string): ParseOutcome {
   const parsed = Papa.parse<RawRow>(text, {
     delimiter: '\t',
     header: true,
@@ -156,7 +181,7 @@ export function parseSierraChartLog(text: string): ParseOutcome {
       continue
     }
 
-    const ts = parseDateTime(row.DateTime ?? '')
+    const ts = parseDateTime(row.DateTime ?? '', tz)
     if (!ts) {
       parseErrors.push(`Row ${rowNumber}: invalid DateTime "${row.DateTime}"`)
       continue

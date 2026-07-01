@@ -48,6 +48,10 @@ export async function POST(req: Request) {
   const db = supabase as any
 
   let csvText = ''
+  // The browser's IANA timezone, sent by the client. Sierra logs store naive
+  // local times with no zone, so we read them in the uploader's timezone rather
+  // than the (UTC) server's — otherwise every fill displays hours off.
+  let clientTz: string | undefined
   const ctype = req.headers.get('content-type') || ''
   try {
     if (ctype.includes('multipart/form-data')) {
@@ -57,9 +61,12 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'No file uploaded.' }, { status: 400 })
       }
       csvText = await (file as File).text()
+      const tzv = form.get('tz')
+      if (typeof tzv === 'string' && tzv) clientTz = tzv
     } else {
       const body = await req.json().catch(() => ({}))
       csvText = body.csv ?? ''
+      if (typeof body.tz === 'string' && body.tz) clientTz = body.tz
     }
   } catch {
     return NextResponse.json({ error: 'Could not read the upload.' }, { status: 400 })
@@ -73,7 +80,7 @@ export async function POST(req: Request) {
   const warnings: string[] = []
 
   if (isSierraLog(csvText)) {
-    const { rows, parseErrors, skippedFiltered } = parseSierraChartLog(csvText)
+    const { rows, parseErrors, skippedFiltered } = parseSierraChartLog(csvText, clientTz)
     skipped = skippedFiltered
     total = rows.length + skippedFiltered
     // Surface the first few parse errors (invalid rows) but don't flood the UI.
@@ -81,8 +88,11 @@ export async function POST(req: Request) {
     if (skippedFiltered > 0) {
       warnings.push(`${skippedFiltered} fill(s) from sim/None accounts were skipped (live accounts only).`)
     }
-    // Sierra logs carry no timezone marker; times are read in the server's zone.
-    warnings.push('Sierra Chart times have no timezone in the log, so they may display shifted from your local clock. P&L, MFE/MAE, and pairing are unaffected.')
+    // Sierra logs carry no timezone marker. With the browser tz we read them in
+    // the uploader's zone (correct); only warn when that wasn't available.
+    if (!clientTz) {
+      warnings.push('Your timezone wasn\'t detected, so Sierra times were read as server time and may display shifted. P&L, MFE/MAE, and pairing are unaffected.')
+    }
     for (const r of rows) {
       const trade_date = (r.entry_time_iso || '').slice(0, 10)
       if (!trade_date) { skipped++; continue }

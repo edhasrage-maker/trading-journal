@@ -24,6 +24,8 @@ export default function EmptyStateImport({ today }: { today: string }) {
     try {
       const fd = new FormData()
       fd.append('file', file)
+      // Read Sierra's naive timestamps in the uploader's timezone, not the server's.
+      fd.append('tz', Intl.DateTimeFormat().resolvedOptions().timeZone)
       const res = await fetch('/api/import-trades-csv', { method: 'POST', body: fd })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) { setError(json.error || 'Import failed.'); return }
