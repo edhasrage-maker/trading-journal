@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { sessionUtcWindow } from '@/lib/pt-time'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,6 +32,12 @@ export async function GET(req: Request) {
   const supabase: AnyClient = await createClient()
   const { start, end } = sessionUtcWindow(date)
 
+  // Local build: bars are stored under the exact per-contract symbol the user
+  // imported. Cloud build: bars come from the shared central feed keyed by the
+  // mini price-series root (NQ/ES), so any micro/mini/dated contract resolves
+  // to that one series. See chartSeriesRoot + scripts/public-bar-feed.ts.
+  const querySymbol = LOCAL_FEATURES_ENABLED ? symbol : chartSeriesRoot(symbol)
+
   // Paginate past Supabase's default 1000-row response cap. A full PT session of
   // 1m bars is up to 1440 rows, so this is typically 2 round-trips.
   const PAGE = 1000
@@ -41,7 +49,7 @@ export async function GET(req: Request) {
     const { data, error } = await supabase
       .from('ohlcv_bars')
       .select('ts, open, high, low, close, volume')
-      .eq('symbol', symbol)
+      .eq('symbol', querySymbol)
       .gte('ts', start)
       .lte('ts', end)
       .order('ts', { ascending: true })

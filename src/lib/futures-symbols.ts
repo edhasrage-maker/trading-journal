@@ -35,6 +35,21 @@ export function symbolRoot(symbol: string): string {
   return noExchange.replace(/[A-Z]\d{1,2}$/, '')
 }
 
+/**
+ * Micro → mini price-series collapse. Micros trade at the SAME price as their
+ * mini (MNQ≈NQ, MES≈ES, …), so one shared bar series serves both. Used by the
+ * cloud LiveChart so any trade symbol (micro, mini, or dated contract) resolves
+ * to the single root the central bar feed stores bars under. Falls back to the
+ * plain root for anything not in the map.
+ */
+const MICRO_TO_MINI: Record<string, string> = {
+  MNQ: 'NQ', MES: 'ES', MYM: 'YM', M2K: 'RTY', MCL: 'CL', MGC: 'GC',
+}
+export function chartSeriesRoot(symbol: string): string {
+  const root = symbolRoot(symbol)
+  return MICRO_TO_MINI[root] ?? root
+}
+
 export function symbolToMultiplier(symbol: string): number {
   return MULTIPLIERS[symbolRoot(symbol)] ?? 1
 }
