@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2 } from 'lucide-react'
+import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2, Pencil, Type as TypeIcon } from 'lucide-react'
 import {
   createChart,
   CandlestickSeries,
@@ -85,6 +85,9 @@ const PREFS_KEY = 'livechart-prefs-v2'
 // chosen timeframe — opening 06/04 lands on 5m if that's what you saved there,
 // and 06/05 lands on 1m independently. Aligns with the saved-zoom keying.
 const TF_VALID = new Set<number>([1, 5, 15, 30, 60, 240])
+
+// Annotation palette — swatches offered in the drawing right-click menu.
+const ANN_COLORS = ['#ef4444', '#22c55e', '#3b82f6', '#eab308', '#a855f7', '#e5e7eb']
 function tfKey(symbol: string | null, date: string): string {
   return `livechart-tf-${symbol ?? 'unknown'}-${date}`
 }
@@ -230,13 +233,22 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // click can map a click position back to a trade. Kept in sync with the
   // primitive's data in the render effect.
   const arrowHitsRef = useRef<Array<{ tradeId: string; time: Time; price: number }>>([])
-  // User-drawn annotations (zones) — a second primitive on the candle series,
-  // plus an opt-in draw overlay. Fully additive: when draw mode is off the
-  // overlay is click-through and the chart behaves exactly as before.
+  // User-drawn annotations (zones + text) — a second primitive on the candle
+  // series, plus an opt-in draw overlay. Fully additive: when Drawing Mode is
+  // off the overlay is gone and the chart pans/zooms exactly as before. When
+  // on, the overlay captures the mouse: right-click opens a tool menu (draw /
+  // type / recolor / delete), left-drag draws a zone once armed.
   const annotationsPrimRef = useRef<AnnotationsPrimitive | null>(null)
   const [annotations, setAnnotations] = useState<ChartAnnotation[]>([])
-  const [drawMode, setDrawMode] = useState<'off' | 'zone'>('off')
+  const [drawingMode, setDrawingMode] = useState(false)
+  const [armedTool, setArmedTool] = useState<'zone' | null>(null)
+  const [drawColor, setDrawColor] = useState(ANN_COLORS[0])
   const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null)
+  // Right-click context menu (position in overlay px + the time/price under it +
+  // the annotation it landed on, if any).
+  const [annMenu, setAnnMenu] = useState<{ x: number; y: number; t: number; p: number; annId: string | null } | null>(null)
+  // In-place text editor (create when editId is null, else edit that annotation).
+  const [textInput, setTextInput] = useState<{ x: number; y: number; t: number; p: number; value: string; editId: string | null } | null>(null)
   const drawStartRef = useRef<{ x: number; y: number; t: number; p: number } | null>(null)
   const router = useRouter()
   // Right-click-on-arrow context menu (container-relative px + the trade it hit).
@@ -1283,10 +1295,11 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     annotationsPrimRef.current?.setData(annotations.map(a => ({ ...a, selected: a.id === selectedAnnId })))
   }, [annotations, selectedAnnId])
 
-  // Esc exits draw mode + clears selection.
+  // Esc closes menus / disarms the tool / clears selection.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setDrawMode('off'); setSelectedAnnId(null) }
+      if (e.key !== 'Escape') return
+      setAnnMenu(null); setTextInput(null); setArmedTool(null); setSelectedAnnId(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -1303,17 +1316,23 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     const r = e.currentTarget.getBoundingClientRect()
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
-  // Topmost zone under a pixel — click-to-select hit test.
+  // Topmost annotation under a pixel — hit test for select / right-click.
+  // Zones test the filled rect; text tests a small box around its anchor.
   const annAtPixel = (x: number, y: number): string | null => {
     const ts = chartRef.current?.timeScale(); const s = candleRef.current
     if (!ts || !s) return null
     for (let i = annotations.length - 1; i >= 0; i--) {
       const a = annotations[i]
-      if (a.kind !== 'zone') continue
-      const x1 = ts.timeToCoordinate(a.geom.t1 as Time), x2 = ts.timeToCoordinate(a.geom.t2 as Time)
-      const y1 = s.priceToCoordinate(a.geom.p1), y2 = s.priceToCoordinate(a.geom.p2)
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue
-      if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) && y >= Math.min(y1, y2) && y <= Math.max(y1, y2)) return a.id
+      if (a.kind === 'zone') {
+        const x1 = ts.timeToCoordinate(a.geom.t1 as Time), x2 = ts.timeToCoordinate(a.geom.t2 as Time)
+        const y1 = s.priceToCoordinate(a.geom.p1 as number), y2 = s.priceToCoordinate(a.geom.p2 as number)
+        if (x1 == null || x2 == null || y1 == null || y2 == null) continue
+        if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) && y >= Math.min(y1, y2) && y <= Math.max(y1, y2)) return a.id
+      } else if (a.kind === 'text') {
+        const tx = ts.timeToCoordinate(a.geom.t as Time), ty = s.priceToCoordinate(a.geom.p as number)
+        if (tx == null || ty == null) continue
+        if (x >= tx - 6 && x <= tx + 140 && y >= ty - 6 && y <= ty + 22) return a.id
+      }
     }
     return null
   }
@@ -1322,40 +1341,95 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     setSelectedAnnId(prev => (prev === id ? null : prev))
     try { await fetch(`/api/annotations?id=${id}`, { method: 'DELETE' }) } catch { /* ignore */ }
   }
-  const onDrawDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (drawMode !== 'zone') return
-    const { x, y } = overlayXY(e)
-    const tp = pxToTP(x, y)
-    if (tp) drawStartRef.current = { x, y, t: tp.t, p: tp.p }
+  // Optimistic recolor of one annotation.
+  const changeColor = async (id: string, color: string) => {
+    setAnnotations(prev => prev.map(a => (a.id === id ? { ...a, color } : a)))
+    try {
+      await fetch(`/api/annotations?id=${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ color }),
+      })
+    } catch { /* ignore */ }
   }
-  const onDrawMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (drawMode !== 'zone' || !drawStartRef.current) return
-    const { x, y } = overlayXY(e)
-    const tp = pxToTP(x, y)
-    const s = drawStartRef.current
-    if (tp) annotationsPrimRef.current?.setPreview({ t1: s.t, p1: s.p, t2: tp.t, p2: tp.p })
-  }
-  const onDrawUp = async (e: React.MouseEvent<HTMLDivElement>) => {
-    if (drawMode !== 'zone' || !drawStartRef.current) return
-    const s = drawStartRef.current
-    drawStartRef.current = null
-    annotationsPrimRef.current?.setPreview(null)
-    const { x, y } = overlayXY(e)
-    if (Math.abs(x - s.x) <= 4 && Math.abs(y - s.y) <= 4) {
-      setSelectedAnnId(annAtPixel(x, y)) // tiny drag = click → select/deselect
+  // Create a text annotation (editId null) or rename an existing one. Clearing
+  // the text of an existing label deletes it.
+  const saveText = async (t: number, p: number, value: string, editId: string | null) => {
+    const text = value.trim()
+    if (editId) {
+      if (!text) { void deleteAnnotation(editId); return }
+      setAnnotations(prev => prev.map(a => (a.id === editId ? { ...a, note: text } : a)))
+      try {
+        await fetch(`/api/annotations?id=${editId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: text }),
+        })
+      } catch { /* ignore */ }
       return
     }
-    const tp = pxToTP(x, y)
-    if (!tp) return
+    if (!text) return
     try {
       const res = await fetch('/api/annotations', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, symbol, kind: 'zone', geom: { t1: s.t, p1: s.p, t2: tp.t, p2: tp.p } }),
+        body: JSON.stringify({ date, symbol, kind: 'text', geom: { t, p }, note: text, color: drawColor }),
       })
       if (!res.ok) return
       const { annotation } = await res.json() as { annotation: ChartAnnotation }
       setAnnotations(prev => [...prev, annotation])
     } catch { /* ignore */ }
+  }
+
+  // Right-click on the overlay → context menu (draw / type / recolor / delete).
+  const onOverlayContext = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const { x, y } = overlayXY(e)
+    const tp = pxToTP(x, y)
+    if (!tp) return
+    const annId = annAtPixel(x, y)
+    setSelectedAnnId(annId)
+    setAnnMenu({ x, y, t: tp.t, p: tp.p, annId })
+  }
+  const onDrawDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (armedTool !== 'zone' || e.button !== 0) return
+    const { x, y } = overlayXY(e)
+    const tp = pxToTP(x, y)
+    if (tp) drawStartRef.current = { x, y, t: tp.t, p: tp.p }
+  }
+  const onDrawMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!drawStartRef.current) return
+    const { x, y } = overlayXY(e)
+    const tp = pxToTP(x, y)
+    const s = drawStartRef.current
+    if (tp) annotationsPrimRef.current?.setPreview({ t1: s.t, p1: s.p, t2: tp.t, p2: tp.p }, drawColor)
+  }
+  const onDrawUp = async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    // Finishing a zone drag.
+    if (drawStartRef.current) {
+      const s = drawStartRef.current
+      drawStartRef.current = null
+      annotationsPrimRef.current?.setPreview(null)
+      const { x, y } = overlayXY(e)
+      if (Math.abs(x - s.x) > 4 || Math.abs(y - s.y) > 4) {
+        const tp = pxToTP(x, y)
+        if (tp) {
+          try {
+            const res = await fetch('/api/annotations', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ date, symbol, kind: 'zone', geom: { t1: s.t, p1: s.p, t2: tp.t, p2: tp.p }, color: drawColor }),
+            })
+            if (res.ok) {
+              const { annotation } = await res.json() as { annotation: ChartAnnotation }
+              setAnnotations(prev => [...prev, annotation])
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      setArmedTool(null) // one zone per arm
+      return
+    }
+    // Plain left-click (not drawing) → select / deselect.
+    const { x, y } = overlayXY(e)
+    setSelectedAnnId(annAtPixel(x, y))
   }
 
   return (
@@ -1559,44 +1633,143 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       <div className="relative">
         <div ref={containerRef} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
 
-        {/* Draw overlay — only captures the mouse in zone-draw mode; otherwise
-            click-through so the chart pans/zooms exactly as before. */}
-        {drawMode === 'zone' && (
+        {/* Draw overlay — present only in Drawing Mode. Captures the mouse:
+            right-click opens the tool menu, left-drag draws a zone once armed,
+            a plain click selects. Exit Drawing Mode to pan/zoom again. */}
+        {drawingMode && (
           <div
-            className="absolute inset-0 z-30 cursor-crosshair"
+            className={`absolute inset-0 z-30 ${armedTool === 'zone' ? 'cursor-crosshair' : 'cursor-default'}`}
             style={{ height }}
             onMouseDown={onDrawDown}
             onMouseMove={onDrawMove}
             onMouseUp={onDrawUp}
+            onContextMenu={onOverlayContext}
             onMouseLeave={() => { if (drawStartRef.current) { drawStartRef.current = null; annotationsPrimRef.current?.setPreview(null) } }}
           />
         )}
 
-        {/* Annotation toolbar — zone toggle + delete-selected. */}
+        {/* Annotation toolbar — the Drawing Mode toggle + a contextual hint. */}
         <div className="absolute top-2 left-2 z-40 flex items-center gap-1.5">
           <button
             type="button"
-            onClick={() => { setDrawMode(m => (m === 'zone' ? 'off' : 'zone')); setSelectedAnnId(null) }}
-            title={drawMode === 'zone' ? 'Exit zone draw (Esc)' : 'Draw a zone — click-drag on the chart'}
+            onClick={() => {
+              setDrawingMode(m => !m)
+              setArmedTool(null); setAnnMenu(null); setTextInput(null); setSelectedAnnId(null)
+            }}
+            title={drawingMode ? 'Exit Drawing Mode (Esc). Right-click the chart for tools.' : 'Drawing Mode — right-click the chart to draw a zone or add text'}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium border transition-colors ${
-              drawMode === 'zone'
-                ? 'bg-red-600 border-red-500 text-white'
+              drawingMode
+                ? 'bg-blue-600 border-blue-500 text-white'
                 : 'bg-gray-900/80 border-gray-700 text-gray-300 hover:text-white hover:border-gray-500'
             }`}
           >
-            <Square className="w-3 h-3" /> Zone
+            <Pencil className="w-3 h-3" /> Drawing Mode
           </button>
-          {selectedAnnId && (
-            <button
-              type="button"
-              onClick={() => { void deleteAnnotation(selectedAnnId) }}
-              title="Delete selected zone"
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium border bg-gray-900/80 border-gray-700 text-gray-300 hover:text-red-400 hover:border-red-700 transition-colors"
-            >
-              <Trash2 className="w-3 h-3" /> Delete
-            </button>
+          {drawingMode && (
+            <span className="text-[11px] text-gray-400 bg-gray-900/80 border border-gray-700 rounded-md px-2 py-1">
+              {armedTool === 'zone' ? 'Drag to draw the zone' : 'Right-click the chart for tools'}
+            </span>
           )}
         </div>
+
+        {/* Right-click tool menu — on an annotation: recolor / edit text /
+            delete; on empty chart: draw zone / add text / pick draw color. */}
+        {annMenu && (() => {
+          const target = annMenu.annId ? annotations.find(a => a.id === annMenu.annId) : null
+          return (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setAnnMenu(null)} onContextMenu={e => { e.preventDefault(); setAnnMenu(null) }} />
+              <div
+                className="absolute z-50 min-w-[172px] bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 text-sm"
+                style={{ left: Math.min(annMenu.x, 9999), top: annMenu.y }}
+              >
+                {target ? (
+                  <>
+                    {target.kind === 'text' && (
+                      <button
+                        type="button"
+                        onClick={() => { setTextInput({ x: annMenu.x, y: annMenu.y, t: target.geom.t as number, p: target.geom.p as number, value: target.note, editId: target.id }); setAnnMenu(null) }}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
+                      >
+                        <TypeIcon className="w-3.5 h-3.5 text-blue-400" /> Edit text
+                      </button>
+                    )}
+                    <div className="px-3 py-1.5">
+                      <div className="text-[11px] text-gray-500 mb-1">Color</div>
+                      <div className="flex items-center gap-1.5">
+                        {ANN_COLORS.map(c => (
+                          <button
+                            key={c} type="button" title={c}
+                            onClick={() => { void changeColor(target.id, c); setAnnMenu(null) }}
+                            className="w-4 h-4 rounded-full border border-black/40 hover:scale-110 transition-transform"
+                            style={{ backgroundColor: c }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="my-1 border-t border-gray-800" />
+                    <button
+                      type="button"
+                      onClick={() => { void deleteAnnotation(target.id); setAnnMenu(null) }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-red-400 text-left"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-400" /> Delete
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => { setArmedTool('zone'); setAnnMenu(null) }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
+                    >
+                      <Square className="w-3.5 h-3.5 text-emerald-400" /> Draw zone
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setTextInput({ x: annMenu.x, y: annMenu.y, t: annMenu.t, p: annMenu.p, value: '', editId: null }); setAnnMenu(null) }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
+                    >
+                      <TypeIcon className="w-3.5 h-3.5 text-blue-400" /> Add text here
+                    </button>
+                    <div className="px-3 py-1.5">
+                      <div className="text-[11px] text-gray-500 mb-1">Draw color</div>
+                      <div className="flex items-center gap-1.5">
+                        {ANN_COLORS.map(c => (
+                          <button
+                            key={c} type="button" title={c}
+                            onClick={() => setDrawColor(c)}
+                            className={`w-4 h-4 rounded-full border hover:scale-110 transition-transform ${drawColor === c ? 'border-white' : 'border-black/40'}`}
+                            style={{ backgroundColor: c }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )
+        })()}
+
+        {/* In-place text editor for add/edit. Enter or click-away saves; Esc cancels. */}
+        {textInput && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => { void saveText(textInput.t, textInput.p, textInput.value, textInput.editId); setTextInput(null) }} />
+            <input
+              autoFocus
+              value={textInput.value}
+              onChange={e => setTextInput(ti => (ti ? { ...ti, value: e.target.value } : ti))}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { void saveText(textInput.t, textInput.p, textInput.value, textInput.editId); setTextInput(null) }
+                else if (e.key === 'Escape') { setTextInput(null) }
+              }}
+              placeholder="Type a label…"
+              className="absolute z-50 px-2 py-1 rounded-md bg-gray-900 border border-blue-500 text-white text-xs outline-none shadow-xl"
+              style={{ left: Math.min(textInput.x, 9999), top: textInput.y, minWidth: 140 }}
+            />
+          </>
+        )}
 
         {/* Right-click-on-arrow menu. Dismisses on outside click / Escape (a
             full-screen backdrop + the Escape handler below). */}

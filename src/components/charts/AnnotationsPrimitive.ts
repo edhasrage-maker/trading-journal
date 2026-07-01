@@ -1,12 +1,11 @@
 /**
- * lightweight-charts v5 series primitive that renders user chart annotations.
- * Phase 1: ZONES (price×time rectangles — demand/supply zones). Same extension
- * mechanism as TradeArrowsPrimitive; extend the kind switch for levels/lines/
- * arrows/text later.
+ * lightweight-charts v5 series primitive that renders user chart annotations:
+ * ZONES (price×time rectangles) and TEXT labels. Same extension mechanism as
+ * TradeArrowsPrimitive; add levels/lines/arrows to the kind switch later.
  *
  * Anchors are (time, price): timeToCoordinate / priceToCoordinate map them to
- * pixels each redraw, so a zone stays pinned to its price/time when you zoom or
- * pan. A live drag-preview renders dashed until the user releases.
+ * pixels each redraw, so a drawing stays pinned to its price/time on zoom/pan.
+ * A live drag-preview renders dashed until the user releases.
  */
 import type {
   ISeriesPrimitive, IPrimitivePaneView, IPrimitivePaneRenderer,
@@ -15,13 +14,15 @@ import type {
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
 
-/** A zone's two opposite corners, as (epoch seconds, price). */
+/** Zone = two opposite corners; text = a single anchor point. Both carry epoch
+ *  seconds (t) + price (p); a loose shape keeps per-kind reads simple. */
+export interface AnnGeom { t1?: number; p1?: number; t2?: number; p2?: number; t?: number; p?: number }
 export interface ZoneGeom { t1: number; p1: number; t2: number; p2: number }
 
 export interface ChartAnnotation {
   id: string
   kind: 'zone' | 'level' | 'trendline' | 'arrow' | 'text'
-  geom: ZoneGeom
+  geom: AnnGeom
   note: string
   color: string
   selected?: boolean
@@ -41,41 +42,65 @@ class AnnotationRenderer implements IPrimitivePaneRenderer {
     target.useMediaCoordinateSpace(({ context: ctx }) => {
       for (const a of this._data) {
         if (a.kind === 'zone') this._drawZone(ctx, ts, a.geom, a.color, a.selected ?? false, a.note, false)
+        else if (a.kind === 'text') this._drawText(ctx, ts, a.geom, a.color, a.selected ?? false, a.note)
       }
       if (this._preview) this._drawZone(ctx, ts, this._preview, this._previewColor, true, '', true)
     })
   }
 
-  private _rect(ts: IChartApi['timeScale'] extends () => infer T ? T : never, g: ZoneGeom) {
-    const x1 = ts.timeToCoordinate(g.t1 as Time)
-    const x2 = ts.timeToCoordinate(g.t2 as Time)
-    const y1 = this._series.priceToCoordinate(g.p1)
-    const y2 = this._series.priceToCoordinate(g.p2)
-    if (x1 == null || x2 == null || y1 == null || y2 == null) return null
-    return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }
+  private _pt(ts: ReturnType<IChartApi['timeScale']>, t?: number, p?: number): { x: number; y: number } | null {
+    if (t == null || p == null) return null
+    const x = ts.timeToCoordinate(t as Time)
+    const y = this._series.priceToCoordinate(p)
+    if (x == null || y == null) return null
+    return { x, y }
   }
 
   private _drawZone(
-    ctx: CanvasRenderingContext2D,
-    ts: ReturnType<IChartApi['timeScale']>,
-    g: ZoneGeom, color: string, selected: boolean, note: string, preview: boolean,
+    ctx: CanvasRenderingContext2D, ts: ReturnType<IChartApi['timeScale']>,
+    g: AnnGeom, color: string, selected: boolean, note: string, preview: boolean,
   ) {
-    const r = this._rect(ts, g)
-    if (!r) return
+    const a = this._pt(ts, g.t1, g.p1), b = this._pt(ts, g.t2, g.p2)
+    if (!a || !b) return
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y)
     ctx.save()
-    ctx.fillStyle = color + '22' // ~13% alpha fill over the candles
-    ctx.fillRect(r.x, r.y, r.w, r.h)
+    ctx.fillStyle = color + '22'
+    ctx.fillRect(x, y, w, h)
     ctx.strokeStyle = color
     ctx.lineWidth = selected ? 2 : 1.25
     if (preview) ctx.setLineDash([5, 4])
-    ctx.strokeRect(r.x, r.y, r.w, r.h)
+    ctx.strokeRect(x, y, w, h)
     ctx.setLineDash([])
     if (note && !preview) {
       ctx.font = '600 11px -apple-system, system-ui, sans-serif'
       ctx.textBaseline = 'bottom'
       ctx.fillStyle = color
-      ctx.fillText(note, r.x + 4, r.y - 2)
+      ctx.fillText(note, x + 4, y - 2)
     }
+    ctx.restore()
+  }
+
+  private _drawText(
+    ctx: CanvasRenderingContext2D, ts: ReturnType<IChartApi['timeScale']>,
+    g: AnnGeom, color: string, selected: boolean, note: string,
+  ) {
+    const p = this._pt(ts, g.t, g.p)
+    if (!p) return
+    const label = note || '(text)'
+    ctx.save()
+    ctx.font = '600 12px -apple-system, system-ui, sans-serif'
+    ctx.textBaseline = 'top'
+    const w = ctx.measureText(label).width
+    // background pill so the text reads over candles
+    ctx.fillStyle = 'rgba(3,7,18,0.78)'
+    ctx.fillRect(p.x - 3, p.y - 2, w + 6, 18)
+    if (selected) {
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1
+      ctx.strokeRect(p.x - 3, p.y - 2, w + 6, 18)
+    }
+    ctx.fillStyle = color
+    ctx.fillText(label, p.x, p.y)
     ctx.restore()
   }
 }
@@ -119,7 +144,6 @@ export class AnnotationsPrimitive implements ISeriesPrimitive<Time> {
     this.annotations = annotations
     this._requestUpdate?.()
   }
-  /** Live drag preview (dashed); pass null to clear. */
   setPreview(preview: ZoneGeom | null, color = '#ef4444'): void {
     this.preview = preview
     this.previewColor = color
