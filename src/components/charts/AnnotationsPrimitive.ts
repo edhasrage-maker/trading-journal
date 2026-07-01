@@ -84,23 +84,27 @@ class AnnotationRenderer implements IPrimitivePaneRenderer {
     ctx: CanvasRenderingContext2D, ts: ReturnType<IChartApi['timeScale']>,
     g: AnnGeom, color: string, selected: boolean, note: string,
   ) {
-    const p = this._pt(ts, g.t, g.p)
-    if (!p) return
+    const anchor = this._pt(ts, g.t, g.p)
+    if (!anchor) return
     const label = note || '(text)'
     ctx.save()
-    ctx.font = '600 12px -apple-system, system-ui, sans-serif'
-    ctx.textBaseline = 'top'
+    ctx.font = '600 12px -apple-system, system-ui, "Segoe UI", sans-serif'
+    ctx.textBaseline = 'middle'
+    const padX = 7
     const w = ctx.measureText(label).width
-    // background pill so the text reads over candles
-    ctx.fillStyle = 'rgba(3,7,18,0.78)'
-    ctx.fillRect(p.x - 3, p.y - 2, w + 6, 18)
-    if (selected) {
-      ctx.strokeStyle = color
-      ctx.lineWidth = 1
-      ctx.strokeRect(p.x - 3, p.y - 2, w + 6, 18)
-    }
+    const boxW = w + padX * 2, boxH = 21
+    const x = anchor.x, y = anchor.y
+    // Subtle rounded chip so the label reads over candles without a heavy pill.
+    ctx.beginPath()
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, boxW, boxH, 5)
+    else ctx.rect(x, y, boxW, boxH)
+    ctx.fillStyle = 'rgba(17,24,39,0.9)'
+    ctx.fill()
+    ctx.lineWidth = selected ? 1.5 : 1
+    ctx.strokeStyle = selected ? color : 'rgba(255,255,255,0.14)'
+    ctx.stroke()
     ctx.fillStyle = color
-    ctx.fillText(label, p.x, p.y)
+    ctx.fillText(label, x + padX, y + boxH / 2 + 0.5)
     ctx.restore()
   }
 }

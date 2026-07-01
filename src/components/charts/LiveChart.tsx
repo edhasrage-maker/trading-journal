@@ -1683,7 +1683,8 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                 className="absolute z-50 min-w-[172px] bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 text-sm"
                 style={{ left: Math.min(annMenu.x, 9999), top: annMenu.y }}
               >
-                {target ? (
+                {/* Annotation-specific actions (only when right-clicking one). */}
+                {target && (
                   <>
                     {target.kind === 'text' && (
                       <button
@@ -1695,19 +1696,18 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                       </button>
                     )}
                     <div className="px-3 py-1.5">
-                      <div className="text-[11px] text-gray-500 mb-1">Color</div>
+                      <div className="text-[11px] text-gray-500 mb-1">{target.kind === 'text' ? 'Text color' : 'Zone color'}</div>
                       <div className="flex items-center gap-1.5">
                         {ANN_COLORS.map(c => (
                           <button
                             key={c} type="button" title={c}
                             onClick={() => { void changeColor(target.id, c); setAnnMenu(null) }}
-                            className="w-4 h-4 rounded-full border border-black/40 hover:scale-110 transition-transform"
+                            className={`w-4 h-4 rounded-full border hover:scale-110 transition-transform ${target.color === c ? 'border-white' : 'border-black/40'}`}
                             style={{ backgroundColor: c }}
                           />
                         ))}
                       </div>
                     </div>
-                    <div className="my-1 border-t border-gray-800" />
                     <button
                       type="button"
                       onClick={() => { void deleteAnnotation(target.id); setAnnMenu(null) }}
@@ -1715,38 +1715,39 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                     >
                       <Trash2 className="w-3.5 h-3.5 text-red-400" /> Delete
                     </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => { setArmedTool('zone'); setAnnMenu(null) }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
-                    >
-                      <Square className="w-3.5 h-3.5 text-emerald-400" /> Draw zone
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setTextInput({ x: annMenu.x, y: annMenu.y, t: annMenu.t, p: annMenu.p, value: '', editId: null }); setAnnMenu(null) }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
-                    >
-                      <TypeIcon className="w-3.5 h-3.5 text-blue-400" /> Add text here
-                    </button>
-                    <div className="px-3 py-1.5">
-                      <div className="text-[11px] text-gray-500 mb-1">Draw color</div>
-                      <div className="flex items-center gap-1.5">
-                        {ANN_COLORS.map(c => (
-                          <button
-                            key={c} type="button" title={c}
-                            onClick={() => setDrawColor(c)}
-                            className={`w-4 h-4 rounded-full border hover:scale-110 transition-transform ${drawColor === c ? 'border-white' : 'border-black/40'}`}
-                            style={{ backgroundColor: c }}
-                          />
-                        ))}
-                      </div>
-                    </div>
+                    <div className="my-1 border-t border-gray-800" />
                   </>
                 )}
+
+                {/* Create actions — always available, even over a zone, so text
+                    can be placed inside one. */}
+                <button
+                  type="button"
+                  onClick={() => { setTextInput({ x: annMenu.x, y: annMenu.y, t: annMenu.t, p: annMenu.p, value: '', editId: null }); setAnnMenu(null) }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
+                >
+                  <TypeIcon className="w-3.5 h-3.5 text-blue-400" /> Add text here
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setArmedTool('zone'); setAnnMenu(null) }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
+                >
+                  <Square className="w-3.5 h-3.5 text-emerald-400" /> Draw zone
+                </button>
+                <div className="px-3 py-1.5">
+                  <div className="text-[11px] text-gray-500 mb-1">New-drawing color</div>
+                  <div className="flex items-center gap-1.5">
+                    {ANN_COLORS.map(c => (
+                      <button
+                        key={c} type="button" title={c}
+                        onClick={() => setDrawColor(c)}
+                        className={`w-4 h-4 rounded-full border hover:scale-110 transition-transform ${drawColor === c ? 'border-white' : 'border-black/40'}`}
+                        style={{ backgroundColor: c }}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             </>
           )
