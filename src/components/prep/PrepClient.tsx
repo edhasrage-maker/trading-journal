@@ -21,6 +21,7 @@ import BarWatcher from '@/components/charts/BarWatcher'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
 import type { SessionLevels } from '@/lib/session-levels'
+import type { DayContextStats } from '@/lib/market-context-from-bars'
 import type { SpellCheckCorrection } from '@/app/api/spell-check/route'
 
 interface Props {
@@ -150,6 +151,42 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       return changed ? next : prev
     })
   }, [])
+
+  // Auto-fill the volatility/volume stats (RVOL/ADR/ATR/IB size/day range) from
+  // bars — the bar-native equivalent of reading them off a Sierra screenshot.
+  // Same fill-blank-once discipline as levels; re-runs when BarWatcher imports
+  // new bars (barsVersion) so realized stats land as the session prints. A
+  // still-null field is un-marked so it retries on the next refresh.
+  const statsAutoFilledRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!chartSymbol || !date) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/bars/market-context?symbol=${encodeURIComponent(chartSymbol)}&date=${date}`)
+        if (!res.ok) return
+        const { stats } = await res.json() as { stats: DayContextStats | null }
+        if (cancelled || !stats) return
+        const map: Record<string, number | null> = {
+          rvol: stats.rvol, ib_size: stats.ib_size, adr: stats.adr, atr_1m: stats.atr_1m, day_range: stats.day_range,
+        }
+        setContext(prev => {
+          const next = { ...prev }
+          let changed = false
+          for (const [k, v] of Object.entries(map)) {
+            if (statsAutoFilledRef.current.has(k)) continue
+            statsAutoFilledRef.current.add(k)
+            if (v == null) { statsAutoFilledRef.current.delete(k); continue }
+            const cur = (prev as Record<string, unknown>)[k]
+            if (cur == null || cur === '') { (next as Record<string, unknown>)[k] = v; changed = true }
+          }
+          return changed ? next : prev
+        })
+      } catch { /* best-effort — screenshot/manual entry still available */ }
+    })()
+    return () => { cancelled = true }
+  }, [chartSymbol, date, barsVersion])
+
   const [prepNotes, setPrepNotes] = useState<PrepNotes>(initialDay?.prep_notes_json ?? {})
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(
     initialDay?.ai_analysis_json && Object.keys(initialDay.ai_analysis_json).length > 0
