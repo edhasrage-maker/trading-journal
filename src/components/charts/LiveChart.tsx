@@ -15,7 +15,7 @@ import {
   type AutoscaleInfo,
 } from 'lightweight-charts'
 import { TradeArrowsPrimitive, type TradeArrow } from './TradeArrowsPrimitive'
-import { AnnotationsPrimitive, type ChartAnnotation } from './AnnotationsPrimitive'
+import { AnnotationsPrimitive, type ChartAnnotation, type AnnGeom } from './AnnotationsPrimitive'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
 import { migrateChartPrefs, schedulePushChartPref, pullChartPref } from '@/lib/chart-prefs'
@@ -254,6 +254,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // In-place text editor (create when editId is null, else edit that annotation).
   const [textInput, setTextInput] = useState<{ x: number; y: number; t: number; p: number; value: string; editId: string | null } | null>(null)
   const drawStartRef = useRef<{ x: number; y: number; t: number; p: number } | null>(null)
+  // In-progress drag of an existing annotation. Deltas are computed against the
+  // grab point so the drawing follows the cursor without jumping; lastGeom is
+  // the latest position (persisted on mouse-up, avoiding a stale-closure read).
+  const dragRef = useRef<{ id: string; startX: number; startY: number; startTP: { t: number; p: number }; origGeom: AnnGeom; moved: boolean; lastGeom: AnnGeom } | null>(null)
   const router = useRouter()
   // Right-click-on-arrow context menu (container-relative px + the trade it hit).
   const [arrowMenu, setArrowMenu] = useState<{ x: number; y: number; tradeId: string } | null>(null)
@@ -1404,17 +1408,49 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     setAnnMenu({ x, y, t: tp.t, p: tp.p, annId })
   }
   const onDrawDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (armedTool !== 'zone' || e.button !== 0) return
+    if (e.button !== 0) return
     const { x, y } = overlayXY(e)
-    const tp = pxToTP(x, y)
-    if (tp) drawStartRef.current = { x, y, t: tp.t, p: tp.p }
+    if (armedTool === 'zone') {
+      const tp = pxToTP(x, y)
+      if (tp) drawStartRef.current = { x, y, t: tp.t, p: tp.p }
+      return
+    }
+    // Not armed → grab the annotation under the cursor to drag it (or clear).
+    const id = annAtPixel(x, y)
+    if (!id) { setSelectedAnnId(null); return }
+    const ann = annotations.find(a => a.id === id)
+    const startTP = pxToTP(x, y)
+    setSelectedAnnId(id)
+    if (ann && startTP) dragRef.current = { id, startX: x, startY: y, startTP, origGeom: ann.geom, moved: false, lastGeom: ann.geom }
   }
   const onDrawMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!drawStartRef.current) return
     const { x, y } = overlayXY(e)
-    const tp = pxToTP(x, y)
-    const s = drawStartRef.current
-    if (tp) annotationsPrimRef.current?.setPreview({ t1: s.t, p1: s.p, t2: tp.t, p2: tp.p }, drawColor)
+    // Zone-draw preview.
+    if (drawStartRef.current) {
+      const tp = pxToTP(x, y)
+      const s = drawStartRef.current
+      if (tp) annotationsPrimRef.current?.setPreview({ t1: s.t, p1: s.p, t2: tp.t, p2: tp.p }, drawColor)
+      return
+    }
+    // Dragging an existing annotation — shift its anchors by the (time, price)
+    // delta from the grab point.
+    const d = dragRef.current
+    if (d) {
+      const tp = pxToTP(x, y)
+      if (!tp) return
+      if (Math.abs(x - d.startX) > 3 || Math.abs(y - d.startY) > 3) d.moved = true
+      const dt = tp.t - d.startTP.t, dp = tp.p - d.startTP.p
+      const g = d.origGeom
+      const next: AnnGeom = g.t1 != null
+        ? { ...g, t1: g.t1 + dt, p1: (g.p1 ?? 0) + dp, t2: (g.t2 ?? 0) + dt, p2: (g.p2 ?? 0) + dp }
+        : { ...g, t: (g.t ?? 0) + dt, p: (g.p ?? 0) + dp }
+      d.lastGeom = next
+      setAnnotations(prev => prev.map(a => (a.id === d.id ? { ...a, geom: next } : a)))
+      e.currentTarget.style.cursor = 'grabbing'
+      return
+    }
+    // Idle hover — show a move cursor over a grabbable annotation.
+    if (armedTool !== 'zone') e.currentTarget.style.cursor = annAtPixel(x, y) ? 'move' : 'default'
   }
   const onDrawUp = async (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
@@ -1442,9 +1478,20 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       setArmedTool(null) // one zone per arm
       return
     }
-    // Plain left-click (not drawing) → select / deselect.
-    const { x, y } = overlayXY(e)
-    setSelectedAnnId(annAtPixel(x, y))
+    // Finishing a move — persist the new geom if it actually moved.
+    const d = dragRef.current
+    if (d) {
+      dragRef.current = null
+      e.currentTarget.style.cursor = 'default'
+      if (d.moved) {
+        try {
+          await fetch(`/api/annotations?id=${d.id}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ geom: d.lastGeom }),
+          })
+        } catch { /* ignore */ }
+      }
+    }
   }
 
   return (
@@ -1659,7 +1706,19 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             onMouseMove={onDrawMove}
             onMouseUp={onDrawUp}
             onContextMenu={onOverlayContext}
-            onMouseLeave={() => { if (drawStartRef.current) { drawStartRef.current = null; annotationsPrimRef.current?.setPreview(null) } }}
+            onMouseLeave={() => {
+              if (drawStartRef.current) { drawStartRef.current = null; annotationsPrimRef.current?.setPreview(null) }
+              const d = dragRef.current
+              if (d) {
+                dragRef.current = null
+                if (d.moved) {
+                  void fetch(`/api/annotations?id=${d.id}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ geom: d.lastGeom }),
+                  }).catch(() => {})
+                }
+              }
+            }}
           />
         )}
 
