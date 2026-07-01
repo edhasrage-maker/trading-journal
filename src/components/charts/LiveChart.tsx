@@ -1303,15 +1303,25 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     annotationsPrimRef.current?.setData(annotations.map(a => ({ ...a, selected: a.id === selectedAnnId })))
   }, [annotations, selectedAnnId])
 
-  // Esc closes menus / disarms the tool / clears selection.
+  // Esc closes menus / disarms / clears selection. Delete or Backspace removes
+  // the selected annotation (unless typing in a field — e.g. the text editor).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      setAnnMenu(null); setTextInput(null); setArmedTool(null); setSelectedAnnId(null)
+      if (e.key === 'Escape') { setAnnMenu(null); setTextInput(null); setArmedTool(null); setSelectedAnnId(null); return }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (!drawingMode || !selectedAnnId) return
+        const el = document.activeElement as HTMLElement | null
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+        e.preventDefault()
+        const id = selectedAnnId
+        setAnnotations(prev => prev.filter(a => a.id !== id))
+        setSelectedAnnId(null)
+        void fetch(`/api/annotations?id=${id}`, { method: 'DELETE' }).catch(() => {})
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [drawingMode, selectedAnnId])
 
   // Pixel (container-relative) → {t: epoch seconds, p: price}, or null off-plot.
   const pxToTP = (x: number, y: number): { t: number; p: number } | null => {
