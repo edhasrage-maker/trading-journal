@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X } from 'lucide-react'
 import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, type BarLike } from '@/lib/analytics'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import type { Trade } from '@/lib/supabase/types'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
@@ -146,7 +148,15 @@ export default function TradeList({
   if (trades.length === 0) {
     return (
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500 text-sm">
-        No trades yet. Use the intraday tagging flow or import a Sierra Chart log to populate this day.
+        {LOCAL_FEATURES_ENABLED ? (
+          'No trades yet. Use the intraday tagging flow or import a Sierra Chart log to populate this day.'
+        ) : (
+          <>
+            No trades yet.{' '}
+            <Link href="/import" className="text-blue-400 hover:underline">Import trades</Link>
+            {' '}(CSV or Sierra Chart <code>.txt</code>) or log one on the Intraday page to populate this day.
+          </>
+        )}
       </div>
     )
   }
