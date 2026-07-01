@@ -231,6 +231,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkTagOpen, setBulkTagOpen] = useState(false)
   const [bulkApplying, setBulkApplying] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const [merging, setMerging] = useState(false)
   // Zoom lightbox — set to a screenshot URL to open a fullscreen viewer
   // overlay. Click backdrop or press Escape to close. Replaces the
@@ -394,6 +395,28 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     setTrades(prev => prev.filter(t => t.id !== id))
     if (trade?.screenshot_url) void deleteBlob(trade.screenshot_url)
     setDeleting(null)
+  }
+
+  // Mass-delete every selected trade. One confirm (destructive), then each row
+  // is DELETEd; local state drops the successes and the selection clears.
+  // Mirrors handleDelete's per-trade screenshot-blob cleanup.
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return
+    const n = selectedIds.size
+    if (!confirm(`Delete ${n} selected trade${n === 1 ? '' : 's'}? This cannot be undone.`)) return
+    setBulkDeleting(true)
+    const targets = trades.filter(t => selectedIds.has(t.id))
+    const deleted = new Set<string>()
+    for (const t of targets) {
+      const res = await fetch(`/api/trades/${t.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        deleted.add(t.id)
+        if (t.screenshot_url) void deleteBlob(t.screenshot_url)
+      }
+    }
+    if (deleted.size > 0) setTrades(prev => prev.filter(t => !deleted.has(t.id)))
+    setBulkDeleting(false)
+    clearSelection()
   }
 
   const toggle = (id: string) =>
@@ -802,6 +825,17 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           >
             {merging ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitMerge className="w-3 h-3" />}
             Merge
+          </button>
+          {/* Mass delete — removes every selected trade after one confirm. */}
+          <button
+            type="button"
+            onClick={handleBulkDelete}
+            disabled={bulkDeleting}
+            className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-500 disabled:bg-gray-800 disabled:text-gray-600 text-white px-3 py-1 rounded-full text-xs font-medium transition-colors"
+            title={`Delete all ${selectedIds.size} selected trade${selectedIds.size === 1 ? '' : 's'}`}
+          >
+            {bulkDeleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+            Delete
           </button>
           <button
             type="button"
