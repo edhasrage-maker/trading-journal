@@ -6,16 +6,14 @@
  * fetch this server-side with no CORS concern. Fetched in the prep server
  * component and passed to PrepClient — never blocks prep on a feed hiccup.
  *
- * TIMEZONE: the feed publishes times in US Eastern. The app displays America/
- * Los_Angeles. ET and PT both observe US DST and are ALWAYS exactly 3 hours
- * apart, so the conversion is a flat −3h (with day-rollover handling) — no DST
- * edge cases. We surface BOTH the ET and PT time so a feed-TZ surprise is
- * obvious on sight; flip FEED_TZ_OFFSET_FROM_PT if FF ever changes the feed TZ.
+ * TIMEZONE: the feed publishes times in UTC/GMT. We convert to America/
+ * Los_Angeles (PT — the app convention) and America/New_York (ET — the news
+ * convention, shown on hover) with Intl, so DST is handled correctly. We also
+ * filter by the event's PT calendar date (not the feed's UTC date) so an event
+ * lands on the right prep day even if the UTC→PT shift crosses midnight.
  */
 
 const FEED_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.xml'
-// Hours to ADD to a feed (ET) time to get PT. ET is 3h ahead of PT, so −3.
-const FEED_TZ_OFFSET_FROM_PT = -3
 // Currencies whose high-impact prints actually move NQ/MNQ. USD is the core;
 // expand here if you want ECB/BOE etc. surfaced too.
 const RELEVANT_COUNTRIES = new Set(['USD'])
@@ -23,11 +21,11 @@ const RELEVANT_COUNTRIES = new Set(['USD'])
 export interface NewsEvent {
   title: string
   country: string
-  /** "8:30am" style original feed time (ET), or 'All Day' / 'Tentative'. */
-  timeEt: string
-  /** Converted display time in PT, e.g. "5:30 AM". Null for All Day/Tentative. */
+  /** PT display time, e.g. "6:00 AM". Null for All Day / Tentative. */
   timePt: string | null
-  /** Minutes-since-midnight PT for sorting; null for All Day/Tentative. */
+  /** ET display time (news convention), shown on hover. Null for non-clock. */
+  timeEt: string | null
+  /** Minutes-since-midnight PT for sorting; null for All Day / Tentative. */
   sortKeyPt: number | null
   url: string
 }
@@ -47,8 +45,6 @@ async function fetchFeedXml(): Promise<string | null> {
     cache = { atMs: Date.now(), xml }
     return xml
   } catch {
-    // Feed down / timeout — fall back to a stale cache if we have one, else
-    // null. Either way prep renders; it just shows no news banner.
     return cache?.xml ?? null
   }
 }
@@ -61,23 +57,43 @@ function tag(block: string, name: string): string {
   return m ? unwrap(m[1]) : ''
 }
 
-/** Parse "8:30am" (ET) → { pt: "5:30 AM", sortKey } shifted −3h, with day
- *  rollover. Returns nulls for non-clock times (All Day / Tentative). */
-function etToPt(timeEt: string): { timePt: string | null; sortKeyPt: number | null } {
-  const m = timeEt.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i)
-  if (!m) return { timePt: null, sortKeyPt: null }
+function fmt12(h24: number, min: number): string {
+  const ap = h24 < 12 ? 'AM' : 'PM'
+  const h = ((h24 + 11) % 12) + 1
+  return `${h}:${String(min).padStart(2, '0')} ${ap}`
+}
+
+/** Feed date (MM-DD-YYYY) + time (UTC "1:00pm", or "All Day"/"Tentative") →
+ *  PT calendar date + PT/ET display strings, DST-correct via Intl. Non-clock
+ *  times keep the feed calendar date and null times. */
+function feedToPt(feedDateMdy: string, timeRaw: string): {
+  ptDate: string; timePt: string | null; timeEt: string | null; sortKeyPt: number | null
+} {
+  const [mm, dd, yyyy] = feedDateMdy.split('-').map(Number)
+  const m = timeRaw.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i)
+  if (!mm || !dd || !yyyy || !m) {
+    const iso = mm && dd && yyyy
+      ? `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`
+      : ''
+    return { ptDate: iso, timePt: null, timeEt: null, sortKeyPt: null }
+  }
   let h = parseInt(m[1], 10)
   const min = parseInt(m[2], 10)
-  const pm = m[3].toLowerCase() === 'pm'
   if (h === 12) h = 0
-  if (pm) h += 12
-  // shift ET → PT
-  let ptMinutes = h * 60 + min + FEED_TZ_OFFSET_FROM_PT * 60
-  ptMinutes = ((ptMinutes % 1440) + 1440) % 1440 // wrap into [0, 1440)
-  const ph = Math.floor(ptMinutes / 60)
-  const pmin = ptMinutes % 60
-  const disp = `${((ph + 11) % 12) + 1}:${String(pmin).padStart(2, '0')} ${ph < 12 ? 'AM' : 'PM'}`
-  return { timePt: disp, sortKeyPt: ptMinutes }
+  if (m[3].toLowerCase() === 'pm') h += 12
+  const d = new Date(Date.UTC(yyyy, mm - 1, dd, h, min))
+  const inZone = (tz: string) => {
+    const p: Record<string, string> = {}
+    for (const x of new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(d)) p[x.type] = x.value
+    const hh = p.hour === '24' ? 0 : parseInt(p.hour)
+    return { date: `${p.year}-${p.month}-${p.day}`, mins: hh * 60 + parseInt(p.minute), label: fmt12(hh, parseInt(p.minute)) }
+  }
+  const pt = inZone('America/Los_Angeles')
+  const et = inZone('America/New_York')
+  return { ptDate: pt.date, timePt: pt.label, timeEt: et.label, sortKeyPt: pt.mins }
 }
 
 /**
@@ -88,20 +104,23 @@ function etToPt(timeEt: string): { timePt: string | null; sortKeyPt: number | nu
 export async function fetchHighImpactNews(date: string): Promise<NewsEvent[]> {
   const xml = await fetchFeedXml()
   if (!xml) return []
-  const [, mm, dd] = date.split('-') // YYYY-MM-DD
-  if (!mm || !dd) return []
-  const feedDate = `${mm}-${dd}-${date.slice(0, 4)}` // FF uses MM-DD-YYYY
 
   const out: NewsEvent[] = []
   for (const block of xml.split('<event>').slice(1)) {
-    const impact = tag(block, 'impact')
-    if (impact !== 'High') continue
+    if (tag(block, 'impact') !== 'High') continue
     const country = tag(block, 'country')
     if (!RELEVANT_COUNTRIES.has(country)) continue
-    if (tag(block, 'date') !== feedDate) continue
-    const timeEt = tag(block, 'time') || 'All Day'
-    const { timePt, sortKeyPt } = etToPt(timeEt)
-    out.push({ title: tag(block, 'title'), country, timeEt, timePt, sortKeyPt, url: tag(block, 'url') })
+    const rawTime = tag(block, 'time')
+    const conv = feedToPt(tag(block, 'date'), rawTime)
+    if (conv.ptDate !== date) continue // filter by PT calendar date, not UTC
+    out.push({
+      title: tag(block, 'title'),
+      country,
+      timePt: conv.timePt,
+      timeEt: conv.timeEt ?? (rawTime || 'All Day'),
+      sortKeyPt: conv.sortKeyPt,
+      url: tag(block, 'url'),
+    })
   }
   // All-day / tentative first (null sortKey), then by PT time.
   out.sort((a, b) => (a.sortKeyPt ?? -1) - (b.sortKeyPt ?? -1))
