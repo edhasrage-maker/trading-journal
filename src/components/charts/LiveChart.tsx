@@ -257,7 +257,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // In-progress drag of an existing annotation. Deltas are computed against the
   // grab point so the drawing follows the cursor without jumping; lastGeom is
   // the latest position (persisted on mouse-up, avoiding a stale-closure read).
-  const dragRef = useRef<{ id: string; startX: number; startY: number; startTP: { t: number; p: number }; origGeom: AnnGeom; moved: boolean; lastGeom: AnnGeom } | null>(null)
+  const dragRef = useRef<{ id: string; startX: number; startY: number; startTP: { t: number; p: number }; origGeom: AnnGeom; moved: boolean; lastGeom: AnnGeom; mode: 'move' | 'resize'; resizeT?: 't1' | 't2'; resizeP?: 'p1' | 'p2'; cursor?: string } | null>(null)
   const router = useRouter()
   // Right-click-on-arrow context menu (container-relative px + the trade it hit).
   const [arrowMenu, setArrowMenu] = useState<{ x: number; y: number; tradeId: string } | null>(null)
@@ -1359,6 +1359,30 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     setSelectedAnnId(prev => (prev === id ? null : prev))
     try { await fetch(`/api/annotations?id=${id}`, { method: 'DELETE' }) } catch { /* ignore */ }
   }
+  // If (x,y) sits on a zone's edge/corner, return which geom field(s) a drag
+  // should move + a resize cursor; null when grabbing the interior (→ move).
+  const zoneResizeHandle = (g: AnnGeom, x: number, y: number): { resizeT?: 't1' | 't2'; resizeP?: 'p1' | 'p2'; cursor: string } | null => {
+    const ts = chartRef.current?.timeScale(); const s = candleRef.current
+    if (!ts || !s) return null
+    const x1 = ts.timeToCoordinate(g.t1 as Time), x2 = ts.timeToCoordinate(g.t2 as Time)
+    const y1 = s.priceToCoordinate(g.p1 as number), y2 = s.priceToCoordinate(g.p2 as number)
+    if (x1 == null || x2 == null || y1 == null || y2 == null) return null
+    const H = 8
+    const left = Math.min(x1, x2), right = Math.max(x1, x2), top = Math.min(y1, y2), bottom = Math.max(y1, y2)
+    if (x < left - H || x > right + H || y < top - H || y > bottom + H) return null
+    let resizeT: 't1' | 't2' | undefined, resizeP: 'p1' | 'p2' | undefined
+    let isLeft = false, isRight = false, isTop = false, isBottom = false
+    if (Math.abs(x - left) <= H) { isLeft = true; resizeT = x1 <= x2 ? 't1' : 't2' }        // left edge = smaller-x corner
+    else if (Math.abs(x - right) <= H) { isRight = true; resizeT = x1 >= x2 ? 't1' : 't2' }
+    if (Math.abs(y - top) <= H) { isTop = true; resizeP = y1 <= y2 ? 'p1' : 'p2' }           // top edge = smaller-y corner
+    else if (Math.abs(y - bottom) <= H) { isBottom = true; resizeP = y1 >= y2 ? 'p1' : 'p2' }
+    if (!resizeT && !resizeP) return null
+    let cursor: string
+    if (resizeT && resizeP) cursor = (isLeft && isTop) || (isRight && isBottom) ? 'nwse-resize' : 'nesw-resize'
+    else if (resizeT) cursor = 'ew-resize'
+    else cursor = 'ns-resize'
+    return { resizeT, resizeP, cursor }
+  }
   // Optimistic recolor of one annotation.
   const changeColor = async (id: string, color: string) => {
     setAnnotations(prev => prev.map(a => (a.id === id ? { ...a, color } : a)))
@@ -1425,13 +1449,18 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       if (tp) drawStartRef.current = { x, y, t: tp.t, p: tp.p }
       return
     }
-    // Not armed → grab the annotation under the cursor to drag it (or clear).
+    // Not armed → grab the annotation under the cursor to move/resize it (or clear).
     const id = annAtPixel(x, y)
     if (!id) { setSelectedAnnId(null); return }
     const ann = annotations.find(a => a.id === id)
     const startTP = pxToTP(x, y)
     setSelectedAnnId(id)
-    if (ann && startTP) dragRef.current = { id, startX: x, startY: y, startTP, origGeom: ann.geom, moved: false, lastGeom: ann.geom }
+    if (!ann || !startTP) return
+    const handle = ann.kind === 'zone' ? zoneResizeHandle(ann.geom, x, y) : null
+    dragRef.current = {
+      id, startX: x, startY: y, startTP, origGeom: ann.geom, moved: false, lastGeom: ann.geom,
+      mode: handle ? 'resize' : 'move', resizeT: handle?.resizeT, resizeP: handle?.resizeP, cursor: handle?.cursor,
+    }
   }
   const onDrawMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const { x, y } = overlayXY(e)
@@ -1449,18 +1478,35 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       const tp = pxToTP(x, y)
       if (!tp) return
       if (Math.abs(x - d.startX) > 3 || Math.abs(y - d.startY) > 3) d.moved = true
-      const dt = tp.t - d.startTP.t, dp = tp.p - d.startTP.p
       const g = d.origGeom
-      const next: AnnGeom = g.t1 != null
-        ? { ...g, t1: g.t1 + dt, p1: (g.p1 ?? 0) + dp, t2: (g.t2 ?? 0) + dt, p2: (g.p2 ?? 0) + dp }
-        : { ...g, t: (g.t ?? 0) + dt, p: (g.p ?? 0) + dp }
+      let next: AnnGeom
+      if (d.mode === 'resize') {
+        // Move only the grabbed edge/corner anchors to the cursor.
+        next = { ...g }
+        if (d.resizeT) next[d.resizeT] = tp.t
+        if (d.resizeP) next[d.resizeP] = tp.p
+        e.currentTarget.style.cursor = d.cursor ?? 'nwse-resize'
+      } else {
+        const dt = tp.t - d.startTP.t, dp = tp.p - d.startTP.p
+        next = g.t1 != null
+          ? { ...g, t1: g.t1 + dt, p1: (g.p1 ?? 0) + dp, t2: (g.t2 ?? 0) + dt, p2: (g.p2 ?? 0) + dp }
+          : { ...g, t: (g.t ?? 0) + dt, p: (g.p ?? 0) + dp }
+        e.currentTarget.style.cursor = 'grabbing'
+      }
       d.lastGeom = next
       setAnnotations(prev => prev.map(a => (a.id === d.id ? { ...a, geom: next } : a)))
-      e.currentTarget.style.cursor = 'grabbing'
       return
     }
-    // Idle hover — show a move cursor over a grabbable annotation.
-    if (armedTool !== 'zone') e.currentTarget.style.cursor = annAtPixel(x, y) ? 'move' : 'default'
+    // Idle hover — resize cursor on a zone edge, move over its body/text.
+    if (armedTool !== 'zone') {
+      const id = annAtPixel(x, y)
+      if (!id) { e.currentTarget.style.cursor = 'default' }
+      else {
+        const ann = annotations.find(a => a.id === id)
+        const h = ann?.kind === 'zone' ? zoneResizeHandle(ann.geom, x, y) : null
+        e.currentTarget.style.cursor = h?.cursor ?? 'move'
+      }
+    }
   }
   const onDrawUp = async (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
