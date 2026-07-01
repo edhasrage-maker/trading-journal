@@ -131,7 +131,7 @@ async function fetchSessionBars(symbol: string, date: string): Promise<BarLike[]
       .range(from, from + PAGE - 1)
     if (error) { console.error(`  bars ${symbol} ${date}:`, error.message); break }
     const rows = (data ?? []) as { ts: string; high: number; low: number; close: number }[]
-    for (const b of rows) out.push({ ts: b.ts, high: Number(b.high), low: Number(b.low), close: Number(b.close) })
+    for (const b of rows) out.push({ ts: b.ts, high: Number(b.high), low: Number(b.low) })
     if (rows.length < PAGE) break
     from += PAGE
   }
