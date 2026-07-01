@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, AlertCircle, Database, Settings2, X, Activity } from 'lucide-react'
+import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2 } from 'lucide-react'
 import {
   createChart,
   CandlestickSeries,
@@ -15,6 +15,7 @@ import {
   type AutoscaleInfo,
 } from 'lightweight-charts'
 import { TradeArrowsPrimitive, type TradeArrow } from './TradeArrowsPrimitive'
+import { AnnotationsPrimitive, type ChartAnnotation } from './AnnotationsPrimitive'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
 import { migrateChartPrefs, schedulePushChartPref, pullChartPref } from '@/lib/chart-prefs'
@@ -229,6 +230,14 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // click can map a click position back to a trade. Kept in sync with the
   // primitive's data in the render effect.
   const arrowHitsRef = useRef<Array<{ tradeId: string; time: Time; price: number }>>([])
+  // User-drawn annotations (zones) — a second primitive on the candle series,
+  // plus an opt-in draw overlay. Fully additive: when draw mode is off the
+  // overlay is click-through and the chart behaves exactly as before.
+  const annotationsPrimRef = useRef<AnnotationsPrimitive | null>(null)
+  const [annotations, setAnnotations] = useState<ChartAnnotation[]>([])
+  const [drawMode, setDrawMode] = useState<'off' | 'zone'>('off')
+  const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null)
+  const drawStartRef = useRef<{ x: number; y: number; t: number; p: number } | null>(null)
   const router = useRouter()
   // Right-click-on-arrow context menu (container-relative px + the trade it hit).
   const [arrowMenu, setArrowMenu] = useState<{ x: number; y: number; tradeId: string } | null>(null)
@@ -650,6 +659,8 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // fed via setData() in the data/markers effect below.
     tradeArrowsRef.current = new TradeArrowsPrimitive()
     candleRef.current.attachPrimitive(tradeArrowsRef.current)
+    annotationsPrimRef.current = new AnnotationsPrimitive()
+    candleRef.current.attachPrimitive(annotationsPrimRef.current)
     // VWAP/EMA overlays must NOT drive the price axis — on a trend day the
     // session-anchored VWAP sits far from the candles and would blow out the
     // vertical scale (squashing the candles). Returning null keeps the price
@@ -727,6 +738,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       ema9Ref.current = null
       ema20Ref.current = null
       tradeArrowsRef.current = null
+      annotationsPrimRef.current = null
     }
   }, [height, chartTfMins])
 
@@ -1250,6 +1262,102 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     setHover({ trade: t, x: x ?? 8, y: y ?? height / 2 })
   }, [hoverTradeId, trades, bars, levels, height, chartTfMins])
 
+  // ── Annotations: load, render, draw ────────────────────────────────────
+  // Load saved zones for this (symbol, date). Best-effort — never blocks the chart.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const qs = `date=${date}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ''}`
+        const res = await fetch(`/api/annotations?${qs}`)
+        if (!res.ok) return
+        const { annotations: rows } = await res.json() as { annotations: ChartAnnotation[] }
+        if (!cancelled) setAnnotations(Array.isArray(rows) ? rows : [])
+      } catch { /* annotations are best-effort */ }
+    })()
+    return () => { cancelled = true }
+  }, [date, symbol])
+
+  // Push annotations (with current selection) into the primitive on any change.
+  useEffect(() => {
+    annotationsPrimRef.current?.setData(annotations.map(a => ({ ...a, selected: a.id === selectedAnnId })))
+  }, [annotations, selectedAnnId])
+
+  // Esc exits draw mode + clears selection.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setDrawMode('off'); setSelectedAnnId(null) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Pixel (container-relative) → {t: epoch seconds, p: price}, or null off-plot.
+  const pxToTP = (x: number, y: number): { t: number; p: number } | null => {
+    const t = chartRef.current?.timeScale().coordinateToTime(x)
+    const p = candleRef.current?.coordinateToPrice(y)
+    if (t == null || p == null) return null
+    return { t: Number(t), p }
+  }
+  const overlayXY = (e: React.MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
+  }
+  // Topmost zone under a pixel — click-to-select hit test.
+  const annAtPixel = (x: number, y: number): string | null => {
+    const ts = chartRef.current?.timeScale(); const s = candleRef.current
+    if (!ts || !s) return null
+    for (let i = annotations.length - 1; i >= 0; i--) {
+      const a = annotations[i]
+      if (a.kind !== 'zone') continue
+      const x1 = ts.timeToCoordinate(a.geom.t1 as Time), x2 = ts.timeToCoordinate(a.geom.t2 as Time)
+      const y1 = s.priceToCoordinate(a.geom.p1), y2 = s.priceToCoordinate(a.geom.p2)
+      if (x1 == null || x2 == null || y1 == null || y2 == null) continue
+      if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) && y >= Math.min(y1, y2) && y <= Math.max(y1, y2)) return a.id
+    }
+    return null
+  }
+  const deleteAnnotation = async (id: string) => {
+    setAnnotations(prev => prev.filter(a => a.id !== id))
+    setSelectedAnnId(prev => (prev === id ? null : prev))
+    try { await fetch(`/api/annotations?id=${id}`, { method: 'DELETE' }) } catch { /* ignore */ }
+  }
+  const onDrawDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (drawMode !== 'zone') return
+    const { x, y } = overlayXY(e)
+    const tp = pxToTP(x, y)
+    if (tp) drawStartRef.current = { x, y, t: tp.t, p: tp.p }
+  }
+  const onDrawMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (drawMode !== 'zone' || !drawStartRef.current) return
+    const { x, y } = overlayXY(e)
+    const tp = pxToTP(x, y)
+    const s = drawStartRef.current
+    if (tp) annotationsPrimRef.current?.setPreview({ t1: s.t, p1: s.p, t2: tp.t, p2: tp.p })
+  }
+  const onDrawUp = async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (drawMode !== 'zone' || !drawStartRef.current) return
+    const s = drawStartRef.current
+    drawStartRef.current = null
+    annotationsPrimRef.current?.setPreview(null)
+    const { x, y } = overlayXY(e)
+    if (Math.abs(x - s.x) <= 4 && Math.abs(y - s.y) <= 4) {
+      setSelectedAnnId(annAtPixel(x, y)) // tiny drag = click → select/deselect
+      return
+    }
+    const tp = pxToTP(x, y)
+    if (!tp) return
+    try {
+      const res = await fetch('/api/annotations', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, symbol, kind: 'zone', geom: { t1: s.t, p1: s.p, t2: tp.t, p2: tp.p } }),
+      })
+      if (!res.ok) return
+      const { annotation } = await res.json() as { annotation: ChartAnnotation }
+      setAnnotations(prev => [...prev, annotation])
+    } catch { /* ignore */ }
+  }
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-2">
       {/* Header: legend + symbol + bar count */}
@@ -1450,6 +1558,45 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       {/* Chart container — always rendered so the chart instance can mount */}
       <div className="relative">
         <div ref={containerRef} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
+
+        {/* Draw overlay — only captures the mouse in zone-draw mode; otherwise
+            click-through so the chart pans/zooms exactly as before. */}
+        {drawMode === 'zone' && (
+          <div
+            className="absolute inset-0 z-30 cursor-crosshair"
+            style={{ height }}
+            onMouseDown={onDrawDown}
+            onMouseMove={onDrawMove}
+            onMouseUp={onDrawUp}
+            onMouseLeave={() => { if (drawStartRef.current) { drawStartRef.current = null; annotationsPrimRef.current?.setPreview(null) } }}
+          />
+        )}
+
+        {/* Annotation toolbar — zone toggle + delete-selected. */}
+        <div className="absolute top-2 left-2 z-40 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => { setDrawMode(m => (m === 'zone' ? 'off' : 'zone')); setSelectedAnnId(null) }}
+            title={drawMode === 'zone' ? 'Exit zone draw (Esc)' : 'Draw a zone — click-drag on the chart'}
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium border transition-colors ${
+              drawMode === 'zone'
+                ? 'bg-red-600 border-red-500 text-white'
+                : 'bg-gray-900/80 border-gray-700 text-gray-300 hover:text-white hover:border-gray-500'
+            }`}
+          >
+            <Square className="w-3 h-3" /> Zone
+          </button>
+          {selectedAnnId && (
+            <button
+              type="button"
+              onClick={() => { void deleteAnnotation(selectedAnnId) }}
+              title="Delete selected zone"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium border bg-gray-900/80 border-gray-700 text-gray-300 hover:text-red-400 hover:border-red-700 transition-colors"
+            >
+              <Trash2 className="w-3 h-3" /> Delete
+            </button>
+          )}
+        </div>
 
         {/* Right-click-on-arrow menu. Dismisses on outside click / Escape (a
             full-screen backdrop + the Escape handler below). */}

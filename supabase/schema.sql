@@ -629,6 +629,29 @@ create policy "weekly_recap_all" on weekly_recap
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================
+-- chart_annotations — user drawings on the LiveChart, scoped per trading day
+-- (and symbol) so a zone drawn for one day never shows on another. geom holds
+-- anchor points as {t: epoch_seconds, p: price} so drawings stay pinned to
+-- price/time across zoom/pan. kind covers zones now + levels/lines/arrows/text.
+-- ============================================================
+create table if not exists chart_annotations (
+  id uuid primary key default gen_random_uuid(),
+  trading_day_id uuid not null references trading_days(id) on delete cascade,
+  symbol text,
+  kind text not null check (kind in ('zone','level','trendline','arrow','text')),
+  geom jsonb not null,
+  note text default '',
+  color text default '#ef4444',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists chart_annotations_day_idx on chart_annotations(trading_day_id);
+alter table chart_annotations enable row level security;
+drop policy if exists "chart_annotations_auth" on chart_annotations;
+create policy "chart_annotations_auth" on chart_annotations
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
 -- Storage buckets (run separately in Supabase dashboard or CLI)
 -- ============================================================
 -- Bucket: 'screenshots'  (for chart + trade entry screenshots)
