@@ -459,7 +459,7 @@ export default async function DashboardPage() {
             </Link>
           </div>
           <p className="text-xs text-gray-600 mt-6">
-            Exports from NinjaTrader, Tradovate, and similar platforms are supported.
+            Exports from Sierra Chart, NinjaTrader, and Tradovate are supported.
           </p>
         </div>
       </div>

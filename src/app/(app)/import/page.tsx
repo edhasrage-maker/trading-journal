@@ -51,7 +51,7 @@ export default function ImportPage() {
 
       <h1 className="text-2xl font-bold text-white">Import trades</h1>
       <p className="text-gray-400 text-sm mt-1">
-        Upload a trade-history CSV exported from NinjaTrader, Tradovate, or another platform.
+        Upload a trade-history CSV exported from Sierra Chart, NinjaTrader, Tradovate, or another platform.
         We&apos;ll match your entries, exits, P&amp;L, and — when the export includes them — MAE/MFE.
       </p>
 
@@ -68,7 +68,7 @@ export default function ImportPage() {
         <p className="text-sm text-gray-300 mt-3 font-medium">
           {busy ? 'Importing…' : 'Drop a CSV here, or click to choose a file'}
         </p>
-        <p className="text-xs text-gray-500 mt-1">.csv exports from NinjaTrader, Tradovate, etc.</p>
+        <p className="text-xs text-gray-500 mt-1">.csv exports from Sierra Chart, NinjaTrader, Tradovate, etc.</p>
         <input
           ref={inputRef}
           type="file"
