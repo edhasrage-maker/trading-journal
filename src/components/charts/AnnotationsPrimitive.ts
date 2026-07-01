@@ -16,7 +16,7 @@ import type { CanvasRenderingTarget2D } from 'fancy-canvas'
 
 /** Zone = two opposite corners; text = a single anchor point. Both carry epoch
  *  seconds (t) + price (p); a loose shape keeps per-kind reads simple. */
-export interface AnnGeom { t1?: number; p1?: number; t2?: number; p2?: number; t?: number; p?: number }
+export interface AnnGeom { t1?: number; p1?: number; t2?: number; p2?: number; t?: number; p?: number; size?: number }
 export interface ZoneGeom { t1: number; p1: number; t2: number; p2: number }
 
 export interface ChartAnnotation {
@@ -87,12 +87,13 @@ class AnnotationRenderer implements IPrimitivePaneRenderer {
     const anchor = this._pt(ts, g.t, g.p)
     if (!anchor) return
     const label = note || '(text)'
+    const fontPx = g.size ?? 13
     ctx.save()
-    ctx.font = '600 12px -apple-system, system-ui, "Segoe UI", sans-serif'
+    ctx.font = `600 ${fontPx}px -apple-system, system-ui, "Segoe UI", sans-serif`
     ctx.textBaseline = 'middle'
     const padX = 7
     const w = ctx.measureText(label).width
-    const boxW = w + padX * 2, boxH = 21
+    const boxW = w + padX * 2, boxH = fontPx + 8
     const x = anchor.x, y = anchor.y
     // Subtle rounded chip so the label reads over candles without a heavy pill.
     ctx.beginPath()

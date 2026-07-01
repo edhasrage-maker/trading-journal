@@ -88,6 +88,9 @@ const TF_VALID = new Set<number>([1, 5, 15, 30, 60, 240])
 
 // Annotation palette — swatches offered in the drawing right-click menu.
 const ANN_COLORS = ['#ef4444', '#22c55e', '#3b82f6', '#eab308', '#a855f7', '#e5e7eb']
+// Text sizes (font px) offered as S / M / L in the text menu.
+const ANN_SIZES = [{ label: 'S', px: 11 }, { label: 'M', px: 13 }, { label: 'L', px: 17 }]
+const DEFAULT_TEXT_SIZE = 13
 function tfKey(symbol: string | null, date: string): string {
   return `livechart-tf-${symbol ?? 'unknown'}-${date}`
 }
@@ -243,6 +246,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   const [drawingMode, setDrawingMode] = useState(false)
   const [armedTool, setArmedTool] = useState<'zone' | null>(null)
   const [drawColor, setDrawColor] = useState(ANN_COLORS[0])
+  const [drawSize, setDrawSize] = useState(DEFAULT_TEXT_SIZE)
   const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null)
   // Right-click context menu (position in overlay px + the time/price under it +
   // the annotation it landed on, if any).
@@ -1331,7 +1335,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       } else if (a.kind === 'text') {
         const tx = ts.timeToCoordinate(a.geom.t as Time), ty = s.priceToCoordinate(a.geom.p as number)
         if (tx == null || ty == null) continue
-        if (x >= tx - 6 && x <= tx + 140 && y >= ty - 6 && y <= ty + 22) return a.id
+        if (x >= tx - 6 && x <= tx + 160 && y >= ty - 4 && y <= ty + 28) return a.id
       }
     }
     return null
@@ -1370,11 +1374,22 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     try {
       const res = await fetch('/api/annotations', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, symbol, kind: 'text', geom: { t, p }, note: text, color: drawColor }),
+        body: JSON.stringify({ date, symbol, kind: 'text', geom: { t, p, size: drawSize }, note: text, color: drawColor }),
       })
       if (!res.ok) return
       const { annotation } = await res.json() as { annotation: ChartAnnotation }
       setAnnotations(prev => [...prev, annotation])
+    } catch { /* ignore */ }
+  }
+  // Change a text label's font size — merges size into its geom.
+  const changeSize = async (id: string, size: number) => {
+    const geom = { ...(annotations.find(a => a.id === id)?.geom ?? {}), size }
+    setAnnotations(prev => prev.map(a => (a.id === id ? { ...a, geom } : a)))
+    try {
+      await fetch(`/api/annotations?id=${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ geom }),
+      })
     } catch { /* ignore */ }
   }
 
@@ -1708,6 +1723,22 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                         ))}
                       </div>
                     </div>
+                    {target.kind === 'text' && (
+                      <div className="px-3 py-1.5">
+                        <div className="text-[11px] text-gray-500 mb-1">Text size</div>
+                        <div className="flex items-center gap-1">
+                          {ANN_SIZES.map(s => (
+                            <button
+                              key={s.px} type="button"
+                              onClick={() => { void changeSize(target.id, s.px); setAnnMenu(null) }}
+                              className={`px-1.5 py-0.5 rounded text-[11px] border transition-colors ${(target.geom.size ?? DEFAULT_TEXT_SIZE) === s.px ? 'border-white text-white' : 'border-gray-700 text-gray-400 hover:text-white'}`}
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={() => { void deleteAnnotation(target.id); setAnnMenu(null) }}
@@ -1745,6 +1776,20 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                         className={`w-4 h-4 rounded-full border hover:scale-110 transition-transform ${drawColor === c ? 'border-white' : 'border-black/40'}`}
                         style={{ backgroundColor: c }}
                       />
+                    ))}
+                  </div>
+                </div>
+                <div className="px-3 py-1.5">
+                  <div className="text-[11px] text-gray-500 mb-1">New-text size</div>
+                  <div className="flex items-center gap-1">
+                    {ANN_SIZES.map(s => (
+                      <button
+                        key={s.px} type="button"
+                        onClick={() => setDrawSize(s.px)}
+                        className={`px-1.5 py-0.5 rounded text-[11px] border transition-colors ${drawSize === s.px ? 'border-white text-white' : 'border-gray-700 text-gray-400 hover:text-white'}`}
+                      >
+                        {s.label}
+                      </button>
                     ))}
                   </div>
                 </div>
