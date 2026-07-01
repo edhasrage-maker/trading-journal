@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { importScidDay, SIERRA_DATA_DIR } from '@/lib/import-scid-day'
 import { readdirSync, existsSync, statSync } from 'fs'
 import { join } from 'path'
+import { blockIfCloud } from '@/lib/local-features-guard'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -12,6 +13,7 @@ type AnyClient = any
  * for the import UI's source dropdown.
  */
 export async function GET() {
+  const blocked = blockIfCloud(); if (blocked) return blocked
   if (!existsSync(SIERRA_DATA_DIR)) {
     return NextResponse.json(
       { error: `Sierra data dir not found: ${SIERRA_DATA_DIR}. Set SIERRA_DATA_DIR in .env.local.`, files: [] },
@@ -46,6 +48,7 @@ export async function GET() {
  *   priceDivisor: price scaling (default 100 for NQ/MNQ)
  */
 export async function POST(req: Request) {
+  const blocked = blockIfCloud(); if (blocked) return blocked
   const body = await req.json() as {
     scidFile?: string
     storeAs?: string

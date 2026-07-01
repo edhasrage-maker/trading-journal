@@ -3,6 +3,7 @@ import { existsSync } from 'fs'
 import { join, basename } from 'path'
 import { probeVideo, extractFrameJpegBase64 } from '@/lib/video-frames'
 import { createClient } from '@/lib/supabase/server'
+import { blockIfCloud } from '@/lib/local-features-guard'
 import { OBS_RECORDINGS_DIR } from '../list/route'
 
 /**
@@ -22,6 +23,7 @@ import { OBS_RECORDINGS_DIR } from '../list/route'
  * Frame extraction stays local (the recording never leaves the machine).
  */
 export async function POST(req: Request) {
+  const blocked = blockIfCloud(); if (blocked) return blocked
   let body: { videoFile?: string; entryTimeIso?: string; deltaSec?: number; tradeId?: string; save?: boolean }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid body' }, { status: 400 }) }
 

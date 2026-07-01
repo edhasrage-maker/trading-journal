@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { importScidDay, resolveSymbolScidMap } from '@/lib/import-scid-day'
+import { blockIfCloud } from '@/lib/local-features-guard'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -30,6 +31,7 @@ function localToday(): string {
  * Returns a per-symbol summary so the client can surface a status/toast.
  */
 export async function POST(req: Request) {
+  const blocked = blockIfCloud(); if (blocked) return blocked
   const { searchParams } = new URL(req.url)
   const date = searchParams.get('date') || localToday()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {

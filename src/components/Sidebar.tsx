@@ -11,23 +11,27 @@ import {
   Activity,
   BarChart2,
   CalendarDays,
-  Settings,
   Tag,
   Archive,
   Database,
   CandlestickChart,
   Brain,
+  Upload,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 
+// Settings nav. Coaching + Tags are real features and always shown. The
+// "Perf Stats" page is a non-functional stub — hidden everywhere. Condition
+// Lookup / Bar Data / SC Archives depend on local files (`.scid`, the SC data
+// dir) so they only appear in the local power-user build.
 const settingsItems = [
-  { href: '/settings/coaching', label: 'Coaching', icon: Brain },
-  { href: '/settings/tags', label: 'Tags', icon: Tag },
-  { href: '/settings/stats', label: 'Perf Stats', icon: Settings },
-  { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database },
-  { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart },
-  { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive },
-]
+  { href: '/settings/coaching', label: 'Coaching', icon: Brain, localOnly: false },
+  { href: '/settings/tags', label: 'Tags', icon: Tag, localOnly: false },
+  { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database, localOnly: true },
+  { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart, localOnly: true },
+  { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive, localOnly: true },
+].filter(item => LOCAL_FEATURES_ENABLED || !item.localOnly)
 
 export default function Sidebar() {
   const pathname = usePathname()
@@ -73,6 +77,7 @@ export default function Sidebar() {
     { href: `/weekly/${weekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp },
+    { href: '/import', label: 'Import', icon: Upload },
   ]
 
   return (
@@ -107,7 +112,8 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Settings */}
+      {/* Settings — hidden entirely when no settings items are visible. */}
+      {settingsItems.length > 0 && (
       <div className="px-3 py-4 border-t border-gray-800 space-y-0.5">
         <p className="px-3 text-xs text-gray-600 uppercase tracking-wider mb-2">Settings</p>
         {settingsItems.map(({ href, label, icon: Icon }) => {
@@ -129,6 +135,7 @@ export default function Sidebar() {
           )
         })}
       </div>
+      )}
     </aside>
   )
 }

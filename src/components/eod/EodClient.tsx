@@ -17,6 +17,7 @@ import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import RecordingCommentary from './RecordingCommentary'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { avgCaptureRatio, avgMaeHeatRatio, type BarLike } from '@/lib/analytics'
 import type {
   TradingDay,
@@ -691,19 +692,26 @@ export default function EodClient({
               className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
               title="Switch to a different day's recap"
             />
-            <SCFolderWatcher
-              onActivity={(msg, type) => showToast(msg, type)}
-              onImported={refreshTrades}
-            />
-            <BarWatcher
-              activeDate={date}
-              onRefresh={() => setBarsVersion(v => v + 1)}
-            />
-            <ImportTradesButton
-              date={date}
-              onImported={handleImported}
-              onError={msg => showToast(msg, 'error')}
-            />
+            {/* Local-only ingestion cluster (SC folder watcher, .scid bar
+                watcher, Sierra-log import) — hidden in the cloud build; cloud
+                testers import via the CSV uploader (sidebar → Import). */}
+            {LOCAL_FEATURES_ENABLED && (
+              <>
+                <SCFolderWatcher
+                  onActivity={(msg, type) => showToast(msg, type)}
+                  onImported={refreshTrades}
+                />
+                <BarWatcher
+                  activeDate={date}
+                  onRefresh={() => setBarsVersion(v => v + 1)}
+                />
+                <ImportTradesButton
+                  date={date}
+                  onImported={handleImported}
+                  onError={msg => showToast(msg, 'error')}
+                />
+              </>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 text-sm">
@@ -982,7 +990,10 @@ export default function EodClient({
         bars={bars}
       />
 
-      <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
+      {/* OBS frame commentary reads local recordings via ffmpeg — local only. */}
+      {LOCAL_FEATURES_ENABLED && (
+        <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
+      )}
 
       {/* EOD Notes */}
       <EodNotesForm

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { existsSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
+import { blockIfCloud } from '@/lib/local-features-guard'
 
 export const OBS_RECORDINGS_DIR = process.env.OBS_RECORDINGS_DIR || 'C:\\Users\\lamed\\Videos'
 
@@ -14,6 +15,7 @@ export const OBS_RECORDINGS_DIR = process.env.OBS_RECORDINGS_DIR || 'C:\\Users\\
  * commentary route validates against this list via basename.
  */
 export async function GET() {
+  const blocked = blockIfCloud(); if (blocked) return blocked
   if (!existsSync(OBS_RECORDINGS_DIR)) {
     return NextResponse.json(
       {

@@ -5,6 +5,7 @@ import { join, basename } from 'path'
 import { probeVideo, extractFrameJpegBase64 } from '@/lib/video-frames'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { createClient } from '@/lib/supabase/server'
+import { blockIfCloud } from '@/lib/local-features-guard'
 import { OBS_RECORDINGS_DIR } from '../list/route'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 
@@ -41,6 +42,7 @@ interface CommentaryTrade {
  * explicitly clicks "Run commentary" or when tags/notes/recording change.
  */
 export async function POST(req: Request) {
+  const blocked = blockIfCloud(); if (blocked) return blocked
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
   }

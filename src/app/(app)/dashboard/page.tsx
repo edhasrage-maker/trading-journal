@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { format, subDays } from 'date-fns'
 import { todayPT } from '@/lib/pt-time'
+import Link from 'next/link'
+import { Upload, PencilLine, BarChart2 } from 'lucide-react'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
 import DashboardCharts from '@/components/dashboard/DashboardCharts'
@@ -418,6 +420,51 @@ export default async function DashboardPage() {
   const recentDaysForTable = recentDays.filter(d => d.date >= past180Start)
   tick('per-day computation loop')
   console.log('[dashboard perf]', perf.phases.map(p => `${p.name}=${p.ms}ms${p.rows != null ? ` (${p.rows})` : ''}`).join(' | '))
+
+  // First-run empty state: the account has no trades and no logged days in the
+  // whole stats window (and hasn't even opened today). Show an onboarding CTA
+  // instead of empty stat cards / an empty Recent Days table.
+  const isEmptyAccount =
+    tradesAll.length === 0 && recentDaysBase.length === 0
+
+  if (isEmptyAccount) {
+    return (
+      <div className="max-w-5xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-gray-400 text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
+        </div>
+
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-10 text-center">
+          <div className="mx-auto w-12 h-12 rounded-full bg-blue-600/20 flex items-center justify-center mb-4">
+            <BarChart2 className="w-6 h-6 text-blue-400" />
+          </div>
+          <h2 className="text-xl font-semibold text-white">Welcome — let&apos;s get your trades in</h2>
+          <p className="text-gray-400 text-sm mt-2 max-w-md mx-auto">
+            Your journal is empty. Import a trade-history CSV to see your analytics,
+            equity curve, and edge breakdowns from day one — or log a trade by hand to start.
+          </p>
+          <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+            <Link
+              href="/import"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors"
+            >
+              <Upload className="w-4 h-4" /> Import trades (CSV)
+            </Link>
+            <Link
+              href={`/intraday/${today}`}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg border border-gray-700 bg-gray-800 text-gray-200 text-sm font-medium hover:bg-gray-700 transition-colors"
+            >
+              <PencilLine className="w-4 h-4" /> Log a trade manually
+            </Link>
+          </div>
+          <p className="text-xs text-gray-600 mt-6">
+            Exports from NinjaTrader, Tradovate, and similar platforms are supported.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-5xl mx-auto">

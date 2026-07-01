@@ -19,6 +19,7 @@ import { AnnotationsPrimitive, type ChartAnnotation, type AnnGeom } from './Anno
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
 import { migrateChartPrefs, schedulePushChartPref, pullChartPref } from '@/lib/chart-prefs'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 
 interface Props {
   date: string
@@ -2028,7 +2029,11 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             <div>
               <AlertCircle className="w-6 h-6 text-gray-500 mx-auto mb-2" />
               <p className="text-sm text-gray-300">No symbol on trades for this day.</p>
-              <p className="text-xs text-gray-500 mt-1">Import a Sierra Chart log to populate trade symbols.</p>
+              <p className="text-xs text-gray-500 mt-1">
+                {LOCAL_FEATURES_ENABLED
+                  ? 'Import a Sierra Chart log to populate trade symbols.'
+                  : 'Import your trades to populate symbols.'}
+              </p>
             </div>
           </div>
         )}
@@ -2047,10 +2052,17 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           <div className="absolute inset-0 flex items-center justify-center text-center px-6">
             <div>
               <Database className="w-6 h-6 text-gray-500 mx-auto mb-2" />
-              <p className="text-sm text-gray-300">No bars imported for {symbol} on {date}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                Go to <a href="/settings/bars" className="text-blue-400 hover:underline">Settings → Bar Data</a> and upload a CSV for this symbol + date range.
-              </p>
+              <p className="text-sm text-gray-300">No chart data for {symbol} on {date}</p>
+              {LOCAL_FEATURES_ENABLED ? (
+                <p className="text-xs text-gray-500 mt-1">
+                  Go to <a href="/settings/bars" className="text-blue-400 hover:underline">Settings → Bar Data</a> and upload a CSV for this symbol + date range.
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500 mt-1">
+                  Chart bars aren&apos;t available for this account yet. Your imported trades and
+                  analytics are unaffected.
+                </p>
+              )}
             </div>
           </div>
         )}
