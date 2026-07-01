@@ -215,7 +215,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
     // only `additionalProperties: false`. Putting the id inside each object
     // keeps the dynamic-key data without violating the spec.
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-opus-4-8',
       // 6000 sized for a busy day (8+ trades each with commentary +
       // suggested_mistakes + detected_levels). Old cap of 1500 truncated
       // mid-response once level detection was added to the schema —
@@ -335,7 +335,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
           recording_commentary: {
             text,
             video_file: safeName,
-            model: 'claude-sonnet-4-6',
+            model: 'claude-opus-4-8',
             generated_at: generatedAt,
             // Detected levels live inside the same jsonb so we don't need a
             // schema migration. Undefined when the model couldn't return a

@@ -116,7 +116,7 @@ Respond with ONLY valid JSON (no markdown, no code fences):
 }`
     try {
       const m1 = await client.messages.create({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: 700,
         messages: [{
           role: 'user',
@@ -331,7 +331,7 @@ Cite the rubric tier in "summary" so the trader can sanity-check the score.`
     : prompt
 
   const message = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-opus-4-8',
     max_tokens: 2000,
     messages: [{ role: 'user', content: userContent }],
   })
