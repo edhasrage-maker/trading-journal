@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
-import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X } from 'lucide-react'
+import Link from 'next/link'
+import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X, Upload } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
@@ -711,6 +712,17 @@ export default function EodClient({
                   onError={msg => showToast(msg, 'error')}
                 />
               </>
+            )}
+            {/* Cloud build: the local Sierra-log button is hidden, so give a
+                direct jump to the Import page (CSV / Sierra .txt / template). */}
+            {!LOCAL_FEATURES_ENABLED && (
+              <Link
+                href="/import"
+                className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2.5 py-1 hover:bg-gray-700 transition-colors"
+                title="Import a trade log (CSV or Sierra Chart .txt)"
+              >
+                <Upload className="w-3.5 h-3.5" /> Import
+              </Link>
             )}
           </div>
         </div>
