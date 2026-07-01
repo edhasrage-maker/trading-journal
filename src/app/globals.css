@@ -17,18 +17,21 @@
    Warnings intentionally left on default `yellow` so caution never collides
    with the amber accent (which now comes from the blue ramp).                 */
 @theme {
-  /* Neutrals → cool near-black (brand surface #0E0F11) */
+  /* Neutrals → cool near-black. Brand ground is #0E0F11, but the surface steps
+     are spread so panels read as distinct from the ground and borders stay
+     visible: ground (950) → card (900) → border/control (800) each a legible
+     step. (Earlier values were packed too close and cards melted into the bg.) */
   --color-gray-50:  #F3F4F1;
   --color-gray-100: #E7E8E5;
   --color-gray-200: #D3D6D0;
   --color-gray-300: #B7BBB5;
-  --color-gray-400: #8A8E86;
-  --color-gray-500: #6C7075;
-  --color-gray-600: #30353B;
-  --color-gray-700: #24282D;
-  --color-gray-800: #16181C;
-  --color-gray-900: #121417;
-  --color-gray-950: #0E0F11;
+  --color-gray-400: #8E938E;
+  --color-gray-500: #6E7378;
+  --color-gray-600: #4A5058;
+  --color-gray-700: #383E46;  /* dividers / hover borders (stronger)   */
+  --color-gray-800: #2A2F36;  /* card borders + controls — visible on a card */
+  --color-gray-900: #191C21;  /* card / panel — clearly lifts off the ground */
+  --color-gray-950: #0E0F11;  /* app ground (brand surface) */
 
   /* Accent → amber (brand #E0A33C); replaces stock blue */
   --color-blue-50:  #FBF3E2;
@@ -71,9 +74,9 @@
 
   /* Semantic aliases (enable bg-accent / text-pos / bg-surface-1 later) */
   --color-app: #0E0F11;
-  --color-surface-1: #16181C;
-  --color-surface-2: #1C1F23;
-  --color-surface-3: #24282D;
+  --color-surface-1: #191C21;
+  --color-surface-2: #2A2F36;
+  --color-surface-3: #383E46;
   --color-accent: #E0A33C;
   --color-accent-bright: #F0BC63;
   --color-accent-contrast: #2A1D07;
