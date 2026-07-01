@@ -737,7 +737,15 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         const d = Math.abs(ts - timeSec)
         if (d < bestDelta) { bestDelta = d; best = t }
       }
-      if (best && bestDelta <= Math.max(90, chartTfMins * 60)) setHover({ trade: best, x: param.point.x, y: param.point.y })
+      // Require the cursor to be near the entry in BOTH axes — time (above) AND
+      // price. Without the price gate the popup fired anywhere in the entry's
+      // vertical column, so it appeared without hovering the actual entry.
+      let nearY = false
+      if (best && bestDelta <= Math.max(90, chartTfMins * 60)) {
+        const entryY = best.entry_price != null ? candleRef.current?.priceToCoordinate(best.entry_price) : null
+        nearY = entryY != null && Math.abs(param.point.y - entryY) <= 40
+      }
+      if (best && nearY) setHover({ trade: best, x: param.point.x, y: param.point.y })
       else setHover(null)
     })
 
