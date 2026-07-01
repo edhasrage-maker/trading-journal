@@ -27,11 +27,12 @@
 -- TENANCY MODEL
 --   Per-user (owner RLS `auth.uid() = user_id`, default `auth.uid()`):
 --     trading_days, market_context, trades, trade_tags, daily_prep,
---     chart_prefs, ohlcv_bars, bar_imports, historical_trades,
+--     chart_prefs, bar_imports, historical_trades,
 --     eod_themes_analysis, trader_profile, weekly_recap, chart_annotations
 --   Shared read-only (any authenticated user may SELECT; writes via service
 --   role only, which bypasses RLS):
---     performance_stats, condition_thresholds, condition_lookup, lookup_metadata
+--     performance_stats, condition_thresholds, condition_lookup, lookup_metadata,
+--     ohlcv_bars  (market bars are identical for every user — fed centrally)
 -- ============================================================================
 
 
@@ -44,7 +45,7 @@ declare
   t text;
   peruser text[] := array[
     'trading_days','market_context','trades','trade_tags','daily_prep',
-    'chart_prefs','ohlcv_bars','bar_imports','historical_trades',
+    'chart_prefs','bar_imports','historical_trades',
     'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations'
   ];
 begin
@@ -79,7 +80,7 @@ declare
   t text;
   peruser text[] := array[
     'trading_days','market_context','trades','trade_tags','daily_prep',
-    'chart_prefs','ohlcv_bars','bar_imports','historical_trades',
+    'chart_prefs','bar_imports','historical_trades',
     'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations'
   ];
 begin
@@ -101,7 +102,7 @@ declare
   p record;
   peruser text[] := array[
     'trading_days','market_context','trades','trade_tags','daily_prep',
-    'chart_prefs','ohlcv_bars','bar_imports','historical_trades',
+    'chart_prefs','bar_imports','historical_trades',
     'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations'
   ];
 begin
@@ -129,8 +130,8 @@ end $$;
 -- ----------------------------------------------------------------------------
 do $$
 declare
-  tbls text[] := array['daily_prep','chart_prefs','ohlcv_bars','trader_profile','weekly_recap'];
-  cols text[] := array['user_id, trade_date','user_id, key','user_id, symbol, ts','user_id, id','user_id, week_start_date'];
+  tbls text[] := array['daily_prep','chart_prefs','trader_profile','weekly_recap'];
+  cols text[] := array['user_id, trade_date','user_id, key','user_id, id','user_id, week_start_date'];
   i int;
   c text;
 begin
@@ -205,6 +206,32 @@ end $$;
 
 
 -- ----------------------------------------------------------------------------
+-- 6b. ohlcv_bars is SHARED market data, not per-user — the same NQ/ES 1-minute
+--     bars serve every user, fed centrally (a local ingest agent or a data
+--     vendor), never written by end users. It is intentionally NOT in the
+--     per-user list above and gets the shared read-only policy in section 7.
+--
+--     This block undoes any prior overlay run that tenant-ized it (older
+--     versions of this file put ohlcv_bars in the per-user list): drop the owner
+--     policy, drop the user_id column (CASCADE takes the composite PK + the
+--     user-scoped index with it), and restore the natural (symbol, ts) PK.
+--     No-op on a fresh project where user_id was never added. Safe because
+--     ohlcv_bars is empty until the central feed populates it.
+-- ----------------------------------------------------------------------------
+drop policy if exists "Owner access" on public.ohlcv_bars;
+alter table public.ohlcv_bars drop column if exists user_id cascade;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.ohlcv_bars'::regclass and contype = 'p'
+  ) then
+    alter table public.ohlcv_bars add primary key (symbol, ts);
+  end if;
+end $$;
+
+
+-- ----------------------------------------------------------------------------
 -- 7. Shared read-only reference tables. Any authenticated user may read; only
 --    the service role (which bypasses RLS) may write. These hold global
 --    methodology data, not per-user data, so they intentionally have NO user_id.
@@ -213,7 +240,7 @@ do $$
 declare
   t text;
   p record;
-  shared text[] := array['performance_stats','condition_thresholds','condition_lookup','lookup_metadata'];
+  shared text[] := array['performance_stats','condition_thresholds','condition_lookup','lookup_metadata','ohlcv_bars'];
 begin
   foreach t in array shared loop
     execute format('alter table public.%I enable row level security', t);
@@ -240,7 +267,6 @@ create index if not exists trades_user_day_idx          on public.trades(user_id
 create index if not exists trading_days_user_date_idx    on public.trading_days(user_id, date);
 create index if not exists market_context_user_day_idx   on public.market_context(user_id, trading_day_id);
 create index if not exists historical_trades_user_date_idx on public.historical_trades(user_id, trade_date);
-create index if not exists ohlcv_bars_user_symbol_ts_idx on public.ohlcv_bars(user_id, symbol, ts desc);
 create index if not exists bar_imports_user_idx          on public.bar_imports(user_id, imported_at desc);
 create index if not exists chart_annotations_user_day_idx on public.chart_annotations(user_id, trading_day_id);
 
