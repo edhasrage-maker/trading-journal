@@ -1,18 +1,25 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, Hanken_Grotesk, Spline_Sans_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// TapeScore design system: Archivo = display/brand, Hanken Grotesk = body/UI,
+// Spline Sans Mono = log/time/tape readouts.
+const archivo = Archivo({ variable: "--font-archivo", subsets: ["latin"], display: "swap" });
+const hanken = Hanken_Grotesk({ variable: "--font-hanken", subsets: ["latin"], display: "swap" });
+const splineMono = Spline_Sans_Mono({ variable: "--font-spline-mono", subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Trade Journal",
-  description: "Personal trading journal",
+  title: "TapeScore",
+  description: "Game film for traders — an AI trading journal for serious futures traders.",
+  icons: { icon: "/brand/tapescore-favicon.svg" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html
+      lang="en"
+      className={`${archivo.variable} ${hanken.variable} ${splineMono.variable} antialiased`}
+    >
       <body className="min-h-screen bg-gray-950 text-white">{children}</body>
     </html>
   );
