@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { TrendingUp } from 'lucide-react'
+import { Mail } from 'lucide-react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -34,16 +34,22 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="bg-blue-600 p-2 rounded-lg">
-            <TrendingUp className="w-6 h-6 text-white" />
+        <div className="flex flex-col items-center gap-2 mb-8">
+          {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
+          <img src="/brand/tapescore-mark.svg" alt="" className="h-12 w-12" />
+          <div className="flex flex-col items-center gap-0.5 leading-none">
+            <span className="text-2xl tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+              <span className="font-medium">Tape</span><span className="font-extrabold">Score</span>
+            </span>
+            <span className="font-mono text-[9px] uppercase text-gray-500" style={{ letterSpacing: '0.2em' }}>
+              Game film for traders
+            </span>
           </div>
-          <h1 className="text-2xl font-bold text-white">Trade Journal</h1>
         </div>
 
         {sent ? (
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center">
-            <div className="text-4xl mb-4">📬</div>
+            <Mail className="w-9 h-9 text-blue-400 mx-auto mb-4" />
             <h2 className="text-lg font-semibold text-white mb-2">Check your email</h2>
             <p className="text-gray-400 text-sm">
               Magic link sent to <span className="text-white">{email}</span>. Click it to sign in.
