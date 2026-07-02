@@ -448,21 +448,33 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     return best
   }, [trades])
 
-  // Distinct symbols traded today (count-desc) — drives the chart's instrument
-  // switcher on mixed days (e.g. NQ + ES). The chart is single-instrument, so we
-  // pick one and show only its trades; the other's fills would plot off-scale.
-  const symbolOptions = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const t of trades) if (t.symbol) counts.set(t.symbol, (counts.get(t.symbol) ?? 0) + 1)
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).map(([symbol, count]) => ({ symbol, count }))
-  }, [trades])
+  // Instruments the chart's header dropdown can switch to: the day's traded
+  // symbols ∪ every instrument with imported bar data (so ES shows even on an
+  // NQ-only day). The chart is single-instrument — switching also filters the
+  // plotted trades to the picked symbol so the other product's fills don't plot
+  // off-scale.
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([])
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/bars/symbols')
+      .then(r => (r.ok ? r.json() : { symbols: [] }))
+      .then((d: { symbols?: string[] }) => { if (!cancelled) setAvailableSymbols(Array.isArray(d.symbols) ? d.symbols : []) })
+      .catch(() => { /* best-effort — dropdown just won't offer extra products */ })
+    return () => { cancelled = true }
+  }, [])
   const [chartSymbolOverride, setChartSymbolOverride] = useState<string | null>(null)
-  const activeChartSymbol = (chartSymbolOverride && symbolOptions.some(o => o.symbol === chartSymbolOverride))
+  const chartSymbolOptions = useMemo(() => {
+    const traded = trades.map(t => t.symbol).filter((s): s is string => !!s)
+    const out: string[] = []
+    for (const s of [chartSymbol, ...traded, ...availableSymbols]) if (s && !out.includes(s)) out.push(s)
+    return out
+  }, [chartSymbol, trades, availableSymbols])
+  const activeChartSymbol = (chartSymbolOverride && chartSymbolOptions.includes(chartSymbolOverride))
     ? chartSymbolOverride
     : chartSymbol
   const chartTrades = useMemo(
-    () => (symbolOptions.length > 1 ? trades.filter(t => t.symbol === activeChartSymbol) : trades),
-    [trades, symbolOptions.length, activeChartSymbol],
+    () => (chartSymbolOptions.length > 1 ? trades.filter(t => t.symbol === activeChartSymbol) : trades),
+    [trades, chartSymbolOptions.length, activeChartSymbol],
   )
 
   return (
@@ -527,29 +539,15 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             {showChart ? <ChevronUp className="w-3.5 h-3.5 text-gray-500" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-500" />}
           </button>
           {showChart && (
-            <div className="p-3 space-y-2">
-              {/* Instrument switcher — only on mixed-symbol days (NQ + ES etc.). */}
-              {symbolOptions.length > 1 && (
-                <div className="flex items-center flex-wrap gap-1.5">
-                  <span className="text-[11px] text-gray-500 mr-1">Instrument:</span>
-                  {symbolOptions.map(o => (
-                    <button
-                      key={o.symbol}
-                      type="button"
-                      onClick={() => setChartSymbolOverride(o.symbol)}
-                      title={`${o.count} trade${o.count === 1 ? '' : 's'} in ${o.symbol}`}
-                      className={`text-xs font-medium px-2 py-1 rounded border transition-colors ${
-                        o.symbol === activeChartSymbol
-                          ? 'bg-blue-600 border-blue-500 text-white'
-                          : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-white hover:border-gray-500'
-                      }`}
-                    >
-                      {o.symbol} <span className="opacity-60">· {o.count}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <LiveChart date={date} symbol={activeChartSymbol} trades={chartTrades} height={420} />
+            <div className="p-3">
+              <LiveChart
+                date={date}
+                symbol={activeChartSymbol}
+                symbolOptions={chartSymbolOptions}
+                onSymbolChange={setChartSymbolOverride}
+                trades={chartTrades}
+                height={420}
+              />
             </div>
           )}
         </div>
