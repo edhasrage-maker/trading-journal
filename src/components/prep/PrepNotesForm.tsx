@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import type { PrepNotes } from '@/lib/supabase/types'
 
 interface Props {
@@ -85,7 +86,9 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
   return (
     <div className="space-y-6">
 
-      {/* IB Break Timing */}
+      {/* IB Break Timing + Volume Profile — local-only. The public prep is
+          simplified to Bias / Observations / Mood. */}
+      {LOCAL_FEATURES_ENABLED && (<>
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">IB Break Timing</h3>
         <div className="space-y-4">
@@ -181,6 +184,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
           </div>
         </div>
       </div>
+      </>)}
 
       {/* Bias — direction buttons. The "Bias reasoning" textarea moved BELOW
           the HTF MGI section so the trader fills it in after touching levels. */}
@@ -201,7 +205,8 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
         </div>
       </div>
 
-      {/* HTF MGI Position — collapsible */}
+      {/* HTF MGI Position — local-only (hidden in the simplified public prep). */}
+      {LOCAL_FEATURES_ENABLED && (
       <div className="border border-gray-800 rounded-xl overflow-hidden">
         <button
           type="button"
@@ -284,13 +289,14 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
           </div>
         )}
       </div>
+      )}
 
       {/* Bias reasoning — moved BELOW HTF MGI so the trader writes it after
           working through the levels above. Reasoning often references which
           MGI levels the bias is built on. */}
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Bias reasoning</label>
-        <textarea rows={2} spellCheck autoCorrect="on" placeholder="Why are you biased this way? What would change your bias?"
+        <label className="block text-xs text-gray-400 mb-1">Observations / reasoning</label>
+        <textarea rows={2} spellCheck autoCorrect="on" placeholder="What are you seeing? Why this bias, and what would change it?"
           value={value.bias_notes ?? ''} onChange={e => set('bias_notes', e.target.value)}
           className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
         />
@@ -298,7 +304,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
 
       {/* Mood & Clarity */}
       <div>
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Mood & Market Clarity</h3>
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Mood</h3>
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-400 mb-1">How are you feeling today?</label>
@@ -307,6 +313,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
             />
           </div>
+          {LOCAL_FEATURES_ENABLED && (
           <div>
             <label className="block text-xs text-gray-400 mb-1">Does the market feel clear to you?</label>
             <textarea rows={2} spellCheck autoCorrect="on" placeholder="Can you clearly see what the market is doing and what setups to take?"
@@ -314,6 +321,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
             />
           </div>
+          )}
         </div>
       </div>
 
