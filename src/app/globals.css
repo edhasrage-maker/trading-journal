@@ -99,3 +99,12 @@ h1, h2, h3 {
   font-family: var(--font-display), var(--font-sans), sans-serif;
   letter-spacing: -0.01em;
 }
+
+/* Solid amber fills (primary buttons, solid badges) carry dark text — the brand
+   rule is dark-on-amber, never low-contrast white. Tinted fills like
+   `bg-blue-600/20` (active nav) use a different class name and are unaffected.
+   Unlayered, so it overrides the `text-white` utility on those fills. */
+.bg-blue-500,
+.bg-blue-600 {
+  color: var(--color-accent-contrast);
+}
