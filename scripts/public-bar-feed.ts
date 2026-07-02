@@ -36,13 +36,21 @@ import { join } from 'path'
 import { createClient } from '@supabase/supabase-js'
 import { importScidDay } from '../src/lib/import-scid-day'
 import { todayPT } from '../src/lib/pt-time'
+import { contractFileForDate } from '../src/lib/nq-front-month'
 
-// Local .scid → shared root symbol. Add more pairs here to feed more markets
-// (the chart resolves any micro/mini/dated contract to these roots).
-const FEEDS: Array<{ scidFile: string; root: string }> = [
-  { scidFile: 'NQU6.CME.scid', root: 'NQ' },
-  { scidFile: 'ESU6.CME.scid', root: 'ES' },
-]
+// Local .scid → shared root symbol, resolved PER DATE. NQ uses the continuous
+// front-month roll table (contractFileForDate) so a trade at ANY date reads the
+// contract that was actually front-month then — that's what makes MFE/MAE-from-
+// bars work across history, not just the current contract. All bars store under
+// 'NQ' (the chartSeriesRoot key micros/dated contracts resolve to). ES has no
+// roll table yet, so it stays on its front contract (single-contract coverage).
+function feedsForDate(date: string): Array<{ scidFile: string; root: string }> {
+  const feeds: Array<{ scidFile: string; root: string }> = []
+  const nqFile = contractFileForDate(date)   // e.g. 2026-03-15 → NQM6.CME.scid
+  if (nqFile) feeds.push({ scidFile: nqFile, root: 'NQ' })
+  feeds.push({ scidFile: 'ESU6.CME.scid', root: 'ES' })
+  return feeds
+}
 
 /** Load PUBLIC-project creds from the local, gitignored `.env.public-feed`. */
 function loadEnv(): void {
@@ -95,7 +103,7 @@ async function main() {
 
   let anyOk = false
   for (const date of dates) {
-    for (const f of FEEDS) {
+    for (const f of feedsForDate(date)) {
       const out = await importScidDay(sb, {
         scidFile: f.scidFile,
         storeAs: f.root,
