@@ -59,7 +59,7 @@ export default function AuthCard() {
         <Mail className="w-9 h-9 text-blue-400 mx-auto mb-4" />
         <h2 className="text-lg font-semibold text-white">Check your email</h2>
         <p className="text-gray-400 text-sm mt-2">
-          Magic link sent to <span className="text-white">{email}</span>. Open it on this device to sign in.
+          Sign-in link sent to <span className="text-white">{email}</span>. Open it on this device to sign in.
         </p>
       </div>
     )
@@ -90,7 +90,7 @@ export default function AuthCard() {
 
       {/* Magic link vs password toggle */}
       <div className="flex items-center gap-1 bg-gray-950/60 border border-gray-800 rounded-lg p-1 mb-4">
-        {([['magic', 'Magic link'], ['password', 'Password']] as const).map(([m, label]) => (
+        {([['magic', 'Email link'], ['password', 'Password']] as const).map(([m, label]) => (
           <button
             key={m}
             type="button"
@@ -127,7 +127,7 @@ export default function AuthCard() {
           className="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-gray-950 font-semibold py-2.5 rounded-lg text-sm transition-colors"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : (mode === 'magic' ? <Mail className="w-4 h-4" /> : <Lock className="w-4 h-4" />)}
-          {loading ? 'Working…' : mode === 'magic' ? 'Send magic link' : mode === 'signup' ? 'Create account' : 'Sign in'}
+          {loading ? 'Working…' : mode === 'magic' ? 'Send sign-in link' : mode === 'signup' ? 'Create account' : 'Sign in'}
         </button>
       </form>
 

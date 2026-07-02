@@ -18,8 +18,8 @@ const FEATURES = [
 ]
 
 const STEPS = [
-  { n: '01', title: 'Enter your email', body: 'No password. We send you a secure magic link.' },
-  { n: '02', title: 'Click the magic link', body: 'It signs you in instantly and drops you at your dashboard.' },
+  { n: '01', title: 'Enter your email', body: 'No password needed — we email you a secure sign-in link (or set a password).' },
+  { n: '02', title: 'Open the link', body: 'It signs you in instantly and drops you at your dashboard.' },
   { n: '03', title: 'Import & explore', body: 'Upload your trades and your analytics populate immediately.' },
 ]
 
