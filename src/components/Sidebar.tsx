@@ -166,12 +166,12 @@ export default function Sidebar() {
               type="button"
               onClick={() => setMode(m)}
               className={cn(
-                'flex-1 rounded-md py-1.5 text-xs capitalize transition-colors',
+                'flex-1 rounded-md py-1.5 text-xs whitespace-nowrap transition-colors',
                 mode === m ? 'bg-blue-600 font-semibold' : 'text-gray-400 hover:text-white',
               )}
               aria-pressed={mode === m}
             >
-              {m}
+              {m === 'beginner' ? 'Highlights' : 'Detailed Tape'}
             </button>
           ))}
         </div>

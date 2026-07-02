@@ -93,7 +93,7 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
       </div>
 
       <p className="text-xs text-gray-600 text-center">
-        Want the full metrics — MFE, capture %, process scores? <span className="text-blue-400">Switch to Pro in the sidebar →</span>
+        Want the full metrics — MFE, capture %, process scores? <span className="text-blue-400">Switch to Detailed Tape in the sidebar →</span>
       </p>
     </div>
   )
