@@ -72,7 +72,7 @@ import { symbolToMultiplier } from './futures-symbols'
  * === the trader's PT machine). The cloud importer passes the browser's IANA
  * zone so a hosted (UTC) server still lands the times in the trader's clock.
  */
-function naiveToUtc(y: number, mo: number, d: number, h: number, mi: number, s: number, ms: number, tz?: string): Date {
+export function naiveToUtc(y: number, mo: number, d: number, h: number, mi: number, s: number, ms: number, tz?: string): Date {
   if (!tz) return new Date(y, mo - 1, d, h, mi, s, ms)
   const asUtc = Date.UTC(y, mo - 1, d, h, mi, s, ms)
   try {

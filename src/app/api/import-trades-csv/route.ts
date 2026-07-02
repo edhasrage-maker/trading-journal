@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { parseTradeCsv } from '@/lib/csv-trade-import'
 import { parseSierraChartLog } from '@/lib/sc-importer'
+import { isNinjaTraderGrid, parseNinjaTraderGrid } from '@/lib/ninjatrader-import'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
 
 /**
  * POST /api/import-trades-csv
@@ -23,6 +25,83 @@ interface PendingTrade {
   trade_date: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   row: Record<string, any>
+}
+
+/** Page the shared ohlcv_bars for [startIso, endIso] (past the 1000-row cap). */
+async function fetchBars(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any, symbol: string, startIso: string, endIso: string,
+): Promise<Array<{ ts: string; high: number; low: number }>> {
+  const PAGE = 1000
+  const out: Array<{ ts: string; high: number; low: number }> = []
+  let from = 0
+  for (let page = 0; page < 40; page++) {
+    const { data, error } = await db
+      .from('ohlcv_bars')
+      .select('ts, high, low')
+      .eq('symbol', symbol)
+      .gte('ts', startIso)
+      .lte('ts', endIso)
+      .order('ts', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) break
+    const rows = (data ?? []) as Array<{ ts: string; high: number; low: number }>
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
+
+/**
+ * Fill high/low-during-position from the central bar feed for any trade whose
+ * source didn't carry excursion data (NinjaTrader grids, generic CSVs). The
+ * market bars — not the trade log — are the source of truth for MFE/MAE. Runs
+ * once per symbol root over the union window, then clips per trade. Best-effort:
+ * trades outside the bar coverage keep null high/low (capture just stays blank).
+ */
+async function backfillExcursionsFromBars(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any, pending: PendingTrade[], warnings: string[],
+): Promise<void> {
+  const bySymbol = new Map<string, number[]>()
+  for (let i = 0; i < pending.length; i++) {
+    const r = pending[i].row
+    if (r.high_during_position != null && r.low_during_position != null) continue
+    if (!r.entry_time || !r.exit_time || !r.symbol) continue
+    const root = chartSeriesRoot(String(r.symbol))
+    if (!bySymbol.has(root)) bySymbol.set(root, [])
+    bySymbol.get(root)!.push(i)
+  }
+
+  let filled = 0
+  for (const [root, idxs] of bySymbol) {
+    let min = Infinity, max = -Infinity
+    for (const i of idxs) {
+      const r = pending[i].row
+      min = Math.min(min, Date.parse(r.entry_time))
+      max = Math.max(max, Date.parse(r.exit_time))
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue
+    const bars = await fetchBars(db, root, new Date(min).toISOString(), new Date(max).toISOString())
+    if (bars.length === 0) continue
+    const parsed = bars.map(b => ({ t: Date.parse(b.ts), high: b.high, low: b.low }))
+    for (const i of idxs) {
+      const r = pending[i].row
+      const s = Date.parse(r.entry_time), e = Date.parse(r.exit_time)
+      let hi = -Infinity, lo = Infinity
+      for (const b of parsed) {
+        // Include the entry minute's bar (bar ts is the minute open, so allow 60s slack).
+        if (b.t >= s - 60_000 && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
+      }
+      if (hi > -Infinity && lo < Infinity) {
+        r.high_during_position = Math.round(hi * 100) / 100
+        r.low_during_position = Math.round(lo * 100) / 100
+        filled++
+      }
+    }
+  }
+  if (filled > 0) warnings.push(`Filled MFE/MAE for ${filled} trade(s) from market data.`)
 }
 
 /**
@@ -114,6 +193,36 @@ export async function POST(req: Request) {
         },
       })
     }
+  } else if (isNinjaTraderGrid(csvText)) {
+    // NinjaTrader executions grid: fill-level, reconstructed into round-trip
+    // trades. Same ParsedSCRow shape as the Sierra path, so map identically.
+    const { rows, parseErrors } = parseNinjaTraderGrid(csvText, clientTz)
+    total = rows.length
+    for (const e of parseErrors.slice(0, 5)) warnings.push(e)
+    if (!clientTz) {
+      warnings.push('Your timezone wasn\'t detected, so NinjaTrader times were read as server time and may display shifted.')
+    }
+    for (const r of rows) {
+      const trade_date = (r.entry_time_iso || '').slice(0, 10)
+      if (!trade_date) { skipped++; continue }
+      pending.push({
+        trade_date,
+        row: {
+          sierra_trade_id: r.sierra_trade_id,
+          symbol: r.symbol,
+          entry_time: r.entry_time_iso,
+          entry_price: r.entry_price,
+          exit_time: r.exit_time_iso ?? null,
+          exit_price: r.exit_price ?? null,
+          direction: r.direction,
+          quantity: r.quantity,
+          pnl: r.pnl,
+          high_during_position: r.high_during_position,
+          low_during_position: r.low_during_position,
+          exits_json: r.exits,
+        },
+      })
+    }
   } else {
     const res = parseTradeCsv(csvText)
     total = res.total
@@ -145,6 +254,15 @@ export async function POST(req: Request) {
       { error: 'No importable trades were found in this file.', total, skipped, warnings },
       { status: 422 },
     )
+  }
+
+  // Backfill MFE/MAE from the central bar feed for trades whose source carried
+  // no excursion data (NinjaTrader, generic CSV). Non-fatal — import proceeds
+  // even if bars are unavailable for the window.
+  try {
+    await backfillExcursionsFromBars(db, pending, warnings)
+  } catch {
+    warnings.push('Could not backfill MFE/MAE from market data (import still completed).')
   }
 
   // Find-or-create a trading_day per distinct date (RLS scopes to this user).

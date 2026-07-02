@@ -99,7 +99,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
       )}
 
       <p className="text-xs text-gray-600 mt-6">
-        Exports from Sierra Chart, NinjaTrader, and Tradovate are supported.{' '}
+        Exports from Sierra Chart, NinjaTrader, Tradezella, and Tradovate are supported.{' '}
         <Link href="/import" className="text-blue-400 hover:underline">More options →</Link>
       </p>
       <p className="text-xs text-gray-500 mt-2">
