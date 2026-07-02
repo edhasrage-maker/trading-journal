@@ -5,6 +5,8 @@ import EmptyStateImport from '@/components/dashboard/EmptyStateImport'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
 import DashboardCharts from '@/components/dashboard/DashboardCharts'
+import DashboardModeSwitch from '@/components/dashboard/DashboardModeSwitch'
+import BeginnerDashboard from '@/components/dashboard/BeginnerDashboard'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
 // Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
@@ -417,6 +419,32 @@ export default async function DashboardPage() {
   // Recent Days table still scopes to the 180d window — keeps the table fast
   // and matches the user's "recent" expectation.
   const recentDaysForTable = recentDays.filter(d => d.date >= past180Start)
+
+  // Beginner-mode data (docs/BEGINNER_PRO_MODES.md): plain-English 30-day
+  // summary + one "focus" derived from the same capture math Pro shows raw +
+  // a simple recent-session list. All computed here so the client view is dumb.
+  const beginner30 = recentDays.filter(d => d.date >= past30Start && d.eod_pnl != null)
+  const beginnerPnl = beginner30.reduce((a, d) => a + (d.eod_pnl ?? 0), 0)
+  const beginnerGreenDays = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).length
+  const beginnerTradedDays = beginner30.length
+  const beginnerBestDay = beginner30.length ? Math.max(...beginner30.map(d => d.eod_pnl ?? 0)) : null
+  const capVals = recentDays
+    .filter(d => d.date >= past30Start && d.avg_capture != null)
+    .map(d => d.avg_capture as number)
+  const avgCap = capVals.length ? capVals.reduce((a, b) => a + b, 0) / capVals.length : null
+  const beginnerFocus = (() => {
+    if (beginnerTradedDays === 0) return 'Log or import a few sessions and your #1 focus will show up here.'
+    if (avgCap != null && avgCap < 0.5) return `You're exiting winners early — on average you're keeping about ${Math.round(avgCap * 100)}% of the move you're offered. This week, try holding to your planned target before taking profit.`
+    if (avgCap != null) return `Your exits are solid — you're capturing about ${Math.round(avgCap * 100)}% of the move you're offered. Keep that up and put your attention on entry timing.`
+    return 'Your sessions are logging cleanly. Keep building the habit — richer coaching shows up as more trades come in.'
+  })()
+  const beginnerSessions = recentDaysForTable.slice(0, 6).map(d => ({
+    date: d.date,
+    pnl: d.eod_pnl,
+    grade: d.overall_grade,
+    breach: (d.process_breach_rules?.length ?? 0) > 0,
+  }))
+
   tick('per-day computation loop')
   console.log('[dashboard perf]', perf.phases.map(p => `${p.name}=${p.ms}ms${p.rows != null ? ` (${p.rows})` : ''}`).join(' | '))
 
@@ -452,21 +480,36 @@ export default async function DashboardPage() {
           net P&L bars. Replaces the old "Today" quick-action tiles. */}
       <DashboardCharts days={statsDays} />
 
-      {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,
-          Median Process. Filters by Week / Month / 30d / YTD / Last Year. */}
-      <DashboardStats days={statsDays} />
+      {/* Beginner (default) = plain summary + one focus + simple session list.
+          Pro = the full instrument (period stats grid + Recent Days table). */}
+      <DashboardModeSwitch
+        beginner={
+          <BeginnerDashboard
+            pnl={beginnerPnl}
+            greenDays={beginnerGreenDays}
+            tradedDays={beginnerTradedDays}
+            bestDay={beginnerBestDay}
+            focus={beginnerFocus}
+            sessions={beginnerSessions}
+          />
+        }
+      >
+        {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,
+            Median Process. Filters by Week / Month / 30d / YTD / Last Year. */}
+        <DashboardStats days={statsDays} />
 
-      {/* Recent days */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <RecentDaysSection
-          initialDays={recentDaysForTable}
-          allSetups={allSetups}
-          allDayTypes={allDayTypes}
-          windowStart={windowStart}
-          windowEnd={windowEnd}
-          defaultFilterStart={defaultFilterStart}
-        />
-      </div>
+        {/* Recent days */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mt-6">
+          <RecentDaysSection
+            initialDays={recentDaysForTable}
+            allSetups={allSetups}
+            allDayTypes={allDayTypes}
+            windowStart={windowStart}
+            windowEnd={windowEnd}
+            defaultFilterStart={defaultFilterStart}
+          />
+        </div>
+      </DashboardModeSwitch>
     </div>
   )
 }

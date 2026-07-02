@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { useUiMode } from '@/lib/ui-mode'
 
 // Settings nav. Coaching + Tags are real features and always shown. The
 // "Perf Stats" page is a non-functional stub — hidden everywhere. Condition
@@ -39,6 +40,7 @@ const settingsItems = [
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
+  const { mode, setMode } = useUiMode()
 
   const signOut = async () => {
     await createClient().auth.signOut()
@@ -154,8 +156,29 @@ export default function Sidebar() {
       </div>
       )}
 
+      {/* View mode — Beginner (plain-English, default) vs Pro (full metrics) */}
+      <div className="px-3 pt-4 border-t border-gray-800">
+        <p className="px-3 text-xs text-gray-600 uppercase tracking-wider mb-2">View</p>
+        <div className="flex items-center gap-1 bg-gray-950/60 border border-gray-800 rounded-lg p-1">
+          {(['beginner', 'pro'] as const).map(m => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                'flex-1 rounded-md py-1.5 text-xs capitalize transition-colors',
+                mode === m ? 'bg-blue-600 font-semibold' : 'text-gray-400 hover:text-white',
+              )}
+              aria-pressed={mode === m}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Sign out */}
-      <div className="px-3 py-4 border-t border-gray-800">
+      <div className="px-3 py-4">
         <button
           type="button"
           onClick={signOut}
