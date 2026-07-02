@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Brain, AlertTriangle, CheckCircle, Loader2, TrendingUp, Target, ShieldCheck, ShieldX, Activity, RefreshCw } from 'lucide-react'
 import type { EodAiAnalysis, ProcessVerdict, ExecutionScore, RuleId, RuleStatus } from '@/lib/supabase/types'
+import { useUiMode } from '@/lib/ui-mode'
 
 interface Props {
   analysis: EodAiAnalysis | null
@@ -44,6 +45,9 @@ const RULE_DESCRIPTIONS: Record<RuleId, string> = {
 const RULE_ORDER: RuleId[] = ['P1', 'P2', 'P3', 'P4', 'P5']
 
 export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled, latestTradeUpdate }: Props) {
+  // Beginner hides the Process/Execution score grids (jargon) and shows just the
+  // plain summary + coaching narrative. Pro shows the full scoring. (docs/BEGINNER_PRO_MODES.md)
+  const { mode } = useUiMode()
   // v1.3-era analyses populate `process` + `execution`. Pre-v1.3 rows only
   // have the legacy `score`. UI prefers v1.3 when present, falls back otherwise.
   const hasV13 = !!(analysis?.process || analysis?.execution)
@@ -102,25 +106,30 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
 
       {analysis && (
         <div className="space-y-3">
-          {/* v1.3: Process verdict + Execution composite, side-by-side */}
-          {hasV13 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-3 border-b border-gray-800">
-              {analysis.process && <ProcessCard process={analysis.process} />}
-              {analysis.execution && <ExecutionCard execution={analysis.execution} />}
-            </div>
-          ) : (
-            /* Pre-v1.3 legacy: single score + summary */
-            <div className="flex items-center gap-3 pb-3 border-b border-gray-800">
-              <span className={`text-3xl font-bold ${legacyColor}`}>
-                {legacyScore}
-                <span className="text-lg text-gray-500">/10</span>
-              </span>
-              <p className="text-sm text-gray-300 leading-relaxed">{analysis.summary}</p>
-            </div>
+          {/* Score grids are Pro-only (Process P1–P5 + Execution sub-metrics = jargon).
+              Beginner gets the plain summary + narrative below instead. */}
+          {mode === 'pro' && (
+            hasV13 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-3 border-b border-gray-800">
+                {analysis.process && <ProcessCard process={analysis.process} />}
+                {analysis.execution && <ExecutionCard execution={analysis.execution} />}
+              </div>
+            ) : (
+              /* Pre-v1.3 legacy: single score + summary */
+              <div className="flex items-center gap-3 pb-3 border-b border-gray-800">
+                <span className={`text-3xl font-bold ${legacyColor}`}>
+                  {legacyScore}
+                  <span className="text-lg text-gray-500">/10</span>
+                </span>
+                <p className="text-sm text-gray-300 leading-relaxed">{analysis.summary}</p>
+              </div>
+            )
           )}
 
-          {/* Summary line in v1.3 era — lives below the verdict cards */}
-          {hasV13 && analysis.summary && (
+          {/* Plain summary line. In Pro it sits under the v1.3 verdict cards; in
+              Beginner it's the headline (shown regardless of era since the score
+              grids are hidden). */}
+          {(hasV13 || mode === 'beginner') && analysis.summary && (
             <p className="text-sm text-gray-300 leading-relaxed pb-3 border-b border-gray-800">{analysis.summary}</p>
           )}
 
