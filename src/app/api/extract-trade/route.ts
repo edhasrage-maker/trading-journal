@@ -88,6 +88,7 @@ If a value lands on the WRONG side of entry for the direction (e.g. a "stop" bel
 
 - Entry time: time at bottom axis at entry point (HH:MM, 24h)
 - Quantity: contracts shown in order marker or stats overlay
+- Symbol: the contract/instrument symbol in the chart header (usually top-left), e.g. "ESU6.CME", "MNQU6.CME", "NQU6.CME". Return the EXACT string shown; do not normalize or guess. Null if not visible.
 
 PART 2 — VISUAL SIGNALS (for tag suggestions)
 
@@ -130,6 +131,7 @@ Return ONLY valid JSON with no other text:
   "direction": "long" or "short" or null,
   "entry_time": "HH:MM" string or null,
   "quantity": number or null,
+  "symbol": string or null,
   "suggested_tags": {
     "setups": [],
     "confluences": [],

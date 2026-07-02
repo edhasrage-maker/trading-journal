@@ -39,6 +39,7 @@ interface Props {
 
 interface FormState {
   direction: 'long' | 'short'
+  symbol: string
   entry_time: string
   entry_price: string
   stop_price: string
@@ -58,6 +59,7 @@ interface FormState {
 
 const empty = (): FormState => ({
   direction: 'long',
+  symbol: '',
   entry_time: new Date().toTimeString().slice(0, 5),
   entry_price: '', stop_price: '', tp1_price: '', quantity: '', pnl: '', notes: '',
   tags: {}, suggestedTags: {}, screenshot_url: null, pendingFile: null, activePin: null,
@@ -70,6 +72,7 @@ function fromTrade(t: Trade): FormState {
   const timeStr = t.entry_time ? new Date(t.entry_time).toTimeString().slice(0, 5) : ''
   return {
     direction: t.direction ?? 'long',
+    symbol: t.symbol ?? '',
     entry_time: timeStr,
     entry_price: t.entry_price?.toString() ?? '',
     stop_price: t.stop_price?.toString() ?? '',
@@ -107,6 +110,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
+    base.symbol = defaultSymbol ?? '' // new trades default to the day's instrument; editable below
     if (initialFile) {
       base.screenshot_url = URL.createObjectURL(initialFile)
       base.pendingFile = initialFile
@@ -277,11 +281,13 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       const tp1Price = data.tp1_price as number | null | undefined
       const entryTime = data.entry_time as string | null | undefined
       const qty = data.quantity as number | null | undefined
+      const sym = data.symbol as string | null | undefined
       const suggested = data.suggested_tags as TradeTags | null | undefined
 
       setForm(f => ({
         ...f,
         ...(dirVal && { direction: dirVal }),
+        ...(sym && { symbol: sym }),
         ...(entryPrice != null && { entry_price: String(entryPrice) }),
         ...(stopPrice != null && { stop_price: String(stopPrice) }),
         ...(tp1Price != null && { tp1_price: String(tp1Price) }),
@@ -325,6 +331,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       const payload = {
         date,
         direction: form.direction,
+        symbol: form.symbol.trim() || defaultSymbol || null,
         entry_time: entryIso,
         entry_price: parseFloat(form.entry_price) || null,
         stop_price: parseFloat(form.stop_price) || null,
@@ -484,6 +491,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trade Details</label>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {[
+              { key: 'symbol', label: 'Instrument', type: 'text', placeholder: 'e.g. ESU6.CME' },
               { key: 'entry_time', label: 'Entry Time', type: 'text', placeholder: 'HH:MM' },
               { key: 'quantity', label: 'Qty / Contracts', type: 'number' },
               { key: 'entry_price', label: 'Entry Price', type: 'number' },
