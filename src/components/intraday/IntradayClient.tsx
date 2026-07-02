@@ -9,6 +9,7 @@ import ScreenshotLightbox from './ScreenshotLightbox'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
+import CoachScoreBadge from './CoachScoreBadge'
 import { deleteBlob } from '@/lib/storage'
 import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, type BarLike } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
@@ -148,6 +149,11 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   // on the page (existing edit-mode forms + the "new" form) without a full
   // page refresh.
   const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
+  // Curated setup labels (lowercased) → Coach Score's "setup in playbook" check.
+  const setupLibrary = useMemo(
+    () => new Set(allTags.filter(t => t.category === 'setups').map(t => t.label.toLowerCase())),
+    [allTags],
+  )
   const addTag = (tag: TradeTag) => {
     setAllTags(prev => prev.some(t => t.id === tag.id) ? prev : [...prev, tag])
   }
@@ -572,6 +578,9 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                   <span key={tag} className="text-xs px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400">{tag}</span>
                 ))}
               </div>
+
+              {/* Coach Score — deterministic per-trade execution grade (0–10). */}
+              <CoachScoreBadge trade={trade} setupLibrary={setupLibrary} />
 
               {/* P&L · R · Capture % · Loss ×R. Capture and loss are bolded when
                   the trade matches a high-signal cross-case pattern:
