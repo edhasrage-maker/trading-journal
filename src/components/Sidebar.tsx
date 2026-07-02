@@ -83,14 +83,14 @@ export default function Sidebar() {
   return (
     <aside className="fixed left-0 top-0 h-screen w-60 bg-gray-900 border-r border-gray-800 flex flex-col">
       {/* Logo — TapeScore lockup: mark + wordmark, tagline aligned under the wordmark */}
-      <div className="flex items-center gap-2 px-5 py-5 border-b border-gray-800">
+      <div className="flex items-center gap-3 px-5 py-6 border-b border-gray-800">
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG, no image optimization needed */}
-        <img src="/brand/tapescore-favicon.svg" alt="TapeScore" className="w-7 h-7 flex-shrink-0" />
-        <div className="flex flex-col gap-0.5 leading-none">
-          <span className="text-[15px] tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+        <img src="/brand/tapescore-favicon.svg" alt="TapeScore" className="w-10 h-10 flex-shrink-0" />
+        <div className="flex flex-col gap-1 leading-none">
+          <span className="text-xl tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
             <span className="font-medium">Tape</span><span className="font-extrabold">Score</span>
           </span>
-          <span className="font-mono text-[8px] uppercase text-gray-500 whitespace-nowrap" style={{ letterSpacing: '0.14em' }}>
+          <span className="font-mono text-[9px] uppercase text-gray-500 whitespace-nowrap" style={{ letterSpacing: '0.1em' }}>
             Game film for traders
           </span>
         </div>
