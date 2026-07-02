@@ -1,10 +1,101 @@
 @import "tailwindcss";
 
+/* ── TapeScore type roles (docs/DESIGN_SYSTEM.md) ─────────────────────────
+   --font-sans    = Hanken Grotesk (body / UI / labels / numbers w/ tabular-nums)
+   --font-display = Archivo         (brand / section heads)
+   --font-mono    = Spline Sans Mono (log / time / tape readouts)               */
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-hanken);
+  --font-display: var(--font-archivo);
+  --font-mono: var(--font-spline-mono);
 }
 
+/* ── TapeScore palette (brand handoff) ────────────────────────────────────
+   The app uses Tailwind's default gray + blue directly across ~40 files.
+   Overriding the ramps re-skins everything into the brand identity:
+   cool near-black surface (#0E0F11) + amber accent (#E0A33C).
+   Warnings intentionally left on default `yellow` so caution never collides
+   with the amber accent (which now comes from the blue ramp).                 */
+@theme {
+  /* Neutrals → cool near-black. Brand ground is #0E0F11, but the surface steps
+     are spread so panels read as distinct from the ground and borders stay
+     visible: ground (950) → card (900) → border/control (800) each a legible
+     step. (Earlier values were packed too close and cards melted into the bg.) */
+  --color-gray-50:  #F3F4F1;
+  --color-gray-100: #E7E8E5;
+  --color-gray-200: #D3D6D0;
+  --color-gray-300: #B7BBB5;
+  --color-gray-400: #8E938E;
+  --color-gray-500: #6E7378;
+  --color-gray-600: #4A5058;
+  --color-gray-700: #383E46;  /* dividers / hover borders (stronger)   */
+  --color-gray-800: #2A2F36;  /* card borders + controls — visible on a card */
+  --color-gray-900: #191C21;  /* card / panel — clearly lifts off the ground */
+  --color-gray-950: #0E0F11;  /* app ground (brand surface) */
+
+  /* Accent → amber (brand #E0A33C); replaces stock blue */
+  --color-blue-50:  #FBF3E2;
+  --color-blue-100: #F7E6C0;
+  --color-blue-200: #F0D293;
+  --color-blue-300: #EABF66;
+  --color-blue-400: #E5AE45;
+  --color-blue-500: #E0A33C;
+  --color-blue-600: #C0872C;
+  --color-blue-700: #97691F;
+  --color-blue-800: #6E4C17;
+  --color-blue-900: #4A3310;
+  --color-blue-950: #2A1D07;
+
+  /* Profit → calm emerald */
+  --color-green-50:  #ECFBF4;
+  --color-green-100: #CFF3E2;
+  --color-green-200: #A6E8C9;
+  --color-green-300: #79DBAD;
+  --color-green-400: #52C99A;
+  --color-green-500: #34B07F;
+  --color-green-600: #259068;
+  --color-green-700: #1C6E50;
+  --color-green-800: #155138;
+  --color-green-900: #0F3A29;
+  --color-green-950: #0A2A1E;
+
+  /* Loss → clay (informs, doesn't scream) */
+  --color-red-50:  #FCEFEE;
+  --color-red-100: #F8DEDC;
+  --color-red-200: #F1C0BC;
+  --color-red-300: #EA9C96;
+  --color-red-400: #E5645F;
+  --color-red-500: #D34E49;
+  --color-red-600: #B23E39;
+  --color-red-700: #8E322E;
+  --color-red-800: #6B2624;
+  --color-red-900: #4C1C1A;
+  --color-red-950: #351312;
+
+  /* Semantic aliases (enable bg-accent / text-pos / bg-surface-1 later) */
+  --color-app: #0E0F11;
+  --color-surface-1: #191C21;
+  --color-surface-2: #2A2F36;
+  --color-surface-3: #383E46;
+  --color-accent: #E0A33C;
+  --color-accent-bright: #F0BC63;
+  --color-accent-contrast: #2A1D07;
+  --color-pos: #52C99A;
+  --color-neg: #E5645F;
+  --color-warn: #EAB308;   /* distinct from the amber accent */
+  --color-danger: #E5645F;
+}
+
+/* ── Base type ──────────────────────────────────────────────────────────── */
 body {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Semantic headings pick up Archivo; styled-div "headings" get font-display
+   applied per-component in later stages. */
+h1, h2, h3 {
+  font-family: var(--font-display), var(--font-sans), sans-serif;
+  letter-spacing: -0.01em;
 }

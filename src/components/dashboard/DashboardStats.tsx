@@ -280,13 +280,19 @@ export default function DashboardStats({ days }: Props) {
         <StatCard
           label="Day Win %"
           value={stats.dayWinRate == null ? '—' : `${(stats.dayWinRate * 100).toFixed(0)}%`}
-          tone={stats.dayWinRate == null ? 'neutral' : stats.dayWinRate >= 0.5 ? 'positive' : 'negative'}
+          // Win rate is colored by meaning, not <50%: gentle green only when
+          // genuinely strong, otherwise neutral. Never red — P&L carries the
+          // honest good/bad signal, so a low win rate on a green stretch (a
+          // valid high-R style) shouldn't read as alarm. (docs/DESIGN_SYSTEM.md)
+          tone={stats.dayWinRate == null ? 'neutral' : stats.dayWinRate >= 0.6 ? 'positive' : 'neutral'}
           sub="% of days green"
         />
         <StatCard
           label="Trade Win %"
           value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
-          tone={stats.tradeWinRate == null ? 'neutral' : stats.tradeWinRate >= 0.5 ? 'positive' : 'negative'}
+          // Never red (see Day Win %): 38% trade win on a profitable stretch is
+          // fine for a high-R approach. Neutral by default, green only when strong.
+          tone={stats.tradeWinRate == null ? 'neutral' : stats.tradeWinRate >= 0.6 ? 'positive' : 'neutral'}
           sub={`${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
         />
         <StatCard
