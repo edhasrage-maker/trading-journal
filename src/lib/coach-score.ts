@@ -18,6 +18,8 @@ export interface GradableTrade {
   direction: 'long' | 'short' | null
   quantity: number | null
   entry_atr_1m?: number | null
+  exit_price?: number | null
+  exits_json?: Array<{ price?: number | null }> | null
   tags_json?: {
     setups?: string[]
     confluences?: string[]
@@ -132,17 +134,34 @@ export function computeCoachScore(t: GradableTrade, opts?: { setupLibrary?: Set<
     }
   }
 
-  // 6. break_of_cluster_or_bubble_entry — trust the entry_model / OF tag.
-  {
-    const has = [...entryModel, ...orderFlow].some(m => /break.*(cluster|bubble)/i.test(m))
-    c.push(has
-      ? { key: 'break_of_cluster', label: 'Break of cluster/bubble', status: 'pass', source: 'auto' }
-      : { key: 'break_of_cluster', label: 'Break of cluster/bubble', status: 'unknown', source: 'auto', reason: 'No break-of-cluster tag' })
-  }
+  // 6. valid_entry_trigger — the entry used a DEFINED trigger from the trader's
+  //    entry_model library (ANY of them — 1 ATR Entry, Break of Candle, POC
+  //    break, Heiken-Ashi flip, break-of-cluster, etc.), not only one. An entry
+  //    with no model tagged is a discretionary poke → unknown for the AI.
+  c.push(entryModel.length > 0
+    ? { key: 'valid_entry_trigger', label: 'Valid entry trigger', status: 'pass', source: 'auto', reason: entryModel.join(', ') }
+    : { key: 'valid_entry_trigger', label: 'Valid entry trigger', status: 'unknown', source: 'auto', reason: 'No entry model tagged' })
 
-  // 7. chart_not_emotion_management — was the exit a technical read or a PnL-
-  //    anchored emotional one? Pure judgment on the notes → always AI.
-  c.push({ key: 'chart_not_emotion', label: 'Chart-not-emotion exit', status: 'unknown', source: 'auto', reason: 'Needs read of exit reasoning' })
+  // 7. rule_based_exit (was chart_not_emotion) — a rule-based exit is disciplined
+  //    by definition: hitting the planned TP, or getting stopped, both PASS
+  //    automatically (getting stopped is correct execution — an invalidated
+  //    idea). Only a discretionary exit BETWEEN target and stop needs a read.
+  {
+    const e = t.entry_price, tp = t.tp1_price, stop = t.stop_price, dir = t.direction
+    const exits = [
+      ...(t.exits_json ?? []).map(x => x?.price),
+      t.exit_price,
+    ].filter((p): p is number => typeof p === 'number' && Number.isFinite(p))
+    if (e == null || dir == null || exits.length === 0) {
+      c.push({ key: 'rule_based_exit', label: 'Rule-based exit', status: 'unknown', source: 'auto', reason: 'Needs read of exit reasoning' })
+    } else {
+      const hitTp = tp != null && exits.some(p => (dir === 'long' ? p >= tp : p <= tp))
+      const stopped = stop != null && exits.some(p => (dir === 'long' ? p <= stop : p >= stop))
+      if (hitTp) c.push({ key: 'rule_based_exit', label: 'Rule-based exit', status: 'pass', source: 'auto', reason: 'Hit TP' })
+      else if (stopped) c.push({ key: 'rule_based_exit', label: 'Rule-based exit', status: 'pass', source: 'auto', reason: 'Stopped out' })
+      else c.push({ key: 'rule_based_exit', label: 'Rule-based exit', status: 'unknown', source: 'auto', reason: 'Discretionary exit — needs read' })
+    }
+  }
 
   // 8. no_mistakes_tagged.
   c.push({ key: 'no_mistakes', label: 'No mistakes tagged', status: mistakes.length === 0 ? 'pass' : 'fail', source: 'auto', reason: mistakes.length ? mistakes.join(', ') : undefined })

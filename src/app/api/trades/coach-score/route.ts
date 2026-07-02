@@ -26,8 +26,8 @@ type AnyClient = any
 // eod-prompt.ts §Execution Parameters).
 const CRITERION_DEF: Record<string, string> = {
   clear_aoi: 'clear_area_of_interest — PASS if the entry is anchored to a specific structural level (PDH/PDL, IBH/IBL, ONH/ONL, an HTF zone, an LVN, or a demand/supply cluster). A generic mid-range entry with no level FAILS. "na" only if there is genuinely no location context in the notes to judge.',
-  break_of_cluster: 'break_of_cluster_or_bubble_entry — PASS if the trigger was a structural break (price breaking through a cluster of orders, or breaking above/below a delta bubble). A purely discretionary price entry with no such break FAILS.',
-  chart_not_emotion: 'chart_not_emotion_management — PASS if exits were driven by clear technical/structural reads (e.g. "a big buyer stepped in above and did not get rewarded"). FAIL if exits were PnL-anchored emotional decisions (e.g. "scared to give back profits before target"). "na" if there is no exit reasoning to judge.',
+  valid_entry_trigger: 'valid_entry_trigger — PASS if the entry used a DEFINED trigger/model from the trader\'s playbook (1 ATR entry, break of candle, POC break, Heiken-Ashi flip, break of cluster/bubble, a price-based trigger, etc.). A purely discretionary poke with no method described FAILS. Do not require any ONE specific model.',
+  rule_based_exit: 'rule_based_exit — this exit was NOT a clean TP-hit or stop-out (those already auto-pass). Judge the discretionary exit: PASS if driven by a technical/structural read (e.g. "a big buyer stepped in above and did not get rewarded"); FAIL if PnL-anchored emotion (e.g. "scared to give back profits before target"). "na" if there is no exit reasoning to judge.',
   tp1_at_2r: 'tp1_at_2r_or_reasoned — this trade\'s planned TP1 was BELOW 2R. PASS only if the notes give an explicit structural reason for the sub-2R target (a one-off level / specific structural target). No reason = FAIL.',
 }
 
