@@ -456,4 +456,58 @@ grant execute on function public.get_shared_day(uuid) to anon, authenticated;
 drop policy if exists "Shared read" on public.ohlcv_bars;
 drop policy if exists "Public read" on public.ohlcv_bars;
 create policy "Public read" on public.ohlcv_bars for select using (true);
+
+
+-- ----------------------------------------------------------------------------
+-- 12. Per-user daily AI usage caps.
+--     Generic (user, PT-day, action) counter + atomic check-and-increment RPC.
+--     First cap: "Coach Score" (AI trade grade) at 3 clicks/day. Same infra
+--     serves any AI route. Mirrored in migrations/20260702_ai_usage.sql.
+-- ----------------------------------------------------------------------------
+create table if not exists public.ai_usage (
+  id          bigint generated always as identity primary key,
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  usage_date  date not null,
+  action      text not null,
+  count       int  not null default 0,
+  updated_at  timestamptz not null default now(),
+  unique (user_id, usage_date, action)
+);
+create index if not exists ai_usage_user_day_idx on public.ai_usage(user_id, usage_date);
+alter table public.ai_usage enable row level security;
+drop policy if exists "Owner ai_usage" on public.ai_usage;
+create policy "Owner ai_usage" on public.ai_usage
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create or replace function public.consume_ai_usage(p_action text, p_limit int)
+returns table(allowed boolean, used int, day date)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid  uuid := auth.uid();
+  v_date date := (now() at time zone 'America/Los_Angeles')::date;
+  v_count int;
+begin
+  if v_uid is null then
+    raise exception 'not authenticated';
+  end if;
+  insert into public.ai_usage (user_id, usage_date, action, count)
+  values (v_uid, v_date, p_action, 0)
+  on conflict (user_id, usage_date, action) do nothing;
+  select ai_usage.count into v_count
+  from public.ai_usage
+  where user_id = v_uid and usage_date = v_date and action = p_action
+  for update;
+  if v_count >= p_limit then
+    return query select false, v_count, v_date;
+  else
+    update public.ai_usage
+      set count = ai_usage.count + 1, updated_at = now()
+    where user_id = v_uid and usage_date = v_date and action = p_action;
+    return query select true, v_count + 1, v_date;
+  end if;
+end $$;
+grant execute on function public.consume_ai_usage(text, int) to authenticated;
 -- ============================================================================
