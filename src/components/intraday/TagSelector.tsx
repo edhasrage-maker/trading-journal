@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import type { TradeTag, TradeTags, TagCategory } from '@/lib/supabase/types'
 import { normalizeTagArray } from '@/lib/supabase/types'
+import { useUiMode } from '@/lib/ui-mode'
 
 interface Props {
   tags: TradeTag[]
@@ -46,6 +47,9 @@ const CATEGORY_ORDER: TagCategory[] = [
 ]
 
 export default function TagSelector({ tags, selected, suggested, onChange, onTagCreated }: Props) {
+  // Highlights (beginner) shows only the Setup category; Detailed Tape (pro)
+  // shows the full taxonomy. (docs/BEGINNER_PRO_MODES.md)
+  const { mode } = useUiMode()
   // Which category currently has its inline input expanded (only one at a
   // time; the affordance is rarely used and stays out of the way otherwise).
   const [addingFor, setAddingFor] = useState<TagCategory | null>(null)
@@ -112,7 +116,7 @@ export default function TagSelector({ tags, selected, suggested, onChange, onTag
   // user can't add the very first tag to an empty category.
   return (
     <div className="space-y-4">
-      {CATEGORY_ORDER.map(cat => {
+      {(mode === 'beginner' ? (['setups'] as TagCategory[]) : CATEGORY_ORDER).map(cat => {
         const list = byCategory[cat] ?? []
         const adding = addingFor === cat
         return (
