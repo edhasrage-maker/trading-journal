@@ -448,6 +448,8 @@ export default async function DashboardPage() {
   const beginnerSessions = recentDaysForTable.slice(0, 6).map(d => ({
     date: d.date,
     pnl: d.eod_pnl,
+    winRate: d.win_rate,        // per-day trade win %
+    capture: d.avg_capture,     // per-day MFE capture (0..1)
     grade: d.overall_grade,
     breach: (d.process_breach_rules?.length ?? 0) > 0,
   }))

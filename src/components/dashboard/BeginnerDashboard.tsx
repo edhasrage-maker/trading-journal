@@ -8,7 +8,7 @@ import { Target } from 'lucide-react'
  * list. No jargon (MFE/MAE/capture/process live in Pro). The numbers here are the
  * same engine's output, just translated. See docs/BEGINNER_PRO_MODES.md.
  */
-type Session = { date: string; pnl: number | null; grade: number | null; breach: boolean }
+type Session = { date: string; pnl: number | null; winRate: number | null; capture: number | null; grade: number | null; breach: boolean }
 
 type Props = {
   pnl: number
@@ -75,10 +75,14 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
         <p className="text-sm text-gray-200 leading-relaxed">{focus}</p>
       </div>
 
-      {/* Recent sessions — plain result + quality word */}
+      {/* Recent sessions — plain per-day signals (win rate, capture) + quality + result */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Recent sessions</h2>
+        <div className="flex items-center px-4 py-3 border-b border-gray-800 text-[10px] uppercase tracking-wide text-gray-600">
+          <span className="flex-1 text-sm font-semibold text-white normal-case tracking-normal" style={{ fontFamily: 'var(--font-display)' }}>Recent sessions</span>
+          <span className="w-14 text-right" title="Trade win rate that day">Win</span>
+          <span className="w-16 text-right" title="How much of the move you kept (MFE capture)">Kept</span>
+          <span className="w-32 text-right">Quality</span>
+          <span className="w-20 text-right">Result</span>
         </div>
         {sessions.length === 0 ? (
           <div className="px-4 py-6 text-sm text-gray-500 text-center">No sessions yet.</div>
@@ -89,13 +93,13 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
               <Link
                 key={s.date}
                 href={`/eod/${s.date}`}
-                className="flex items-center justify-between px-4 py-3 text-sm border-b border-gray-800 last:border-0 hover:bg-gray-800 transition-colors"
+                className="flex items-center px-4 py-3 text-sm border-b border-gray-800 last:border-0 hover:bg-gray-800 transition-colors"
               >
-                <span className="text-gray-300">{fmtDate(s.date)}</span>
-                <span className="flex items-center gap-3">
-                  <span className="flex items-center gap-2 text-gray-500 text-xs"><span className={`w-2 h-2 rounded-full ${q.dot}`} />{q.word}</span>
-                  <span className={`font-semibold min-w-[64px] text-right ${(s.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(s.pnl)}</span>
-                </span>
+                <span className="flex-1 text-gray-300">{fmtDate(s.date)}</span>
+                <span className="w-14 text-right text-xs text-gray-400" style={{ fontVariantNumeric: 'tabular-nums' }}>{s.winRate == null ? '—' : `${Math.round(s.winRate)}%`}</span>
+                <span className="w-16 text-right text-xs text-gray-400" style={{ fontVariantNumeric: 'tabular-nums' }}>{s.capture == null ? '—' : `${Math.round(s.capture * 100)}%`}</span>
+                <span className="w-32 flex items-center justify-end gap-2 text-gray-500 text-xs"><span className={`w-2 h-2 rounded-full ${q.dot}`} />{q.word}</span>
+                <span className={`w-20 text-right font-semibold ${(s.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(s.pnl)}</span>
               </Link>
             )
           })
