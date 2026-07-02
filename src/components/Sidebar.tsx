@@ -19,6 +19,7 @@ import {
   Brain,
   Upload,
   Sparkles,
+  DollarSign,
   LogOut,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -31,6 +32,7 @@ import { useUiMode } from '@/lib/ui-mode'
 // dir) so they only appear in the local power-user build.
 const settingsItems = [
   { href: '/settings/coaching', label: 'Coaching', icon: Brain, localOnly: false },
+  { href: '/settings/commissions', label: 'Commissions', icon: DollarSign, localOnly: false },
   { href: '/settings/tags', label: 'Tags', icon: Tag, localOnly: false },
   { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database, localOnly: true },
   { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart, localOnly: true },

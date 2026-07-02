@@ -600,6 +600,11 @@ create table if not exists trader_profile (
   -- Short, high-priority steering list injected LAST in the coach prompt
   -- (highest-recency slot). Migration: 20260620_trader_profile_focus.sql.
   focus_md text not null default '',
+  -- Commission ($ per contract, per side) applied at import to logs that carry
+  -- NO commission of their own (Sierra Chart = gross P&L). Round-turn = 2×.
+  -- Sources that already include commission (NinjaTrader, Tradezella net) are
+  -- untouched. 0 = don't adjust. Migration: 20260702_commission_per_side.sql.
+  commission_per_side numeric not null default 0,
   updated_at timestamptz not null default now()
 );
 

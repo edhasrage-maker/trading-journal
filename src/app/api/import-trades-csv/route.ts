@@ -54,6 +54,35 @@ async function fetchBars(
 }
 
 /**
+ * Apply the user's per-side commission to GROSS-P&L imports (Sierra Chart).
+ * Round-turn cost per trade = rate × contracts × 2 (entry + exit). No-op when
+ * the setting is 0 or the column hasn't been migrated. Sources that already
+ * carry commission (NinjaTrader, Tradezella) never call this.
+ */
+async function applyGrossCommissions(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any, pending: PendingTrade[], warnings: string[],
+): Promise<void> {
+  const { data, error } = await db
+    .from('trader_profile')
+    .select('commission_per_side')
+    .eq('id', 'default')
+    .maybeSingle()
+  if (error) return // column/table not migrated → skip silently
+  const rate = Number(data?.commission_per_side ?? 0)
+  if (!(rate > 0)) return
+
+  let n = 0
+  for (const p of pending) {
+    const q = Number(p.row.quantity)
+    if (p.row.pnl == null || !Number.isFinite(q) || q <= 0) continue
+    p.row.pnl = Math.round((p.row.pnl - rate * q * 2) * 100) / 100
+    n++
+  }
+  if (n > 0) warnings.push(`Applied $${rate.toFixed(2)}/side commission (round-turn) to ${n} trade(s).`)
+}
+
+/**
  * Fill high/low-during-position from the central bar feed for any trade whose
  * source didn't carry excursion data (NinjaTrader grids, generic CSVs). The
  * market bars — not the trade log — are the source of truth for MFE/MAE. Runs
@@ -157,8 +186,13 @@ export async function POST(req: Request) {
   let total = 0
   let skipped = 0
   const warnings: string[] = []
+  // True when the source exports GROSS P&L (no commission of its own) → apply
+  // the user's per-side commission setting. Sierra logs are gross; NinjaTrader
+  // (per-fill commission) and Tradezella (Net P&L) already include costs.
+  let grossSource = false
 
   if (isSierraLog(csvText)) {
+    grossSource = true // Sierra exports gross P&L → apply commission setting
     const { rows, parseErrors, skippedFiltered } = parseSierraChartLog(csvText, clientTz)
     skipped = skippedFiltered
     total = rows.length + skippedFiltered
@@ -263,6 +297,13 @@ export async function POST(req: Request) {
     await backfillExcursionsFromBars(db, pending, warnings)
   } catch {
     warnings.push('Could not backfill MFE/MAE from market data (import still completed).')
+  }
+
+  // Apply the user's commission setting to gross-P&L sources (Sierra Chart).
+  if (grossSource) {
+    try {
+      await applyGrossCommissions(db, pending, warnings)
+    } catch { /* non-fatal: keep gross P&L */ }
   }
 
   // Find-or-create a trading_day per distinct date (RLS scopes to this user).
