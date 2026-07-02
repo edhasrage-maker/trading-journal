@@ -23,8 +23,10 @@
  *      Override the folder with SIERRA_DATA_DIR if yours isn't D:\SierraCharts\Data.
  *
  * RUN
- *   npx tsx scripts/public-bar-feed.ts             # today (PT)
- *   npx tsx scripts/public-bar-feed.ts 2026-06-29  # a specific date (backfill)
+ *   npx tsx scripts/public-bar-feed.ts             # today (PT) — the scheduled run
+ *   npx tsx scripts/public-bar-feed.ts 2026-06-29  # a specific date
+ *   npx tsx scripts/public-bar-feed.ts --days 8    # last 8 days — one-time, so the
+ *                                                  # chart's session levels have lookback
  *
  * SCHEDULE
  *   Task Scheduler, every ~3 min during your session — same cadence as BarWatcher.
@@ -65,23 +67,48 @@ async function main() {
   }
 
   const sb = createClient(url, key, { auth: { persistSession: false } })
-  const date = process.argv[2] || todayPT()
-  console.log(`[public-bar-feed] ${date} → ${url.replace(/^https?:\/\//, '')}`)
+
+  // Which dates to feed:
+  //   (no args)          → today only  (the frequent 3-min run)
+  //   YYYY-MM-DD         → that one date
+  //   --days N           → the last N calendar days (one-time backfill so the
+  //                        session-levels lookback — prior day, overnight — has
+  //                        data). Weekends/holidays report "no ticks" and skip.
+  const args = process.argv.slice(2)
+  const daysIdx = args.indexOf('--days')
+  let dates: string[]
+  if (daysIdx >= 0) {
+    const n = Math.max(1, Number(args[daysIdx + 1]) || 8)
+    const today = todayPT()
+    dates = Array.from({ length: n }, (_, i) => {
+      const d = new Date(`${today}T12:00:00Z`)
+      d.setUTCDate(d.getUTCDate() - i)
+      return d.toISOString().slice(0, 10)
+    })
+  } else if (args[0] && /^\d{4}-\d{2}-\d{2}$/.test(args[0])) {
+    dates = [args[0]]
+  } else {
+    dates = [todayPT()]
+  }
+
+  console.log(`[public-bar-feed] ${dates.length === 1 ? dates[0] : `${dates[dates.length - 1]}…${dates[0]}`} → ${url.replace(/^https?:\/\//, '')}`)
 
   let anyOk = false
-  for (const f of FEEDS) {
-    const out = await importScidDay(sb, {
-      scidFile: f.scidFile,
-      storeAs: f.root,
-      date,
-      priceDivisor: 100,
-      writeHistory: false,
-    })
-    if (out.ok) {
-      anyOk = true
-      console.log(`  ${f.root.padEnd(4)} upserted ${out.result.upserted} bars  (${f.scidFile})`)
-    } else {
-      console.error(`  ${f.root.padEnd(4)} ${out.error}${out.hint ? `  — ${out.hint}` : ''}`)
+  for (const date of dates) {
+    for (const f of FEEDS) {
+      const out = await importScidDay(sb, {
+        scidFile: f.scidFile,
+        storeAs: f.root,
+        date,
+        priceDivisor: 100,
+        writeHistory: false,
+      })
+      if (out.ok) {
+        anyOk = true
+        console.log(`  ${date} ${f.root.padEnd(4)} upserted ${out.result.upserted} bars`)
+      } else {
+        console.error(`  ${date} ${f.root.padEnd(4)} ${out.error}`)
+      }
     }
   }
   process.exit(anyOk ? 0 : 1)

@@ -1,12 +1,42 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { readScidBars } from '@/lib/scid-reader'
-import { computeSessionLevels, DEFAULT_LEVELS_CONFIG } from '@/lib/session-levels'
+import { computeSessionLevels, DEFAULT_LEVELS_CONFIG, type RawBar } from '@/lib/session-levels'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
+
+/**
+ * Paginate the shared ohlcv_bars for [startIso, endIso] (cloud levels source).
+ * 8 days of 1-minute bars is ~11k rows, past the 1000-row cap, so we page.
+ */
+async function fetchDbBars(
+  supabase: AnyClient, symbol: string, startIso: string, endIso: string,
+): Promise<RawBar[]> {
+  const PAGE = 1000
+  const out: RawBar[] = []
+  let from = 0
+  for (let page = 0; page < 20; page++) {
+    const { data, error } = await supabase
+      .from('ohlcv_bars')
+      .select('ts, open, high, low, close, volume')
+      .eq('symbol', symbol)
+      .gte('ts', startIso)
+      .lte('ts', endIso)
+      .order('ts', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) break
+    const rows = (data ?? []) as RawBar[]
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
 
 const SIERRA_DATA_DIR = process.env.SIERRA_DATA_DIR || 'D:\\SierraCharts\\Data'
 // Days of lookback so weekly anchor (last Sun 15:00 PT), prior-day, and
@@ -37,6 +67,28 @@ export async function GET(req: Request) {
   }
 
   const supabase: AnyClient = await createClient()
+  const emaTf = Number(searchParams.get('emaTf') ?? '5') || 5
+
+  // Cloud build: compute levels from the shared ohlcv_bars feed (root symbol)
+  // rather than a local .scid. Same session-levels engine, different bar source.
+  if (!LOCAL_FEATURES_ENABLED) {
+    const root = chartSeriesRoot(symbol)
+    const targetStartMs = Date.parse(`${date}T00:00:00Z`)
+    const startIso = new Date(targetStartMs - LOOKBACK_DAYS * 86_400_000).toISOString()
+    const endIso = new Date(targetStartMs + 86_400_000).toISOString()
+    const bars = await fetchDbBars(supabase, root, startIso, endIso)
+    if (bars.length === 0) {
+      return NextResponse.json(
+        { error: `No bars for ${root} in the ${LOOKBACK_DAYS}-day lookback.`, levels: null, series: [] },
+        { status: 200 },
+      )
+    }
+    const { levels, series } = computeSessionLevels(bars, date, {
+      ...DEFAULT_LEVELS_CONFIG,
+      emaTimeframeMins: emaTf,
+    })
+    return NextResponse.json({ levels, series })
+  }
 
   // Resolve the source .scid filename from the latest SCID import for this symbol.
   let scidFile = explicitFile
@@ -85,7 +137,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: `No bars in lookback for ${safeName}`, levels: null, series: [] }, { status: 200 })
   }
 
-  const emaTf = Number(searchParams.get('emaTf') ?? '5') || 5
   const { levels, series } = computeSessionLevels(bars, date, {
     ...DEFAULT_LEVELS_CONFIG,
     emaTimeframeMins: emaTf,
