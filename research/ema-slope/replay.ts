@@ -36,6 +36,7 @@ type Args = {
   rearmAtrFrac: number
   triggerExpireBars: number
   minSlope: number
+  maxSlope: number // upper slope bound (pts/5m) — for isolating slope BANDS (default ∞)
   minSep: number // min |price − EMA| in ATR at signal (extension/separation floor)
   minSpread: number // min |9 EMA − 20 EMA| in ATR at signal, direction-aligned (trend-strength floor)
   maxSep: number // max |price − EMA| in ATR at signal — reject over-extended (exhaustion) entries
@@ -128,6 +129,7 @@ function parseArgs(): Args {
     rearmAtrFrac: Number(a.rearm ?? 0.5),
     triggerExpireBars: a['trigger-expire'] != null ? Number(a['trigger-expire']) : Number.POSITIVE_INFINITY,
     minSlope: Number(a['min-slope'] ?? 0),
+    maxSlope: a['max-slope'] != null ? Number(a['max-slope']) : Number.POSITIVE_INFINITY,
     minSep: Number(a['min-sep'] ?? 0),
     minSpread: Number(a['min-spread'] ?? 0),
     maxSep: a['max-sep'] != null ? Number(a['max-sep']) : Number.POSITIVE_INFINITY,
@@ -552,7 +554,7 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
     if (args.side === 'long' && newBias === 'short') newBias = null
     if (args.side === 'short' && newBias === 'long') newBias = null
     // Slope-magnitude floor: drop weak-trend signals before they ever arm.
-    if (newBias != null && Math.abs(slope) < args.minSlope) newBias = null
+    if (newBias != null && (Math.abs(slope) < args.minSlope || Math.abs(slope) > args.maxSlope)) newBias = null
     // Entry-time window: no new arming outside the configured PT window.
     if (newBias != null && !inEntryWindow(bar5m.ts, args.entryStartMin, args.entryEndMin)) newBias = null
     // 24h VWAP filter (Test 3): only trade aligned with the 3pm-PT-anchored VWAP.
@@ -905,7 +907,7 @@ function simulateBreak(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades:
     if (args.side === 'long' && newBias === 'short') newBias = null
     if (args.side === 'short' && newBias === 'long') newBias = null
     // Slope-magnitude floor: drop weak-trend signals before they ever arm.
-    if (newBias != null && Math.abs(slope) < args.minSlope) newBias = null
+    if (newBias != null && (Math.abs(slope) < args.minSlope || Math.abs(slope) > args.maxSlope)) newBias = null
     // Entry-time window: no new arming outside the configured PT window.
     if (newBias != null && !inEntryWindow(bar5m.ts, args.entryStartMin, args.entryEndMin)) newBias = null
     if (newBias !== bias) {
