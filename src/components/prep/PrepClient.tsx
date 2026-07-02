@@ -935,15 +935,18 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         }
       />
 
-      {/* Discord Dashboard */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <DiscordDashboard
-          date={date}
-          marketContext={context as Partial<MarketContext>}
-          prepNotes={prepNotes}
-          symbol={context.symbol ?? 'NQ'}
-        />
-      </div>
+      {/* Discord prep-share card — a personal community feature; hidden in the
+          cloud build, kept in the local build. */}
+      {LOCAL_FEATURES_ENABLED && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+          <DiscordDashboard
+            date={date}
+            marketContext={context as Partial<MarketContext>}
+            prepNotes={prepNotes}
+            symbol={context.symbol ?? 'NQ'}
+          />
+        </div>
+      )}
     </div>
   )
 }
