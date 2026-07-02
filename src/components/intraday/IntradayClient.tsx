@@ -10,6 +10,7 @@ import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
 import CoachScoreBadge from './CoachScoreBadge'
+import CoachScorePanel from './CoachScorePanel'
 import { deleteBlob } from '@/lib/storage'
 import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, type BarLike } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
@@ -637,6 +638,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             {/* Expanded detail */}
             {isOpen && (
               <div className="border-t border-gray-800 px-4 py-4 space-y-4">
+                <CoachScorePanel trade={trade} notes={trade.notes} setupLibrary={setupLibrary} />
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
                   {[
                     { label: 'Entry', value: fmt(trade.entry_price) },
