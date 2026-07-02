@@ -391,3 +391,69 @@ create trigger on_auth_user_created
 --   folder-prefix hardening (prefix objects with auth.uid()) is a follow-up.
 --   See docs/DEPLOY_RUNBOOK.md.
 -- ============================================================================
+
+
+-- ----------------------------------------------------------------------------
+-- 11. Coach-review share links (public build)
+-- ----------------------------------------------------------------------------
+-- "Share for review" lets a trader send ONE trading day's interactive chart to
+-- a coach with no account. Security model:
+--   • A `shares` row maps an unguessable token → one trading_day_id, with an
+--     optional expiry and a revoke flag. Owner RLS = users manage only their own.
+--   • The PUBLIC /share/<token> page reads via get_shared_day() below — a
+--     SECURITY DEFINER function that validates the token and returns ONLY that
+--     day's data. So no service-role key is needed on the web host; the function
+--     is the single controlled door.
+create table if not exists public.shares (
+  token uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade default auth.uid(),
+  trading_day_id uuid not null references public.trading_days(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz,
+  revoked boolean not null default false
+);
+create index if not exists shares_user_idx on public.shares(user_id, created_at desc);
+
+alter table public.shares enable row level security;
+drop policy if exists "Owner shares" on public.shares;
+create policy "Owner shares" on public.shares
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create or replace function public.get_shared_day(p_token uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_day_id uuid;
+begin
+  select trading_day_id into v_day_id
+  from public.shares
+  where token = p_token
+    and not revoked
+    and (expires_at is null or expires_at > now());
+  if v_day_id is null then
+    return null;
+  end if;
+  return jsonb_build_object(
+    'day', (select to_jsonb(td) from public.trading_days td where td.id = v_day_id),
+    'trades', (
+      select coalesce(jsonb_agg(to_jsonb(t) order by t.entry_time), '[]'::jsonb)
+      from public.trades t where t.trading_day_id = v_day_id
+    ),
+    'market_context', (
+      select to_jsonb(mc) from public.market_context mc where mc.trading_day_id = v_day_id
+    )
+  );
+end $$;
+
+grant execute on function public.get_shared_day(uuid) to anon, authenticated;
+
+-- Market bars are public data (NQ/ES prices), so let anon read them — a shared
+-- chart must render candles for a logged-out coach. This overrides the
+-- authenticated-only "Shared read" policy section 7 set on ohlcv_bars.
+drop policy if exists "Shared read" on public.ohlcv_bars;
+drop policy if exists "Public read" on public.ohlcv_bars;
+create policy "Public read" on public.ohlcv_bars for select using (true);
+-- ============================================================================
