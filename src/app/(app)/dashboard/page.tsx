@@ -22,6 +22,39 @@ const PAGE_SIZE = 1000
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+// Plain-English per-day note for the Beginner recent-sessions list: interprets
+// the day's win rate + move capture AGAINST the trader's own baseline, so a
+// beginner gets meaning ("lower win rate than usual, but kept more of the move")
+// instead of raw percentages they can't yet judge. (docs/BEGINNER_PRO_MODES.md)
+function beginnerDayNote(opts: {
+  winRate: number | null      // that day, 0..100
+  capture: number | null      // that day, 0..1
+  breach: boolean
+  avgWin: number | null       // baseline, 0..100
+  avgCap: number | null       // baseline, 0..1
+}): string {
+  const { winRate, capture, breach, avgWin, avgCap } = opts
+  if (breach) return 'Broke one of your rules — worth reviewing this one.'
+  const cmp = (v: number | null, avg: number | null, margin: number): -1 | 0 | 1 | null => {
+    if (v == null || avg == null) return null
+    if (v > avg + margin) return 1
+    if (v < avg - margin) return -1
+    return 0
+  }
+  const w = cmp(winRate, avgWin, 8)      // ±8 percentage points
+  const c = cmp(capture, avgCap, 0.1)    // ±0.10 of the move
+  if (w === null && c === null) return ''
+  if (w === 1 && c === 1) return 'Above your usual on both win rate and move capture — clean day.'
+  if (w === -1 && c === 1) return 'Lower win rate than usual, but you kept more of the moves you got right.'
+  if (w === 1 && c === -1) return 'Strong hit rate, but you exited earlier than usual.'
+  if (w === -1 && c === -1) return 'Below your usual on both — worth a look.'
+  if (w === 1) return 'Better hit rate than usual.'
+  if (w === -1) return 'Lower win rate than usual.'
+  if (c === 1) return 'Held your winners better than usual.'
+  if (c === -1) return 'Gave back more of the move than usual.'
+  return 'About your usual.'
+}
+
 export default async function DashboardPage() {
   // PT-anchored, not machine-local — see todayPT(). Prevents a mis-set OS
   // timezone on either synced machine from filing today's prep/intraday/EOD
@@ -448,10 +481,13 @@ export default async function DashboardPage() {
   const beginnerSessions = recentDaysForTable.slice(0, 6).map(d => ({
     date: d.date,
     pnl: d.eod_pnl,
-    winRate: d.win_rate,        // per-day trade win %
-    capture: d.avg_capture,     // per-day MFE capture (0..1)
-    grade: d.overall_grade,
-    breach: (d.process_breach_rules?.length ?? 0) > 0,
+    note: beginnerDayNote({
+      winRate: d.win_rate,
+      capture: d.avg_capture,
+      breach: (d.process_breach_rules?.length ?? 0) > 0,
+      avgWin: beginnerWinRate,
+      avgCap,
+    }),
   }))
 
   tick('per-day computation loop')

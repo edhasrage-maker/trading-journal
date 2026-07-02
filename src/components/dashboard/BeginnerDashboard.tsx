@@ -8,7 +8,7 @@ import { Target } from 'lucide-react'
  * list. No jargon (MFE/MAE/capture/process live in Pro). The numbers here are the
  * same engine's output, just translated. See docs/BEGINNER_PRO_MODES.md.
  */
-type Session = { date: string; pnl: number | null; winRate: number | null; capture: number | null; grade: number | null; breach: boolean }
+type Session = { date: string; pnl: number | null; note: string }
 
 type Props = {
   pnl: number
@@ -24,14 +24,6 @@ type Props = {
 function money(n: number | null): string {
   if (n == null) return '—'
   return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString()}`
-}
-
-function quality(s: Session): { word: string; dot: string } {
-  if (s.breach) return { word: 'Breached a rule', dot: 'bg-red-400' }
-  if (s.grade == null) return { word: 'Logged', dot: 'bg-gray-500' }
-  if (s.grade >= 7) return { word: 'Clean session', dot: 'bg-green-400' }
-  if (s.grade >= 4) return { word: 'Solid', dot: 'bg-gray-400' }
-  return { word: 'Rushed a few', dot: 'bg-yellow-400' }
 }
 
 function fmtDate(d: string): string {
@@ -75,34 +67,28 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
         <p className="text-sm text-gray-200 leading-relaxed">{focus}</p>
       </div>
 
-      {/* Recent sessions — plain per-day signals (win rate, capture) + quality + result */}
+      {/* Recent sessions — each day gets a plain-English note vs your own baseline */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <div className="flex items-center px-4 py-3 border-b border-gray-800 text-[10px] uppercase tracking-wide text-gray-600">
-          <span className="flex-1 text-sm font-semibold text-white normal-case tracking-normal" style={{ fontFamily: 'var(--font-display)' }}>Recent sessions</span>
-          <span className="w-14 text-right" title="Trade win rate that day">Win</span>
-          <span className="w-16 text-right" title="How much of the move you kept (MFE capture)">Kept</span>
-          <span className="w-32 text-right">Quality</span>
-          <span className="w-20 text-right">Result</span>
+        <div className="px-4 py-3 border-b border-gray-800">
+          <h2 className="text-sm font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Recent sessions</h2>
         </div>
         {sessions.length === 0 ? (
           <div className="px-4 py-6 text-sm text-gray-500 text-center">No sessions yet.</div>
         ) : (
-          sessions.map(s => {
-            const q = quality(s)
-            return (
-              <Link
-                key={s.date}
-                href={`/eod/${s.date}`}
-                className="flex items-center px-4 py-3 text-sm border-b border-gray-800 last:border-0 hover:bg-gray-800 transition-colors"
-              >
-                <span className="flex-1 text-gray-300">{fmtDate(s.date)}</span>
-                <span className="w-14 text-right text-xs text-gray-400" style={{ fontVariantNumeric: 'tabular-nums' }}>{s.winRate == null ? '—' : `${Math.round(s.winRate)}%`}</span>
-                <span className="w-16 text-right text-xs text-gray-400" style={{ fontVariantNumeric: 'tabular-nums' }}>{s.capture == null ? '—' : `${Math.round(s.capture * 100)}%`}</span>
-                <span className="w-32 flex items-center justify-end gap-2 text-gray-500 text-xs"><span className={`w-2 h-2 rounded-full ${q.dot}`} />{q.word}</span>
-                <span className={`w-20 text-right font-semibold ${(s.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(s.pnl)}</span>
-              </Link>
-            )
-          })
+          sessions.map(s => (
+            <Link
+              key={s.date}
+              href={`/eod/${s.date}`}
+              className="flex items-start gap-3 px-4 py-3 border-b border-gray-800 last:border-0 hover:bg-gray-800 transition-colors"
+            >
+              <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${(s.pnl ?? 0) >= 0 ? 'bg-green-400' : 'bg-red-400'}`} />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-gray-300">{fmtDate(s.date)}</div>
+                {s.note && <div className="text-xs text-gray-500 mt-0.5 leading-snug">{s.note}</div>}
+              </div>
+              <span className={`text-sm font-semibold flex-shrink-0 ${(s.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(s.pnl)}</span>
+            </Link>
+          ))
         )}
       </div>
 
