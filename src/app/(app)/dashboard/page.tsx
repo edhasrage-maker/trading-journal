@@ -5,6 +5,8 @@ import EmptyStateImport from '@/components/dashboard/EmptyStateImport'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
 import DashboardCharts from '@/components/dashboard/DashboardCharts'
+import DashboardModeSwitch from '@/components/dashboard/DashboardModeSwitch'
+import BeginnerDashboard from '@/components/dashboard/BeginnerDashboard'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
 // Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
@@ -19,6 +21,39 @@ const PAGE_SIZE = 1000
 // (otherwise this page caches and shows stale "today" across midnight).
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
+
+// Plain-English per-day note for the Beginner recent-sessions list: interprets
+// the day's win rate + move capture AGAINST the trader's own baseline, so a
+// beginner gets meaning ("lower win rate than usual, but kept more of the move")
+// instead of raw percentages they can't yet judge. (docs/BEGINNER_PRO_MODES.md)
+function beginnerDayNote(opts: {
+  winRate: number | null      // that day, 0..100
+  capture: number | null      // that day, 0..1
+  breach: boolean
+  avgWin: number | null       // baseline, 0..100
+  avgCap: number | null       // baseline, 0..1
+}): string {
+  const { winRate, capture, breach, avgWin, avgCap } = opts
+  if (breach) return 'Broke one of your rules — worth reviewing this one.'
+  const cmp = (v: number | null, avg: number | null, margin: number): -1 | 0 | 1 | null => {
+    if (v == null || avg == null) return null
+    if (v > avg + margin) return 1
+    if (v < avg - margin) return -1
+    return 0
+  }
+  const w = cmp(winRate, avgWin, 8)      // ±8 percentage points
+  const c = cmp(capture, avgCap, 0.1)    // ±0.10 of the move
+  if (w === null && c === null) return ''
+  if (w === 1 && c === 1) return 'Above your usual on both win rate and move capture — clean day.'
+  if (w === -1 && c === 1) return 'Lower win rate than usual, but you kept more of the moves you got right.'
+  if (w === 1 && c === -1) return 'Strong hit rate, but you exited earlier than usual.'
+  if (w === -1 && c === -1) return 'Below your usual on both — worth a look.'
+  if (w === 1) return 'Better hit rate than usual.'
+  if (w === -1) return 'Lower win rate than usual.'
+  if (c === 1) return 'Held your winners better than usual.'
+  if (c === -1) return 'Gave back more of the move than usual.'
+  return 'About your usual.'
+}
 
 export default async function DashboardPage() {
   // PT-anchored, not machine-local — see todayPT(). Prevents a mis-set OS
@@ -417,6 +452,44 @@ export default async function DashboardPage() {
   // Recent Days table still scopes to the 180d window — keeps the table fast
   // and matches the user's "recent" expectation.
   const recentDaysForTable = recentDays.filter(d => d.date >= past180Start)
+
+  // Beginner-mode data (docs/BEGINNER_PRO_MODES.md): plain-English 30-day
+  // summary + one "focus" derived from the same capture math Pro shows raw +
+  // a simple recent-session list. All computed here so the client view is dumb.
+  const beginner30 = recentDays.filter(d => d.date >= past30Start && d.eod_pnl != null)
+  const beginnerPnl = beginner30.reduce((a, d) => a + (d.eod_pnl ?? 0), 0)
+  const beginnerGreenDays = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).length
+  const beginnerTradedDays = beginner30.length
+  const beginnerBestDay = beginner30.length ? Math.max(...beginner30.map(d => d.eod_pnl ?? 0)) : null
+  const capVals = recentDays
+    .filter(d => d.date >= past30Start && d.avg_capture != null)
+    .map(d => d.avg_capture as number)
+  const avgCap = capVals.length ? capVals.reduce((a, b) => a + b, 0) / capVals.length : null
+  // Trade win rate + capture % over the 30-day window — plain "how am I doing"
+  // signals for the Beginner summary (same numbers Pro shows, plainly labeled).
+  const beginnerWinWindow = recentDays.filter(d => d.date >= past30Start)
+  const beginnerWins = beginnerWinWindow.reduce((a, d) => a + d.trade_wins, 0)
+  const beginnerTradesWithPnl = beginnerWinWindow.reduce((a, d) => a + d.trades_with_pnl_count, 0)
+  const beginnerWinRate = beginnerTradesWithPnl > 0 ? (beginnerWins / beginnerTradesWithPnl) * 100 : null
+  const beginnerCapturePct = avgCap != null ? Math.round(avgCap * 100) : null
+  const beginnerFocus = (() => {
+    if (beginnerTradedDays === 0) return 'Log or import a few sessions and your #1 focus will show up here.'
+    if (avgCap != null && avgCap < 0.5) return `You're exiting winners early — on average you're keeping about ${Math.round(avgCap * 100)}% of the move you're offered. This week, try holding to your planned target before taking profit.`
+    if (avgCap != null) return `Your exits are solid — you're capturing about ${Math.round(avgCap * 100)}% of the move you're offered. Keep that up and put your attention on entry timing.`
+    return 'Your sessions are logging cleanly. Keep building the habit — richer coaching shows up as more trades come in.'
+  })()
+  const beginnerSessions = recentDaysForTable.slice(0, 6).map(d => ({
+    date: d.date,
+    pnl: d.eod_pnl,
+    note: beginnerDayNote({
+      winRate: d.win_rate,
+      capture: d.avg_capture,
+      breach: (d.process_breach_rules?.length ?? 0) > 0,
+      avgWin: beginnerWinRate,
+      avgCap,
+    }),
+  }))
+
   tick('per-day computation loop')
   console.log('[dashboard perf]', perf.phases.map(p => `${p.name}=${p.ms}ms${p.rows != null ? ` (${p.rows})` : ''}`).join(' | '))
 
@@ -452,21 +525,38 @@ export default async function DashboardPage() {
           net P&L bars. Replaces the old "Today" quick-action tiles. */}
       <DashboardCharts days={statsDays} />
 
-      {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,
-          Median Process. Filters by Week / Month / 30d / YTD / Last Year. */}
-      <DashboardStats days={statsDays} />
+      {/* Beginner (default) = plain summary + one focus + simple session list.
+          Pro = the full instrument (period stats grid + Recent Days table). */}
+      <DashboardModeSwitch
+        beginner={
+          <BeginnerDashboard
+            pnl={beginnerPnl}
+            winRate={beginnerWinRate}
+            capturePct={beginnerCapturePct}
+            greenDays={beginnerGreenDays}
+            tradedDays={beginnerTradedDays}
+            bestDay={beginnerBestDay}
+            focus={beginnerFocus}
+            sessions={beginnerSessions}
+          />
+        }
+      >
+        {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,
+            Median Process. Filters by Week / Month / 30d / YTD / Last Year. */}
+        <DashboardStats days={statsDays} />
 
-      {/* Recent days */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <RecentDaysSection
-          initialDays={recentDaysForTable}
-          allSetups={allSetups}
-          allDayTypes={allDayTypes}
-          windowStart={windowStart}
-          windowEnd={windowEnd}
-          defaultFilterStart={defaultFilterStart}
-        />
-      </div>
+        {/* Recent days */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mt-6">
+          <RecentDaysSection
+            initialDays={recentDaysForTable}
+            allSetups={allSetups}
+            allDayTypes={allDayTypes}
+            windowStart={windowStart}
+            windowEnd={windowEnd}
+            defaultFilterStart={defaultFilterStart}
+          />
+        </div>
+      </DashboardModeSwitch>
     </div>
   )
 }

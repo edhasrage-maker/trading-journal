@@ -8,6 +8,7 @@ import {
   CheckCircle2, AlertTriangle, Target, TrendingUp, TrendingDown, History,
 } from 'lucide-react'
 import { previousWeekStart, nextWeekStart } from '@/lib/week-dates'
+import { useUiMode } from '@/lib/ui-mode'
 
 export interface DayCard {
   date: string
@@ -59,6 +60,7 @@ export default function WeeklyRecapClient({ weekStart, weekLabelText, dayCards, 
   const [notesDirty, setNotesDirty] = useState(false)
   const [savingNotes, setSavingNotes] = useState(false)
   const [notesToast, setNotesToast] = useState<string | null>(null)
+  const { mode } = useUiMode()
 
   const totalPnl = dayCards.reduce((s, c) => s + (c.eod_pnl ?? 0), 0)
   const tradesTotal = dayCards.reduce((s, c) => s + c.trade_count, 0)
@@ -143,11 +145,13 @@ export default function WeeklyRecapClient({ weekStart, weekLabelText, dayCards, 
       </div>
 
       {/* Week stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className={`grid grid-cols-2 gap-3 ${mode === 'beginner' ? 'md:grid-cols-4' : 'md:grid-cols-5'}`}>
         <StatCard label="Total PnL" value={`${totalPnl >= 0 ? '+' : ''}$${Math.round(totalPnl).toLocaleString()}`} positive={totalPnl >= 0} />
         <StatCard label="Trades" value={tradesTotal.toString()} positive={null} />
         <StatCard label="Win Rate" value={wrTotal != null ? `${wrTotal}%` : '—'} positive={wrTotal != null && wrTotal >= 50} />
-        <StatCard label="Compliance" value={daysWithVerdict > 0 ? `${compliantDays}/${daysWithVerdict}` : '—'} positive={daysWithVerdict > 0 && compliantDays >= daysWithVerdict - 1} hint="days Compliant" />
+        {mode === 'pro' && (
+          <StatCard label="Compliance" value={daysWithVerdict > 0 ? `${compliantDays}/${daysWithVerdict}` : '—'} positive={daysWithVerdict > 0 && compliantDays >= daysWithVerdict - 1} hint="days Compliant" />
+        )}
         <StatCard label="Trading Days" value={dayCards.filter(c => c.trade_count > 0).length.toString()} positive={null} hint="with trades" />
       </div>
 
@@ -239,6 +243,7 @@ function StatCard({ label, value, positive, hint }: { label: string; value: stri
 }
 
 function DayCardView({ card }: { card: DayCard }) {
+  const { mode } = useUiMode()
   const pnlColor = card.eod_pnl == null ? 'text-gray-600' : card.eod_pnl > 0 ? 'text-green-400' : card.eod_pnl < 0 ? 'text-red-400' : 'text-gray-400'
   const verdictColor = card.process_verdict === 'Compliant' ? 'text-green-400 border-green-800/60 bg-green-950/30'
     : card.process_verdict === 'Breach' ? 'text-red-400 border-red-800/60 bg-red-950/30'
@@ -256,18 +261,20 @@ function DayCardView({ card }: { card: DayCard }) {
         {card.eod_pnl == null ? '—' : `${card.eod_pnl >= 0 ? '+' : ''}$${Math.round(card.eod_pnl).toLocaleString()}`}
       </div>
       <div className="text-[11px] text-gray-500 mt-1">{card.trade_count} {card.trade_count === 1 ? 'trade' : 'trades'} · WR {card.win_rate ?? '—'}%</div>
-      <div className="flex items-center gap-1 mt-2">
-        {card.execution_composite != null && (
-          <span className="text-[10px] font-mono text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">
-            Exec {Math.round(card.execution_composite * 100)}%
-          </span>
-        )}
-        {card.process_verdict && (
-          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${verdictColor}`}>
-            {card.process_verdict}
-          </span>
-        )}
-      </div>
+      {mode === 'pro' && (
+        <div className="flex items-center gap-1 mt-2">
+          {card.execution_composite != null && (
+            <span className="text-[10px] font-mono text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded">
+              Exec {Math.round(card.execution_composite * 100)}%
+            </span>
+          )}
+          {card.process_verdict && (
+            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${verdictColor}`}>
+              {card.process_verdict}
+            </span>
+          )}
+        </div>
+      )}
     </Link>
   )
 }

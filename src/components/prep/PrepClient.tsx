@@ -19,6 +19,7 @@ import type { NewsEvent } from '@/lib/economic-calendar'
 import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import BarWatcher from '@/components/charts/BarWatcher'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { useUiMode } from '@/lib/ui-mode'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
 import type { SessionLevels } from '@/lib/session-levels'
@@ -86,6 +87,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const STORAGE_KEY = `prep-draft-${date}`
   const AUTO_SAVE_DELAY_MS = 3000
 
+  // Highlights (beginner) keeps Chart + Day Type + Prep Notes (Bias/Observations/
+  // Mood) + the AI read; Detailed Tape (pro) adds Morning Conditions, Market
+  // Context, and Trade Plans. (docs/BEGINNER_PRO_MODES.md)
+  const { mode } = useUiMode()
   const [savedChartUrl, setSavedChartUrl] = useState<string | null>(initialDay?.chart_screenshot_url ?? null)
   const [chartUrl, setChartUrl] = useState<string | null>(initialDay?.chart_screenshot_url ?? null)
   // Multi-select: prep can tag combo sessions like "High Action + Double Inside".
@@ -872,24 +877,28 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           first so screenshot re-extraction updates the pill immediately.
           drAdrAuto (server-computed, may be bar-based) is the fallback for
           days where the screenshot hasn't been extracted yet. */}
-      <ConditionFilterPanel
-        date={date}
-        marketContext={{
-          rvol: context.rvol ?? null,
-          ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
-          atr_1m: context.atr_1m ?? null,
-          dr_adr:
-            context.day_range != null && context.adr != null && context.adr > 0
-              ? Math.round((context.day_range / context.adr) * 100) / 100
-              : drAdrAuto,
-        }}
-      />
+      {mode === 'pro' && (
+        <ConditionFilterPanel
+          date={date}
+          marketContext={{
+            rvol: context.rvol ?? null,
+            ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
+            atr_1m: context.atr_1m ?? null,
+            dr_adr:
+              context.day_range != null && context.adr != null && context.adr > 0
+                ? Math.round((context.day_range / context.adr) * 100) / 100
+                : drAdrAuto,
+          }}
+        />
+      )}
 
-      {/* Market Context */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h2 className="font-semibold text-white mb-4">Market Context</h2>
-        <MarketContextForm value={context} onChange={setContext} />
-      </div>
+      {/* Market Context — Detailed Tape only (levels / IB / volatility / MGI) */}
+      {mode === 'pro' && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+          <h2 className="font-semibold text-white mb-4">Market Context</h2>
+          <MarketContextForm value={context} onChange={setContext} />
+        </div>
+      )}
 
       {/* Prep Notes */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -903,15 +912,17 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         />
       </div>
 
-      {/* Trade Plans */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h2 className="font-semibold text-white mb-4">Trade Plans / Setups</h2>
-        <TradePlansSection
-          plans={prepNotes.trade_plans ?? []}
-          onChange={plans => setPrepNotes({ ...prepNotes, trade_plans: plans })}
-          planAssessments={(aiAnalysis as AiAnalysis | null)?.plan_assessments as PlanAssessment[] | undefined}
-        />
-      </div>
+      {/* Trade Plans — Detailed Tape only (named playbook setups) */}
+      {mode === 'pro' && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+          <h2 className="font-semibold text-white mb-4">Trade Plans / Setups</h2>
+          <TradePlansSection
+            plans={prepNotes.trade_plans ?? []}
+            onChange={plans => setPrepNotes({ ...prepNotes, trade_plans: plans })}
+            planAssessments={(aiAnalysis as AiAnalysis | null)?.plan_assessments as PlanAssessment[] | undefined}
+          />
+        </div>
+      )}
 
       {/* Prep Analysis */}
       <AiAnalysisCard

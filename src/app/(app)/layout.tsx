@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import CoachChat from '@/components/CoachChat'
+import { UiModeProvider } from '@/lib/ui-mode'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -9,13 +10,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!user) redirect('/')
 
   return (
-    <div className="flex min-h-screen">
-      <Sidebar />
-      <main className="flex-1 ml-60 p-6 overflow-y-auto">
-        {children}
-      </main>
-      {/* Floating Trade Coach — bottom-right icon on every page; click to expand */}
-      <CoachChat />
-    </div>
+    <UiModeProvider>
+      <div className="flex min-h-screen">
+        <Sidebar />
+        <main className="flex-1 ml-60 p-6 overflow-y-auto">
+          {children}
+        </main>
+        {/* Floating Trade Coach — bottom-right icon on every page; click to expand */}
+        <CoachChat />
+      </div>
+    </UiModeProvider>
   )
 }

@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X } from 'lucide-react'
 import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, type BarLike } from '@/lib/analytics'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
@@ -75,6 +76,9 @@ export default function TradeList({
   postExitByTradeId,
   bars,
 }: Props) {
+  // Beginner renders a simple plain list (below); Pro renders the full sortable
+  // table. (docs/BEGINNER_PRO_MODES.md)
+  const { mode } = useUiMode()
   // Sort state. Default is Time asc — preserves the existing fill-order view.
   // Click a sortable column header to toggle; clicking a different column
   // resets to that column's "natural" direction (time asc, everything else desc).
@@ -157,6 +161,43 @@ export default function TradeList({
             {' '}or log one on the Intraday page to populate this day.
           </>
         )}
+      </div>
+    )
+  }
+
+  // Beginner: a simple plain list — time · direction · setup · result, with the
+  // AI overview note. No R / MFE% / MAE% / ATR / post-exit columns.
+  if (mode === 'beginner') {
+    return (
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 className="font-semibold text-white mb-3 text-sm" style={{ fontFamily: 'var(--font-display)' }}>Trades ({trades.length})</h2>
+        <div className="divide-y divide-gray-800">
+          {sortedTrades.map(t => {
+            const setup = ((t.tags_json as unknown as { setups?: string[] } | null)?.setups ?? [])[0]
+            const pnl = t.pnl
+            const time = t.entry_time ? format(new Date(t.entry_time), 'h:mm a') : '--'
+            const summary = summaries[t.id]
+            const isLong = t.direction === 'long'
+            return (
+              <div
+                key={t.id}
+                className={`py-3 ${onRowOpen ? 'cursor-pointer hover:bg-gray-800/40 -mx-2 px-2 rounded-lg' : ''}`}
+                onClick={onRowOpen ? () => onRowOpen(t.id) : undefined}
+              >
+                <div className="flex items-center gap-3">
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isLong ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>{isLong ? 'LONG' : 'SHORT'}</span>
+                  <span className="text-sm text-gray-300 tabular-nums">{time}</span>
+                  {setup && <span className="text-xs text-gray-500 truncate">{setup}</span>}
+                  <span className="flex-1" />
+                  <span className={`text-sm font-semibold ${(pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
+                  </span>
+                </div>
+                {summary && <p className="text-xs text-gray-500 mt-1.5 leading-snug">{summary}</p>}
+              </div>
+            )
+          })}
+        </div>
       </div>
     )
   }
