@@ -10,6 +10,7 @@ import PeriodComparison from './PeriodComparison'
 import JournalThemes from './JournalThemes'
 import CsvExportButton from './CsvExportButton'
 import TradeListModal, { type ModalCategory } from './TradeListModal'
+import { useUiMode } from '@/lib/ui-mode'
 import {
   aggregateByTag,
   aggregateByDayType,
@@ -86,6 +87,9 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
   }
   const [filterCategory, setFilterCategory] = useState<FilterCategory | ''>('')
   const [filterLabel, setFilterLabel] = useState<string>('')
+  // Beginner shows a plain KPI subset + Setup Performance + Journal Themes; Pro
+  // shows all metrics and every breakdown table. (docs/BEGINNER_PRO_MODES.md)
+  const { mode } = useUiMode()
 
   // Available labels for the current filter category — computed from the
   // date-filtered set so the dropdown only offers labels actually present
@@ -274,8 +278,9 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
         )}
       </div>
 
-      {/* Overall stats */}
-      <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
+      {/* Overall stats. Beginner: plain subset (Trades, Win Rate, Total PnL,
+          Move captured). Pro: the full 8-metric grid. */}
+      <div className={`grid grid-cols-2 gap-3 ${mode === 'beginner' ? 'md:grid-cols-4' : 'md:grid-cols-8'}`}>
         <StatCard label="Trades" value={overall.count.toString()} positive={null} />
         <StatCard
           label="Win Rate"
@@ -287,34 +292,42 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
           value={`${overall.total_pnl >= 0 ? '+' : ''}$${overall.total_pnl.toFixed(0)}`}
           positive={overall.total_pnl >= 0}
         />
+        {mode === 'pro' && (
+          <StatCard
+            label="Expectancy"
+            value={`${overall.expectancy >= 0 ? '+' : ''}$${overall.expectancy.toFixed(2)}`}
+            positive={overall.expectancy >= 0}
+          />
+        )}
+        {mode === 'pro' && (
+          <StatCard
+            label="Profit Factor"
+            value={Number.isFinite(overall.profit_factor) ? overall.profit_factor.toFixed(2) : '∞'}
+            positive={overall.profit_factor >= 1}
+          />
+        )}
+        {mode === 'pro' && (
+          <StatCard
+            label="Avg R"
+            value={overall.avg_r == null ? '—' : `${overall.avg_r >= 0 ? '+' : ''}${overall.avg_r.toFixed(2)}R`}
+            hint={`${overall.r_count} of ${overall.count}`}
+            positive={overall.avg_r != null && overall.avg_r >= 0}
+          />
+        )}
         <StatCard
-          label="Expectancy"
-          value={`${overall.expectancy >= 0 ? '+' : ''}$${overall.expectancy.toFixed(2)}`}
-          positive={overall.expectancy >= 0}
-        />
-        <StatCard
-          label="Profit Factor"
-          value={Number.isFinite(overall.profit_factor) ? overall.profit_factor.toFixed(2) : '∞'}
-          positive={overall.profit_factor >= 1}
-        />
-        <StatCard
-          label="Avg R"
-          value={overall.avg_r == null ? '—' : `${overall.avg_r >= 0 ? '+' : ''}${overall.avg_r.toFixed(2)}R`}
-          hint={`${overall.r_count} of ${overall.count}`}
-          positive={overall.avg_r != null && overall.avg_r >= 0}
-        />
-        <StatCard
-          label="MFE Realized %"
+          label={mode === 'beginner' ? 'Move captured' : 'MFE Realized %'}
           value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
           hint={`${overall.capture_count} of ${overall.count}`}
           positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
         />
-        <StatCard
-          label="MAE Heat %"
-          value={overall.avg_heat == null ? '—' : `${Math.round(overall.avg_heat * 100)}%`}
-          hint={`${overall.heat_count} of ${overall.count}`}
-          positive={overall.avg_heat != null && overall.avg_heat <= 0.6}
-        />
+        {mode === 'pro' && (
+          <StatCard
+            label="MAE Heat %"
+            value={overall.avg_heat == null ? '—' : `${Math.round(overall.avg_heat * 100)}%`}
+            hint={`${overall.heat_count} of ${overall.count}`}
+            positive={overall.avg_heat != null && overall.avg_heat <= 0.6}
+          />
+        )}
       </div>
 
       {/* Tag performance sections — each label click opens TradeListModal
@@ -325,45 +338,52 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
         data={setupPerf}
         onTagClick={openCategory('setups')}
       />
-      <TagPerformanceTable
-        title="Confluences"
-        description="Performance when each confluence was tagged on the trade"
-        data={confluencePerf}
-        onTagClick={openCategory('confluences')}
-      />
-      <TagPerformanceTable
-        title="Order Flow"
-        description="Performance broken down by order-flow signal tags"
-        data={orderFlowPerf}
-        onTagClick={openCategory('order_flow')}
-      />
-      <TagPerformanceTable
-        title="Day Type"
-        description="Performance by the day type set during prep"
-        data={dayTypePerf}
-        onTagClick={openCategory('day_types')}
-      />
-      <TagPerformanceTable
-        title="Structure (Follow / Fade)"
-        description="Pivot 5m market structure at entry — trading with vs against the HH-HL trend"
-        data={structurePerf}
-      />
-      <TagPerformanceTable
-        title="Trade Management"
-        description="How different management styles played out"
-        data={mgmtPerf}
-        minCount={2}
-        onTagClick={openCategory('trade_management')}
-      />
+      {/* Deeper breakdowns are Pro-only — Beginner keeps Setup Performance +
+          Journal Themes so it stays "what's working / what to watch" without a
+          wall of tables. */}
+      {mode === 'pro' && (
+        <>
+          <TagPerformanceTable
+            title="Confluences"
+            description="Performance when each confluence was tagged on the trade"
+            data={confluencePerf}
+            onTagClick={openCategory('confluences')}
+          />
+          <TagPerformanceTable
+            title="Order Flow"
+            description="Performance broken down by order-flow signal tags"
+            data={orderFlowPerf}
+            onTagClick={openCategory('order_flow')}
+          />
+          <TagPerformanceTable
+            title="Day Type"
+            description="Performance by the day type set during prep"
+            data={dayTypePerf}
+            onTagClick={openCategory('day_types')}
+          />
+          <TagPerformanceTable
+            title="Structure (Follow / Fade)"
+            description="Pivot 5m market structure at entry — trading with vs against the HH-HL trend"
+            data={structurePerf}
+          />
+          <TagPerformanceTable
+            title="Trade Management"
+            description="How different management styles played out"
+            data={mgmtPerf}
+            minCount={2}
+            onTagClick={openCategory('trade_management')}
+          />
 
-      {/* Mistakes / Emotions Impact tables removed — pending new tagging
-          system. Historical data preserved in tags_json. */}
+          {/* Mistakes / Emotions Impact tables removed — pending new tagging
+              system. Historical data preserved in tags_json. */}
 
-      <ConditionBuckets trades={filtered} />
+          <ConditionBuckets trades={filtered} />
 
-      <RollingPerformance trades={filtered} />
+          <RollingPerformance trades={filtered} />
 
-      <PeriodComparison trades={filtered} dayStats={filteredDayStats} />
+          <PeriodComparison trades={filtered} dayStats={filteredDayStats} />
+        </>
+      )}
 
       <JournalThemes from={startDate} to={endDate} />
 
