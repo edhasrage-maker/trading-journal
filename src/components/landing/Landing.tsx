@@ -57,7 +57,7 @@ export default function Landing() {
         <form onSubmit={submit} className="space-y-4">
           <div>
             <h2 className="text-lg font-semibold text-white" style={DISPLAY}>Get started free</h2>
-            <p className="text-gray-400 text-sm mt-0.5">Enter your email — we&apos;ll send a magic link. No password.</p>
+            <p className="text-gray-400 text-sm mt-0.5">Enter your email to start reviewing your trading game.</p>
           </div>
           {error && (
             <div className="bg-red-950 border border-red-800 text-red-300 text-sm px-3 py-2 rounded-lg">{error}</div>
@@ -85,7 +85,7 @@ export default function Landing() {
       {/* Top bar */}
       <header className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
-        <img src="/brand/tapescore-logo.svg" alt="TapeScore — Game Film for Traders" className="h-9 w-auto" />
+        <img src="/brand/tapescore-logo.svg" alt="TapeScore — Game Film for Traders" className="h-16 sm:h-20 w-auto" />
         <a href="#get-started" className="text-sm font-medium text-blue-400 hover:text-blue-300">Sign in →</a>
       </header>
 
