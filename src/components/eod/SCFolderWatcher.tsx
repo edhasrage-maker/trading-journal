@@ -52,6 +52,11 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
   const [polling, setPolling] = useState(false)
   const [lastCheck, setLastCheck] = useState<Date | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Guards against overlapping ticks. Each import can take 10-18s; on a live
+  // trading day Sierra rewrites the log every poll, so without this a slow tick
+  // that runs past the 60s interval lets the next tick(s) fire concurrently —
+  // imports pile up, saturate the server, and every request grinds to 2-4s.
+  const runningRef = useRef(false)
   const onActivityRef = useRef(onActivity)
   const onImportedRef = useRef(onImported)
 
@@ -70,6 +75,8 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
   }
 
   const tick = useCallback(async (h: FsHandle) => {
+    if (runningRef.current) return // a prior tick is still importing — don't stack
+    runningRef.current = true
     setPolling(true)
     setLastCheck(new Date())
     const state = loadState()
@@ -132,6 +139,7 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
       }
     } finally {
       setPolling(false)
+      runningRef.current = false
     }
   }, [])
 
