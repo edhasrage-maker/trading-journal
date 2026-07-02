@@ -432,6 +432,13 @@ export default async function DashboardPage() {
     .filter(d => d.date >= past30Start && d.avg_capture != null)
     .map(d => d.avg_capture as number)
   const avgCap = capVals.length ? capVals.reduce((a, b) => a + b, 0) / capVals.length : null
+  // Trade win rate + capture % over the 30-day window — plain "how am I doing"
+  // signals for the Beginner summary (same numbers Pro shows, plainly labeled).
+  const beginnerWinWindow = recentDays.filter(d => d.date >= past30Start)
+  const beginnerWins = beginnerWinWindow.reduce((a, d) => a + d.trade_wins, 0)
+  const beginnerTradesWithPnl = beginnerWinWindow.reduce((a, d) => a + d.trades_with_pnl_count, 0)
+  const beginnerWinRate = beginnerTradesWithPnl > 0 ? (beginnerWins / beginnerTradesWithPnl) * 100 : null
+  const beginnerCapturePct = avgCap != null ? Math.round(avgCap * 100) : null
   const beginnerFocus = (() => {
     if (beginnerTradedDays === 0) return 'Log or import a few sessions and your #1 focus will show up here.'
     if (avgCap != null && avgCap < 0.5) return `You're exiting winners early — on average you're keeping about ${Math.round(avgCap * 100)}% of the move you're offered. This week, try holding to your planned target before taking profit.`
@@ -486,6 +493,8 @@ export default async function DashboardPage() {
         beginner={
           <BeginnerDashboard
             pnl={beginnerPnl}
+            winRate={beginnerWinRate}
+            capturePct={beginnerCapturePct}
             greenDays={beginnerGreenDays}
             tradedDays={beginnerTradedDays}
             bestDay={beginnerBestDay}
