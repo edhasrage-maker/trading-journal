@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
 import { todayPT } from '@/lib/pt-time'
 import {
   TrendingUp,
@@ -18,6 +19,7 @@ import {
   Brain,
   Upload,
   Sparkles,
+  LogOut,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
@@ -36,6 +38,13 @@ const settingsItems = [
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+
+  const signOut = async () => {
+    await createClient().auth.signOut()
+    router.push('/')
+    router.refresh()
+  }
   // `today` is the PT session date (todayPT), not machine-local — a mis-set OS
   // timezone on either synced machine would otherwise point these links at the
   // wrong calendar day. Tick every minute so links roll over if the tab stays
@@ -144,6 +153,18 @@ export default function Sidebar() {
         })}
       </div>
       )}
+
+      {/* Sign out */}
+      <div className="px-3 py-4 border-t border-gray-800">
+        <button
+          type="button"
+          onClick={signOut}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+        >
+          <LogOut className="w-4 h-4 flex-shrink-0" />
+          Sign out
+        </button>
+      </div>
     </aside>
   )
 }
