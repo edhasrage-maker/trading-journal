@@ -17,6 +17,7 @@ import {
   CandlestickChart,
   Brain,
   Upload,
+  Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
@@ -70,6 +71,7 @@ export default function Sidebar() {
   })()
 
   const navItems = [
+    { href: '/welcome', label: 'Welcome', icon: Sparkles },
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: `/prep/${viewedDate}`, label: 'Daily Prep', icon: ClipboardList },
     { href: `/intraday/${viewedDate}`, label: 'Intraday', icon: Activity },
