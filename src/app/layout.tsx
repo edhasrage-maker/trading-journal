@@ -10,7 +10,7 @@ const splineMono = Spline_Sans_Mono({ variable: "--font-spline-mono", subsets: [
 
 export const metadata: Metadata = {
   title: "TapeScore",
-  description: "Game film for traders — an AI trading journal to review your trading game and capture your edge.",
+  description: "Game film for traders — an AI trading journal that reviews your game and captures more edge.",
   icons: { icon: "/brand/tapescore-favicon.svg" },
 };
 
