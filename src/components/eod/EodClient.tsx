@@ -19,6 +19,7 @@ import EodAnalysisCard from './EodAnalysisCard'
 import RecordingCommentary from './RecordingCommentary'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { useUiMode } from '@/lib/ui-mode'
 import { avgCaptureRatio, avgMaeHeatRatio, type BarLike } from '@/lib/analytics'
 import type {
   TradingDay,
@@ -104,6 +105,9 @@ export default function EodClient({
   })
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  // Highlights hides the MFE/MAE-capture metrics in the header (kept for
+  // Detailed Tape); plain stats — Trades, Win Rate, W/L, PnL — always show.
+  const { mode } = useUiMode()
   // Deep-link: /eod/<date>?trade=<id> (e.g. double-clicking a chart arrow from
   // another page) scrolls to + highlights that trade's row once it's rendered.
   const searchParams = useSearchParams()
@@ -788,6 +792,8 @@ export default function EodClient({
               {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
             </div>
           </div>
+          {mode === 'pro' && (
+          <>
           {/* Avg MFE/MAE — inline variant, drops between PnL and MFE Realized %.
               Uses pts/$/×ATR toggle synced with the Dashboard card via localStorage. */}
           <AvgMfeMaeCard trades={trades} variant="inline" />
@@ -877,6 +883,8 @@ export default function EodClient({
               </div>
             )}
           </div>
+          </>
+          )}
           </div>
         </div>
       </div>
