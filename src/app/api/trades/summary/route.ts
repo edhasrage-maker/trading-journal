@@ -1,5 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { consumeAiUsage } from '@/lib/ai-usage'
+import { createClient } from '@/lib/supabase/server'
 
 const client = new Anthropic()
 
@@ -31,6 +34,12 @@ interface SummaryTrade {
 export async function POST(req: Request) {
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
+  }
+
+  if (!LOCAL_FEATURES_ENABLED) {
+    const supabase = await createClient()
+    const gate = await consumeAiUsage(supabase, 'trades_summary')
+    if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
   }
 
   let trades: SummaryTrade[] = []

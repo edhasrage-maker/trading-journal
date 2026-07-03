@@ -22,9 +22,22 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
-/** Daily limits per action. Add a key to cap another AI surface. */
+/** Daily limits per action (per user, PT calendar day). Add a key to cap another
+ *  AI surface. Big single-shot analyses are tighter; frequently auto-fired
+ *  routes (summaries, themes, spell-check) are generous so a normal reviewing
+ *  session never trips them — they exist to bound abuse, not to ration use. */
 export const AI_LIMITS: Record<string, number> = {
   coach_score: 3,
+  analyze_eod: 15,
+  analyze_prep: 15,
+  analyze_week: 8,
+  predict_day_type: 15,
+  extract_trade: 25,
+  extract_context: 25,
+  extract_themes: 15,
+  trades_summary: 40,
+  suggest_tags: 30,
+  spell_check: 40,
 }
 
 export function aiLimitFor(action: string): number {

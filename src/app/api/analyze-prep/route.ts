@@ -1,5 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { consumeAiUsage } from '@/lib/ai-usage'
+import { createClient } from '@/lib/supabase/server'
 import type { PrepNotes } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
@@ -29,6 +32,12 @@ async function handle(req: Request) {
       { error: 'ANTHROPIC_API_KEY is not configured on the server. Add it to .env.local and restart the dev server.' },
       { status: 503 },
     )
+  }
+
+  if (!LOCAL_FEATURES_ENABLED) {
+    const supabase = await createClient()
+    const gate = await consumeAiUsage(supabase, 'analyze_prep')
+    if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
   }
 
   const { prepNotes, marketContext, imageBase64, imageMediaType } = await req.json() as {

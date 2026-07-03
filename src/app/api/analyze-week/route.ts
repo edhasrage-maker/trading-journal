@@ -25,6 +25,8 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { consumeAiUsage } from '@/lib/ai-usage'
 import { createClient } from '@/lib/supabase/server'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { buildCoachContext } from '@/lib/coach-context'
@@ -60,6 +62,12 @@ async function weekExecCompliance(supabase: AnyClient, start: string, end: strin
 export async function POST(req: Request) {
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 503 })
+  }
+
+  if (!LOCAL_FEATURES_ENABLED) {
+    const supabase = await createClient()
+    const gate = await consumeAiUsage(supabase, 'analyze_week')
+    if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
   }
 
   let body: { weekStart?: string }

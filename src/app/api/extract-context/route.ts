@@ -1,5 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { consumeAiUsage } from '@/lib/ai-usage'
+import { createClient } from '@/lib/supabase/server'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 
 const client = new Anthropic()
@@ -18,6 +21,12 @@ export async function POST(req: Request) {
 async function handle(req: Request) {
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
+  }
+
+  if (!LOCAL_FEATURES_ENABLED) {
+    const supabase = await createClient()
+    const gate = await consumeAiUsage(supabase, 'extract_context')
+    if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
   }
 
   const formData = await req.formData()

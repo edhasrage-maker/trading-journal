@@ -1,5 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { consumeAiUsage } from '@/lib/ai-usage'
+import { createClient } from '@/lib/supabase/server'
 
 const client = new Anthropic()
 
@@ -22,6 +25,12 @@ interface ClaudeResponseEntry {
 }
 
 export async function POST(req: Request) {
+  if (!LOCAL_FEATURES_ENABLED) {
+    const supabase = await createClient()
+    const gate = await consumeAiUsage(supabase, 'spell_check')
+    if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
+  }
+
   const body = (await req.json()) as RequestBody
   const texts = body.texts ?? {}
 
