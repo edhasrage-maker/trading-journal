@@ -577,7 +577,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     if (!id) return
     setArrowMenu(null)
     if (onTradeActivate) onTradeActivate(id)
-    else router.push(`/eod/${date}?trade=${id}`)
+    else if (!readOnly) router.push(`/eod/${date}?trade=${id}`)
   }
 
   const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1343,23 +1343,39 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     const timeSec = displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins)
     const price = t.entry_price ?? null
     suppressCrosshairRef.current = true // hold across the synthetic crosshair event
-    // setCrosshairPosition throws "Value is null" when the time falls outside
-    // the loaded bar range (which happens whenever the hovered trade's entry
-    // is on a day whose bars haven't been imported, or the chart is still
-    // mounting). Skip the synthetic crosshair in that case — the popup still
-    // renders at the timeToCoordinate-resolved position, just without the
-    // hairline.
-    if (price != null) {
-      try {
-        chart.setCrosshairPosition(price, timeSec, candle)
-      } catch {
-        suppressCrosshairRef.current = false
+    const applyHover = () => {
+      // setCrosshairPosition throws "Value is null" when the time falls outside
+      // the loaded bar range (unimported day, or the chart still mounting). Skip
+      // the synthetic crosshair then — the popup still renders at the resolved
+      // position, just without the hairline.
+      if (price != null) {
+        try { chart.setCrosshairPosition(price, timeSec, candle) }
+        catch { suppressCrosshairRef.current = false }
+      }
+      const x = chart.timeScale().timeToCoordinate(timeSec)
+      const y = price != null ? candle.priceToCoordinate(price) : null
+      setHover({ trade: t, x: x ?? 8, y: y ?? height / 2 })
+    }
+
+    // Read-only / shared view: clicking a trade row should PAN the chart to that
+    // entry (the EOD/intraday pages only highlight on row hover, no pan). Recenter
+    // — preserving the current window width — only when the entry is off-screen.
+    if (readOnly) {
+      const ts = chart.timeScale()
+      const vr = ts.getVisibleRange()
+      const from = vr ? Number(vr.from) : null
+      const to = vr ? Number(vr.to) : null
+      const tSec = Number(timeSec)
+      if (from == null || to == null || tSec < from || tSec > to) {
+        const half = from != null && to != null ? (to - from) / 2 : 1800
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        try { ts.setVisibleRange({ from: (tSec - half) as any, to: (tSec + half) as any }) } catch { /* out of bar range */ }
+        requestAnimationFrame(applyHover)
+        return
       }
     }
-    const x = chart.timeScale().timeToCoordinate(timeSec)
-    const y = price != null ? candle.priceToCoordinate(price) : null
-    setHover({ trade: t, x: x ?? 8, y: y ?? height / 2 })
-  }, [hoverTradeId, trades, bars, levels, height, chartTfMins])
+    applyHover()
+  }, [hoverTradeId, trades, bars, levels, height, chartTfMins, readOnly])
 
   // ── Annotations: load, render, draw ────────────────────────────────────
   // Load saved zones for this (symbol, date). Best-effort — never blocks the chart.
@@ -2036,7 +2052,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             >
               <button
                 type="button"
-                onClick={() => { const id = arrowMenu.tradeId; setArrowMenu(null); router.push(`/intraday/${date}?trade=${id}`) }}
+                onClick={() => { const id = arrowMenu.tradeId; setArrowMenu(null); if (onTradeActivate) onTradeActivate(id); else if (!readOnly) router.push(`/intraday/${date}?trade=${id}`) }}
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
               >
                 <Activity className="w-3.5 h-3.5 text-blue-400" />

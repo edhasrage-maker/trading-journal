@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import LiveChart from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
@@ -61,6 +61,26 @@ export default function SharedDayView({ day, trades }: { day: TradingDay; trades
   // (logged-out share context), so multi-instrument days still get a toggle.
   const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(defaultSymbol, trades)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [hoverTradeId, setHoverTradeId] = useState<string | null>(null)
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({})
+
+  // Row click: expand its detail, switch the chart to that trade's instrument if
+  // different (NQ ↔ ES), and pan/highlight its entry on the chart.
+  const onRowClick = (t: Trade) => {
+    setExpanded(prev => (prev === t.id ? null : t.id))
+    if (t.symbol) {
+      const root = chartSeriesRoot(t.symbol)
+      if (!activeSymbol || chartSeriesRoot(activeSymbol) !== root) onSymbolChange(t.symbol)
+    }
+    setHoverTradeId(t.id)
+  }
+  // Chart double-click on an entry → expand + scroll to that trade's row. Never
+  // navigates in the shared view (that would kick a logged-in viewer to their app).
+  const onTradeActivate = (id: string) => {
+    setExpanded(id)
+    setHoverTradeId(id)
+    rowRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
 
   const dateLabel = (() => {
     try {
@@ -102,6 +122,8 @@ export default function SharedDayView({ day, trades }: { day: TradingDay; trades
             symbolOptions={symbolOptions}
             onSymbolChange={onSymbolChange}
             trades={chartTrades}
+            hoverTradeId={hoverTradeId}
+            onTradeActivate={onTradeActivate}
             readOnly
             height={520}
           />
@@ -143,8 +165,9 @@ export default function SharedDayView({ day, trades }: { day: TradingDay; trades
                   return (
                     <Fragment key={t.id}>
                       <tr
-                        className="border-b border-gray-800/60 last:border-0 cursor-pointer hover:bg-gray-800/40"
-                        onClick={() => setExpanded(isOpen ? null : t.id)}
+                        ref={el => { rowRefs.current[t.id] = el }}
+                        className={`border-b border-gray-800/60 last:border-0 cursor-pointer hover:bg-gray-800/40 ${hoverTradeId === t.id ? 'bg-gray-800/40' : ''}`}
+                        onClick={() => onRowClick(t)}
                       >
                         <td className="px-2 py-2 text-gray-500">
                           <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
