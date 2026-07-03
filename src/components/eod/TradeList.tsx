@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3 } from 'lucide-react'
 import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, type BarLike } from '@/lib/analytics'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
@@ -11,6 +11,34 @@ import type { Trade } from '@/lib/supabase/types'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
+
+// Optional columns the user can show/hide in the Detailed (Pro) view. Core
+// columns — checkbox, Time, Setup, Entry, PnL, Overview — are always shown.
+// The choice is persisted per-device in localStorage.
+const TOGGLEABLE_COLS = [
+  { key: 'stop', label: 'Stop' },
+  { key: 'tp1', label: 'TP1' },
+  { key: 'qty', label: 'Qty' },
+  { key: 'atr', label: 'ATR@' },
+  { key: 'r', label: 'R' },
+  { key: 'mfe', label: 'MFE %' },
+  { key: 'mae', label: 'MAE %' },
+  { key: 'postExit', label: 'Post-Exit' },
+] as const
+type ColKey = (typeof TOGGLEABLE_COLS)[number]['key']
+const COLS_STORAGE_KEY = 'eod-trade-cols-v1'
+const defaultColPrefs = (): Record<ColKey, boolean> =>
+  Object.fromEntries(TOGGLEABLE_COLS.map(c => [c.key, true])) as Record<ColKey, boolean>
+function loadColPrefs(): Record<ColKey, boolean> {
+  const defaults = defaultColPrefs()
+  if (typeof window === 'undefined') return defaults
+  try {
+    const raw = localStorage.getItem(COLS_STORAGE_KEY)
+    if (!raw) return defaults
+    // Merge OVER defaults so a column added in a later version defaults to visible.
+    return { ...defaults, ...(JSON.parse(raw) as Partial<Record<ColKey, boolean>>) }
+  } catch { return defaults }
+}
 
 /** Display capture % per trade — uses the same null-handling as the intraday row.
  *  When bars are provided, prefers the per-leg scaling-aware ratio so a scaled-
@@ -136,20 +164,35 @@ export default function TradeList({
   const [maeOpen, setMaeOpen] = useState(false)
   const mfeRef = useRef<HTMLDivElement>(null)
   const maeRef = useRef<HTMLDivElement>(null)
+
+  // User-toggleable columns. Init to all-visible (safe for SSR), then hydrate the
+  // saved per-device choice from localStorage after mount.
+  const [cols, setCols] = useState<Record<ColKey, boolean>>(defaultColPrefs)
+  const [colsOpen, setColsOpen] = useState(false)
+  const colsRef = useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate saved column prefs from localStorage once on mount (can't read localStorage during SSR)
+  useEffect(() => { setCols(loadColPrefs()) }, [])
+  const toggleCol = (key: ColKey) => setCols(prev => {
+    const next = { ...prev, [key]: !prev[key] }
+    try { localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+    return next
+  })
+
   useEffect(() => {
-    if (!mfeOpen && !maeOpen) return
+    if (!mfeOpen && !maeOpen && !colsOpen) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
       if (mfeOpen && mfeRef.current && !mfeRef.current.contains(t)) setMfeOpen(false)
       if (maeOpen && maeRef.current && !maeRef.current.contains(t)) setMaeOpen(false)
+      if (colsOpen && colsRef.current && !colsRef.current.contains(t)) setColsOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setMfeOpen(false); setMaeOpen(false) }
+      if (e.key === 'Escape') { setMfeOpen(false); setMaeOpen(false); setColsOpen(false) }
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
-  }, [mfeOpen, maeOpen])
+  }, [mfeOpen, maeOpen, colsOpen])
 
   if (trades.length === 0) {
     return (
@@ -206,7 +249,40 @@ export default function TradeList({
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-      <h2 className="font-semibold text-white mb-3 text-sm">Trades ({trades.length})</h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold text-white text-sm">Trades ({trades.length})</h2>
+        <div className="relative" ref={colsRef}>
+          <button
+            type="button"
+            onClick={() => setColsOpen(o => !o)}
+            className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded border transition-colors ${
+              colsOpen ? 'border-blue-500 text-blue-300 bg-blue-950/30' : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+            }`}
+            title="Show / hide columns"
+          >
+            <Columns3 className="w-3.5 h-3.5" /> Columns
+          </button>
+          {colsOpen && (
+            <div className="absolute right-0 top-full mt-1 z-30 w-44 bg-gray-900 border border-gray-700 rounded-lg p-1.5 shadow-xl">
+              <p className="px-2 py-1 text-[10px] uppercase tracking-wider text-gray-600">Show columns</p>
+              {TOGGLEABLE_COLS.map(c => (
+                <label
+                  key={c.key}
+                  className="flex items-center gap-2 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800 rounded cursor-pointer select-none"
+                >
+                  <input
+                    type="checkbox"
+                    checked={cols[c.key]}
+                    onChange={() => toggleCol(c.key)}
+                    className="accent-blue-500 w-3.5 h-3.5"
+                  />
+                  {c.label}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs font-mono">
           {/* Sticky header: stays pinned to the top of the viewport as the
@@ -221,13 +297,13 @@ export default function TradeList({
                   shown as an inline arrow on the setup chip itself. */}
               <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Setup</th>
               <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Entry</th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Stop</th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">TP1</th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Qty</th>
-              <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." />
+              {cols.stop && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Stop</th>}
+              {cols.tp1 && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">TP1</th>}
+              {cols.qty && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Qty</th>}
+              {cols.atr && <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." />}
               <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} />
-              <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." />
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
+              {cols.r && <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." />}
+              {cols.mfe && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
                 <span className="inline-flex items-center gap-1 justify-end">
                   <button
                     type="button"
@@ -271,8 +347,8 @@ export default function TradeList({
                     <p className="text-gray-500">Bolded when the trade was a give-back (MFE ≥ 1R favorable then closed red).</p>
                   </div>
                 )}
-              </th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
+              </th>}
+              {cols.mae && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
                 <span className="inline-flex items-center gap-1 justify-end">
                   <button
                     type="button"
@@ -316,8 +392,8 @@ export default function TradeList({
                     <p className="text-gray-500">Red bold on lucky-escape winners (heat &gt; 100% but trade closed green) or on standout heat (≥ 100%).</p>
                   </div>
                 )}
-              </th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>
+              </th>}
+              {cols.postExit && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>}
               <th className="text-left font-normal pb-2 whitespace-nowrap">Overview</th>
               <th className="w-8" />
             </tr>
@@ -400,10 +476,10 @@ export default function TradeList({
                   <td className="py-1.5 pr-3 text-right text-gray-300">
                     {t.entry_price ?? '--'}
                   </td>
-                  <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>
-                  <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>
-                  <td className="py-1.5 pr-3 text-right text-gray-300">{t.quantity ?? '--'}</td>
-                  {(() => {
+                  {cols.stop && <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>}
+                  {cols.tp1 && <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>}
+                  {cols.qty && <td className="py-1.5 pr-3 text-right text-gray-300">{t.quantity ?? '--'}</td>}
+                  {cols.atr && (() => {
                     // Prefer live ATR from bars; on the cloud build (no bars) fall
                     // back to the stored entry_atr_1m so the column still populates.
                     const liveAtr = liveAtrByTradeId?.[t.id]
@@ -422,7 +498,7 @@ export default function TradeList({
                     {pnl >= 0 ? '+' : ''}
                     {pnl.toFixed(2)}
                   </td>
-                  {(() => {
+                  {cols.r && (() => {
                     const r = rMultiple(t)
                     return (
                       <td className={`py-1.5 pr-3 text-right ${
@@ -459,21 +535,25 @@ export default function TradeList({
                     const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
                     return (
                       <>
-                        <td className={`py-1.5 pr-3 text-right ${capCls}`}
-                          title={isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.' : undefined}>
-                          {captureDisplay(t, bars ?? undefined) ?? '—'}
-                        </td>
-                        <td className={`py-1.5 pr-3 text-right ${heatCls}`}
-                          title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : undefined}>
-                          {heatDisplay(t) ?? '—'}
-                          {neverRed && (
-                            <span className="ml-1 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
-                          )}
-                        </td>
+                        {cols.mfe && (
+                          <td className={`py-1.5 pr-3 text-right ${capCls}`}
+                            title={isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.' : undefined}>
+                            {captureDisplay(t, bars ?? undefined) ?? '—'}
+                          </td>
+                        )}
+                        {cols.mae && (
+                          <td className={`py-1.5 pr-3 text-right ${heatCls}`}
+                            title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : undefined}>
+                            {heatDisplay(t) ?? '—'}
+                            {neverRed && (
+                              <span className="ml-1 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
+                            )}
+                          </td>
+                        )}
                       </>
                     )
                   })()}
-                  {(() => {
+                  {cols.postExit && (() => {
                     const ext = postExitByTradeId?.[t.id]
                     if (!ext) return <td className="py-1.5 pr-3 text-right text-gray-700">—</td>
                     const isLong = t.direction === 'long'
