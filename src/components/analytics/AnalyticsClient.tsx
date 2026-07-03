@@ -280,7 +280,7 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
 
       {/* Overall stats. Beginner: plain subset (Trades, Win Rate, Total PnL,
           Move captured). Pro: the full 8-metric grid. */}
-      <div className={`grid grid-cols-2 gap-3 ${mode === 'beginner' ? 'md:grid-cols-4' : 'md:grid-cols-8'}`}>
+      <div className={`grid grid-cols-2 gap-3 ${mode === 'beginner' ? (overall.avg_capture == null ? 'md:grid-cols-3' : 'md:grid-cols-4') : 'md:grid-cols-8'}`}>
         <StatCard label="Trades" value={overall.count.toString()} positive={null} />
         <StatCard
           label="Win Rate"
@@ -314,12 +314,16 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
             positive={overall.avg_r != null && overall.avg_r >= 0}
           />
         )}
-        <StatCard
-          label={mode === 'beginner' ? 'Move captured' : 'MFE Realized %'}
-          value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
-          hint={`${overall.capture_count} of ${overall.count}`}
-          positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
-        />
+        {/* Beginner hides this when there's no capture data (a bare "—" reads
+            as broken); Pro always shows MFE Realized %. */}
+        {(mode === 'pro' || overall.avg_capture != null) && (
+          <StatCard
+            label={mode === 'beginner' ? 'Move captured' : 'MFE Realized %'}
+            value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
+            hint={`${overall.capture_count} of ${overall.count}`}
+            positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
+          />
+        )}
         {mode === 'pro' && (
           <StatCard
             label="MAE Heat %"

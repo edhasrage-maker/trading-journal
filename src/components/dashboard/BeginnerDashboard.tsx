@@ -33,8 +33,10 @@ function fmtDate(d: string): string {
 export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, focus, sessions }: Props) {
   return (
     <div className="space-y-4">
-      {/* Plain summary — a few "how am I doing" signals in plain language */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
+      {/* Plain summary — a few "how am I doing" signals in plain language.
+          "Move captured" only shows when there's capture data (imports without
+          MFE/stops have none — a bare "—" reads as broken, so hide it). */}
+      <div className={`grid grid-cols-2 sm:grid-cols-3 gap-3 ${capturePct == null ? 'xl:grid-cols-4' : 'xl:grid-cols-5'}`}>
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500 mb-1">Last 30 days</div>
           <div className={`text-2xl font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(pnl)}</div>
@@ -43,11 +45,13 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
           <div className="text-xs text-gray-500 mb-1">Win rate</div>
           <div className="text-2xl font-semibold text-gray-100" style={{ fontVariantNumeric: 'tabular-nums' }}>{winRate == null ? '—' : `${Math.round(winRate)}%`}</div>
         </div>
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4" title="How much of the favorable move you kept, on average (your MFE capture).">
-          <div className="text-xs text-gray-500 mb-1">Move captured</div>
-          <div className="text-2xl font-semibold text-gray-100" style={{ fontVariantNumeric: 'tabular-nums' }}>{capturePct == null ? '—' : `${capturePct}%`}</div>
-          <div className="text-[10px] text-gray-600 mt-0.5">of the move offered</div>
-        </div>
+        {capturePct != null && (
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4" title="How much of the favorable move you kept, on average (your MFE capture).">
+            <div className="text-xs text-gray-500 mb-1">Move captured</div>
+            <div className="text-2xl font-semibold text-gray-100" style={{ fontVariantNumeric: 'tabular-nums' }}>{capturePct}%</div>
+            <div className="text-[10px] text-gray-600 mt-0.5">of the move offered</div>
+          </div>
+        )}
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500 mb-1">Green days</div>
           <div className="text-2xl font-semibold text-gray-100" style={{ fontVariantNumeric: 'tabular-nums' }}>{greenDays} <span className="text-gray-500 text-base font-normal">of {tradedDays}</span></div>
