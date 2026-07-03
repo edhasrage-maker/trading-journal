@@ -77,21 +77,34 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
     return () => clearInterval(id)
   }, [])
 
-  // The day the user is actually viewing. When the URL is a dated route
-  // (/prep|/intraday|/eod/<date>), keep the day tabs pointed at THAT date so
-  // switching tabs while reviewing a prior session doesn't yank them back to
-  // today — the user picks the day, navigation preserves it. Falls back to
-  // `today` on non-dated routes (dashboard, analytics, calendar, settings).
-  const viewedDate = (() => {
-    const m = /^\/(?:prep|intraday|eod)\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
-    return m ? m[1] : today
-  })()
+  // The date the review tabs default to when NOT on a dated route: today once
+  // today's prep is started, else the most-recently-traded day (/api/nav-anchor).
+  // Refetched on navigation so it flips to today right after prep is saved.
+  const [anchor, setAnchor] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/nav-anchor')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled && d?.anchor) setAnchor(d.anchor as string) })
+      .catch(() => { /* fall back to today */ })
+    return () => { cancelled = true }
+  }, [pathname])
 
-  // Monday of the viewed week → /weekly/<thatMonday>. Anchored to viewedDate so
-  // the Weekly tab follows the session you're reviewing, not the current week.
-  // Computed at noon UTC so the weekday is TZ-safe (noon dodges DST edges).
+  // On a dated route (/prep|/intraday|/eod/<date>) the tabs stick to THAT date.
+  // Otherwise Daily Prep points at today (where you start today's prep), while the
+  // review tabs (Intraday/EOD/Weekly) follow the anchor — today once prep is
+  // started, else your last traded day — so they don't land on an empty today.
+  const urlDate = (() => {
+    const m = /^\/(?:prep|intraday|eod)\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
+    return m ? m[1] : null
+  })()
+  const prepDate = urlDate ?? today
+  const reviewDate = urlDate ?? anchor ?? today
+
+  // Monday of the review week → /weekly/<thatMonday>. Noon UTC so the weekday is
+  // TZ-safe (dodges DST edges).
   const weekMonday = (() => {
-    const noon = new Date(`${viewedDate}T12:00:00Z`)
+    const noon = new Date(`${reviewDate}T12:00:00Z`)
     const day = noon.getUTCDay()  // 0=Sun, 1=Mon, ..., 6=Sat
     const diff = day === 0 ? -6 : 1 - day
     const monday = new Date(noon.getTime() + diff * 24 * 3600 * 1000)
@@ -101,9 +114,9 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const navItems = [
     { href: '/welcome', label: 'Welcome', icon: Sparkles },
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { href: `/prep/${viewedDate}`, label: 'Daily Prep', icon: ClipboardList },
-    { href: `/intraday/${viewedDate}`, label: 'Intraday', icon: Activity },
-    { href: `/eod/${viewedDate}`, label: 'EOD Recap', icon: BarChart2 },
+    { href: `/prep/${prepDate}`, label: 'Daily Prep', icon: ClipboardList },
+    { href: `/intraday/${reviewDate}`, label: 'Intraday', icon: Activity },
+    { href: `/eod/${reviewDate}`, label: 'EOD Recap', icon: BarChart2 },
     { href: `/weekly/${weekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp },
@@ -114,13 +127,13 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   // "More" sheet. (Desktop uses the full navItems list above, unchanged.)
   const mobileTabs = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, match: '/dashboard' },
-    { href: `/prep/${viewedDate}`, label: 'Prep', icon: ClipboardList, match: '/prep' },
-    { href: `/eod/${viewedDate}`, label: 'EOD', icon: BarChart2, match: '/eod' },
+    { href: `/prep/${prepDate}`, label: 'Prep', icon: ClipboardList, match: '/prep' },
+    { href: `/eod/${reviewDate}`, label: 'EOD', icon: BarChart2, match: '/eod' },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp, match: '/analytics' },
   ]
   const moreNav = [
     { href: '/welcome', label: 'Welcome', icon: Sparkles },
-    { href: `/intraday/${viewedDate}`, label: 'Intraday', icon: Activity },
+    { href: `/intraday/${reviewDate}`, label: 'Intraday', icon: Activity },
     { href: `/weekly/${weekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/import', label: 'Import', icon: Upload },
