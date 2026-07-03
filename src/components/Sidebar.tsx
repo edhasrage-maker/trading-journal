@@ -19,7 +19,7 @@ import {
   Brain,
   Upload,
   Sparkles,
-  DollarSign,
+  SlidersHorizontal,
   LogOut,
   Menu,
   X,
@@ -34,7 +34,7 @@ import { useUiMode } from '@/lib/ui-mode'
 // Filtered per-user in the component (needs the runtime isAdmin), not here.
 const settingsItems = [
   { href: '/settings/coaching', label: 'Player Profile', icon: Brain, localOnly: false, adminOnly: false },
-  { href: '/settings/commissions', label: 'Commissions', icon: DollarSign, localOnly: false, adminOnly: false },
+  { href: '/settings/account', label: 'Account Settings', icon: SlidersHorizontal, localOnly: false, adminOnly: false },
   { href: '/settings/tags', label: 'Tags', icon: Tag, localOnly: false, adminOnly: false },
   { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database, localOnly: false, adminOnly: true },
   { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart, localOnly: true, adminOnly: true },

@@ -605,6 +605,11 @@ create table if not exists trader_profile (
   -- Sources that already include commission (NinjaTrader, Tradezella net) are
   -- untouched. 0 = don't adjust. Migration: 20260702_commission_per_side.sql.
   commission_per_side numeric not null default 0,
+  -- Account Settings → Profile (trading defaults). Migration: 20260703_trading_defaults.sql.
+  display_name text,
+  default_instrument text,
+  account_size numeric,
+  timezone text,
   updated_at timestamptz not null default now()
 );
 
