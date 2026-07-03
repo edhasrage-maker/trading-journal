@@ -164,6 +164,48 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
 }
 
 /**
+ * MFE and MAE in ATR units — excursion points ÷ ATR-at-entry. The stop-free unit
+ * for the efficiency read ("took 0.4×ATR of heat", "captured 2.1×ATR"). Pass a
+ * live ATR via `atrAtEntry`; otherwise falls back to the stored entry_atr_1m.
+ * Non-negative (mfeMaePoints floors at 0). Null when excursion or a usable ATR
+ * is missing.
+ */
+export function mfeMaeAtr(
+  t: TradeWithExcursion & { entry_atr_1m?: number | null },
+  atrAtEntry?: number | null,
+): { mfe: number; mae: number } | null {
+  const pts = mfeMaePoints(t)
+  if (!pts) return null
+  const atr = atrAtEntry ?? t.entry_atr_1m
+  if (atr == null || atr <= 0) return null
+  return { mfe: pts.mfe / atr, mae: pts.mae / atr }
+}
+
+/**
+ * Session/period aggregate of MFE and MAE in ATR units — powers the "you take
+ * X×ATR of heat to capture Y×ATR" verdict. Averages over trades that have both
+ * excursion and a usable ATR. `atrByTradeId` supplies live ATRs; falls back to
+ * each trade's entry_atr_1m. Works with or without planned stops (excursion is
+ * bar-derived), so it lights up on a fills-only import.
+ */
+export function avgMfeMaeAtr(
+  trades: (TradeWithExcursion & { entry_atr_1m?: number | null })[],
+  atrByTradeId?: Record<string, number>,
+): { mfe: number | null; mae: number | null; count: number } {
+  let sumMfe = 0, sumMae = 0, n = 0
+  for (const t of trades) {
+    const live = t.id != null ? atrByTradeId?.[t.id] : undefined
+    const r = mfeMaeAtr(t, live)
+    if (!r) continue
+    sumMfe += r.mfe
+    sumMae += r.mae
+    n++
+  }
+  if (n === 0) return { mfe: null, mae: null, count: 0 }
+  return { mfe: sumMfe / n, mae: sumMae / n, count: n }
+}
+
+/**
  * Capture ratio = realized PnL / peak favorable excursion in $.
  *
  * Both sides scale by the symbol multiplier and quantity, so we can express

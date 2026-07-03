@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3 } from 'lucide-react'
-import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, type BarLike } from '@/lib/analytics'
+import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaeAtr, type BarLike } from '@/lib/analytics'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
@@ -539,6 +539,15 @@ export default function TradeList({
                     const heatStandout = isLuckyEscape || (heat != null && heat > 1.0)
                     const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
                     const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
+                    // MAE column is stop-aware. With a planned stop → heat as % of stop
+                    // distance (answers "held past my stop?"). Without a stop → heat in
+                    // ATR units; amber ONLY on a winner that took real heat (>=1 ATR = a
+                    // late/lucky entry to review). Losers stay neutral — adverse movement
+                    // is expected when you're wrong, not a mistake to flag red.
+                    const hasStop = t.stop_price != null
+                    const maeAtr = hasStop ? null : (mfeMaeAtr(t, liveAtrByTradeId?.[t.id])?.mae ?? null)
+                    const atrWinnerHeat = !hasStop && (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
+                    const atrNeverRed = !hasStop && maeAtr === 0
                     return (
                       <>
                         {cols.mfe && (
@@ -547,15 +556,25 @@ export default function TradeList({
                             {captureDisplay(t, bars ?? undefined) ?? '—'}
                           </td>
                         )}
-                        {cols.mae && (
+                        {cols.mae && (hasStop ? (
                           <td className={`py-1.5 pr-3 text-right ${heatCls}`}
-                            title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : undefined}>
+                            title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : 'Heat as % of planned stop distance. Over 100% = you held past your stop.'}>
                             {heatDisplay(t) ?? '—'}
                             {neverRed && (
                               <span className="ml-1 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
                             )}
                           </td>
-                        )}
+                        ) : (
+                          <td className={`py-1.5 pr-3 text-right ${atrWinnerHeat ? 'text-amber-400 font-bold' : 'text-gray-400'}`}
+                            title={maeAtr == null ? 'Heat unavailable — no ATR at entry for this trade.'
+                              : atrWinnerHeat ? `Won but sat through ${maeAtr.toFixed(1)}×ATR of heat — a late/lucky entry worth reviewing.`
+                              : `Heat in ATR units: peak adverse excursion ÷ 1 ATR at entry.${(t.pnl ?? 0) <= 0 ? ' Adverse movement is expected on a losing trade.' : ''}`}>
+                            {maeAtr == null ? '—' : `${maeAtr.toFixed(1)}×`}
+                            {atrNeverRed && (
+                              <span className="ml-1 text-emerald-400" title="Never traded below entry — instantly favorable.">↑</span>
+                            )}
+                          </td>
+                        ))}
                       </>
                     )
                   })()}

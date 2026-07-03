@@ -19,9 +19,10 @@ import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import RecordingCommentary from './RecordingCommentary'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
+import MfeMaeEfficiency from './MfeMaeEfficiency'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
-import { avgCaptureRatio, avgMaeHeatRatio, type BarLike } from '@/lib/analytics'
+import { avgCaptureRatio, avgMaeHeatRatio, avgMfeMaeAtr, type BarLike } from '@/lib/analytics'
 import type {
   TradingDay,
   Trade,
@@ -536,6 +537,10 @@ export default function EodClient({
   // trades that have the data (entry/stop/direction/high/low present).
   const captureStats = useMemo(() => avgCaptureRatio(trades), [trades])
   const heatStats = useMemo(() => avgMaeHeatRatio(trades), [trades])
+  // Entry-efficiency (avg MFE vs MAE in ATR units) for the verdict card. Prefers
+  // the per-trade live ATR, falls back to stored entry_atr_1m; bar-derived, so it
+  // works on a fills-only import with no planned stops.
+  const mfeMaeAtrStats = useMemo(() => avgMfeMaeAtr(trades, liveAtrByTradeId), [trades, liveAtrByTradeId])
 
   // --- Trade-selection state (shared by merge + bulk-delete actions) ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -1031,6 +1036,8 @@ export default function EodClient({
           </div>
         </div>
       )}
+
+      <MfeMaeEfficiency mfe={mfeMaeAtrStats.mfe} mae={mfeMaeAtrStats.mae} count={mfeMaeAtrStats.count} />
 
       <TradeList
         trades={trades}
