@@ -52,12 +52,12 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   )
   const { mode, setMode } = useUiMode()
 
-  // Mobile drawer state. On desktop (md+) the sidebar is always shown and this
-  // is inert; below md it's an off-canvas drawer. Close it on any route change
-  // so tapping a nav link slides it away and reveals the page.
-  const [open, setOpen] = useState(false)
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- close the drawer on any route change (covers link taps + back/forward nav)
-  useEffect(() => { setOpen(false) }, [pathname])
+  // Mobile "More" sheet state (the bottom-tab-bar overflow menu). Desktop (md+)
+  // shows the full sidebar and ignores this. Close on any route change so
+  // tapping a link in the sheet dismisses it.
+  const [moreOpen, setMoreOpen] = useState(false)
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- close the More sheet on any route change (covers link taps + back/forward nav)
+  useEffect(() => { setMoreOpen(false) }, [pathname])
 
   const signOut = async () => {
     await createClient().auth.signOut()
@@ -110,40 +110,35 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
     { href: '/import', label: 'Import', icon: Upload },
   ]
 
+  // Mobile: four primary tabs in the bottom bar; everything else lives in the
+  // "More" sheet. (Desktop uses the full navItems list above, unchanged.)
+  const mobileTabs = [
+    { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, match: '/dashboard' },
+    { href: `/prep/${viewedDate}`, label: 'Prep', icon: ClipboardList, match: '/prep' },
+    { href: `/eod/${viewedDate}`, label: 'EOD', icon: BarChart2, match: '/eod' },
+    { href: '/analytics', label: 'Analytics', icon: TrendingUp, match: '/analytics' },
+  ]
+  const moreNav = [
+    { href: '/welcome', label: 'Welcome', icon: Sparkles },
+    { href: `/intraday/${viewedDate}`, label: 'Intraday', icon: Activity },
+    { href: `/weekly/${weekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
+    { href: '/calendar', label: 'Calendar', icon: CalendarDays },
+    { href: '/import', label: 'Import', icon: Upload },
+  ]
+
   return (
     <>
-      {/* Mobile top bar — hamburger opens the drawer (md:hidden; desktop keeps the fixed sidebar) */}
-      <div className="md:hidden fixed top-0 inset-x-0 h-14 z-30 flex items-center gap-3 px-4 bg-gray-900 border-b border-gray-800">
-        <button type="button" onClick={() => setOpen(true)} aria-label="Open menu" className="text-gray-300 hover:text-white">
-          <Menu className="w-6 h-6" />
-        </button>
+      {/* Mobile top bar — logo only; navigation is the bottom tab bar. md:hidden. */}
+      <div className="md:hidden fixed top-0 inset-x-0 h-14 z-30 flex items-center gap-2.5 px-4 bg-gray-900 border-b border-gray-800">
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
-        <img src="/brand/tapescore-favicon.svg" alt="TapeScore" className="w-7 h-7" />
+        <img src="/brand/tapescore-favicon.svg" alt="TapeScore" className="w-8 h-8" />
         <span className="text-lg tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
           <span className="font-medium">Tape</span><span className="font-extrabold">Score</span>
         </span>
       </div>
 
-      {/* Backdrop behind the open drawer (mobile only) */}
-      {open && (
-        <div className="md:hidden fixed inset-0 z-40 bg-black/60" onClick={() => setOpen(false)} aria-hidden />
-      )}
-
-      <aside
-        className={cn(
-          'fixed left-0 top-0 h-dvh w-60 bg-gray-900 border-r border-gray-800 flex flex-col overflow-y-auto z-50 transition-transform duration-200 md:translate-x-0',
-          open ? 'translate-x-0' : '-translate-x-full',
-        )}
-      >
-      {/* Close (mobile only) */}
-      <button
-        type="button"
-        onClick={() => setOpen(false)}
-        aria-label="Close menu"
-        className="md:hidden absolute top-4 right-3 text-gray-400 hover:text-white"
-      >
-        <X className="w-5 h-5" />
-      </button>
+      {/* Desktop sidebar (md+ only). Mobile navigates via the bottom tab bar below. */}
+      <aside className="hidden md:flex fixed left-0 top-0 h-dvh w-60 bg-gray-900 border-r border-gray-800 flex-col overflow-y-auto z-50">
       {/* Logo — TapeScore lockup: mark + wordmark, tagline aligned under the wordmark */}
       <div className="flex items-center gap-3 px-5 py-6 border-b border-gray-800">
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG, no image optimization needed */}
@@ -238,6 +233,127 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
         </button>
       </div>
       </aside>
+
+      {/* Mobile bottom tab bar (md:hidden) — four primary tabs + More. */}
+      <nav
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex bg-gray-900 border-t border-gray-800"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        {mobileTabs.map(({ href, label, icon: Icon, match }) => {
+          const active = pathname.startsWith(match)
+          return (
+            <Link
+              key={label}
+              href={href}
+              className={cn(
+                'flex-1 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] text-[10px] transition-colors',
+                active ? 'text-blue-400' : 'text-gray-500 hover:text-gray-300',
+              )}
+            >
+              <Icon className="w-5 h-5" />
+              {label}
+            </Link>
+          )
+        })}
+        <button
+          type="button"
+          onClick={() => setMoreOpen(true)}
+          aria-expanded={moreOpen}
+          className={cn(
+            'flex-1 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] text-[10px] transition-colors',
+            moreOpen ? 'text-blue-400' : 'text-gray-500 hover:text-gray-300',
+          )}
+        >
+          <Menu className="w-5 h-5" />
+          More
+        </button>
+      </nav>
+
+      {/* Mobile "More" sheet — secondary nav + Settings + View toggle + Sign out. */}
+      {moreOpen && (
+        <div className="md:hidden">
+          <div className="fixed inset-0 z-40 bg-black/60" onClick={() => setMoreOpen(false)} aria-hidden />
+          <div
+            className="fixed inset-x-0 bottom-0 z-50 max-h-[85dvh] overflow-y-auto rounded-t-2xl bg-gray-900 border-t border-gray-800"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+          >
+            <div className="sticky top-0 flex items-center justify-between px-5 py-4 bg-gray-900 border-b border-gray-800">
+              <span className="text-sm font-semibold text-gray-200">More</span>
+              <button type="button" onClick={() => setMoreOpen(false)} aria-label="Close" className="text-gray-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-3 py-3 space-y-0.5">
+              {moreNav.map(({ href, label, icon: Icon }) => {
+                const active = pathname === href || pathname.startsWith(href.split('/').slice(0, 2).join('/'))
+                return (
+                  <Link
+                    key={label}
+                    href={href}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors',
+                      active ? 'bg-blue-600/20 text-blue-400' : 'text-gray-300 hover:text-white hover:bg-gray-800',
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    {label}
+                  </Link>
+                )
+              })}
+            </div>
+            {visibleSettings.length > 0 && (
+              <div className="px-3 py-3 border-t border-gray-800 space-y-0.5">
+                <p className="px-3 text-xs text-gray-600 uppercase tracking-wider mb-2">Settings</p>
+                {visibleSettings.map(({ href, label, icon: Icon }) => {
+                  const active = pathname.startsWith(href)
+                  return (
+                    <Link
+                      key={href}
+                      href={href}
+                      className={cn(
+                        'flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors',
+                        active ? 'bg-blue-600/20 text-blue-400' : 'text-gray-300 hover:text-white hover:bg-gray-800',
+                      )}
+                    >
+                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      {label}
+                    </Link>
+                  )
+                })}
+              </div>
+            )}
+            <div className="px-3 py-3 border-t border-gray-800">
+              <p className="px-3 text-xs text-gray-600 uppercase tracking-wider mb-2">View</p>
+              <div className="flex items-center gap-1 bg-gray-950/60 border border-gray-800 rounded-lg p-1">
+                {(['beginner', 'pro'] as const).map(m => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    aria-pressed={mode === m}
+                    className={cn(
+                      'flex-1 rounded-md py-2 text-xs whitespace-nowrap transition-colors',
+                      mode === m ? 'bg-blue-600 font-semibold text-white' : 'text-gray-400 hover:text-white',
+                    )}
+                  >
+                    {m === 'beginner' ? 'Highlights' : 'Detailed Tape'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="px-3 py-3 border-t border-gray-800">
+              <button
+                type="button"
+                onClick={signOut}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
+              >
+                <LogOut className="w-4 h-4 flex-shrink-0" />
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
