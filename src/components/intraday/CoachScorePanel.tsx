@@ -30,12 +30,14 @@ export default function CoachScorePanel({
   trade,
   notes,
   setupLibrary,
+  instrumentHasBars,
 }: {
   trade: GradableTrade
   notes?: string | null
   setupLibrary?: Set<string>
+  instrumentHasBars?: boolean
 }) {
-  const base = useMemo(() => computeCoachScore(trade, { setupLibrary }), [trade, setupLibrary])
+  const base = useMemo(() => computeCoachScore(trade, { setupLibrary, instrumentHasBars }), [trade, setupLibrary, instrumentHasBars])
   const [ai, setAi] = useState<Resolutions>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

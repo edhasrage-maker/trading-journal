@@ -71,7 +71,10 @@ export function summarizeCoachScore(criteria: Criterion[]): CoachScore {
  * lets criterion 1 verify the setup is a real playbook entry; omit it to just
  * require a setup tag.
  */
-export function computeCoachScore(t: GradableTrade, opts?: { setupLibrary?: Set<string> }): CoachScore {
+export function computeCoachScore(
+  t: GradableTrade,
+  opts?: { setupLibrary?: Set<string>; instrumentHasBars?: boolean },
+): CoachScore {
   const tj = t.tags_json ?? {}
   const setups = arr(tj.setups)
   const confluences = arr(tj.confluences)
@@ -93,7 +96,12 @@ export function computeCoachScore(t: GradableTrade, opts?: { setupLibrary?: Set<
   //    (1.25 upper for size-ups > 5 lots). N/A without an entry ATR (e.g. GBX).
   {
     const e = t.entry_price, s = t.stop_price, atr = t.entry_atr_1m
-    if (e == null || s == null || atr == null || atr <= 0) {
+    if (opts?.instrumentHasBars === false) {
+      // No bar data for this instrument → any stored entry_atr_1m is from a
+      // DIFFERENT instrument (e.g. an ES trade carrying a stale NQ ATR). Don't
+      // judge the stop against a wrong-scale ATR — mark N/A until bars exist.
+      c.push({ key: 'stop_in_atr_band', label: 'Stop 0.5–1.5× ATR', status: 'na', source: 'auto', reason: 'No bars for this instrument' })
+    } else if (e == null || s == null || atr == null || atr <= 0) {
       c.push({ key: 'stop_in_atr_band', label: 'Stop 0.5–1.5× ATR', status: 'na', source: 'auto', reason: atr == null ? 'No entry ATR' : 'Missing stop/entry' })
     } else {
       const mult = Math.abs(e - s) / atr

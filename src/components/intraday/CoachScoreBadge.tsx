@@ -24,11 +24,13 @@ function band(score: number | null): string {
 export default function CoachScoreBadge({
   trade,
   setupLibrary,
+  instrumentHasBars,
 }: {
   trade: GradableTrade
   setupLibrary?: Set<string>
+  instrumentHasBars?: boolean
 }) {
-  const cs = useMemo(() => computeCoachScore(trade, { setupLibrary }), [trade, setupLibrary])
+  const cs = useMemo(() => computeCoachScore(trade, { setupLibrary, instrumentHasBars }), [trade, setupLibrary, instrumentHasBars])
 
   const lines = cs.criteria.map(c => `${SYM[c.status]} ${c.label}${c.reason ? ` (${c.reason})` : ''}`)
   const tip =

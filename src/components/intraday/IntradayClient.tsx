@@ -13,7 +13,7 @@ import CoachScoreBadge from './CoachScoreBadge'
 import CoachScorePanel from './CoachScorePanel'
 import { deleteBlob } from '@/lib/storage'
 import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, type BarLike } from '@/lib/analytics'
-import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { symbolToMultiplier, chartSeriesRoot } from '@/lib/futures-symbols'
 import { useMfeUnit, formatMfeMae } from '@/lib/mfe-unit'
 import { mergeTradeTags } from '@/lib/suggest-tags'
 import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
@@ -476,6 +476,12 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     () => (chartSymbolOptions.length > 1 ? trades.filter(t => t.symbol === activeChartSymbol) : trades),
     [trades, chartSymbolOptions.length, activeChartSymbol],
   )
+  // A trade's stored ATR/MFE/MAE are only trustworthy if bars exist for ITS
+  // instrument — else they're from another product (e.g. an ES trade carrying a
+  // stale NQ ATR). Used to suppress the bar-derived Coach Score criterion.
+  // Empty set = symbols not loaded yet → don't suppress.
+  const availableRoots = useMemo(() => new Set(availableSymbols.map(chartSeriesRoot)), [availableSymbols])
+  const tradeHasBars = (t: Trade) => availableRoots.size === 0 || !t.symbol || availableRoots.has(chartSeriesRoot(t.symbol))
 
   return (
     <div className="space-y-4">
@@ -617,7 +623,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
               </div>
 
               {/* Coach Score — deterministic per-trade execution grade (0–10). */}
-              <CoachScoreBadge trade={trade} setupLibrary={setupLibrary} />
+              <CoachScoreBadge trade={trade} setupLibrary={setupLibrary} instrumentHasBars={tradeHasBars(trade)} />
 
               {/* P&L · R · Capture % · Loss ×R. Capture and loss are bolded when
                   the trade matches a high-signal cross-case pattern:
@@ -636,7 +642,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             {/* Expanded detail */}
             {isOpen && (
               <div className="border-t border-gray-800 px-4 py-4 space-y-4">
-                <CoachScorePanel trade={trade} notes={trade.notes} setupLibrary={setupLibrary} />
+                <CoachScorePanel trade={trade} notes={trade.notes} setupLibrary={setupLibrary} instrumentHasBars={tradeHasBars(trade)} />
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
                   {[
                     { label: 'Entry', value: fmt(trade.entry_price) },
