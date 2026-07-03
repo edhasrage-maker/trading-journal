@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { resilientUpsert } from '@/lib/resilient-upsert'
+import { userConflict } from '@/lib/tenant-conflict'
 import type { DailyPrep, ConditionVerdict } from '@/lib/supabase/types'
 import { clientError } from '@/lib/api-error'
 
@@ -73,7 +74,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     supabase,
     'daily_prep',
     payload,
-    { onConflict: 'trade_date' },
+    { onConflict: userConflict('trade_date') },
   )
 
   if (error) {

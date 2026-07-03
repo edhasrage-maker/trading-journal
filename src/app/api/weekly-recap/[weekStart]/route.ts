@@ -9,6 +9,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { clientError } from '@/lib/api-error'
+import { userConflict } from '@/lib/tenant-conflict'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,7 +65,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ weekStar
     .from('weekly_recap')
     .upsert(
       { week_start_date: weekStart, notes_md: body.notes_md, updated_at: new Date().toISOString() },
-      { onConflict: 'week_start_date' },
+      { onConflict: userConflict('week_start_date') },
     )
     .select('week_start_date, notes_md, updated_at')
     .single()

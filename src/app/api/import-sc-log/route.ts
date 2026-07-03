@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { parseSierraChartLog, mapRowToTrade } from '@/lib/sc-importer'
 import { resilientUpsert, resilientBulkUpsert, resilientUpdate } from '@/lib/resilient-upsert'
 import { perLegMaxDollars, type BarLike } from '@/lib/analytics'
@@ -13,6 +14,12 @@ import type { TradingDay } from '@/lib/supabase/types'
 type AnyClient = any
 
 export async function POST(req: Request) {
+  if (!LOCAL_FEATURES_ENABLED) {
+    return NextResponse.json(
+      { error: 'This feature runs only in the local desktop build (it reads Sierra Chart / OBS files on your machine).', local_only: true },
+      { status: 503 },
+    )
+  }
   const supabase: AnyClient = await createClient()
   const formData = await req.formData()
   const file = formData.get('file') as File | null

@@ -100,7 +100,9 @@ export default function TradeList({
         case 'time':
           return t.entry_time ? Date.parse(t.entry_time) : 0
         case 'atr':
-          return liveAtrByTradeId?.[t.id] ?? Number.NEGATIVE_INFINITY
+          // Cloud build has no live bars; fall back to the stored entry_atr_1m
+          // (same ATR-10 1m metric, computed + persisted at import time).
+          return (liveAtrByTradeId?.[t.id] ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m) ?? Number.NEGATIVE_INFINITY
         case 'pnl':
           return t.pnl ?? Number.NEGATIVE_INFINITY
         case 'r':
@@ -401,9 +403,17 @@ export default function TradeList({
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-300">{t.quantity ?? '--'}</td>
-                  <td className="py-1.5 pr-3 text-right text-gray-400" title={liveAtrByTradeId?.[t.id] != null ? `Live ATR-10 (1m Wilder) at this trade's entry_time` : 'Bars unavailable for live ATR — fallback to prep ATR not shown here'}>
-                    {liveAtrByTradeId?.[t.id] != null ? liveAtrByTradeId[t.id].toFixed(2) : '—'}
-                  </td>
+                  {(() => {
+                    // Prefer live ATR from bars; on the cloud build (no bars) fall
+                    // back to the stored entry_atr_1m so the column still populates.
+                    const liveAtr = liveAtrByTradeId?.[t.id]
+                    const atr = liveAtr ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m ?? null
+                    return (
+                      <td className="py-1.5 pr-3 text-right text-gray-400" title={liveAtr != null ? `Live ATR-10 (1m Wilder) at this trade's entry_time` : atr != null ? 'Stored ATR-10 (1m Wilder) at entry (bars unavailable in this view)' : 'ATR unavailable'}>
+                        {atr != null ? atr.toFixed(2) : '—'}
+                      </td>
+                    )
+                  })()}
                   <td
                     className={`py-1.5 pr-3 text-right font-bold ${
                       pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-500'

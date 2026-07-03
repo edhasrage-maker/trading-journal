@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { clientError } from '@/lib/api-error'
+import { userConflict } from '@/lib/tenant-conflict'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,7 +76,7 @@ export async function POST(req: Request) {
   const payload = entries.map(e => ({ key: e.key, value: e.value, updated_at: now }))
   const { error } = await supabase
     .from('chart_prefs')
-    .upsert(payload, { onConflict: 'key' })
+    .upsert(payload, { onConflict: userConflict('key') })
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ ok: true, written: payload.length })
 }

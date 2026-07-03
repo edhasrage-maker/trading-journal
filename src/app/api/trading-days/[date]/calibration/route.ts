@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { resilientUpsert } from '@/lib/resilient-upsert'
+import { userConflict } from '@/lib/tenant-conflict'
 import type { ChartCalibration, TradingDay } from '@/lib/supabase/types'
 import { clientError } from '@/lib/api-error'
 
@@ -52,7 +53,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
       chart_calibration_json: calibration,
       updated_at: new Date().toISOString(),
     },
-    { onConflict: 'date' },
+    { onConflict: userConflict('date') },
   )
 
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
@@ -66,7 +67,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ date
     supabase,
     'trading_days',
     { date, chart_calibration_json: null, updated_at: new Date().toISOString() },
-    { onConflict: 'date' },
+    { onConflict: userConflict('date') },
   )
 
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })

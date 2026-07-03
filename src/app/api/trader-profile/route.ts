@@ -9,6 +9,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { clientError } from '@/lib/api-error'
+import { userConflict } from '@/lib/tenant-conflict'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -77,7 +78,7 @@ export async function PUT(req: Request) {
   if (typeof body.focus_md === 'string') row.focus_md = body.focus_md
 
   const upsert = (select: string) =>
-    supabase.from('trader_profile').upsert(row, { onConflict: 'id' }).select(select).single()
+    supabase.from('trader_profile').upsert(row, { onConflict: userConflict('id') }).select(select).single()
 
   let { data, error } = await upsert('preferences_md, focus_md, updated_at')
   // focus_md column absent → strip it from the write and retry so a

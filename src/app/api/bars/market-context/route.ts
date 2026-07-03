@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { readScidBars } from '@/lib/scid-reader'
 import { contextStatsForDate } from '@/lib/market-context-from-bars'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { clientError } from '@/lib/api-error'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
@@ -29,6 +30,12 @@ const LOOKBACK_DAYS = 22
  * last completed day); the realized fields are null.
  */
 export async function GET(req: Request) {
+  if (!LOCAL_FEATURES_ENABLED) {
+    return NextResponse.json(
+      { error: 'This feature runs only in the local desktop build (it reads Sierra Chart / OBS files on your machine).', local_only: true },
+      { status: 503 },
+    )
+  }
   const { searchParams } = new URL(req.url)
   const symbol = searchParams.get('symbol')
   const date = searchParams.get('date')

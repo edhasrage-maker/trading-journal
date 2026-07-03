@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { resilientUpsert } from '@/lib/resilient-upsert'
+import { userConflict } from '@/lib/tenant-conflict'
 import { normalizeTagArray, type TradeTags } from '@/lib/supabase/types'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
@@ -59,7 +60,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     supabase,
     'trading_days',
     payload,
-    { onConflict: 'date' },
+    { onConflict: userConflict('date') },
   )
 
   if (dayError) return NextResponse.json({ error: dayError.message }, { status: 500 })

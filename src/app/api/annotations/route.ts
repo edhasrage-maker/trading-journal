@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { clientError } from '@/lib/api-error'
+import { userConflict } from '@/lib/tenant-conflict'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,7 +30,7 @@ async function dayId(supabase: AnyClient, date: string, create: boolean): Promis
   if (!create) return null
   const { data: made } = await supabase
     .from('trading_days')
-    .upsert({ date }, { onConflict: 'date' })
+    .upsert({ date }, { onConflict: userConflict('date') })
     .select('id')
     .single()
   return made?.id ?? null

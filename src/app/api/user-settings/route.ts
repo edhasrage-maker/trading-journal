@@ -13,6 +13,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { clientError } from '@/lib/api-error'
+import { userConflict } from '@/lib/tenant-conflict'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,7 +57,7 @@ export async function PUT(req: Request) {
 
   const { data, error } = await supabase
     .from('trader_profile')
-    .upsert({ id: 'default', commission_per_side: value, updated_at: new Date().toISOString() }, { onConflict: 'id' })
+    .upsert({ id: 'default', commission_per_side: value, updated_at: new Date().toISOString() }, { onConflict: userConflict('id') })
     .select('commission_per_side, updated_at')
     .single()
   if (error) {

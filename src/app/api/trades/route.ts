@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { clientError } from '@/lib/api-error'
+import { userConflict } from '@/lib/tenant-conflict'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
 
   const { data: day, error: dayError } = await supabase
     .from('trading_days')
-    .upsert({ date, updated_at: new Date().toISOString() }, { onConflict: 'date' })
+    .upsert({ date, updated_at: new Date().toISOString() }, { onConflict: userConflict('date') })
     .select().single()
 
   if (dayError) return NextResponse.json({ error: dayError.message }, { status: 500 })

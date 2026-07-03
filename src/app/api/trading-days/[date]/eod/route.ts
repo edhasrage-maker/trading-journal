@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { resilientUpsert } from '@/lib/resilient-upsert'
+import { userConflict } from '@/lib/tenant-conflict'
 import type { TradingDay, EodAiAnalysis } from '@/lib/supabase/types'
 import { clientError } from '@/lib/api-error'
 
@@ -32,7 +33,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     supabase,
     'trading_days',
     update,
-    { onConflict: 'date' },
+    { onConflict: userConflict('date') },
   )
 
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })

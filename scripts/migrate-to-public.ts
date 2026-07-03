@@ -56,9 +56,13 @@ const only = onlyArg ? new Set(onlyArg.split('=')[1].split(',')) : null
 // `conflict` = the target's unique/PK for idempotent re-runs (id where the base
 // keeps an id PK; the composite (user_id, natural-key) where the overlay made it
 // the PK — daily_prep / chart_prefs / weekly_recap / trader_profile).
-const TABLES: Array<{ name: string; order: string; conflict: string }> = [
+const TABLES: Array<{ name: string; order: string; conflict: string; stripId?: boolean }> = [
   { name: 'trading_days', order: 'id', conflict: 'id' },
-  { name: 'trade_tags', order: 'id', conflict: 'id' },
+  // trade_tags: the public app pre-seeds a default library on first login, so the
+  // rows collide on the natural key (user_id, category, label) — NOT on id. Upsert
+  // on that natural key and drop id (nothing FKs trade_tags.id; trades.tags_json
+  // stores tag LABELS, not ids), so seeded rows update in place and custom tags insert.
+  { name: 'trade_tags', order: 'id', conflict: 'user_id,category,label', stripId: true },
   { name: 'trader_profile', order: 'id', conflict: 'user_id,id' },
   { name: 'historical_trades', order: 'id', conflict: 'id' },
   { name: 'chart_prefs', order: 'key', conflict: 'user_id,key' },
@@ -84,11 +88,15 @@ async function fetchAll(table: string, order: string): Promise<Record<string, un
   return out
 }
 
-async function migrateTable(t: { name: string; order: string; conflict: string }) {
+async function migrateTable(t: { name: string; order: string; conflict: string; stripId?: boolean }) {
   let rows: Record<string, unknown>[]
   try { rows = await fetchAll(t.name, t.order) }
   catch (e) { console.log(`  ⚠ skip ${t.name}: ${(e as Error).message}`); return }
-  const stamped = rows.map(r => ({ ...r, user_id: USER_ID }))
+  const stamped = rows.map(r => {
+    const o: Record<string, unknown> = { ...r, user_id: USER_ID }
+    if (t.stripId) delete o.id
+    return o
+  })
   console.log(`${t.name.padEnd(20)} ${stamped.length} rows`)
   if (dryRun || stamped.length === 0) return
   let wrote = 0

@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { userConflict } from '@/lib/tenant-conflict'
 import { consumeAiUsage } from '@/lib/ai-usage'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -223,7 +224,7 @@ async function handle(req: Request) {
         model,
         generated_at: new Date().toISOString(),
       },
-      { onConflict: 'from_date,to_date,prompt_version' },
+      { onConflict: userConflict('from_date,to_date,prompt_version') },
     )
 
   return NextResponse.json({

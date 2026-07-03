@@ -26,6 +26,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { userConflict } from '@/lib/tenant-conflict'
 import { consumeAiUsage } from '@/lib/ai-usage'
 import { createClient } from '@/lib/supabase/server'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
@@ -187,7 +188,7 @@ Respond starting with { and ending with }.`
           generated_at: generatedAt,
           updated_at: generatedAt,
         },
-        { onConflict: 'week_start_date' },
+        { onConflict: userConflict('week_start_date') },
       )
   } catch (e) {
     // Table missing — soft-fail; the synthesis still returns to the client.
