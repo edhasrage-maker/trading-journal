@@ -5,6 +5,7 @@ import { parseSierraChartLog } from '@/lib/sc-importer'
 import { isNinjaTraderGrid, parseNinjaTraderGrid } from '@/lib/ninjatrader-import'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { liveAtr } from '@/lib/atr'
 
 /**
  * POST /api/import-trades-csv
@@ -32,21 +33,21 @@ interface PendingTrade {
 async function fetchBars(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any, symbol: string, startIso: string, endIso: string,
-): Promise<Array<{ ts: string; high: number; low: number }>> {
+): Promise<Array<{ ts: string; high: number; low: number; close: number }>> {
   const PAGE = 1000
-  const out: Array<{ ts: string; high: number; low: number }> = []
+  const out: Array<{ ts: string; high: number; low: number; close: number }> = []
   let from = 0
   for (let page = 0; page < 40; page++) {
     const { data, error } = await db
       .from('ohlcv_bars')
-      .select('ts, high, low')
+      .select('ts, high, low, close')
       .eq('symbol', symbol)
       .gte('ts', startIso)
       .lte('ts', endIso)
       .order('ts', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error) break
-    const rows = (data ?? []) as Array<{ ts: string; high: number; low: number }>
+    const rows = (data ?? []) as Array<{ ts: string; high: number; low: number; close: number }>
     out.push(...rows)
     if (rows.length < PAGE) break
     from += PAGE
@@ -84,11 +85,13 @@ async function applyGrossCommissions(
 }
 
 /**
- * Fill high/low-during-position from the central bar feed for any trade whose
- * source didn't carry excursion data (NinjaTrader grids, generic CSVs). The
- * market bars — not the trade log — are the source of truth for MFE/MAE. Runs
- * once per symbol root over the union window, then clips per trade. Best-effort:
- * trades outside the bar coverage keep null high/low (capture just stays blank).
+ * Fill the derived market-data fields the local `.scid` pipeline normally
+ * provides but cloud imports lack, from the central bar feed:
+ *   - high/low-during-position (MFE/MAE source) — clipped from bars over the hold
+ *   - entry_atr_1m (1-min Wilder ATR-10 at entry) — powers the ×ATR MFE/MAE unit
+ * The bars — not the trade log — are the source of truth. Runs once per symbol
+ * root over the union window (extended back so ATR-10 can seed). Best-effort:
+ * trades outside the bar coverage keep their nulls.
  */
 async function backfillExcursionsFromBars(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -97,41 +100,56 @@ async function backfillExcursionsFromBars(
   const bySymbol = new Map<string, number[]>()
   for (let i = 0; i < pending.length; i++) {
     const r = pending[i].row
-    if (r.high_during_position != null && r.low_during_position != null) continue
-    if (!r.entry_time || !r.exit_time || !r.symbol) continue
+    const needsExcursion = r.high_during_position == null || r.low_during_position == null
+    const needsAtr = r.entry_atr_1m == null
+    if (!needsExcursion && !needsAtr) continue
+    if (!r.entry_time || !r.symbol) continue // ATR needs entry; excursion also needs exit (checked below)
     const root = chartSeriesRoot(String(r.symbol))
     if (!bySymbol.has(root)) bySymbol.set(root, [])
     bySymbol.get(root)!.push(i)
   }
 
-  let filled = 0
+  let filled = 0, atrFilled = 0
   for (const [root, idxs] of bySymbol) {
     let min = Infinity, max = -Infinity
     for (const i of idxs) {
       const r = pending[i].row
-      min = Math.min(min, Date.parse(r.entry_time))
-      max = Math.max(max, Date.parse(r.exit_time))
+      const s = Date.parse(r.entry_time)
+      min = Math.min(min, s)
+      max = Math.max(max, r.exit_time ? Date.parse(r.exit_time) : s)
     }
     if (!Number.isFinite(min) || !Number.isFinite(max)) continue
-    const bars = await fetchBars(db, root, new Date(min).toISOString(), new Date(max).toISOString())
+    // Extend the window 60 min before the earliest entry so ATR-10 has enough
+    // preceding 1-min bars to seed (Wilder needs period+1 bars strictly before entry).
+    const bars = await fetchBars(db, root, new Date(min - 60 * 60_000).toISOString(), new Date(max).toISOString())
     if (bars.length === 0) continue
     const parsed = bars.map(b => ({ t: Date.parse(b.ts), high: b.high, low: b.low }))
     for (const i of idxs) {
       const r = pending[i].row
-      const s = Date.parse(r.entry_time), e = Date.parse(r.exit_time)
-      let hi = -Infinity, lo = Infinity
-      for (const b of parsed) {
-        // Include the entry minute's bar (bar ts is the minute open, so allow 60s slack).
-        if (b.t >= s - 60_000 && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
+      const s = Date.parse(r.entry_time)
+      // high/low excursion over the hold (needs an exit).
+      if ((r.high_during_position == null || r.low_during_position == null) && r.exit_time) {
+        const e = Date.parse(r.exit_time)
+        let hi = -Infinity, lo = Infinity
+        for (const b of parsed) {
+          // Include the entry minute's bar (bar ts is the minute open, so allow 60s slack).
+          if (b.t >= s - 60_000 && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
+        }
+        if (hi > -Infinity && lo < Infinity) {
+          r.high_during_position = Math.round(hi * 100) / 100
+          r.low_during_position = Math.round(lo * 100) / 100
+          filled++
+        }
       }
-      if (hi > -Infinity && lo < Infinity) {
-        r.high_during_position = Math.round(hi * 100) / 100
-        r.low_during_position = Math.round(lo * 100) / 100
-        filled++
+      // Entry ATR-10 (1-min Wilder) snapshot at entry — bars strictly before entry.
+      if (r.entry_atr_1m == null) {
+        const atr = liveAtr(bars, new Date(s), 10)
+        if (atr != null) { r.entry_atr_1m = Math.round(atr * 100) / 100; atrFilled++ }
       }
     }
   }
   if (filled > 0) warnings.push(`Filled MFE/MAE for ${filled} trade(s) from market data.`)
+  if (atrFilled > 0) warnings.push(`Filled entry ATR for ${atrFilled} trade(s) from market data.`)
 }
 
 /**
