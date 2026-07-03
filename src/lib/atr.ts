@@ -12,6 +12,8 @@
  *   ATR_n = ((period − 1) × ATR_{n−1} + TR_n) / period   (Wilder smoothing)
  */
 
+import { miniContractSymbol } from '@/lib/futures-symbols'
+
 export interface AtrBar {
   ts: string             // ISO timestamp
   high: number
@@ -27,14 +29,8 @@ export interface AtrBar {
  * either null ATR or worse, an ATR computed from a partial bar set.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function fetchAllBars(supabase: any, symbol: string, dateYmd: string): Promise<AtrBar[]> {
+async function fetchBarsForSymbol(supabase: any, symbol: string, start: string, end: string): Promise<AtrBar[]> {
   const PAGE = 1000
-  const start = `${dateYmd}T00:00:00Z`
-  // Two-day end so late-PT trades on the journal date (which can be early
-  // next-day UTC) still have their full preceding-bar window.
-  const endDate = new Date(`${dateYmd}T00:00:00Z`)
-  endDate.setUTCDate(endDate.getUTCDate() + 1)
-  const end = endDate.toISOString().slice(0, 10) + 'T23:59:59Z'
   const out: AtrBar[] = []
   for (let p = 0; p < 10; p++) {
     const { data } = await supabase
@@ -50,6 +46,25 @@ export async function fetchAllBars(supabase: any, symbol: string, dateYmd: strin
     if (batch.length < PAGE) break
   }
   return out
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function fetchAllBars(supabase: any, symbol: string, dateYmd: string): Promise<AtrBar[]> {
+  const start = `${dateYmd}T00:00:00Z`
+  // Two-day end so late-PT trades on the journal date (which can be early
+  // next-day UTC) still have their full preceding-bar window.
+  const endDate = new Date(`${dateYmd}T00:00:00Z`)
+  endDate.setUTCDate(endDate.getUTCDate() + 1)
+  const end = endDate.toISOString().slice(0, 10) + 'T23:59:59Z'
+  let bars = await fetchBarsForSymbol(supabase, symbol, start, end)
+  // A micro contract (MES/MNQ) often has no bars of its own — the feed is
+  // stored under the mini (ES/NQ), same price series. Fall back to the mini so
+  // micro trades still get live ATR + Post-Exit. Mirrors /api/bars resolution.
+  if (bars.length === 0) {
+    const mini = miniContractSymbol(symbol)
+    if (mini && mini !== symbol) bars = await fetchBarsForSymbol(supabase, mini, start, end)
+  }
+  return bars
 }
 
 /**
