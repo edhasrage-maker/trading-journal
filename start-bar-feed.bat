@@ -18,18 +18,11 @@ REM
 REM Off-hours / weekends print "no ticks" and skip — harmless. Close this window
 REM to stop the loop (don't Ctrl+C).
 
+REM Single-instance is handled by Task Scheduler's "Do not start a new instance"
+REM setting (see SETUP), so no lock file is needed here.
+
 setlocal
 cd /d "%~dp0"
-
-REM Skip if another instance is already running (crude single-instance guard via
-REM a lock file that this window holds open).
-if exist "%~dp0.cache\bar-feed.lock" (
-  echo === Skipped at %date% %time% — lock present === >> "%~dp0start-bar-feed.log"
-  endlocal
-  exit /b 0
-)
-if not exist "%~dp0.cache" mkdir "%~dp0.cache"
-echo %date% %time% > "%~dp0.cache\bar-feed.lock"
 
 :LOOP
 echo. >> "%~dp0start-bar-feed.log"
