@@ -51,7 +51,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
       onDragOver={e => { e.preventDefault(); if (!busy) setDragOver(true) }}
       onDragLeave={() => setDragOver(false)}
       onDrop={e => { e.preventDefault(); setDragOver(false); if (!busy) onPick(e.dataTransfer.files) }}
-      className={`rounded-xl border p-10 text-center transition-colors ${
+      className={`rounded-xl border p-6 sm:p-10 text-center transition-colors ${
         dragOver ? 'border-blue-500 border-dashed bg-blue-950/30' : 'border-gray-800 bg-gray-900'
       }`}
     >
@@ -60,8 +60,9 @@ export default function EmptyStateImport({ today }: { today: string }) {
       </div>
       <h2 className="text-xl font-semibold text-white">Welcome — let&apos;s get your trades in</h2>
       <p className="text-gray-400 text-sm mt-2 max-w-md mx-auto">
-        Your journal is empty. Import a trade-history CSV to see your analytics,
-        equity curve, and edge breakdowns from day one — or log a trade by hand to start.
+        Your journal is empty. Import your trades and you&apos;ll see how you&apos;re doing —
+        your P&amp;L, win rate, and best and worst days — right from the first file. No trades to
+        import yet? Log one by hand to get started.
       </p>
 
       <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
@@ -99,7 +100,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
       )}
 
       <p className="text-xs text-gray-600 mt-6">
-        Exports from Sierra Chart, NinjaTrader, and Tradovate are supported.{' '}
+        Exports from Sierra Chart, NinjaTrader, Tradezella, and Tradovate are supported.{' '}
         <Link href="/import" className="text-blue-400 hover:underline">More options →</Link>
       </p>
       <p className="text-xs text-gray-500 mt-2">
