@@ -17,6 +17,10 @@ interface Props {
    *  button that opens the drilldown modal (TradeListModal). Pages that
    *  don't need drilldown can omit this — the row stays static. */
   onTagClick?: (label: string) => void
+  /** 'plain' trims the table to Tag / Trades / Win % / Total PnL — used in
+   *  Highlights so the "what's working" read fits a phone and skips the
+   *  Profit Factor / R / MFE% / MAE% jargon. Defaults to the full 9 columns. */
+  columns?: 'plain' | 'full'
 }
 
 type SortKey = 'label' | 'count' | 'win_rate' | 'avg_pnl' | 'profit_factor' | 'avg_r' | 'avg_capture' | 'avg_heat' | 'total_pnl'
@@ -29,7 +33,9 @@ export default function TagPerformanceTable({
   minCount = 1,
   emptyMessage = 'No tagged trades in this category yet.',
   onTagClick,
+  columns = 'full',
 }: Props) {
+  const plain = columns === 'plain'
   const [sortKey, setSortKey] = useState<SortKey>('total_pnl')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [open, setOpen] = useState(false)
@@ -84,6 +90,11 @@ export default function TagPerformanceTable({
     { k: 'avg_heat', label: 'MAE %', align: 'right' },
     { k: 'total_pnl', label: 'Total PnL', align: 'right' },
   ]
+  // Highlights: Tag / Trades / Win % / Total PnL only — narrow enough to fit a
+  // phone and free of the Pro-only jargon columns.
+  const visibleHeaders = plain
+    ? HEADERS.filter(h => h.k === 'label' || h.k === 'count' || h.k === 'win_rate' || h.k === 'total_pnl')
+    : HEADERS
 
   const labelTone = variant === 'mistakes'
     ? 'bg-red-900/30 border-red-800 text-red-300'
@@ -108,7 +119,7 @@ export default function TagPerformanceTable({
           <table className="w-full text-xs font-mono">
             <thead className="text-gray-500 border-b border-gray-800">
               <tr>
-                {HEADERS.map(h => {
+                {visibleHeaders.map(h => {
                   const Icon = sortKey !== h.k ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown
                   return (
                     <th
@@ -151,6 +162,8 @@ export default function TagPerformanceTable({
                   <td className={`py-1.5 pr-3 text-right ${stats.win_rate >= 0.5 ? 'text-green-400' : 'text-gray-300'}`}>
                     {(stats.win_rate * 100).toFixed(0)}%
                   </td>
+                  {!plain && (
+                  <>
                   <td className={`py-1.5 pr-3 text-right ${stats.avg_pnl > 0 ? 'text-green-400' : stats.avg_pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
                     {stats.avg_pnl >= 0 ? '+' : ''}{stats.avg_pnl.toFixed(2)}
                   </td>
@@ -211,6 +224,8 @@ export default function TagPerformanceTable({
                   >
                     {stats.avg_heat == null ? '—' : `${Math.round(stats.avg_heat * 100)}%`}
                   </td>
+                  </>
+                  )}
                   <td className={`py-1.5 text-right font-bold ${stats.total_pnl > 0 ? 'text-green-400' : stats.total_pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
                     {stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(0)}
                   </td>

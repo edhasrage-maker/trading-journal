@@ -338,9 +338,10 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
           filtered to that tag (within the active date range). */}
       <TagPerformanceTable
         title="Setup Performance"
-        description="Win rate, expectancy, and PnL by setup tag"
+        description={mode === 'beginner' ? 'Win rate and total P&L by setup' : 'Win rate, expectancy, and PnL by setup tag'}
         data={setupPerf}
         onTagClick={openCategory('setups')}
+        columns={mode === 'beginner' ? 'plain' : 'full'}
       />
       {/* Deeper breakdowns are Pro-only — Beginner keeps Setup Performance +
           Journal Themes so it stays "what's working / what to watch" without a
