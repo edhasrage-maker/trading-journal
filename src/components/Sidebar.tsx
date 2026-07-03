@@ -131,7 +131,7 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
 
       <aside
         className={cn(
-          'fixed left-0 top-0 h-screen w-60 bg-gray-900 border-r border-gray-800 flex flex-col z-50 transition-transform duration-200 md:translate-x-0',
+          'fixed left-0 top-0 h-screen w-60 bg-gray-900 border-r border-gray-800 flex flex-col overflow-y-auto z-50 transition-transform duration-200 md:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
