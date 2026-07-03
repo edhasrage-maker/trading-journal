@@ -29,30 +29,47 @@ export const revalidate = 0
 function beginnerDayNote(opts: {
   winRate: number | null      // that day, 0..100
   capture: number | null      // that day, 0..1
+  pnl: number | null
   breach: boolean
-  avgWin: number | null       // baseline, 0..100
-  avgCap: number | null       // baseline, 0..1
+  avgWin: number | null       // baseline win rate, 0..100
+  avgCap: number | null       // baseline capture, 0..1
+  bestDay: number | null      // best day $ in the window (for magnitude context)
+  worstDay: number | null     // worst day $ in the window
 }): string {
-  const { winRate, capture, breach, avgWin, avgCap } = opts
-  if (breach) return 'Broke one of your rules — worth reviewing this one.'
-  const cmp = (v: number | null, avg: number | null, margin: number): -1 | 0 | 1 | null => {
-    if (v == null || avg == null) return null
-    if (v > avg + margin) return 1
-    if (v < avg - margin) return -1
-    return 0
+  const { winRate, capture, pnl, breach, avgWin, avgCap, bestDay, worstDay } = opts
+  if (breach) return 'Broke one of your rules — the one to review first.'
+  const wr = winRate == null ? null : Math.round(winRate)
+  const cap = capture == null ? null : Math.round(capture * 100)
+  const winLow = avgWin != null && winRate != null && winRate <= avgWin - 8
+  const winHigh = avgWin != null && winRate != null && winRate >= avgWin + 8
+  const capLow = avgCap != null && capture != null && capture <= avgCap - 0.1
+  const capHigh = avgCap != null && capture != null && capture >= avgCap + 0.1
+
+  // Richest read: win rate AND capture together, with the concrete numbers.
+  if (wr != null && cap != null) {
+    if (winLow && capHigh) return `${wr}% wins, but you kept ${cap}% of the move — you cashed the ones you got right.`
+    if (winHigh && capLow) return `${wr}% wins, but only kept ${cap}% of the move — winners cut early.`
+    if (winHigh && capHigh) return `${wr}% wins and kept ${cap}% of the move — clean on both.`
+    if (winLow && capLow) return `${wr}% wins and kept ${cap}% of the move — off day on both.`
+    return `${wr}% wins · kept ${cap}% of the move.`
   }
-  const w = cmp(winRate, avgWin, 8)      // ±8 percentage points
-  const c = cmp(capture, avgCap, 0.1)    // ±0.10 of the move
-  if (w === null && c === null) return ''
-  if (w === 1 && c === 1) return 'Above your usual on both win rate and move capture — clean day.'
-  if (w === -1 && c === 1) return 'Lower win rate than usual, but you kept more of the moves you got right.'
-  if (w === 1 && c === -1) return 'Strong hit rate, but you exited earlier than usual.'
-  if (w === -1 && c === -1) return 'Below your usual on both — worth a look.'
-  if (w === 1) return 'Better hit rate than usual.'
-  if (w === -1) return 'Lower win rate than usual.'
-  if (c === 1) return 'Held your winners better than usual.'
-  if (c === -1) return 'Gave back more of the move than usual.'
-  return 'About your usual.'
+
+  // No capture data — lead with the win-rate number + how the day's result sized up.
+  if (wr != null) {
+    if (pnl != null && pnl > 0) {
+      if (bestDay != null && bestDay > 0 && pnl >= bestDay) return `${wr}% wins — your best day this stretch.`
+      return `${wr}% wins — a green day.`
+    }
+    if (pnl != null && pnl < 0) {
+      if (worstDay != null && pnl <= worstDay) return `${wr}% wins — your roughest day this stretch.`
+      return `${wr}% wins — small red day, kept it contained.`
+    }
+    return `${wr}% wins.`
+  }
+
+  if (pnl != null && pnl > 0) return 'A green day.'
+  if (pnl != null && pnl < 0) return 'A red day.'
+  return ''
 }
 
 export default async function DashboardPage() {
@@ -461,6 +478,11 @@ export default async function DashboardPage() {
   const beginnerGreenDays = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).length
   const beginnerTradedDays = beginner30.length
   const beginnerBestDay = beginner30.length ? Math.max(...beginner30.map(d => d.eod_pnl ?? 0)) : null
+  const beginnerWorstDay = beginner30.length ? Math.min(...beginner30.map(d => d.eod_pnl ?? 0)) : null
+  const greenPnls = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).map(d => d.eod_pnl as number)
+  const redPnls = beginner30.filter(d => (d.eod_pnl ?? 0) < 0).map(d => d.eod_pnl as number)
+  const avgGreenDay = greenPnls.length ? greenPnls.reduce((a, b) => a + b, 0) / greenPnls.length : null
+  const avgRedDay = redPnls.length ? redPnls.reduce((a, b) => a + b, 0) / redPnls.length : null   // negative
   const capVals = recentDays
     .filter(d => d.date >= past30Start && d.avg_capture != null)
     .map(d => d.avg_capture as number)
@@ -474,9 +496,23 @@ export default async function DashboardPage() {
   const beginnerCapturePct = avgCap != null ? Math.round(avgCap * 100) : null
   const beginnerFocus = (() => {
     if (beginnerTradedDays === 0) return 'Log or import a few sessions and your #1 focus will show up here.'
-    if (avgCap != null && avgCap < 0.5) return `You're exiting winners early — on average you're keeping about ${Math.round(avgCap * 100)}% of the move you're offered. This week, try holding to your planned target before taking profit.`
-    if (avgCap != null) return `Your exits are solid — you're capturing about ${Math.round(avgCap * 100)}% of the move you're offered. Keep that up and put your attention on entry timing.`
-    return 'Your sessions are logging cleanly. Keep building the habit — richer coaching shows up as more trades come in.'
+    if (avgCap != null && avgCap < 0.5) return `You're exiting winners early — on average you keep about ${Math.round(avgCap * 100)}% of the move you're offered. This week, try holding to your planned target before you take profit.`
+    if (avgCap != null) return `Your exits are solid — you're capturing about ${Math.round(avgCap * 100)}% of the move. Keep that up and put your attention on entry timing.`
+    // No capture data yet (imports without stops/MFE) — coach from win rate + how
+    // your green vs red days size up, so it still says something specific.
+    if (beginnerPnl < 0) {
+      if (avgRedDay != null && avgGreenDay != null && Math.abs(avgRedDay) > avgGreenDay) {
+        return `You're down over the last 30 days, and your red days are bigger than your green ones. The fastest fix isn't more winners — it's cutting losers sooner. Pick a hard daily loss limit and honor it.`
+      }
+      return `You're down over the last 30 days. Get selective — track which setups actually make you money and skip the rest.`
+    }
+    if (beginnerWinRate != null && beginnerWinRate < 50) {
+      return `You're green even at a ${Math.round(beginnerWinRate)}% win rate — your winners are outsizing your losers, which is a real edge. Protect it by keeping every loss small.`
+    }
+    if (beginnerWinRate != null) {
+      return `A ${Math.round(beginnerWinRate)}% win rate and green overall — strong. Your next gain is size discipline: don't hand back a good stretch on one oversized trade.`
+    }
+    return 'Green over the last 30 days. Keep logging every session — the more you tag, the sharper this gets.'
   })()
   const beginnerSessions = recentDaysForTable.slice(0, 6).map(d => ({
     date: d.date,
@@ -484,9 +520,12 @@ export default async function DashboardPage() {
     note: beginnerDayNote({
       winRate: d.win_rate,
       capture: d.avg_capture,
+      pnl: d.eod_pnl,
       breach: (d.process_breach_rules?.length ?? 0) > 0,
       avgWin: beginnerWinRate,
       avgCap,
+      bestDay: beginnerBestDay,
+      worstDay: beginnerWorstDay,
     }),
   }))
 

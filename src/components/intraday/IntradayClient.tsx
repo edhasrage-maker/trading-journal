@@ -9,6 +9,8 @@ import ScreenshotLightbox from './ScreenshotLightbox'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
+import CoachScoreBadge from './CoachScoreBadge'
+import CoachScorePanel from './CoachScorePanel'
 import { deleteBlob } from '@/lib/storage'
 import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, type BarLike } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
@@ -148,6 +150,11 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   // on the page (existing edit-mode forms + the "new" form) without a full
   // page refresh.
   const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
+  // Curated setup labels (lowercased) → Coach Score's "setup in playbook" check.
+  const setupLibrary = useMemo(
+    () => new Set(allTags.filter(t => t.category === 'setups').map(t => t.label.toLowerCase())),
+    [allTags],
+  )
   const addTag = (tag: TradeTag) => {
     setAllTags(prev => prev.some(t => t.id === tag.id) ? prev : [...prev, tag])
   }
@@ -441,6 +448,35 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     return best
   }, [trades])
 
+  // Instruments the chart's header dropdown can switch to: the day's traded
+  // symbols ∪ every instrument with imported bar data (so ES shows even on an
+  // NQ-only day). The chart is single-instrument — switching also filters the
+  // plotted trades to the picked symbol so the other product's fills don't plot
+  // off-scale.
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([])
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/bars/symbols')
+      .then(r => (r.ok ? r.json() : { symbols: [] }))
+      .then((d: { symbols?: string[] }) => { if (!cancelled) setAvailableSymbols(Array.isArray(d.symbols) ? d.symbols : []) })
+      .catch(() => { /* best-effort — dropdown just won't offer extra products */ })
+    return () => { cancelled = true }
+  }, [])
+  const [chartSymbolOverride, setChartSymbolOverride] = useState<string | null>(null)
+  const chartSymbolOptions = useMemo(() => {
+    const traded = trades.map(t => t.symbol).filter((s): s is string => !!s)
+    const out: string[] = []
+    for (const s of [chartSymbol, ...traded, ...availableSymbols]) if (s && !out.includes(s)) out.push(s)
+    return out
+  }, [chartSymbol, trades, availableSymbols])
+  const activeChartSymbol = (chartSymbolOverride && chartSymbolOptions.includes(chartSymbolOverride))
+    ? chartSymbolOverride
+    : chartSymbol
+  const chartTrades = useMemo(
+    () => (chartSymbolOptions.length > 1 ? trades.filter(t => t.symbol === activeChartSymbol) : trades),
+    [trades, chartSymbolOptions.length, activeChartSymbol],
+  )
+
   return (
     <div className="space-y-4">
 
@@ -504,7 +540,14 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           </button>
           {showChart && (
             <div className="p-3">
-              <LiveChart date={date} symbol={chartSymbol} trades={trades} height={420} />
+              <LiveChart
+                date={date}
+                symbol={activeChartSymbol}
+                symbolOptions={chartSymbolOptions}
+                onSymbolChange={setChartSymbolOverride}
+                trades={chartTrades}
+                height={420}
+              />
             </div>
           )}
         </div>
@@ -573,6 +616,9 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                 ))}
               </div>
 
+              {/* Coach Score — deterministic per-trade execution grade (0–10). */}
+              <CoachScoreBadge trade={trade} setupLibrary={setupLibrary} />
+
               {/* P&L · R · Capture % · Loss ×R. Capture and loss are bolded when
                   the trade matches a high-signal cross-case pattern:
                     - "Give-back" = loser that went green first (negative capture)
@@ -590,6 +636,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             {/* Expanded detail */}
             {isOpen && (
               <div className="border-t border-gray-800 px-4 py-4 space-y-4">
+                <CoachScorePanel trade={trade} notes={trade.notes} setupLibrary={setupLibrary} />
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
                   {[
                     { label: 'Entry', value: fmt(trade.entry_price) },

@@ -8,7 +8,7 @@ import { Folder, FolderCheck, Loader2, X } from 'lucide-react'
  *
  * Uses the browser File System Access API (Chrome/Edge/Opera). The user clicks
  * "Watch folder", grants access to C:\SierraChart\TradeActivityLogs, and from
- * then on (while any page in the app is open) the watcher polls every 60s for
+ * then on (while any page in the app is open) the watcher polls every hour for
  * new or modified `TradeActivityLog_YYYY-MM-DD*.txt` files and POSTs them to
  * `/api/import-sc-log` with the date extracted from the filename. The existing
  * logged-in session cookie authenticates the request — no extra token needed.
@@ -22,7 +22,11 @@ import { Folder, FolderCheck, Loader2, X } from 'lucide-react'
  */
 
 const FILE_RE = /^TradeActivityLog_(\d{4}-\d{2}-\d{2}).*\.txt$/i
-const POLL_MS = 60_000
+// Poll hourly. Each import does a full .scid pass (~15s), and Sierra rewrites
+// the live log constantly — a tight interval just re-imports the same day over
+// and over for no new data. Hourly keeps the folder in sync without the churn;
+// the manual "Import" button covers mid-session pickups.
+const POLL_MS = 3_600_000
 const STATE_KEY = 'sc-watcher-state-v1'
 
 interface FileState {
@@ -52,6 +56,11 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
   const [polling, setPolling] = useState(false)
   const [lastCheck, setLastCheck] = useState<Date | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Guards against overlapping ticks. Each import can take 10-18s; on a live
+  // trading day Sierra rewrites the log every poll, so without this a slow tick
+  // that runs past the 60s interval lets the next tick(s) fire concurrently —
+  // imports pile up, saturate the server, and every request grinds to 2-4s.
+  const runningRef = useRef(false)
   const onActivityRef = useRef(onActivity)
   const onImportedRef = useRef(onImported)
 
@@ -70,6 +79,8 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
   }
 
   const tick = useCallback(async (h: FsHandle) => {
+    if (runningRef.current) return // a prior tick is still importing — don't stack
+    runningRef.current = true
     setPolling(true)
     setLastCheck(new Date())
     const state = loadState()
@@ -132,6 +143,7 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
       }
     } finally {
       setPolling(false)
+      runningRef.current = false
     }
   }, [])
 
@@ -186,7 +198,7 @@ export default function SCFolderWatcher({ onActivity, onImported }: Props) {
   return (
     <div
       className="flex items-center gap-1.5 bg-green-900/20 border border-green-800 text-green-300 text-xs font-medium px-3 py-1.5 rounded-lg whitespace-nowrap shrink-0"
-      title={`Polling ${folderName} every ${POLL_MS / 1000}s`}
+      title={`Polling ${folderName} every ${Math.round(POLL_MS / 60000)} min`}
     >
       {polling ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderCheck className="w-3 h-3" />}
       <span>Watching {folderName}</span>

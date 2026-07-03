@@ -23,6 +23,7 @@ import { useUiMode } from '@/lib/ui-mode'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
 import type { SessionLevels } from '@/lib/session-levels'
+import type { DayContextStats } from '@/lib/market-context-from-bars'
 import type { SpellCheckCorrection } from '@/app/api/spell-check/route'
 
 interface Props {
@@ -156,6 +157,76 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       return changed ? next : prev
     })
   }, [])
+
+  // Auto-fill the volatility/volume stats (RVOL/ADR/ATR/IB size/day range) from
+  // bars — the bar-native equivalent of reading them off a Sierra screenshot.
+  // Same fill-blank-once discipline as levels; re-runs when BarWatcher imports
+  // new bars (barsVersion) so realized stats land as the session prints. A
+  // still-null field is un-marked so it retries on the next refresh.
+  const statsAutoFilledRef = useRef<Set<string>>(new Set())
+  // Bar-native current price → drives the PD/GBX "in range?" flags (effect
+  // below), replacing the fragile screenshot read of "current price".
+  const [barCurrentPrice, setBarCurrentPrice] = useState<number | null>(null)
+  useEffect(() => {
+    if (!chartSymbol || !date) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/bars/market-context?symbol=${encodeURIComponent(chartSymbol)}&date=${date}`)
+        if (!res.ok) return
+        const { stats } = await res.json() as { stats: DayContextStats | null }
+        if (cancelled || !stats) return
+        setBarCurrentPrice(stats.current_price ?? null)
+        const map: Record<string, number | null> = {
+          rvol: stats.rvol, ib_size: stats.ib_size, adr: stats.adr, atr_1m: stats.atr_1m, day_range: stats.day_range,
+        }
+        setContext(prev => {
+          const next = { ...prev }
+          let changed = false
+          for (const [k, v] of Object.entries(map)) {
+            if (statsAutoFilledRef.current.has(k)) continue
+            statsAutoFilledRef.current.add(k)
+            if (v == null) { statsAutoFilledRef.current.delete(k); continue }
+            const cur = (prev as Record<string, unknown>)[k]
+            if (cur == null || cur === '') { (next as Record<string, unknown>)[k] = v; changed = true }
+          }
+          return changed ? next : prev
+        })
+      } catch { /* best-effort — screenshot/manual entry still available */ }
+    })()
+    return () => { cancelled = true }
+  }, [chartSymbol, date, barsVersion])
+
+  // Derive the "Price between PDH/PDL?" and "Price in GBX range?" flags from the
+  // bar-native current price + the levels in the form — overwriting the fragile
+  // screenshot read (which mis-grabs the trade-entry label as "current price").
+  // Only once the day's session has printed a price (barCurrentPrice non-null)
+  // and the relevant levels exist; re-runs as the price or levels update.
+  useEffect(() => {
+    if (barCurrentPrice == null) return
+    const cp = barCurrentPrice
+    const numOr = (v: unknown): number | null => {
+      const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''))
+      return Number.isFinite(n) ? n : null
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- derive PD/GBX flags from bar price + levels; runs only on price/level change and never loops (the flags aren't in deps)
+    setContext(prev => {
+      const next = { ...prev }
+      let changed = false
+      const pdl = numOr(prev.pdl), pdh = numOr(prev.pdh)
+      if (pdl != null && pdh != null) {
+        const v = cp >= Math.min(pdl, pdh) && cp <= Math.max(pdl, pdh)
+        if (prev.price_in_pd_range !== v) { next.price_in_pd_range = v; changed = true }
+      }
+      const onl = numOr(prev.onl), onh = numOr(prev.onh)
+      if (onl != null && onh != null) {
+        const v = cp >= Math.min(onl, onh) && cp <= Math.max(onl, onh)
+        if (prev.price_in_gbx_range !== v) { next.price_in_gbx_range = v; changed = true }
+      }
+      return changed ? next : prev
+    })
+  }, [barCurrentPrice, context.pdl, context.pdh, context.onl, context.onh])
+
   const [prepNotes, setPrepNotes] = useState<PrepNotes>(initialDay?.prep_notes_json ?? {})
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(
     initialDay?.ai_analysis_json && Object.keys(initialDay.ai_analysis_json).length > 0

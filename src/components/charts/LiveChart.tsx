@@ -25,6 +25,11 @@ interface Props {
   date: string
   symbol: string | null
   trades: Trade[]
+  /** Instruments the chart can switch to (e.g. NQ, ES) — the header symbol
+   *  renders as a dropdown when there's more than one. The parent owns the
+   *  symbol + trade filtering; onSymbolChange delegates the pick upward. */
+  symbolOptions?: string[]
+  onSymbolChange?: (symbol: string) => void
   height?: number
   /** Bumped externally (e.g. by the bar watcher) to force a bars/levels re-fetch. */
   refreshKey?: number
@@ -221,7 +226,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onLevels, readOnly = false },
+  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onLevels, readOnly = false },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1569,7 +1574,18 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       {/* Header: legend + symbol + bar count */}
       <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-3 text-gray-400">
-          <span className="font-mono">{symbol ?? '—'}</span>
+          {symbolOptions && symbolOptions.length > 1 && onSymbolChange ? (
+            <select
+              value={symbol ?? ''}
+              onChange={e => onSymbolChange(e.target.value)}
+              title="Switch instrument"
+              className="font-mono bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            >
+              {symbolOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          ) : (
+            <span className="font-mono">{symbol ?? '—'}</span>
+          )}
           {displayBars && displayBars.length > 0 && (
             <span className="text-gray-600">· {displayBars.length.toLocaleString()} bars</span>
           )}

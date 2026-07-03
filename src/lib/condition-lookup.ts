@@ -240,7 +240,10 @@ export function consolidate(
     }
   }
 
-  // Both present — tertile wins by default. Conflict still detected for the UI.
+  // Both present — default to the view backed by MORE trades (bigger sample =
+  // more reliable stats). Tie → median: its coarser LOW/HIGH split is the safer
+  // default when the two samples are equal. Conflict still surfaced for the UI,
+  // and the dropdown lets the user switch to the other view.
   const m = bestMedian!.row
   const t = bestTertile!.row
 
@@ -251,11 +254,15 @@ export function consolidate(
     ? `Median says ${VERDICT_DISPLAY[m.verdict]}, tertile says ${VERDICT_DISPLAY[t.verdict]} — they disagree on direction.`
     : null
 
+  const mN = m.n_trades ?? 0
+  const tN = t.n_trades ?? 0
+  const pickMedian = mN >= tN
+  const chosen = pickMedian ? m : t
   return {
-    pick: 'tertile',
-    verdict: t.verdict,
-    condition_id: t.condition_id,
-    explanation: `Tertile view selected (specificity ${t.specificity}). Use the dropdown above to switch to the median view.`,
+    pick: pickMedian ? 'median' : 'tertile',
+    verdict: chosen.verdict,
+    condition_id: chosen.condition_id,
+    explanation: `${pickMedian ? 'Median' : 'Tertile'} view selected — larger sample (${chosen.n_trades ?? 0} trades vs ${pickMedian ? tN : mN}). Use the dropdown above to switch views.`,
     conflict,
     conflict_reason: conflictReason,
   }

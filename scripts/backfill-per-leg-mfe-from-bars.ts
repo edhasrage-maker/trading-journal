@@ -123,14 +123,14 @@ async function fetchSessionBars(symbol: string, date: string): Promise<BarLike[]
   for (let page = 0; page < 10; page++) {
     const { data, error } = await sb
       .from('ohlcv_bars')
-      .select('ts, high, low, close')
+      .select('ts, high, low')
       .eq('symbol', symbol)
       .gte('ts', start)
       .lte('ts', end)
       .order('ts', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error) { console.error(`  bars ${symbol} ${date}:`, error.message); break }
-    const rows = (data ?? []) as { ts: string; high: number; low: number; close: number }[]
+    const rows = (data ?? []) as { ts: string; high: number; low: number }[]
     for (const b of rows) out.push({ ts: b.ts, high: Number(b.high), low: Number(b.low) })
     if (rows.length < PAGE) break
     from += PAGE
