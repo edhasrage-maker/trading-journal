@@ -462,19 +462,25 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
       .catch(() => { /* best-effort — dropdown just won't offer extra products */ })
     return () => { cancelled = true }
   }, [])
-  const [chartSymbolOverride, setChartSymbolOverride] = useState<string | null>(null)
-  const chartSymbolOptions = useMemo(() => {
-    const traded = trades.map(t => t.symbol).filter((s): s is string => !!s)
-    const out: string[] = []
-    for (const s of [chartSymbol, ...traded, ...availableSymbols]) if (s && !out.includes(s)) out.push(s)
-    return out
-  }, [chartSymbol, trades, availableSymbols])
-  const activeChartSymbol = (chartSymbolOverride && chartSymbolOptions.includes(chartSymbolOverride))
-    ? chartSymbolOverride
-    : chartSymbol
+  const [chartRootOverride, setChartRootOverride] = useState<string | null>(null)
+  // Group available bar symbols + the day's traded symbols by PRODUCT ROOT
+  // (ES, NQ) — micros (MES/MNQ) collapse to their mini series. Each root maps to
+  // ONE concrete symbol to load bars for (prefer one with imported bars). This
+  // makes the dropdown read "ES" / "NQ" and lets a micro (MES) trade plot on the
+  // mini (ES) chart instead of being filtered out by an exact-symbol mismatch.
+  const rootOptions = useMemo(() => {
+    const byRoot = new Map<string, string>()
+    for (const s of availableSymbols) { const r = chartSeriesRoot(s); if (!byRoot.has(r)) byRoot.set(r, s) }
+    for (const t of trades) { if (t.symbol) { const r = chartSeriesRoot(t.symbol); if (!byRoot.has(r)) byRoot.set(r, t.symbol) } }
+    if (chartSymbol) { const r = chartSeriesRoot(chartSymbol); if (!byRoot.has(r)) byRoot.set(r, chartSymbol) }
+    return Array.from(byRoot.entries()).map(([root, symbol]) => ({ root, symbol }))
+  }, [availableSymbols, trades, chartSymbol])
+  const defaultRoot = chartSymbol ? chartSeriesRoot(chartSymbol) : null
+  const activeRoot = (chartRootOverride && rootOptions.some(o => o.root === chartRootOverride)) ? chartRootOverride : defaultRoot
+  const activeChartSymbol = rootOptions.find(o => o.root === activeRoot)?.symbol ?? chartSymbol
   const chartTrades = useMemo(
-    () => (chartSymbolOptions.length > 1 ? trades.filter(t => t.symbol === activeChartSymbol) : trades),
-    [trades, chartSymbolOptions.length, activeChartSymbol],
+    () => (rootOptions.length > 1 ? trades.filter(t => !!t.symbol && chartSeriesRoot(t.symbol) === activeRoot) : trades),
+    [trades, rootOptions.length, activeRoot],
   )
   // A trade's stored ATR/MFE/MAE are only trustworthy if bars exist for ITS
   // instrument — else they're from another product (e.g. an ES trade carrying a
@@ -549,8 +555,8 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
               <LiveChart
                 date={date}
                 symbol={activeChartSymbol}
-                symbolOptions={chartSymbolOptions}
-                onSymbolChange={setChartSymbolOverride}
+                symbolOptions={rootOptions.map(o => ({ symbol: o.symbol, label: o.root }))}
+                onSymbolChange={s => setChartRootOverride(chartSeriesRoot(s))}
                 trades={chartTrades}
                 height={420}
               />

@@ -16,6 +16,7 @@ import {
 } from 'lightweight-charts'
 import { TradeArrowsPrimitive, type TradeArrow } from './TradeArrowsPrimitive'
 import { AnnotationsPrimitive, type ChartAnnotation, type AnnGeom } from './AnnotationsPrimitive'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
 import { migrateChartPrefs, schedulePushChartPref, pullChartPref } from '@/lib/chart-prefs'
@@ -28,7 +29,7 @@ interface Props {
   /** Instruments the chart can switch to (e.g. NQ, ES) — the header symbol
    *  renders as a dropdown when there's more than one. The parent owns the
    *  symbol + trade filtering; onSymbolChange delegates the pick upward. */
-  symbolOptions?: string[]
+  symbolOptions?: Array<{ symbol: string; label: string }>
   onSymbolChange?: (symbol: string) => void
   height?: number
   /** Bumped externally (e.g. by the bar watcher) to force a bars/levels re-fetch. */
@@ -1576,10 +1577,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
               title="Switch instrument"
               className="font-mono bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
             >
-              {symbolOptions.map(s => <option key={s} value={s}>{s}</option>)}
+              {symbolOptions.map(o => <option key={o.symbol} value={o.symbol}>{o.label}</option>)}
             </select>
           ) : (
-            <span className="font-mono">{symbol ?? '—'}</span>
+            <span className="font-mono">{symbol ? chartSeriesRoot(symbol) : '—'}</span>
           )}
           {displayBars && displayBars.length > 0 && (
             <span className="text-gray-600">· {displayBars.length.toLocaleString()} bars</span>
