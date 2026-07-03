@@ -1,8 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
-import { readScidBars } from '@/lib/scid-reader'
+import { readScidBars, type OneMinBar } from '@/lib/scid-reader'
 import { contextStatsForDate } from '@/lib/market-context-from-bars'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { clientError } from '@/lib/api-error'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
@@ -17,25 +18,47 @@ const SIERRA_DATA_DIR = process.env.SIERRA_DATA_DIR || 'D:\\SierraCharts\\Data'
 const LOOKBACK_DAYS = 22
 
 /**
+ * Paginate the shared ohlcv_bars for [startIso, endIso] (cloud stats source).
+ * 22 days of 1-minute bars is ~30k rows, so page generously.
+ */
+async function fetchDbBars(
+  supabase: AnyClient, symbol: string, startIso: string, endIso: string,
+): Promise<OneMinBar[]> {
+  const PAGE = 1000
+  const out: OneMinBar[] = []
+  let from = 0
+  for (let page = 0; page < 40; page++) {
+    const { data, error } = await supabase
+      .from('ohlcv_bars')
+      .select('ts, open, high, low, close, volume')
+      .eq('symbol', symbol)
+      .gte('ts', startIso)
+      .lte('ts', endIso)
+      .order('ts', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) break
+    const rows = (data ?? []) as OneMinBar[]
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
+
+/**
  * GET /api/bars/market-context?symbol=X&date=YYYY-MM-DD[&scidFile=...&priceDivisor=100]
  *
  * Computes the day's volatility/volume Market Context stats (RVOL, ADR, ATR-10,
- * IB size, IB-close snapshots, day range, current price) directly from the
- * source `.scid` — the bar-native equivalent of the numbers the user otherwise
- * reads off a Sierra screenshot via /api/extract-context. Same definitions as
- * scripts/backfill-market-context-from-csv.ts, so live and backfilled match.
+ * IB size, IB-close snapshots, day range, current price). Local build reads the
+ * source `.scid`; cloud build computes from the shared ohlcv_bars feed (same
+ * contextStatsForDate engine, different bar source) — so tapescore.app auto-fills
+ * these too. Definitions match scripts/backfill-market-context-from-csv.ts.
  *
  * `stats.realized` is false when today's session hasn't printed yet (morning
  * prep) — in that case only adr/atr_1m/atr_10d_avg come back (carried from the
  * last completed day); the realized fields are null.
  */
 export async function GET(req: Request) {
-  if (!LOCAL_FEATURES_ENABLED) {
-    return NextResponse.json(
-      { error: 'This feature runs only in the local desktop build (it reads Sierra Chart / OBS files on your machine).', local_only: true },
-      { status: 503 },
-    )
-  }
   const { searchParams } = new URL(req.url)
   const symbol = searchParams.get('symbol')
   const date = searchParams.get('date')
@@ -49,8 +72,26 @@ export async function GET(req: Request) {
 
   const supabase: AnyClient = await createClient()
 
-  // Resolve the source .scid from the symbol's latest SCID import (same as
-  // /api/bars/levels — the chart only passes its symbol).
+  // Cloud build: compute from the shared ohlcv_bars feed (root symbol) rather
+  // than a local .scid. Same engine, DB bar source.
+  if (!LOCAL_FEATURES_ENABLED) {
+    const root = chartSeriesRoot(symbol)
+    const targetStartMs = Date.parse(`${date}T00:00:00Z`)
+    const startIso = new Date(targetStartMs - LOOKBACK_DAYS * 86_400_000).toISOString()
+    const endIso = new Date(targetStartMs + 86_400_000).toISOString()
+    const bars = await fetchDbBars(supabase, root, startIso, endIso)
+    if (bars.length === 0) {
+      return NextResponse.json(
+        { error: `No bars for ${root} in the ${LOOKBACK_DAYS}-day lookback.`, stats: null },
+        { status: 200 },
+      )
+    }
+    const stats = contextStatsForDate(bars, date)
+    return NextResponse.json({ stats })
+  }
+
+  // Local: resolve the source .scid from the symbol's latest SCID import (same
+  // as /api/bars/levels — the chart only passes its symbol).
   let scidFile = explicitFile
   if (!scidFile) {
     const { data } = await supabase
