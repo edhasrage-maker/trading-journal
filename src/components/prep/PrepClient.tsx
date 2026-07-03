@@ -763,8 +763,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       {/* Red-folder economic news for the day — pinned to the very top. */}
       <HighImpactNews events={highImpactNews} />
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-white">Daily Prep</h1>
           <div className="flex items-center gap-3 mt-1">
             <input
@@ -784,7 +784,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           </div>
           <PrepTiming startedAt={prepStartedAt} completedAt={prepCompletedAt} isToday={isToday} />
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <SaveStatus
             saving={saving}
             isDirty={isDirty}
