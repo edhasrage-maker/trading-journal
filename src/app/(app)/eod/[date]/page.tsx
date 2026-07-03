@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import EodClient from '@/components/eod/EodClient'
-import { liveAtr, fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from '@/lib/atr'
+import { fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from '@/lib/atr'
+import { configuredAtr } from '@/lib/atr-config'
+import { getAtrConfig } from '@/lib/atr-config-server'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -9,6 +11,9 @@ type AnyClient = any
 export default async function EodPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params
   const supabase: AnyClient = await createClient()
+  // The user's chosen ATR measurement (timeframe / method / period) — drives the
+  // ATR@ column and the ATR-unit R fallback. Defaults to 1m Wilder-10.
+  const atrCfg = await getAtrConfig(supabase)
 
   const { data: day } = await supabase
     .from('trading_days')
@@ -63,7 +68,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       if (!t.symbol || !t.entry_time) continue
       const bars = barsBySymbolDate.get(`${t.symbol}|${date}`)
       if (!bars || bars.length === 0) continue
-      const value = liveAtr(bars, new Date(t.entry_time), 10)
+      const value = configuredAtr(bars, new Date(t.entry_time), atrCfg)
       if (value != null) liveAtrByTradeId[t.id] = value
     }
 
