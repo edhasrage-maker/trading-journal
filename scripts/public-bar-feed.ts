@@ -17,8 +17,10 @@
  * SETUP (once)
  *   1. Create `.env.public-feed` in the repo root:
  *        PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
- *        PUBLIC_SUPABASE_SERVICE_ROLE_KEY=<public project's service_role key>
- *      (Supabase → API Keys → "Legacy anon, service_role" tab → service_role.)
+ *        PUBLIC_SUPABASE_SERVICE_ROLE_KEY=<public project's SECRET key>
+ *      Supabase → API Keys → create a Secret key (sb_secret_…). The old
+ *      "Legacy anon, service_role" JWTs are disabled on this project, so use a
+ *      new secret key here — it works the same way server-side.
  *   2. Keep NQ + ES charts live in Sierra so their `.scid` files stay current.
  *      Override the folder with SIERRA_DATA_DIR if yours isn't D:\SierraCharts\Data.
  *
