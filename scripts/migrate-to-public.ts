@@ -51,22 +51,24 @@ const dryRun = process.argv.includes('--dry-run')
 const onlyArg = process.argv.find(a => a.startsWith('--only='))
 const only = onlyArg ? new Set(onlyArg.split('=')[1].split(',')) : null
 
-// Per-user tables, PARENTS FIRST (children reference trading_day_id). `src`
-// overrides the source table name when it differs from the public one.
-// `order` is the column to paginate by (must exist on the source table).
-const TABLES: Array<{ name: string; src?: string; order: string }> = [
-  { name: 'trading_days', order: 'id' },
-  { name: 'trade_tags', order: 'id' },
-  { name: 'trader_profile', order: 'id' },
-  { name: 'historical_trades', order: 'id' },
-  { name: 'chart_prefs', order: 'id' },
-  { name: 'bar_imports', order: 'id' },
-  { name: 'weekly_recap', order: 'id' },
-  { name: 'eod_themes_analysis', src: 'eod_themes', order: 'id' },
-  { name: 'market_context', order: 'id' },       // FK trading_day_id
-  { name: 'daily_prep', order: 'id' },            // FK trading_day_id (or date-keyed)
-  { name: 'trades', order: 'id' },                // FK trading_day_id
-  { name: 'chart_annotations', order: 'id' },     // FK trading_day_id
+// Per-user tables, PARENTS FIRST (children reference trading_day_id).
+// `order` = a column that exists on the table (for stable pagination).
+// `conflict` = the target's unique/PK for idempotent re-runs (id where the base
+// keeps an id PK; the composite (user_id, natural-key) where the overlay made it
+// the PK — daily_prep / chart_prefs / weekly_recap / trader_profile).
+const TABLES: Array<{ name: string; order: string; conflict: string }> = [
+  { name: 'trading_days', order: 'id', conflict: 'id' },
+  { name: 'trade_tags', order: 'id', conflict: 'id' },
+  { name: 'trader_profile', order: 'id', conflict: 'user_id,id' },
+  { name: 'historical_trades', order: 'id', conflict: 'id' },
+  { name: 'chart_prefs', order: 'key', conflict: 'user_id,key' },
+  { name: 'bar_imports', order: 'id', conflict: 'id' },
+  { name: 'weekly_recap', order: 'week_start_date', conflict: 'user_id,week_start_date' },
+  { name: 'eod_themes_analysis', order: 'id', conflict: 'id' },
+  { name: 'market_context', order: 'id', conflict: 'id' },      // FK trading_day_id
+  { name: 'daily_prep', order: 'trade_date', conflict: 'user_id,trade_date' },
+  { name: 'trades', order: 'id', conflict: 'id' },              // FK trading_day_id
+  { name: 'chart_annotations', order: 'id', conflict: 'id' },   // FK trading_day_id
 ]
 
 async function fetchAll(table: string, order: string): Promise<Record<string, unknown>[]> {
@@ -82,17 +84,16 @@ async function fetchAll(table: string, order: string): Promise<Record<string, un
   return out
 }
 
-async function migrateTable(t: { name: string; src?: string; order: string }) {
-  const srcName = t.src ?? t.name
+async function migrateTable(t: { name: string; order: string; conflict: string }) {
   let rows: Record<string, unknown>[]
-  try { rows = await fetchAll(srcName, t.order) }
+  try { rows = await fetchAll(t.name, t.order) }
   catch (e) { console.log(`  ⚠ skip ${t.name}: ${(e as Error).message}`); return }
   const stamped = rows.map(r => ({ ...r, user_id: USER_ID }))
-  console.log(`${t.name.padEnd(20)} ${stamped.length} rows${srcName !== t.name ? ` (from ${srcName})` : ''}`)
+  console.log(`${t.name.padEnd(20)} ${stamped.length} rows`)
   if (dryRun || stamped.length === 0) return
   let wrote = 0
   for (let i = 0; i < stamped.length; i += 500) {
-    const { error } = await target.from(t.name).upsert(stamped.slice(i, i + 500), { onConflict: 'id' })
+    const { error } = await target.from(t.name).upsert(stamped.slice(i, i + 500), { onConflict: t.conflict })
     if (error) { console.log(`  ✗ target ${t.name}: ${error.message}`); return }
     wrote += stamped.slice(i, i + 500).length
   }
