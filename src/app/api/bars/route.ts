@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { sessionUtcWindow } from '@/lib/pt-time'
-import { chartSeriesRoot } from '@/lib/futures-symbols'
+import { chartSeriesRoot, miniContractSymbol } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { NextResponse } from 'next/server'
 
@@ -36,7 +36,18 @@ export async function GET(req: Request) {
   // imported. Cloud build: bars come from the shared central feed keyed by the
   // mini price-series root (NQ/ES), so any micro/mini/dated contract resolves
   // to that one series. See chartSeriesRoot + scripts/public-bar-feed.ts.
-  const querySymbol = LOCAL_FEATURES_ENABLED ? symbol : chartSeriesRoot(symbol)
+  let querySymbol = LOCAL_FEATURES_ENABLED ? symbol : chartSeriesRoot(symbol)
+  // Micro/dated contract with no bars of its own (e.g. an MESU6.CME trade whose
+  // bars live under ESU6.CME) → fall back to the mini contract. Prefer the exact
+  // symbol; only re-point when it truly has no bars in the window.
+  if (LOCAL_FEATURES_ENABLED) {
+    const mini = miniContractSymbol(symbol)
+    if (mini !== querySymbol) {
+      const { count } = await supabase.from('ohlcv_bars').select('*', { count: 'exact', head: true })
+        .eq('symbol', querySymbol).gte('ts', start).lte('ts', end)
+      if (!count) querySymbol = mini
+    }
+  }
 
   // Paginate past Supabase's default 1000-row response cap. A full PT session of
   // 1m bars is up to 1440 rows, so this is typically 2 round-trips.

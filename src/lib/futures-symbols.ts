@@ -53,3 +53,16 @@ export function chartSeriesRoot(symbol: string): string {
 export function symbolToMultiplier(symbol: string): number {
   return MULTIPLIERS[symbolRoot(symbol)] ?? 1
 }
+
+/**
+ * Micro contract → its MINI contract symbol, keeping the contract suffix:
+ * "MESU6.CME" → "ESU6.CME", "MNQU6.CME" → "NQU6.CME". Non-micros unchanged.
+ * Micros trade the same price series as their mini, so when a micro trade's
+ * bars aren't stored under its own symbol we fall back to the mini's bars.
+ */
+export function miniContractSymbol(symbol: string): string {
+  const root = symbolRoot(symbol)
+  const mini = MICRO_TO_MINI[root]
+  if (!mini) return symbol
+  return mini + symbol.slice(root.length)
+}

@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { readScidBars } from '@/lib/scid-reader'
 import { computeSessionLevels, DEFAULT_LEVELS_CONFIG, type RawBar } from '@/lib/session-levels'
-import { chartSeriesRoot } from '@/lib/futures-symbols'
+import { chartSeriesRoot, miniContractSymbol } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
@@ -95,8 +95,9 @@ export async function GET(req: Request) {
   if (!scidFile) {
     const { data } = await supabase
       .from('bar_imports')
-      .select('source_filename')
-      .eq('symbol', symbol)
+      // Exact symbol OR its mini — a micro (MESU6.CME) has no .scid of its own,
+      // so fall back to the mini's (ESU6.CME), same price series.
+      .in('symbol', Array.from(new Set([symbol, miniContractSymbol(symbol)])))
       .order('imported_at', { ascending: false })
       .limit(20)
     for (const row of (data ?? []) as { source_filename: string | null }[]) {
