@@ -10,30 +10,30 @@ const STEPS = [
   {
     icon: Upload,
     title: 'Import your trades',
-    body: 'Upload a trade-history CSV (NinjaTrader, Tradovate) or a Sierra Chart trade-activity log. Prefer to log by hand? Grab the template on the Import page.',
+    body: 'Drag in a CSV from your broker or journal — NinjaTrader, Tradovate, Tradezella — or a Sierra Chart log. No file yet? Log a trade by hand in a few taps.',
     href: '/import',
     cta: 'Go to Import',
   },
   {
     icon: LineChart,
-    title: 'See your edge — from day one',
-    body: 'Your dashboard, equity curve, and analytics populate on the first import: P&L, win rate, MFE/MAE and capture efficiency, plus day-type and regime breakdowns.',
+    title: 'See how you\'re really doing',
+    body: 'Your dashboard fills in the second you import — your P&L, win rate, best and worst days, and a plain-English read on the one thing to work on next. No minimum history.',
     href: '/dashboard',
     cta: 'Open dashboard',
   },
   {
     icon: Brain,
-    title: 'Dig in',
-    body: 'Prep each session, tag trades, review the EOD recap with AI execution analysis, and study your day on the live chart. Coaching learns your style over time.',
+    title: 'Make it a habit',
+    body: 'Plan your morning, jot notes as you trade, and get an honest end-of-day recap — in plain English, with the full detail one click away. A coach that learns your style, not a scoreboard.',
     href: '/analytics',
-    cta: 'View analytics',
+    cta: 'Take a look',
   },
 ]
 
 const EXPECT = [
-  'Import trades via CSV or Sierra Chart log — analytics are instant, no minimum history.',
-  'Live NQ / ES charts with your entries and exits marked.',
-  'AI per-trade insight, EOD execution scoring, and a coaching chat that respects your system.',
+  'Your numbers the second you import — no waiting months for history to add up.',
+  'Your entries and exits marked right on the chart.',
+  'Plain-English coaching on every session, with the full metrics one click away.',
   'Your data is private to your account — nothing is shared with other testers.',
 ]
 
