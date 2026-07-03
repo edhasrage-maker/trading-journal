@@ -6,9 +6,9 @@ export const revalidate = 0
 export default function CoachingSettingsPage() {
   return (
     <div className="max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold text-white mb-2">Coaching Preferences</h1>
+      <h1 className="text-2xl font-bold text-white mb-2">Player Profile</h1>
       <p className="text-gray-400 text-sm mb-8">
-        Standing context about your trading style. This gets injected into every AI
+        The context your AI coach uses to read your game. It&apos;s injected into every AI
         prompt (EOD analysis, prep analysis, day-type prediction, video commentary,
         etc.) so the coach respects your actual approach.
       </p>

@@ -33,7 +33,7 @@ import { useUiMode } from '@/lib/ui-mode'
 // local files (`.scid`, the SC data dir), so they're additionally local-only.
 // Filtered per-user in the component (needs the runtime isAdmin), not here.
 const settingsItems = [
-  { href: '/settings/coaching', label: 'Coaching', icon: Brain, localOnly: false, adminOnly: false },
+  { href: '/settings/coaching', label: 'Player Profile', icon: Brain, localOnly: false, adminOnly: false },
   { href: '/settings/commissions', label: 'Commissions', icon: DollarSign, localOnly: false, adminOnly: false },
   { href: '/settings/tags', label: 'Tags', icon: Tag, localOnly: false, adminOnly: false },
   { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database, localOnly: false, adminOnly: true },

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, Save, AlertCircle, CheckCircle2, Brain, Lightbulb, Target } from 'lucide-react'
+import { Loader2, Save, AlertCircle, CheckCircle2, Brain, Lightbulb, Target, Info } from 'lucide-react'
 
 const FOCUS_PLACEHOLDER = `A short, high-priority list of what the coach should weight MOST right now. This is injected last — right before your question — so it gets the most attention. Keep it to a few sharp bullets:
 
@@ -148,7 +148,15 @@ export default function CoachingPreferencesClient() {
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
         <div className="flex items-center gap-2 text-sm">
           <Brain className="w-4 h-4 text-blue-400" />
-          <span className="font-medium text-white">Your standing coaching context</span>
+          <span className="font-medium text-white">Player Profile</span>
+          <span className="text-xs text-gray-500">(Context for your coach)</span>
+          <span
+            title="What your coach should know about you — your setups, trading style, risk tolerance, the markets and regimes you trade, and your struggles + strengths/weaknesses. The more specific, the better the coach reads your game."
+            className="cursor-help text-gray-500 hover:text-gray-300"
+            aria-label="What to put in your player profile"
+          >
+            <Info className="w-3.5 h-3.5" />
+          </span>
           {profile?.updated_at && (
             <span className="text-xs text-gray-500 ml-auto">
               Last saved: {new Date(profile.updated_at).toLocaleString()}
