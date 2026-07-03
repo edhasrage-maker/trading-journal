@@ -700,7 +700,7 @@ export default function EodClient({
       {/* Header — single row. Left (title + date) is shrink-0 so it never gets
           compressed; the gap-4 guarantees clear space before the action buttons
           (no more date sitting under the Watch-folder button). */}
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
         <div className="shrink-0">
           <h1 className="text-xl font-bold text-white">EOD Recap</h1>
           {/* Date + action buttons share one row, aligned under the title. */}
@@ -763,8 +763,9 @@ export default function EodClient({
         <div className="flex items-center gap-2 text-sm">
           {/* Stats strip: tightened font + gap so the row fits on one line.
               All labels carry `whitespace-nowrap` so "W/L" and "MAE Heat %"
-              never wrap onto two lines when the viewport narrows. */}
-          <div className="flex items-center gap-2.5">
+              never wrap onto two lines when the viewport narrows. On phones the
+              strip wraps to a second line (flex-wrap) rather than overflowing. */}
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
           <div>
             <div className="text-[10px] text-gray-500 whitespace-nowrap">Trades</div>
             <div className="font-mono text-white text-sm">{trades.length}</div>
@@ -984,7 +985,7 @@ export default function EodClient({
       )}
 
       {selectedIds.size > 0 && (
-        <div className="bg-blue-950/60 border border-blue-800 rounded-xl px-4 py-2.5 flex items-center justify-between text-sm">
+        <div className="bg-blue-950/60 border border-blue-800 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-y-2 text-sm">
           <span className="text-blue-200">
             {selectedIds.size} trade{selectedIds.size === 1 ? '' : 's'} selected
             {selectedIds.size === 1 && <span className="text-blue-400/70"> — select one more to merge</span>}
