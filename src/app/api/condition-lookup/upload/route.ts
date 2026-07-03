@@ -7,6 +7,7 @@ import type {
   ConditionVerdict,
   ConditionComboType,
 } from '@/lib/supabase/types'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -72,7 +73,7 @@ export async function POST(req: Request) {
   } catch (e) {
     const err = e as Error
     console.error('[condition-lookup/upload] failed:', err)
-    return NextResponse.json({ error: err.message ?? 'unknown server error' }, { status: 500 })
+    return NextResponse.json({ error: clientError(err, 'unknown server error') }, { status: 500 })
   }
 }
 

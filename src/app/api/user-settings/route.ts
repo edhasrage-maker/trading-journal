@@ -12,6 +12,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server'
+import { clientError } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,7 +34,7 @@ export async function GET() {
     if (['42703', 'PGRST204', '42P01', 'PGRST205'].includes(error.code)) {
       return NextResponse.json({ commission_per_side: 0, migration_pending: true, hint: MIGRATION_HINT })
     }
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: clientError(error) }, { status: 500 })
   }
   return NextResponse.json({
     commission_per_side: Number(data?.commission_per_side ?? 0),
@@ -62,7 +63,7 @@ export async function PUT(req: Request) {
     if (['42703', 'PGRST204', '42P01', 'PGRST205'].includes(error.code)) {
       return NextResponse.json({ error: 'commission column not found — apply the migration first', migration_pending: true, hint: MIGRATION_HINT }, { status: 503 })
     }
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: clientError(error) }, { status: 500 })
   }
   return NextResponse.json({
     commission_per_side: Number(data.commission_per_side ?? value),

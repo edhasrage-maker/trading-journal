@@ -4,6 +4,7 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { consumeAiUsage } from '@/lib/ai-usage'
 import { createClient } from '@/lib/supabase/server'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
+import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
 
@@ -14,7 +15,7 @@ export async function POST(req: Request) {
     const err = e as { message?: string; status?: number; error?: { type?: string; message?: string } }
     const detail = err?.error?.message ?? err?.message ?? 'unknown server error'
     console.error('[extract-context] failed:', err)
-    return NextResponse.json({ error: detail, type: err?.error?.type, status: err?.status }, { status: 500 })
+    return NextResponse.json({ error: clientError(detail), type: err?.error?.type, status: err?.status }, { status: 500 })
   }
 }
 

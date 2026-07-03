@@ -11,6 +11,7 @@ import {
   type NoteEntry,
   type ThemeRaw,
 } from '@/lib/themes-prompt'
+import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
 
@@ -55,7 +56,7 @@ export async function POST(req: Request) {
     const detail = err?.error?.message ?? err?.message ?? 'unknown server error'
     console.error('[extract-themes] failed:', err)
     return NextResponse.json(
-      { error: detail, type: err?.error?.type, status: err?.status },
+      { error: clientError(detail), type: err?.error?.type, status: err?.status },
       { status: 500 },
     )
   }
@@ -131,7 +132,7 @@ async function handle(req: Request) {
           { status: 503 },
         )
       }
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ error: clientError(error) }, { status: 500 })
     }
     const batch = (data ?? []) as DayForThemes[]
     days.push(...batch)

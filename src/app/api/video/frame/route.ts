@@ -4,6 +4,7 @@ import { join, basename } from 'path'
 import { probeVideo, extractFrameJpegBase64 } from '@/lib/video-frames'
 import { createClient } from '@/lib/supabase/server'
 import { blockIfCloud } from '@/lib/local-features-guard'
+import { clientError } from '@/lib/api-error'
 import { OBS_RECORDINGS_DIR } from '../list/route'
 
 /**
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
   let frame: string
   try { frame = await extractFrameJpegBase64(fullPath, offsetSec) }
   catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : 'frame extraction failed' }, { status: 500 })
+    return NextResponse.json({ error: clientError(e, 'frame extraction failed') }, { status: 500 })
   }
 
   // Preview path — return the frame inline, no DB write.
@@ -104,6 +105,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ url, offsetSec })
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : 'save failed' }, { status: 500 })
+    return NextResponse.json({ error: clientError(e, 'save failed') }, { status: 500 })
   }
 }

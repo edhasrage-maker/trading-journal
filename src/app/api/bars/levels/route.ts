@@ -4,6 +4,7 @@ import { readScidBars } from '@/lib/scid-reader'
 import { computeSessionLevels, DEFAULT_LEVELS_CONFIG, type RawBar } from '@/lib/session-levels'
 import { chartSeriesRoot, miniContractSymbol } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { clientError } from '@/lib/api-error'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
 
@@ -131,7 +132,7 @@ export async function GET(req: Request) {
     bars = readScidBars(fullPath, startMs, endMs, { priceDivisor }).bars
   } catch (e) {
     console.error('[bars/levels] scid read failed:', e)
-    return NextResponse.json({ error: e instanceof Error ? e.message : 'SCID read failed' }, { status: 500 })
+    return NextResponse.json({ error: clientError(e, 'SCID read failed') }, { status: 500 })
   }
 
   if (bars.length === 0) {

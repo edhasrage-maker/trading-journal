@@ -8,6 +8,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server'
+import { clientError } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -35,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ weekSta
         migration_pending: true,
       })
     }
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: clientError(error) }, { status: 500 })
   }
   return NextResponse.json(data ?? {
     week_start_date: weekStart,
@@ -71,7 +72,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ weekStar
     if (error.code === 'PGRST205' || error.code === '42P01') {
       return NextResponse.json({ error: 'weekly_recap table missing — apply migration', migration_pending: true }, { status: 503 })
     }
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: clientError(error) }, { status: 500 })
   }
   return NextResponse.json(data)
 }

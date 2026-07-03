@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { resilientUpsert } from '@/lib/resilient-upsert'
 import type { ChartCalibration, TradingDay } from '@/lib/supabase/types'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -54,7 +55,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     { onConflict: 'date' },
   )
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ calibration, day, droppedColumns: droppedColumns.length > 0 ? droppedColumns : undefined })
 }
 
@@ -68,6 +69,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ date
     { onConflict: 'date' },
   )
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ day, droppedColumns: droppedColumns.length > 0 ? droppedColumns : undefined })
 }

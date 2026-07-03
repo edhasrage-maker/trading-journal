@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { existsSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { blockIfCloud } from '@/lib/local-features-guard'
+import { clientError } from '@/lib/api-error'
 
 export const OBS_RECORDINGS_DIR = process.env.OBS_RECORDINGS_DIR || 'C:\\Users\\lamed\\Videos'
 
@@ -38,7 +39,7 @@ export async function GET() {
     return NextResponse.json({ files, dir: OBS_RECORDINGS_DIR })
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'readdir failed', files: [], dir: OBS_RECORDINGS_DIR },
+      { error: clientError(e, 'readdir failed'), files: [], dir: OBS_RECORDINGS_DIR },
       { status: 500 },
     )
   }

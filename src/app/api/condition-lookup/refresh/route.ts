@@ -4,6 +4,7 @@ import {
   deriveMetrics, computeThresholds, buildLookupRows,
   type MarketContextLite, type TradeLite, type MetricRow,
 } from '@/lib/condition-lookup-refresh'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -30,7 +31,7 @@ export async function POST() {
   } catch (e) {
     const err = e as Error
     console.error('[condition-lookup/refresh] failed:', err)
-    return NextResponse.json({ error: err.message ?? 'unknown server error' }, { status: 500 })
+    return NextResponse.json({ error: clientError(err, 'unknown server error') }, { status: 500 })
   }
 }
 

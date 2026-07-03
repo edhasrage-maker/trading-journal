@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { computeBuckets, type MetricBuckets, type DaySample } from '@/lib/metric-buckets'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -41,7 +42,7 @@ export async function GET() {
       .order('date', { ascending: false })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
     const batch = (data ?? []) as Array<{ id: string; date: string; eod_pnl: number | null }>
     days.push(...batch)
     if (batch.length < PAGE) break
@@ -86,7 +87,7 @@ export async function GET() {
       fetchChunked<typeof tradesRaw[number]>('trades', 'trading_day_id, pnl'),
     ])
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : 'fetch failed' }, { status: 500 })
+    return NextResponse.json({ error: clientError(e, 'fetch failed') }, { status: 500 })
   }
 
   interface MarketCtxSlim {

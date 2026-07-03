@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { clientError } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -20,7 +21,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     .eq('id', id)
     .select().single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json(data)
 }
 
@@ -28,6 +29,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const { id } = await params
   const supabase: AnyClient = await createClient()
   const { error } = await supabase.from('trades').delete().eq('id', id)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

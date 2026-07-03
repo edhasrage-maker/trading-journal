@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { PrepNotes } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
+import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
 
@@ -20,7 +21,7 @@ export async function POST(req: Request) {
       'unknown server error'
     console.error('[analyze-prep] failed:', err)
     return NextResponse.json(
-      { error: detail, type: err?.error?.type, status: err?.status },
+      { error: clientError(detail), type: err?.error?.type, status: err?.status },
       { status: 500 },
     )
   }

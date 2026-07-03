@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import type { TagCategory, TradeTag } from '@/lib/supabase/types'
 import { normalizeTagArray } from '@/lib/supabase/types'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -154,7 +155,7 @@ export async function POST(req: Request) {
     historicalUpdated = await rewriteTable(supabase, 'historical_trades', fromCategory, toCategory, tag.label)
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'Rewrite failed' },
+      { error: clientError(e, 'Rewrite failed') },
       { status: 500 },
     )
   }

@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { clientError } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,7 +48,7 @@ export async function GET(req: Request) {
   let q = supabase.from('chart_annotations').select('*').eq('trading_day_id', tdid).order('created_at')
   if (symbol) q = q.eq('symbol', symbol)
   const { data, error } = await q
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ annotations: data ?? [] })
 }
 
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
     .insert({ trading_day_id: tdid, symbol: symbol ?? null, kind, geom, note: note ?? '', color: color ?? '#ef4444' })
     .select('*')
     .single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ annotation: data })
 }
 
@@ -84,7 +85,7 @@ export async function PATCH(req: Request) {
 
   const supabase: AnyClient = await createClient()
   const { data, error } = await supabase.from('chart_annotations').update(patch).eq('id', id).select('*').single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ annotation: data })
 }
 
@@ -94,6 +95,6 @@ export async function DELETE(req: Request) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   const supabase: AnyClient = await createClient()
   const { error } = await supabase.from('chart_annotations').delete().eq('id', id)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

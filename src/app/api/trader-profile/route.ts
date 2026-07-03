@@ -8,6 +8,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server'
+import { clientError } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,7 +46,7 @@ export async function GET() {
         hint: 'Apply supabase/migrations/20260617_trader_profile.sql in the Supabase dashboard to enable.',
       })
     }
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: clientError(error) }, { status: 500 })
   }
   return NextResponse.json({
     preferences_md: data?.preferences_md ?? '',
@@ -98,7 +99,7 @@ export async function PUT(req: Request) {
         migration_pending: true,
       }, { status: 503 })
     }
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: clientError(error) }, { status: 500 })
   }
   return NextResponse.json({
     preferences_md: data.preferences_md,

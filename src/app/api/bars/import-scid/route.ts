@@ -4,6 +4,7 @@ import { importScidDay, SIERRA_DATA_DIR } from '@/lib/import-scid-day'
 import { readdirSync, existsSync, statSync } from 'fs'
 import { join } from 'path'
 import { blockIfCloud } from '@/lib/local-features-guard'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -34,7 +35,7 @@ export async function GET() {
       .sort((a, b) => b.mtimeMs - a.mtimeMs)
     return NextResponse.json({ files, dir: SIERRA_DATA_DIR })
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : 'readdir failed', files: [] }, { status: 500 })
+    return NextResponse.json({ error: clientError(e, 'readdir failed'), files: [] }, { status: 500 })
   }
 }
 

@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { clientError } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 
 export async function POST(req: Request) {
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
     .from(bucket)
     .upload(path, buffer, { contentType: file.type, upsert: true })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
 
   const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path)
   return NextResponse.json({ url: publicUrl })
@@ -61,6 +62,6 @@ export async function DELETE(req: Request) {
   }
 
   const { error } = await supabase.storage.from(bucket).remove(paths)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ deleted: paths.length })
 }

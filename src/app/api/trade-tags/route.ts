@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import type { TagCategory, TradeTag } from '@/lib/supabase/types'
 import { tagKey } from '@/lib/tradezella-import'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
     .insert({ category, label, sort_order: nextSort })
     .select('*')
     .single() as { data: TradeTag | null; error: { message: string } | null }
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
 
   return NextResponse.json({ tag: inserted, created: true })
 }

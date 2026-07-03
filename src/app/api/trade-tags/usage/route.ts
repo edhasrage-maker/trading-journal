@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import type { TagCategory } from '@/lib/supabase/types'
 import { normalizeTagArray } from '@/lib/supabase/types'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -56,7 +57,7 @@ export async function GET() {
     await tallyTable(supabase, 'historical_trades', counts)
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'Tally failed' },
+      { error: clientError(e, 'Tally failed') },
       { status: 500 },
     )
   }

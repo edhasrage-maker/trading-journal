@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { clientError } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -27,7 +28,7 @@ export async function GET(req: Request) {
   let query = supabase.from('chart_prefs').select('key, value, updated_at')
   if (key) query = query.eq('key', key)
   const { data, error } = await query
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ entries: data ?? [] })
 }
 
@@ -75,6 +76,6 @@ export async function POST(req: Request) {
   const { error } = await supabase
     .from('chart_prefs')
     .upsert(payload, { onConflict: 'key' })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ ok: true, written: payload.length })
 }

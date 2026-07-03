@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { parseBarCsv } from '@/lib/bar-importer'
 import type { BarGranularity } from '@/lib/supabase/types'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -121,7 +122,7 @@ export async function GET() {
     .order('imported_at', { ascending: false })
     .limit(50)
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: clientError(error) }, { status: 500 })
   }
   return NextResponse.json(data ?? [])
 }

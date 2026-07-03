@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import type { ConditionThreshold } from '@/lib/supabase/types'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -11,6 +12,6 @@ export async function GET() {
     .from('condition_thresholds')
     .select('*')
     .order('metric') as { data: ConditionThreshold[] | null; error: { message: string } | null }
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
   return NextResponse.json({ thresholds: data ?? [] })
 }

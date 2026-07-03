@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { readScidBars } from '@/lib/scid-reader'
 import { contextStatsForDate } from '@/lib/market-context-from-bars'
+import { clientError } from '@/lib/api-error'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
 
@@ -78,7 +79,7 @@ export async function GET(req: Request) {
     bars = readScidBars(fullPath, startMs, endMs, { priceDivisor }).bars
   } catch (e) {
     console.error('[bars/market-context] scid read failed:', e)
-    return NextResponse.json({ error: e instanceof Error ? e.message : 'SCID read failed' }, { status: 500 })
+    return NextResponse.json({ error: clientError(e, 'SCID read failed') }, { status: 500 })
   }
   if (bars.length === 0) {
     return NextResponse.json({ error: `No bars in lookback for ${safeName}`, stats: null }, { status: 200 })

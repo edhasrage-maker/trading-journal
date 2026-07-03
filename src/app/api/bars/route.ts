@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { sessionUtcWindow } from '@/lib/pt-time'
 import { chartSeriesRoot, miniContractSymbol } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { clientError } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -67,7 +68,7 @@ export async function GET(req: Request) {
       .range(from, from + PAGE - 1)
     if (error) {
       console.error('[api/bars] query failed:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ error: clientError(error) }, { status: 500 })
     }
     const rows = data ?? []
     all.push(...rows)

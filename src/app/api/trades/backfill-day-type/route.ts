@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { normalizeTagArray, type TradeTags } from '@/lib/supabase/types'
+import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
     .from('trades')
     .select('id, tags_json')
     .eq('trading_day_id', day.id) as { data: TradeRow[] | null; error: { message: string } | null }
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
 
   const all = trades ?? []
   // Treat trades whose current day_type matches the target set (order-insensitive)

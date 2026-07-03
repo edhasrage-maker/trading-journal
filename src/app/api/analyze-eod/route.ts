@@ -7,6 +7,7 @@ import type { PrepNotes, AiAnalysis, Trade, MarketContext } from '@/lib/supabase
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { buildEodPrompt, parseEodResponse, applyDeterministicOverrides } from '@/lib/eod-prompt'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
+import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
 
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
     const err = e as { message?: string; status?: number; error?: { type?: string; message?: string } }
     const detail = err?.error?.message ?? err?.message ?? 'unknown server error'
     console.error('[analyze-eod] failed:', err)
-    return NextResponse.json({ error: detail, type: err?.error?.type, status: err?.status }, { status: 500 })
+    return NextResponse.json({ error: clientError(detail), type: err?.error?.type, status: err?.status }, { status: 500 })
   }
 }
 
