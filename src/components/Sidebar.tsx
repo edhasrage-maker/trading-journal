@@ -19,7 +19,10 @@ import {
   Brain,
   Upload,
   Sparkles,
+  DollarSign,
   LogOut,
+  Menu,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
@@ -31,6 +34,7 @@ import { useUiMode } from '@/lib/ui-mode'
 // Filtered per-user in the component (needs the runtime isAdmin), not here.
 const settingsItems = [
   { href: '/settings/coaching', label: 'Coaching', icon: Brain, localOnly: false, adminOnly: false },
+  { href: '/settings/commissions', label: 'Commissions', icon: DollarSign, localOnly: false, adminOnly: false },
   { href: '/settings/tags', label: 'Tags', icon: Tag, localOnly: false, adminOnly: false },
   { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database, localOnly: false, adminOnly: true },
   { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart, localOnly: true, adminOnly: true },
@@ -47,6 +51,13 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
     item => (!item.localOnly || LOCAL_FEATURES_ENABLED) && (!item.adminOnly || isAdmin),
   )
   const { mode, setMode } = useUiMode()
+
+  // Mobile drawer state. On desktop (md+) the sidebar is always shown and this
+  // is inert; below md it's an off-canvas drawer. Close it on any route change
+  // so tapping a nav link slides it away and reveals the page.
+  const [open, setOpen] = useState(false)
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- close the drawer on any route change (covers link taps + back/forward nav)
+  useEffect(() => { setOpen(false) }, [pathname])
 
   const signOut = async () => {
     await createClient().auth.signOut()
@@ -100,7 +111,39 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   ]
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-60 bg-gray-900 border-r border-gray-800 flex flex-col">
+    <>
+      {/* Mobile top bar — hamburger opens the drawer (md:hidden; desktop keeps the fixed sidebar) */}
+      <div className="md:hidden fixed top-0 inset-x-0 h-14 z-30 flex items-center gap-3 px-4 bg-gray-900 border-b border-gray-800">
+        <button type="button" onClick={() => setOpen(true)} aria-label="Open menu" className="text-gray-300 hover:text-white">
+          <Menu className="w-6 h-6" />
+        </button>
+        {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
+        <img src="/brand/tapescore-favicon.svg" alt="TapeScore" className="w-7 h-7" />
+        <span className="text-lg tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+          <span className="font-medium">Tape</span><span className="font-extrabold">Score</span>
+        </span>
+      </div>
+
+      {/* Backdrop behind the open drawer (mobile only) */}
+      {open && (
+        <div className="md:hidden fixed inset-0 z-40 bg-black/60" onClick={() => setOpen(false)} aria-hidden />
+      )}
+
+      <aside
+        className={cn(
+          'fixed left-0 top-0 h-screen w-60 bg-gray-900 border-r border-gray-800 flex flex-col z-50 transition-transform duration-200 md:translate-x-0',
+          open ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+      {/* Close (mobile only) */}
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        aria-label="Close menu"
+        className="md:hidden absolute top-4 right-3 text-gray-400 hover:text-white"
+      >
+        <X className="w-5 h-5" />
+      </button>
       {/* Logo — TapeScore lockup: mark + wordmark, tagline aligned under the wordmark */}
       <div className="flex items-center gap-3 px-5 py-6 border-b border-gray-800">
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG, no image optimization needed */}
@@ -194,6 +237,7 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
           Sign out
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   )
 }

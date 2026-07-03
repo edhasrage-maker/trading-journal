@@ -19,7 +19,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <UiModeProvider>
       <div className="flex min-h-screen">
         <Sidebar isAdmin={isAdmin} />
-        <main className="flex-1 ml-60 p-6 overflow-y-auto">
+        <main className="flex-1 md:ml-60 p-6 pt-20 md:pt-6 overflow-y-auto">
           {children}
         </main>
         {/* Floating Trade Coach — bottom-right icon on every page; click to expand */}
