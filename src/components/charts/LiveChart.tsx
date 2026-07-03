@@ -202,6 +202,61 @@ function clearView(symbol: string, date: string, tfMins: number) {
   } catch { /* ignore */ }
 }
 
+/**
+ * Logical (bar-index) range that brackets the day's trades with padding, so a
+ * freshly opened day starts framed on WHERE YOU TRADED instead of the tail end
+ * of the session — no more hunting for your fills. Returns null when there are
+ * no trades (or no bars), so the caller falls back to the default last-N-bars
+ * view. Works in bar-index space (matches setVisibleLogicalRange) and is
+ * TF-agnostic — displayBars is already the active-timeframe series.
+ */
+function tradesLogicalRange(
+  displayBars: { ts: string }[],
+  trades: Trade[],
+): { from: number; to: number } | null {
+  const total = displayBars.length
+  if (total === 0 || !trades || trades.length === 0) return null
+  let minMs = Infinity
+  let maxMs = -Infinity
+  const consider = (iso: string | null | undefined) => {
+    if (!iso) return
+    const ms = new Date(iso).getTime()
+    if (!Number.isFinite(ms)) return
+    if (ms < minMs) minMs = ms
+    if (ms > maxMs) maxMs = ms
+  }
+  for (const t of trades) {
+    consider(t.entry_time)
+    consider(t.exit_time)
+    if (Array.isArray(t.exits_json)) {
+      for (const e of t.exits_json as { time?: string }[]) consider(e?.time)
+    }
+  }
+  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs)) return null
+  const barMs = (i: number) => new Date(displayBars[i].ts).getTime()
+  // firstIdx: last bar at/before the earliest trade; lastIdx: first bar at/after
+  // the latest trade — so the whole trade span is enclosed.
+  let firstIdx = 0
+  for (let i = 0; i < total; i++) { if (barMs(i) <= minMs) firstIdx = i; else break }
+  let lastIdx = total - 1
+  for (let i = total - 1; i >= 0; i--) { if (barMs(i) >= maxMs) lastIdx = i; else break }
+  if (lastIdx < firstIdx) { const tmp = firstIdx; firstIdx = lastIdx; lastIdx = tmp }
+  // Pad ~25% of the span (min 8 bars) so trades don't sit against the edges.
+  const span = Math.max(1, lastIdx - firstIdx)
+  const pad = Math.max(8, Math.round(span * 0.25))
+  let from = Math.max(0, firstIdx - pad)
+  let to = Math.min(total - 1, lastIdx + pad)
+  // Floor the window so a single quick scalp isn't zoomed to a handful of bars.
+  const MIN_WINDOW = 40
+  if (to - from < MIN_WINDOW) {
+    const center = (from + to) / 2
+    from = Math.max(0, Math.round(center - MIN_WINDOW / 2))
+    to = Math.min(total - 1, from + MIN_WINDOW)
+    if (to - from < MIN_WINDOW) from = Math.max(0, to - MIN_WINDOW)
+  }
+  return { from: from - 0.5, to: to + 0.5 }
+}
+
 // Diagnostic flag — flip to true to see the chart's range-decision log in
 // the browser console. Filter by "[livechart]" to follow. Off in normal
 // operation; turn on when debugging TF-switch / zoom / saved-view issues.
@@ -1179,8 +1234,13 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         // and fits; otherwise default to the compact target range. Three apply attempts
         // (sync + rAF + 100ms) to beat the post-setData auto-fit pass.
         restoredKeyRef.current = dayKey
-        const range = savedFits ? { from: savedThisTf!.from, to: savedThisTf!.to } : defaultRange
-        if (LIVECHART_DEBUG) console.log('[livechart] FIRST-OPEN apply', range, 'usingSaved=', savedFits)
+        // Priority: a saved zoom the user set for this day > auto-frame on the
+        // day's trades > the compact last-N-bars default. Auto-framing means a
+        // day opens centered on your fills instead of the session tail.
+        const range = savedFits
+          ? { from: savedThisTf!.from, to: savedThisTf!.to }
+          : (tradesLogicalRange(displayBars, trades) ?? defaultRange)
+        if (LIVECHART_DEBUG) console.log('[livechart] FIRST-OPEN apply', range, 'usingSaved=', savedFits, 'framedTrades=', !savedFits && !!tradesLogicalRange(displayBars, trades))
         const apply = () => chartRef.current?.timeScale().setVisibleLogicalRange(range)
         apply()
         requestAnimationFrame(apply)
