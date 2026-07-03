@@ -170,13 +170,18 @@ NO TRADE DATA — the trader logged no trades in this window.
     // exceed it; a stored value above it is corrupt (old un-capped backfill
     // walking a bad bar tick) and would massively inflate "$ left on the table".
     let mfeUsd = t.mfe_dollars_per_leg
-    if (mfeUsd != null && t.entry_price != null && t.quantity != null) {
+    if (t.entry_price != null && t.quantity != null) {
       const favPts = t.direction === 'short'
         ? (t.low_during_position != null ? t.entry_price - t.low_during_position : null)
         : (t.high_during_position != null ? t.high_during_position - t.entry_price : null)
       if (favPts != null && favPts >= 0) {
+        // Tick-precise full-position ceiling (favorable extreme × qty × mult).
         const ceiling = favPts * t.quantity * mult(t.symbol)
-        if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
+        // Imported trades have the raw extremes but NO per-leg backfill: use the
+        // ceiling as the best-case $ directly. Otherwise clamp the per-leg value
+        // to it (a stored value above it is corrupt un-capped backfill).
+        if (mfeUsd == null) mfeUsd = ceiling
+        else if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
       }
     }
     let capPct: number | null = null
