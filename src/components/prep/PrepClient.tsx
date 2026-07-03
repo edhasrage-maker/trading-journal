@@ -15,6 +15,7 @@ import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
 import HighImpactNews from './HighImpactNews'
+import CollapsibleCard from '@/components/CollapsibleCard'
 import type { NewsEvent } from '@/lib/economic-calendar'
 import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
@@ -893,8 +894,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
       {/* Day Type — chips sourced from trade_tags.day_type so prep + intraday
           stay in sync. Falls back to a hint when the library is empty. */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <label className="block text-sm font-medium text-gray-300 mb-2">Day Type</label>
+      <CollapsibleCard title="Day Type" defaultOpen>
         {dayTypeOptions.length === 0 ? (
           <p className="text-xs text-gray-500">
             No day types in the library yet. Add some from <span className="font-mono">/settings/tags</span>.
@@ -947,7 +947,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             return next
           })}
         />
-      </div>
+      </CollapsibleCard>
 
       {/* Condition Filter (Morning Conditions) */}
       {/* dr_adr is reactive: compute from live context.day_range / context.adr
@@ -971,15 +971,13 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
       {/* Market Context — Detailed Tape only (levels / IB / volatility / MGI) */}
       {mode === 'pro' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h2 className="font-semibold text-white mb-4">Market Context</h2>
+        <CollapsibleCard title="Market Context">
           <MarketContextForm value={context} onChange={setContext} />
-        </div>
+        </CollapsibleCard>
       )}
 
       {/* Prep Notes */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h2 className="font-semibold text-white mb-4">Prep Notes</h2>
+      <CollapsibleCard title="Prep Notes" defaultOpen>
         <PrepNotesForm
           value={prepNotes}
           onChange={setPrepNotes}
@@ -987,18 +985,17 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           ibl={context.ibl as number | null}
           ibSize={context.ib_size as number | null}
         />
-      </div>
+      </CollapsibleCard>
 
       {/* Trade Plans — Detailed Tape only (named playbook setups) */}
       {mode === 'pro' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h2 className="font-semibold text-white mb-4">Trade Plans / Setups</h2>
+        <CollapsibleCard title="Trade Plans / Setups">
           <TradePlansSection
             plans={prepNotes.trade_plans ?? []}
             onChange={plans => setPrepNotes({ ...prepNotes, trade_plans: plans })}
             planAssessments={(aiAnalysis as AiAnalysis | null)?.plan_assessments as PlanAssessment[] | undefined}
           />
-        </div>
+        </CollapsibleCard>
       )}
 
       {/* Prep Analysis */}
@@ -1064,6 +1061,7 @@ function SaveStatus({
   // outputs a stable placeholder and the client computes the real value only
   // after mount.
   const [mounted, setMounted] = useState(false)
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag for hydration-safe render
   useEffect(() => { setMounted(true) }, [])
 
   if (saving) {

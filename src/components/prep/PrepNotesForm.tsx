@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import AutoGrowTextarea from '@/components/AutoGrowTextarea'
 import type { PrepNotes } from '@/lib/supabase/types'
 
 interface Props {
@@ -56,6 +57,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
   // header — that override holds until the next Break Timing change.
   const breakTimingActive = !!value.ib_behaviour && value.ib_behaviour !== IB_BREAK_TIMING_DEFAULT
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync the extensions panel open-state to whether a break timing is set
     setExtsOpen(breakTimingActive)
   }, [breakTimingActive])
 
@@ -177,7 +179,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
           </div>
           <div>
             <label className="block text-xs text-gray-400 mb-1">Notes (low nodes, POC location, etc.)</label>
-            <textarea rows={2} spellCheck autoCorrect="on" placeholder="e.g. Low node at 19850, POC at 19900, clean accept above..."
+            <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="e.g. Low node at 19850, POC at 19900, clean accept above..."
               value={value.volume_profile_notes ?? ''} onChange={e => set('volume_profile_notes', e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
             />
@@ -296,7 +298,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
           MGI levels the bias is built on. */}
       <div>
         <label className="block text-xs text-gray-400 mb-1">Observations / reasoning</label>
-        <textarea rows={2} spellCheck autoCorrect="on" placeholder="What are you seeing? Why this bias, and what would change it?"
+        <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="What are you seeing? Why this bias, and what would change it?"
           value={value.bias_notes ?? ''} onChange={e => set('bias_notes', e.target.value)}
           className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
         />
@@ -308,7 +310,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-400 mb-1">How are you feeling today?</label>
-            <textarea rows={2} spellCheck autoCorrect="on" placeholder="Be honest. Any stress, fatigue, emotional events affecting you?"
+            <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="Be honest. Any stress, fatigue, emotional events affecting you?"
               value={value.mood ?? ''} onChange={e => set('mood', e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
             />
@@ -316,7 +318,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
           {LOCAL_FEATURES_ENABLED && (
           <div>
             <label className="block text-xs text-gray-400 mb-1">Does the market feel clear to you?</label>
-            <textarea rows={2} spellCheck autoCorrect="on" placeholder="Can you clearly see what the market is doing and what setups to take?"
+            <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="Can you clearly see what the market is doing and what setups to take?"
               value={value.market_clarity ?? ''} onChange={e => set('market_clarity', e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
             />
