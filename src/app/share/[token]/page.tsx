@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import SharedDayView from './SharedDayView'
 import type { Trade, TradingDay } from '@/lib/supabase/types'
+import type { ChartPrefs } from '@/components/charts/LiveChart'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Shared session — TapeScore' }
@@ -16,6 +17,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
   const day = (data?.day ?? null) as TradingDay | null
   const trades = (data?.trades ?? []) as Trade[]
+  const chartPrefs = (data?.chart_prefs ?? null) as Partial<ChartPrefs> | null
 
   if (!data || !day) {
     return (
@@ -32,5 +34,5 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
     )
   }
 
-  return <SharedDayView day={day} trades={trades} />
+  return <SharedDayView day={day} trades={trades} chartPrefs={chartPrefs} />
 }

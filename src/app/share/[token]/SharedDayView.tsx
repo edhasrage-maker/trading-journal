@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import LiveChart from '@/components/charts/LiveChart'
+import LiveChart, { type ChartPrefs } from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import { chartSeriesRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import type { Trade, TradingDay } from '@/lib/supabase/types'
@@ -46,7 +46,7 @@ function rMultiple(t: Trade): number | null {
   return risk > 0 ? t.pnl / risk : null
 }
 
-export default function SharedDayView({ day, trades }: { day: TradingDay; trades: Trade[] }) {
+export default function SharedDayView({ day, trades, chartPrefs }: { day: TradingDay; trades: Trade[]; chartPrefs?: Partial<ChartPrefs> | null }) {
   // Most-common symbol on the day → the chart's default instrument.
   const defaultSymbol = useMemo(() => {
     const counts = new Map<string, number>()
@@ -124,6 +124,7 @@ export default function SharedDayView({ day, trades }: { day: TradingDay; trades
             trades={chartTrades}
             hoverTradeId={hoverTradeId}
             onTradeActivate={onTradeActivate}
+            prefsOverride={chartPrefs ?? null}
             readOnly
             height={520}
           />

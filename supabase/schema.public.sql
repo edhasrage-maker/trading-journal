@@ -427,8 +427,9 @@ set search_path = public
 as $$
 declare
   v_day_id uuid;
+  v_owner  uuid;
 begin
-  select trading_day_id into v_day_id
+  select trading_day_id, user_id into v_day_id, v_owner
   from public.shares
   where token = p_token
     and not revoked
@@ -444,6 +445,11 @@ begin
     ),
     'market_context', (
       select to_jsonb(mc) from public.market_context mc where mc.trading_day_id = v_day_id
+    ),
+    -- Owner's chart appearance prefs so the shared chart shows THEIR colors.
+    'chart_prefs', (
+      select value from public.chart_prefs
+      where user_id = v_owner and key = 'livechart-prefs-v2' limit 1
     )
   );
 end $$;

@@ -47,6 +47,9 @@ interface Props {
   /** Read-only mode (shared coach-review view): hides Drawing Mode and skips
    *  all chart-pref/view persistence, since the viewer isn't the owner. */
   readOnly?: boolean
+  /** In read-only mode, the OWNER's appearance prefs (colors) to render with —
+   *  so a shared chart shows the owner's scheme, not the viewer's. */
+  prefsOverride?: Partial<ChartPrefs> | null
 }
 
 interface ApiBar {
@@ -58,7 +61,7 @@ interface ApiBar {
   volume: number | null
 }
 
-interface ChartPrefs {
+export interface ChartPrefs {
   background: string
   upColor: string
   downColor: string
@@ -282,7 +285,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onLevels, readOnly = false },
+  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onLevels, readOnly = false, prefsOverride = null },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -417,6 +420,14 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // changed by the hydrate path, we re-read it so the chart picks up the
   // synced values immediately.
   useEffect(() => {
+    // Read-only / shared view: render with the OWNER's prefs (from the share
+    // payload) so the viewer sees the owner's colors. Never read the viewer's
+    // localStorage and never run the cross-PC migration.
+    if (readOnly) {
+      if (prefsOverride) setPrefs({ ...DEFAULT_PREFS, ...prefsOverride })
+      setPrefsHydrated(true)
+      return
+    }
     // Synchronous hot path: read whatever's in localStorage RIGHT NOW.
     try {
       const raw = localStorage.getItem(PREFS_KEY)
@@ -436,7 +447,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         } catch { /* ignore */ }
       }
     })
-  }, [])
+  }, [readOnly, prefsOverride])
   // Persist on change — but ONLY after hydration. The guard MUST be state, not
   // a ref: the load effect and this effect run in the same initial commit, so a
   // ref flipped to true inside the load effect would let this effect fire on
@@ -446,11 +457,13 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // that first commit and only becomes true on the re-render that also carries
   // the loaded prefs.
   useEffect(() => {
-    if (!prefsHydrated) return
+    // Read-only view NEVER persists — writing here would overwrite the viewer's
+    // own saved prefs with the owner's colors when they return to their app.
+    if (!prefsHydrated || readOnly) return
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
     // Cross-PC sync: debounced upsert to Supabase. localStorage is still the
     // synchronous source of truth; the server write is fire-and-forget.
-    if (!readOnly) schedulePushChartPref(PREFS_KEY, prefs)
+    schedulePushChartPref(PREFS_KEY, prefs)
   }, [prefs, prefsHydrated, readOnly])
   const updatePref = (patch: Partial<ChartPrefs>) => setPrefs(prev => ({ ...prev, ...patch }))
 
