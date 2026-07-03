@@ -134,7 +134,7 @@ export default function TradeList({
         case 'pnl':
           return t.pnl ?? Number.NEGATIVE_INFINITY
         case 'r':
-          return rMultiple(t) ?? Number.NEGATIVE_INFINITY
+          return rMultiple(t, liveAtrByTradeId?.[t.id]) ?? Number.NEGATIVE_INFINITY
         case 'mfe':
           return ((bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)) ?? Number.NEGATIVE_INFINITY
         case 'mae':
@@ -499,7 +499,11 @@ export default function TradeList({
                     {pnl.toFixed(2)}
                   </td>
                   {cols.r && (() => {
-                    const r = rMultiple(t)
+                    const liveAtr = liveAtrByTradeId?.[t.id]
+                    const r = rMultiple(t, liveAtr)
+                    // Flag when R came from the no-stop/no-TP ATR fallback (R in ATR units)
+                    // rather than a planned stop, so the tooltip is honest.
+                    const atrBased = r != null && t.stop_price == null
                     return (
                       <td className={`py-1.5 pr-3 text-right ${
                         r == null ? 'text-gray-700'
@@ -507,8 +511,10 @@ export default function TradeList({
                         : r >= 0 ? 'text-green-500'
                         : r >= -0.5 ? 'text-orange-400'
                         : 'text-red-400'
-                      }`} title="R = pnl / (|entry-stop| * qty * multiplier).">
-                        {r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`}
+                      }`} title={atrBased
+                        ? 'R in ATR units (no stop/TP): PnL ÷ (1 ATR at entry × qty × multiplier).'
+                        : 'R = PnL ÷ planned risk (|entry − stop| × qty × multiplier).'}>
+                        {r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R${atrBased ? '*' : ''}`}
                       </td>
                     )
                   })()}

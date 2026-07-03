@@ -106,13 +106,25 @@ const ZERO_STATS: PerformanceStats = {
  *
  * Returns null when entry/stop/qty/pnl are missing or risk is zero.
  */
-export function rMultiple(t: TradeLike): number | null {
+export function rMultiple(t: TradeLike, atrAtEntry?: number | null): number | null {
   const ep = t.entry_price, sp = t.stop_price, pnl = t.pnl, qty = t.quantity
-  if (ep == null || sp == null || pnl == null || qty == null) return null
+  if (ep == null || pnl == null || qty == null) return null
   const mult = symbolToMultiplier(t.symbol ?? '')
-  const riskDollars = Math.abs(ep - sp) * qty * mult
-  if (riskDollars === 0) return null
-  return pnl / riskDollars
+  // Planned-stop R (default): realized PnL ÷ the dollar risk implied by the stop.
+  if (sp != null) {
+    const riskDollars = Math.abs(ep - sp) * qty * mult
+    return riskDollars === 0 ? null : pnl / riskDollars
+  }
+  // No stop AND no TP → measure R in ATR units at entry: R = pnl ÷ (1 ATR × qty ×
+  // mult), so +1.5 ATR of profit reads +1.5R and a 2-ATR loss reads −2.0R. A trade
+  // that has a TP but no stop still returns null (unchanged). `atrAtEntry` lets a
+  // caller pass a user-configured ATR; otherwise the stored 1m-Wilder-10 entry ATR.
+  const tp = (t as { tp1_price?: number | null }).tp1_price
+  const atr = atrAtEntry ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m
+  if (tp == null && atr != null && atr > 0) {
+    return pnl / (atr * qty * mult)
+  }
+  return null
 }
 
 // ────────────────────────────────────────────────────────────────────────────
