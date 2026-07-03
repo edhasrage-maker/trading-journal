@@ -76,7 +76,7 @@ function heatDisplay(t: Trade): string | null {
  * red+bold only for the cross-case patterns that need review (give-back
  * loser, lucky-escape winner, heat past stop).
  */
-function CapHeatInline({ trade, rDisplay, bars }: { trade: Trade; rDisplay: string | null; bars?: BarLike[] }) {
+function CapHeatInline({ trade, rDisplay, bars, instrumentHasBars = true }: { trade: Trade; rDisplay: string | null; bars?: BarLike[]; instrumentHasBars?: boolean }) {
   // Prefer per-leg scaling-aware capture when bars are available; fall back
   // to the simple peak × full-qty calc otherwise. Matches the displayed %
   // so the standout-color logic agrees with what the trader sees.
@@ -110,7 +110,7 @@ function CapHeatInline({ trade, rDisplay, bars }: { trade: Trade; rDisplay: stri
   return (
     <div className="flex flex-col items-end text-xs text-gray-500 leading-tight">
       {rDisplay && <span>{rDisplay}</span>}
-      {cap != null && (
+      {instrumentHasBars && cap != null && (
         <span
           className={capCls}
           title={isGiveBack
@@ -120,7 +120,7 @@ function CapHeatInline({ trade, rDisplay, bars }: { trade: Trade; rDisplay: stri
           {captureDisplay(trade, bars)}
         </span>
       )}
-      {heat != null && (
+      {instrumentHasBars && heat != null && (
         <span
           className={heatCls}
           title={isLuckyEscape
@@ -633,7 +633,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                 <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
                   {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
                 </div>
-                <CapHeatInline trade={trade} rDisplay={r} bars={bars ?? undefined} />
+                <CapHeatInline trade={trade} rDisplay={r} bars={bars ?? undefined} instrumentHasBars={tradeHasBars(trade)} />
               </div>
 
               {isOpen ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0" />}
@@ -662,7 +662,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                     Scaling-aware capture when bars are loaded — falls back to
                     simple peak × full-qty when bars haven't arrived yet OR a
                     bar coverage gap returns null. */}
-                {(captureDisplay(trade, bars ?? undefined) != null || heatDisplay(trade) != null) && (() => {
+                {tradeHasBars(trade) && (captureDisplay(trade, bars ?? undefined) != null || heatDisplay(trade) != null) && (() => {
                   const xc = mfeMaePoints(trade)
                   const cap = captureDisplay(trade, bars ?? undefined)
                   const heat = heatDisplay(trade)
