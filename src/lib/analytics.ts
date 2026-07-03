@@ -267,10 +267,13 @@ function noBarsScaledMfeDollars(t: TradeWithExcursion & { exits_json?: ExitLeg[]
 
 export function captureComponents(t: TradeWithExcursion): CaptureComponents | null {
   if (t.pnl == null || t.quantity == null) return null
-  // Stop is required: without a planned-risk baseline we can't tell whether
-  // a small MFE is meaningful or significant. Trades without a stop don't
-  // get a capture report.
-  if (t.entry_price == null || t.stop_price == null) return null
+  // entry_price is required for the excursion math; stop_price is NOT. Capture
+  // (pnl / peak-favorable-$) doesn't need a stop — the stop only feeds the
+  // noise-floor baseline in mfeClearsNoiseFloor, which already tolerates its
+  // absence (falls back to ATR, then to no filter). Imported trades (Sierra
+  // logs, Tradezella, broker CSVs) carry no stop price, so requiring one here
+  // blanked "Move captured" for every imported account.
+  if (t.entry_price == null) return null
   const xc = mfeMaePoints(t)
   if (!xc) return null
   if (xc.mfe <= 0) return null

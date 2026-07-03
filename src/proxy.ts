@@ -27,16 +27,26 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
-  const publicRoutes = ['/login', '/auth/callback']
-  const isPublic = publicRoutes.some(r => pathname.startsWith(r))
+  // Public (no auth): the marketing landing (/), the login entry, and the auth
+  // callback. Everything else requires a signed-in user. NB `/` must be an
+  // EXACT match — `startsWith('/')` would make every route public.
+  const isPublic =
+    pathname === '/' ||
+    pathname === '/login' ||
+    pathname.startsWith('/auth') ||
+    pathname.startsWith('/share') ||        // coach-review share pages (token-gated)
+    pathname.startsWith('/api/bars')        // public market bars for the shared chart
 
+  // Logged-out visitor on a protected route → send them to the landing (which
+  // carries the login form), not a bare /login.
   if (!user && !isPublic) {
     const url = request.nextUrl.clone()
-    url.pathname = '/login'
+    url.pathname = '/'
     return NextResponse.redirect(url)
   }
 
-  if (user && pathname === '/login') {
+  // Signed-in user shouldn't sit on the landing or login — go to the dashboard.
+  if (user && (pathname === '/' || pathname === '/login')) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)

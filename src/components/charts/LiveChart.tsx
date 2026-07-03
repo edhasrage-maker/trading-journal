@@ -44,6 +44,9 @@ interface Props {
    *  uses this to auto-fill the Market Context form (PDH/PDL/IBH/IBL/ONH/ONL)
    *  from the same values the chart draws, for fields the user hasn't edited. */
   onLevels?: (levels: SessionLevels | null) => void
+  /** Read-only mode (shared coach-review view): hides Drawing Mode and skips
+   *  all chart-pref/view persistence, since the viewer isn't the owner. */
+  readOnly?: boolean
 }
 
 interface ApiBar {
@@ -224,7 +227,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onLevels },
+  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onLevels, readOnly = false },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -392,8 +395,8 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
     // Cross-PC sync: debounced upsert to Supabase. localStorage is still the
     // synchronous source of truth; the server write is fire-and-forget.
-    schedulePushChartPref(PREFS_KEY, prefs)
-  }, [prefs, prefsHydrated])
+    if (!readOnly) schedulePushChartPref(PREFS_KEY, prefs)
+  }, [prefs, prefsHydrated, readOnly])
   const updatePref = (patch: Partial<ChartPrefs>) => setPrefs(prev => ({ ...prev, ...patch }))
 
   // Hover-to-show-trade (task 3). tradesRef keeps the crosshair handler (set up
@@ -466,6 +469,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // auto-persist; this also captures the per-day zoom and reassures the user
   // everything is locked.)
   const saveChartView = () => {
+    if (readOnly) return
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch { /* ignore */ }
     // Cross-PC: push the appearance prefs immediately too (the change-tracking
     // effect already debounces these, but this button is explicit "lock in".)
@@ -1804,7 +1808,9 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           />
         )}
 
-        {/* Annotation toolbar — the Drawing Mode toggle + a contextual hint. */}
+        {/* Annotation toolbar — the Drawing Mode toggle + a contextual hint.
+            Hidden in read-only (shared coach-review) mode. */}
+        {!readOnly && (
         <div className="absolute top-2 left-2 z-40 flex items-center gap-1.5">
           <button
             type="button"
@@ -1827,6 +1833,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             </span>
           )}
         </div>
+        )}
 
         {/* Right-click tool menu — on an annotation: recolor / edit text /
             delete; on empty chart: draw zone / add text / pick draw color. */}

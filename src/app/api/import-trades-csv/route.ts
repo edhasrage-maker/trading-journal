@@ -2,6 +2,9 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { parseTradeCsv } from '@/lib/csv-trade-import'
 import { parseSierraChartLog } from '@/lib/sc-importer'
+import { isNinjaTraderGrid, parseNinjaTraderGrid } from '@/lib/ninjatrader-import'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 
 /**
  * POST /api/import-trades-csv
@@ -23,6 +26,112 @@ interface PendingTrade {
   trade_date: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   row: Record<string, any>
+}
+
+/** Page the shared ohlcv_bars for [startIso, endIso] (past the 1000-row cap). */
+async function fetchBars(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any, symbol: string, startIso: string, endIso: string,
+): Promise<Array<{ ts: string; high: number; low: number }>> {
+  const PAGE = 1000
+  const out: Array<{ ts: string; high: number; low: number }> = []
+  let from = 0
+  for (let page = 0; page < 40; page++) {
+    const { data, error } = await db
+      .from('ohlcv_bars')
+      .select('ts, high, low')
+      .eq('symbol', symbol)
+      .gte('ts', startIso)
+      .lte('ts', endIso)
+      .order('ts', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) break
+    const rows = (data ?? []) as Array<{ ts: string; high: number; low: number }>
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
+
+/**
+ * Apply the user's per-side commission to GROSS-P&L imports (Sierra Chart).
+ * Round-turn cost per trade = rate × contracts × 2 (entry + exit). No-op when
+ * the setting is 0 or the column hasn't been migrated. Sources that already
+ * carry commission (NinjaTrader, Tradezella) never call this.
+ */
+async function applyGrossCommissions(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any, pending: PendingTrade[], warnings: string[],
+): Promise<void> {
+  const { data, error } = await db
+    .from('trader_profile')
+    .select('commission_per_side')
+    .eq('id', 'default')
+    .maybeSingle()
+  if (error) return // column/table not migrated → skip silently
+  const rate = Number(data?.commission_per_side ?? 0)
+  if (!(rate > 0)) return
+
+  let n = 0
+  for (const p of pending) {
+    const q = Number(p.row.quantity)
+    if (p.row.pnl == null || !Number.isFinite(q) || q <= 0) continue
+    p.row.pnl = Math.round((p.row.pnl - rate * q * 2) * 100) / 100
+    n++
+  }
+  if (n > 0) warnings.push(`Applied $${rate.toFixed(2)}/side commission (round-turn) to ${n} trade(s).`)
+}
+
+/**
+ * Fill high/low-during-position from the central bar feed for any trade whose
+ * source didn't carry excursion data (NinjaTrader grids, generic CSVs). The
+ * market bars — not the trade log — are the source of truth for MFE/MAE. Runs
+ * once per symbol root over the union window, then clips per trade. Best-effort:
+ * trades outside the bar coverage keep null high/low (capture just stays blank).
+ */
+async function backfillExcursionsFromBars(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any, pending: PendingTrade[], warnings: string[],
+): Promise<void> {
+  const bySymbol = new Map<string, number[]>()
+  for (let i = 0; i < pending.length; i++) {
+    const r = pending[i].row
+    if (r.high_during_position != null && r.low_during_position != null) continue
+    if (!r.entry_time || !r.exit_time || !r.symbol) continue
+    const root = chartSeriesRoot(String(r.symbol))
+    if (!bySymbol.has(root)) bySymbol.set(root, [])
+    bySymbol.get(root)!.push(i)
+  }
+
+  let filled = 0
+  for (const [root, idxs] of bySymbol) {
+    let min = Infinity, max = -Infinity
+    for (const i of idxs) {
+      const r = pending[i].row
+      min = Math.min(min, Date.parse(r.entry_time))
+      max = Math.max(max, Date.parse(r.exit_time))
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue
+    const bars = await fetchBars(db, root, new Date(min).toISOString(), new Date(max).toISOString())
+    if (bars.length === 0) continue
+    const parsed = bars.map(b => ({ t: Date.parse(b.ts), high: b.high, low: b.low }))
+    for (const i of idxs) {
+      const r = pending[i].row
+      const s = Date.parse(r.entry_time), e = Date.parse(r.exit_time)
+      let hi = -Infinity, lo = Infinity
+      for (const b of parsed) {
+        // Include the entry minute's bar (bar ts is the minute open, so allow 60s slack).
+        if (b.t >= s - 60_000 && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
+      }
+      if (hi > -Infinity && lo < Infinity) {
+        r.high_during_position = Math.round(hi * 100) / 100
+        r.low_during_position = Math.round(lo * 100) / 100
+        filled++
+      }
+    }
+  }
+  if (filled > 0) warnings.push(`Filled MFE/MAE for ${filled} trade(s) from market data.`)
 }
 
 /**
@@ -78,8 +187,13 @@ export async function POST(req: Request) {
   let total = 0
   let skipped = 0
   const warnings: string[] = []
+  // True when the source exports GROSS P&L (no commission of its own) → apply
+  // the user's per-side commission setting. Sierra logs are gross; NinjaTrader
+  // (per-fill commission) and Tradezella (Net P&L) already include costs.
+  let grossSource = false
 
   if (isSierraLog(csvText)) {
+    grossSource = true // Sierra exports gross P&L → apply commission setting
     const { rows, parseErrors, skippedFiltered } = parseSierraChartLog(csvText, clientTz)
     skipped = skippedFiltered
     total = rows.length + skippedFiltered
@@ -92,6 +206,36 @@ export async function POST(req: Request) {
     // the uploader's zone (correct); only warn when that wasn't available.
     if (!clientTz) {
       warnings.push('Your timezone wasn\'t detected, so Sierra times were read as server time and may display shifted. P&L, MFE/MAE, and pairing are unaffected.')
+    }
+    for (const r of rows) {
+      const trade_date = (r.entry_time_iso || '').slice(0, 10)
+      if (!trade_date) { skipped++; continue }
+      pending.push({
+        trade_date,
+        row: {
+          sierra_trade_id: r.sierra_trade_id,
+          symbol: r.symbol,
+          entry_time: r.entry_time_iso,
+          entry_price: r.entry_price,
+          exit_time: r.exit_time_iso ?? null,
+          exit_price: r.exit_price ?? null,
+          direction: r.direction,
+          quantity: r.quantity,
+          pnl: r.pnl,
+          high_during_position: r.high_during_position,
+          low_during_position: r.low_during_position,
+          exits_json: r.exits,
+        },
+      })
+    }
+  } else if (isNinjaTraderGrid(csvText)) {
+    // NinjaTrader executions grid: fill-level, reconstructed into round-trip
+    // trades. Same ParsedSCRow shape as the Sierra path, so map identically.
+    const { rows, parseErrors } = parseNinjaTraderGrid(csvText, clientTz)
+    total = rows.length
+    for (const e of parseErrors.slice(0, 5)) warnings.push(e)
+    if (!clientTz) {
+      warnings.push('Your timezone wasn\'t detected, so NinjaTrader times were read as server time and may display shifted.')
     }
     for (const r of rows) {
       const trade_date = (r.entry_time_iso || '').slice(0, 10)
@@ -147,6 +291,22 @@ export async function POST(req: Request) {
     )
   }
 
+  // Backfill MFE/MAE from the central bar feed for trades whose source carried
+  // no excursion data (NinjaTrader, generic CSV). Non-fatal — import proceeds
+  // even if bars are unavailable for the window.
+  try {
+    await backfillExcursionsFromBars(db, pending, warnings)
+  } catch {
+    warnings.push('Could not backfill MFE/MAE from market data (import still completed).')
+  }
+
+  // Apply the user's commission setting to gross-P&L sources (Sierra Chart).
+  if (grossSource) {
+    try {
+      await applyGrossCommissions(db, pending, warnings)
+    } catch { /* non-fatal: keep gross P&L */ }
+  }
+
   // Find-or-create a trading_day per distinct date (RLS scopes to this user).
   const dates = Array.from(new Set(pending.map(p => p.trade_date)))
   const dayIdByDate = new Map<string, string>()
@@ -171,7 +331,13 @@ export async function POST(req: Request) {
 
   const { data: inserted, error: insErr } = await db
     .from('trades')
-    .upsert(rows, { onConflict: 'user_id,sierra_trade_id', ignoreDuplicates: true })
+    // Conflict key differs per DB: the personal (single-user) DB has a UNIQUE on
+    // sierra_trade_id alone; the public multi-tenant DB recomposes it to
+    // (user_id, sierra_trade_id). Pick the one that matches the active mode.
+    .upsert(rows, {
+      onConflict: LOCAL_FEATURES_ENABLED ? 'sierra_trade_id' : 'user_id,sierra_trade_id',
+      ignoreDuplicates: true,
+    })
     .select('id')
   if (insErr) {
     return NextResponse.json(

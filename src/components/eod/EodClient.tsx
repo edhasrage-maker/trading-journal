@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import Link from 'next/link'
-import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X, Upload } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X, Upload, Share2 } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
@@ -343,6 +343,28 @@ export default function EodClient({
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 4000)
+  }
+
+  // Mint (or reuse) a read-only coach-review link for this day and copy it.
+  const [sharing, setSharing] = useState(false)
+  const shareForReview = async () => {
+    if (!day?.id) return
+    setSharing(true)
+    try {
+      const res = await fetch('/api/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trading_day_id: day.id }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.url) { showToast(json.error || 'Could not create link', 'error'); return }
+      await navigator.clipboard.writeText(json.url).catch(() => {})
+      showToast('Review link copied — send it to your coach', 'success')
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Share failed', 'error')
+    } finally {
+      setSharing(false)
+    }
   }
 
   const uploadChart = async (file: File) => {
@@ -723,6 +745,18 @@ export default function EodClient({
               >
                 <Upload className="w-3.5 h-3.5" /> Import
               </Link>
+            )}
+            {/* Coach-review share: read-only public link to this day's chart. */}
+            {!LOCAL_FEATURES_ENABLED && day?.id && (
+              <button
+                type="button"
+                onClick={shareForReview}
+                disabled={sharing}
+                className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2.5 py-1 hover:bg-gray-700 transition-colors disabled:opacity-60"
+                title="Copy a read-only link to share this day's chart with a coach"
+              >
+                <Share2 className="w-3.5 h-3.5" /> {sharing ? 'Sharing…' : 'Share'}
+              </button>
             )}
           </div>
         </div>

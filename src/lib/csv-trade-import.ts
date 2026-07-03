@@ -56,12 +56,22 @@ const ALIASES: Record<string, string[]> = {
   boughtTime: ['boughttimestamp', 'boughttime'],
   soldTime: ['soldtimestamp', 'soldtime'],
   pnl: ['pnl', 'profit', 'profitloss', 'netpnl', 'realizedpnl', 'pl', 'grosspl', 'netprofit', 'grossp', 'plcurrency'],
+  // Prefer NET P&L (after commissions) when a platform exports both (Tradezella).
+  netPnl: ['netpnl', 'netpl', 'netprofit'],
   mae: ['mae', 'maxadverseexcursion', 'maeprice'],
   mfe: ['mfe', 'maxfavorableexcursion', 'mfeprice'],
+  // Tradezella exports the actual worst/best PRICE reached during the position.
+  priceMae: ['pricemae'],
+  priceMfe: ['pricemfe'],
   stop: ['stop', 'stopprice', 'stoploss'],
   high: ['highduringposition', 'high'],
   low: ['lowduringposition', 'low'],
   date: ['date', 'tradedate'],
+  // Split date/time columns (Tradezella: Open Date + Open Time, Close Date + Close Time).
+  openDate: ['opendate'],
+  openTime: ['opentime'],
+  closeDate: ['closedate'],
+  closeTime: ['closetime'],
 }
 
 /** Minimal RFC-4180-ish CSV line splitter (handles quoted fields w/ commas). */
@@ -100,6 +110,35 @@ function toIso(v: string | undefined): string | null {
   const d = new Date(v.trim())
   if (Number.isNaN(d.getTime())) return null
   return d.toISOString()
+}
+
+// North-American trading timezone abbreviations → UTC offsets. Tradezella writes
+// times like "08:13:25 PDT"; JS Date can't parse the abbreviation reliably, so
+// we map it ourselves.
+const TZ_OFFSETS: Record<string, string> = {
+  UTC: '+00:00', GMT: '+00:00',
+  EST: '-05:00', EDT: '-04:00', CST: '-06:00', CDT: '-05:00',
+  MST: '-07:00', MDT: '-06:00', PST: '-08:00', PDT: '-07:00',
+}
+
+/** Combine a separate date ("YYYY-MM-DD") and time ("HH:MM:SS [TZ]") into an ISO
+ *  string. A trailing timezone abbreviation is mapped to an offset; without one
+ *  the time is read in the server's zone. For exports (Tradezella) that split
+ *  date and time into separate columns. */
+function combineDateTime(dateRaw?: string, timeRaw?: string): string | null {
+  if (!dateRaw) return null
+  const d = dateRaw.trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return toIso(dateRaw) // maybe already a full datetime
+  if (!timeRaw || !timeRaw.trim()) return `${d}T00:00:00.000Z`
+  let t = timeRaw.trim()
+  let offset = ''
+  const m = t.match(/\s([A-Za-z]{2,4})$/)
+  if (m) {
+    if (TZ_OFFSETS[m[1].toUpperCase()]) offset = TZ_OFFSETS[m[1].toUpperCase()]
+    t = t.slice(0, m.index).trim()
+  }
+  const parsed = new Date(`${d}T${t}${offset}`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
 function localDate(iso: string | null): string | null {
@@ -149,6 +188,9 @@ export function parseTradeCsv(csvText: string): ImportParseResult {
     let exitPrice = toNumber(get(cells, 'exitPrice'))
     let entryTime = toIso(get(cells, 'entryTime'))
     let exitTime = toIso(get(cells, 'exitTime'))
+    // Split date/time columns (Tradezella: Open Date + Open Time "HH:MM:SS PDT").
+    if (!entryTime) entryTime = combineDateTime(get(cells, 'openDate'), get(cells, 'openTime'))
+    if (!exitTime) exitTime = combineDateTime(get(cells, 'closeDate'), get(cells, 'closeTime'))
 
     // Tradovate-style buy/sell columns: derive entry/exit + direction from
     // whichever fill came first.
@@ -170,13 +212,22 @@ export function parseTradeCsv(csvText: string): ImportParseResult {
     }
 
     const quantity = toNumber(get(cells, 'quantity'))
-    const pnl = toNumber(get(cells, 'pnl'))
+    const pnl = toNumber(get(cells, 'netPnl')) ?? toNumber(get(cells, 'pnl'))
     const stop = toNumber(get(cells, 'stop'))
 
-    // high/low during position: prefer explicit columns; else derive from
-    // MAE/MFE (assumed price points) given entry + direction.
+    // high/low during position: prefer explicit high/low columns; then the
+    // actual worst/best PRICE (Tradezella Price MAE/MFE — the two are the low
+    // and high regardless of direction); else derive from MAE/MFE price points.
     let high = toNumber(get(cells, 'high'))
     let low = toNumber(get(cells, 'low'))
+    if (high == null || low == null) {
+      const pMae = toNumber(get(cells, 'priceMae'))
+      const pMfe = toNumber(get(cells, 'priceMfe'))
+      if (pMae != null && pMfe != null) {
+        high = high ?? Math.max(pMae, pMfe)
+        low = low ?? Math.min(pMae, pMfe)
+      }
+    }
     if ((high == null || low == null) && entryPrice != null && direction != null) {
       const mae = toNumber(get(cells, 'mae'))
       const mfe = toNumber(get(cells, 'mfe'))
@@ -193,7 +244,11 @@ export function parseTradeCsv(csvText: string): ImportParseResult {
       }
     }
 
+    // Prefer the platform's own trading-day column (Tradezella "Open Date") —
+    // it's the trader's session date, independent of any timezone shift.
+    const openDateCol = get(cells, 'openDate')?.trim().slice(0, 10)
     const tradeDate =
+      (openDateCol && /^\d{4}-\d{2}-\d{2}$/.test(openDateCol) ? openDateCol : null) ||
       localDate(exitTime) || localDate(entryTime) ||
       (get(cells, 'date') ? localDate(toIso(get(cells, 'date'))) : null)
 

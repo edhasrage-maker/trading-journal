@@ -1,11 +1,10 @@
 'use client'
 
-import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import {
-  Mail, Upload, LineChart, Brain, CandlestickChart, Gauge, Layers,
-  Check, ArrowRight, Loader2,
+  Upload, LineChart, Brain, CandlestickChart, Gauge, Layers,
+  Check, ArrowRight,
 } from 'lucide-react'
+import AuthCard from './AuthCard'
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const
 
@@ -19,73 +18,18 @@ const FEATURES = [
 ]
 
 const STEPS = [
-  { n: '01', title: 'Enter your email', body: 'No password. We send you a secure magic link.' },
-  { n: '02', title: 'Click the magic link', body: 'It signs you in instantly and drops you at your dashboard.' },
+  { n: '01', title: 'Enter your email', body: 'No password needed — we email you a secure sign-in link (or set a password).' },
+  { n: '02', title: 'Open the link', body: 'It signs you in instantly and drops you at your dashboard.' },
   { n: '03', title: 'Import & explore', body: 'Upload your trades and your analytics populate immediately.' },
 ]
 
 export default function Landing() {
-  const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true); setError(null)
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-    })
-    if (error) setError(error.message)
-    else setSent(true)
-    setLoading(false)
-  }
-
-  const loginCard = (
-    <div className="w-full max-w-sm rounded-2xl border border-gray-800 bg-gray-900 p-6 shadow-xl">
-      {sent ? (
-        <div className="text-center py-4">
-          <Mail className="w-9 h-9 text-blue-400 mx-auto mb-4" />
-          <h2 className="text-lg font-semibold text-white">Check your email</h2>
-          <p className="text-gray-400 text-sm mt-2">
-            Magic link sent to <span className="text-white">{email}</span>. Click it to sign in.
-          </p>
-        </div>
-      ) : (
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <h2 className="text-lg font-semibold text-white" style={DISPLAY}>Get started free</h2>
-            <p className="text-gray-400 text-sm mt-0.5">Enter your email — we&apos;ll send a magic link. No password.</p>
-          </div>
-          {error && (
-            <div className="bg-red-950 border border-red-800 text-red-300 text-sm px-3 py-2 rounded-lg">{error}</div>
-          )}
-          <input
-            type="email" value={email} onChange={e => setEmail(e.target.value)}
-            placeholder="you@example.com" required
-            className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2.5 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
-          />
-          <button
-            type="submit" disabled={loading || !email}
-            className="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-gray-950 font-semibold py-2.5 rounded-lg text-sm transition-colors"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-            {loading ? 'Sending…' : 'Send magic link'}
-          </button>
-          <p className="text-[11px] text-gray-600 text-center">Early testing build · free while in beta</p>
-        </form>
-      )}
-    </div>
-  )
-
   return (
     <div className="min-h-screen bg-gray-950 text-gray-200">
       {/* Top bar */}
       <header className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
-        <img src="/brand/tapescore-logo.svg" alt="TapeScore — Game Film for Traders" className="h-9 w-auto" />
+        <img src="/brand/tapescore-logo.svg" alt="TapeScore — Game Film for Traders" className="h-16 sm:h-20 w-auto" />
         <a href="#get-started" className="text-sm font-medium text-blue-400 hover:text-blue-300">Sign in →</a>
       </header>
 
@@ -109,7 +53,7 @@ export default function Landing() {
             ))}
           </ul>
         </div>
-        <div id="get-started" className="flex lg:justify-end scroll-mt-24">{loginCard}</div>
+        <div id="get-started" className="flex lg:justify-end scroll-mt-24"><AuthCard /></div>
       </section>
 
       {/* Features */}
