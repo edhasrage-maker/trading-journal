@@ -11,9 +11,10 @@ import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
 import CoachScoreBadge from './CoachScoreBadge'
 import CoachScorePanel from './CoachScorePanel'
+import { useChartInstruments } from '@/lib/use-chart-instruments'
 import { deleteBlob } from '@/lib/storage'
 import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, type BarLike } from '@/lib/analytics'
-import { symbolToMultiplier, chartSeriesRoot } from '@/lib/futures-symbols'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { useMfeUnit, formatMfeMae } from '@/lib/mfe-unit'
 import { mergeTradeTags } from '@/lib/suggest-tags'
 import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
@@ -448,46 +449,9 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     return best
   }, [trades])
 
-  // Instruments the chart's header dropdown can switch to: the day's traded
-  // symbols ∪ every instrument with imported bar data (so ES shows even on an
-  // NQ-only day). The chart is single-instrument — switching also filters the
-  // plotted trades to the picked symbol so the other product's fills don't plot
-  // off-scale.
-  const [availableSymbols, setAvailableSymbols] = useState<string[]>([])
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/bars/symbols')
-      .then(r => (r.ok ? r.json() : { symbols: [] }))
-      .then((d: { symbols?: string[] }) => { if (!cancelled) setAvailableSymbols(Array.isArray(d.symbols) ? d.symbols : []) })
-      .catch(() => { /* best-effort — dropdown just won't offer extra products */ })
-    return () => { cancelled = true }
-  }, [])
-  const [chartRootOverride, setChartRootOverride] = useState<string | null>(null)
-  // Group available bar symbols + the day's traded symbols by PRODUCT ROOT
-  // (ES, NQ) — micros (MES/MNQ) collapse to their mini series. Each root maps to
-  // ONE concrete symbol to load bars for (prefer one with imported bars). This
-  // makes the dropdown read "ES" / "NQ" and lets a micro (MES) trade plot on the
-  // mini (ES) chart instead of being filtered out by an exact-symbol mismatch.
-  const rootOptions = useMemo(() => {
-    const byRoot = new Map<string, string>()
-    for (const s of availableSymbols) { const r = chartSeriesRoot(s); if (!byRoot.has(r)) byRoot.set(r, s) }
-    for (const t of trades) { if (t.symbol) { const r = chartSeriesRoot(t.symbol); if (!byRoot.has(r)) byRoot.set(r, t.symbol) } }
-    if (chartSymbol) { const r = chartSeriesRoot(chartSymbol); if (!byRoot.has(r)) byRoot.set(r, chartSymbol) }
-    return Array.from(byRoot.entries()).map(([root, symbol]) => ({ root, symbol }))
-  }, [availableSymbols, trades, chartSymbol])
-  const defaultRoot = chartSymbol ? chartSeriesRoot(chartSymbol) : null
-  const activeRoot = (chartRootOverride && rootOptions.some(o => o.root === chartRootOverride)) ? chartRootOverride : defaultRoot
-  const activeChartSymbol = rootOptions.find(o => o.root === activeRoot)?.symbol ?? chartSymbol
-  const chartTrades = useMemo(
-    () => (rootOptions.length > 1 ? trades.filter(t => !!t.symbol && chartSeriesRoot(t.symbol) === activeRoot) : trades),
-    [trades, rootOptions.length, activeRoot],
-  )
-  // A trade's stored ATR/MFE/MAE are only trustworthy if bars exist for ITS
-  // instrument — else they're from another product (e.g. an ES trade carrying a
-  // stale NQ ATR). Used to suppress the bar-derived Coach Score criterion.
-  // Empty set = symbols not loaded yet → don't suppress.
-  const availableRoots = useMemo(() => new Set(availableSymbols.map(chartSeriesRoot)), [availableSymbols])
-  const tradeHasBars = (t: Trade) => availableRoots.size === 0 || !t.symbol || availableRoots.has(chartSeriesRoot(t.symbol))
+  // ES/NQ instrument switcher for the chart (shared hook with EOD + prep).
+  // `tradeHasBars` gates the bar-derived Coach Score criterion / stats.
+  const { activeSymbol: activeChartSymbol, symbolOptions, onSymbolChange, chartTrades, tradeHasBars } = useChartInstruments(chartSymbol, trades)
 
   return (
     <div className="space-y-4">
@@ -555,8 +519,8 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
               <LiveChart
                 date={date}
                 symbol={activeChartSymbol}
-                symbolOptions={rootOptions.map(o => ({ symbol: o.symbol, label: o.root }))}
-                onSymbolChange={s => setChartRootOverride(chartSeriesRoot(s))}
+                symbolOptions={symbolOptions}
+                onSymbolChange={onSymbolChange}
                 trades={chartTrades}
                 height={420}
               />
