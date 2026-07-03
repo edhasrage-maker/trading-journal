@@ -11,6 +11,7 @@ import ChartScreenshotPanel from './ChartScreenshotPanel'
 import CalibrationOverlay, { type CalibStep, type CalibDraft } from './CalibrationOverlay'
 import TradeArrowOverlay from './TradeArrowOverlay'
 import LiveChart from '@/components/charts/LiveChart'
+import { useChartInstruments } from '@/lib/use-chart-instruments'
 import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
@@ -171,6 +172,8 @@ export default function EodClient({
     }
     return best
   }, [initialTrades])
+  // ES/NQ instrument switcher for the chart (shared with intraday + prep).
+  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(chartSymbol, trades)
 
   // Generate (or reuse cached) AI Overview summaries whenever trades change.
   // Pulls hits from localStorage by content hash; batches the misses into one
@@ -919,8 +922,10 @@ export default function EodClient({
       {chartView === 'live' ? (
         <LiveChart
           date={date}
-          symbol={chartSymbol}
-          trades={trades}
+          symbol={activeSymbol}
+          symbolOptions={symbolOptions}
+          onSymbolChange={onSymbolChange}
+          trades={chartTrades}
           refreshKey={barsVersion}
           hoverTradeId={hoveredTradeId}
           // Double-click an arrow → scroll to + highlight that trade's row in

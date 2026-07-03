@@ -17,6 +17,7 @@ import DayTypePredictor from './DayTypePredictor'
 import HighImpactNews from './HighImpactNews'
 import type { NewsEvent } from '@/lib/economic-calendar'
 import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
+import { useChartInstruments } from '@/lib/use-chart-instruments'
 import BarWatcher from '@/components/charts/BarWatcher'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
@@ -56,6 +57,9 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   // Bumped by BarWatcher when new bars import; forces LiveChart to re-fetch.
   const [barsVersion, setBarsVersion] = useState(0)
+  // ES/NQ instrument switcher for the chart (shared with intraday + EOD). Other
+  // chartSymbol uses (market-context auto-fill) stay on the day's default.
+  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(chartSymbol, initialTrades)
   // Ref to the LiveChart so analyze() can snapshot its canvas as a PNG when
   // the user hasn't pasted a Sierra screenshot. Falls back to text-only
   // analysis if the chart isn't ready (no bars / pre-mount / screenshot view).
@@ -877,8 +881,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           <LiveChart
             ref={liveChartRef}
             date={date}
-            symbol={chartSymbol}
-            trades={initialTrades}
+            symbol={activeSymbol}
+            symbolOptions={symbolOptions}
+            onSymbolChange={onSymbolChange}
+            trades={chartTrades}
             refreshKey={barsVersion}
             onLevels={handleLevels}
           />
