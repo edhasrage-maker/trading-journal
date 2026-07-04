@@ -49,6 +49,18 @@ const settingsItems = [
   { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive, localOnly: true, cloudOnly: false, adminOnly: true },
 ]
 
+// data-tour anchor for the first-login SiteTour. Only the 4 workflow tabs get
+// one; matched by href prefix so the dated Prep/EOD links resolve too. Applied
+// to BOTH the desktop sidebar link and the mobile tab link — the tour's
+// viewport-aware resolver targets whichever is visible.
+function navTourAnchor(href: string): string | undefined {
+  if (href.startsWith('/prep')) return 'nav-prep'
+  if (href.startsWith('/eod')) return 'nav-eod'
+  if (href === '/dashboard') return 'nav-dashboard'
+  if (href === '/analytics') return 'nav-analytics'
+  return undefined
+}
+
 export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -203,6 +215,7 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
             <Link
               key={href}
               href={href}
+              data-tour={navTourAnchor(href)}
               title={collapsed ? label : undefined}
               className={cn(
                 'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
@@ -302,6 +315,7 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
             <Link
               key={label}
               href={href}
+              data-tour={navTourAnchor(href)}
               className={cn(
                 'flex-1 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] text-[10px] transition-colors',
                 active ? 'text-blue-400' : 'text-gray-500 hover:text-gray-300',

@@ -48,6 +48,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
 
   return (
     <div
+      data-tour="dash-import"
       onDragOver={e => { e.preventDefault(); if (!busy) setDragOver(true) }}
       onDragLeave={() => setDragOver(false)}
       onDrop={e => { e.preventDefault(); setDragOver(false); if (!busy) onPick(e.dataTransfer.files) }}

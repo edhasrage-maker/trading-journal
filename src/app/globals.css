@@ -125,3 +125,81 @@ h1, h2, h3 {
     max-height: calc(100dvh - 56px - env(safe-area-inset-bottom) - 2rem);
   }
 }
+
+/* ── First-login guided tour (driver.js) — TapeScore skin ──────────────────
+   Scoped to the .tapescore-tour popoverClass so it never touches any other
+   driver.js use. Warm-graphite popover + amber primary action, matching the
+   onboarding banner / brand identity. */
+.driver-popover.tapescore-tour {
+  background: #0c0a09;                       /* graphite */
+  color: #e7e5e4;
+  border: 1px solid rgba(120, 53, 15, 0.6); /* amber-900/60 */
+  border-radius: 12px;
+  box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7);
+  max-width: 320px;
+}
+.driver-popover.tapescore-tour .driver-popover-title {
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fafaf9;
+}
+.driver-popover.tapescore-tour .driver-popover-description {
+  color: #a8a29e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.driver-popover.tapescore-tour .driver-popover-progress-text {
+  color: #78716c;
+  font-size: 11px;
+}
+.driver-popover.tapescore-tour .driver-popover-close-btn {
+  color: #78716c;
+}
+.driver-popover.tapescore-tour .driver-popover-close-btn:hover {
+  color: #f59e0b;
+}
+.driver-popover.tapescore-tour .driver-popover-next-btn,
+.driver-popover.tapescore-tour .driver-popover-prev-btn {
+  text-shadow: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+}
+.driver-popover.tapescore-tour .driver-popover-next-btn {
+  background: #f59e0b;                       /* amber-500 */
+  color: #1c1917;
+  border: none;
+}
+.driver-popover.tapescore-tour .driver-popover-next-btn:hover {
+  background: #fbbf24;                       /* amber-400 */
+}
+.driver-popover.tapescore-tour .driver-popover-prev-btn {
+  background: transparent;
+  color: #a8a29e;
+  border: 1px solid #292524;
+}
+.driver-popover.tapescore-tour .driver-popover-prev-btn:hover {
+  color: #e7e5e4;
+  background: #1c1917;
+}
+/* Explicit "Skip tour" link injected into the footer (prepended, pushed left). */
+.driver-popover.tapescore-tour .ts-tour-skip {
+  margin-right: auto;
+  background: none;
+  border: none;
+  color: #78716c;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.driver-popover.tapescore-tour .ts-tour-skip:hover {
+  color: #d6d3d1;
+  text-decoration: underline;
+}
+/* Arrow tint — match the graphite popover on every side. */
+.driver-popover.tapescore-tour .driver-popover-arrow-side-left { border-left-color: #0c0a09; }
+.driver-popover.tapescore-tour .driver-popover-arrow-side-right { border-right-color: #0c0a09; }
+.driver-popover.tapescore-tour .driver-popover-arrow-side-top { border-top-color: #0c0a09; }
+.driver-popover.tapescore-tour .driver-popover-arrow-side-bottom { border-bottom-color: #0c0a09; }
