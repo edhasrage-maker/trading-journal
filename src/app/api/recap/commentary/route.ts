@@ -38,6 +38,7 @@ import { consumeAiUsage } from '@/lib/ai-usage'
 import { resolveAiModel } from '@/lib/ai-model'
 import { interpretExcursion } from '@/lib/trade-excursion'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
+import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 
 const client = new Anthropic()
 
@@ -45,6 +46,104 @@ const client = new Anthropic()
 type AnyClient = any
 
 interface FrameRef { id: string; path: string; exitPath?: string }
+
+// ── Lever C: per-session TIMELINE ──────────────────────────────────────────
+// Frames are otherwise scored in ISOLATION, so behavioral patterns (revenge
+// re-entries, stacking the same direction, digging into a drawdown) are
+// invisible. We rebuild the full day sequence from fills and feed each framed
+// trade an interpreted position-in-session line the model can reason over.
+interface DayTrade {
+  id: string
+  trading_day_id: string
+  direction: 'long' | 'short' | null
+  entry_time: string | null
+  exit_time: string | null
+  pnl: number | null
+}
+interface TimelineRow {
+  seq: number
+  total: number
+  /** Nth consecutive trade in the SAME direction (1 = first, or just flipped). */
+  consecutiveSameDir: number
+  /** Minutes from the PRIOR trade's exit to this entry. Null if not derivable. */
+  gapFromPrevExitMin: number | null
+  prevOutcome: 'win' | 'loss' | 'flat' | null
+  /** Cumulative realized P&L of every trade BEFORE this one in the session. */
+  runningPnlBefore: number
+}
+
+/** Build the interpreted timeline for one trading day's trades, keyed by id. */
+function buildDayTimeline(trades: DayTrade[]): Map<string, TimelineRow> {
+  const sorted = [...trades].sort((a, b) => {
+    const ta = a.entry_time ? Date.parse(a.entry_time) : Infinity
+    const tb = b.entry_time ? Date.parse(b.entry_time) : Infinity
+    if (ta !== tb) return ta - tb
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+  })
+  const out = new Map<string, TimelineRow>()
+  let running = 0
+  let prev: DayTrade | null = null
+  let consec = 0
+  for (let i = 0; i < sorted.length; i++) {
+    const t = sorted[i]
+    if (prev && t.direction && prev.direction === t.direction) consec++
+    else consec = 1
+    let gap: number | null = null
+    if (prev?.exit_time && t.entry_time) {
+      const g = (Date.parse(t.entry_time) - Date.parse(prev.exit_time)) / 60000
+      gap = Number.isFinite(g) ? g : null
+    }
+    const prevOutcome: TimelineRow['prevOutcome'] = prev
+      ? (prev.pnl == null ? null : prev.pnl > 0 ? 'win' : prev.pnl < 0 ? 'loss' : 'flat')
+      : null
+    out.set(t.id, {
+      seq: i + 1, total: sorted.length, consecutiveSameDir: consec,
+      gapFromPrevExitMin: gap, prevOutcome, runningPnlBefore: running,
+    })
+    running += t.pnl ?? 0
+    prev = t
+  }
+  return out
+}
+
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`
+}
+function fmtGap(min: number): string {
+  if (min < 1) return `${Math.round(min * 60)}s`
+  if (min < 60) return `${Math.round(min)}m`
+  return `${(min / 60).toFixed(1)}h`
+}
+function fmtSignedUsd(n: number): string {
+  const r = Math.round(n)
+  return `${r >= 0 ? '+' : '−'}$${Math.abs(r)}`
+}
+/** One interpreted line describing this trade's place in the session. */
+function timelineLine(tl: TimelineRow, dir: string): string {
+  const parts: string[] = [`trade #${tl.seq} of ${tl.total} this session`]
+  if (tl.consecutiveSameDir > 1) parts.push(`${ordinal(tl.consecutiveSameDir)} consecutive ${dir.toLowerCase()}`)
+  if (tl.gapFromPrevExitMin != null) {
+    const outcome = tl.prevOutcome === 'loss' ? ', which LOST'
+      : tl.prevOutcome === 'win' ? ', which won'
+        : tl.prevOutcome === 'flat' ? ', which scratched' : ''
+    parts.push(`entered ${fmtGap(tl.gapFromPrevExitMin)} after the prior exit${outcome}`)
+  }
+  parts.push(`session P&L before this trade ${fmtSignedUsd(tl.runningPnlBefore)}`)
+  let line = parts.join(' · ')
+  if (tl.prevOutcome === 'loss' && tl.gapFromPrevExitMin != null && tl.gapFromPrevExitMin < 2) {
+    line += ' · ⚠ quick re-entry right after a loss — check for revenge/tilt'
+  }
+  return line
+}
+
+// Order-flow / tape lens is PROFILE-GATED (feedback_no_forced_orderflow):
+// price action, structure, location and risk are judged for everyone, but the
+// tape read is only invoked when the trader's own profile talks that language.
+const OF_HINTS = [
+  'order flow', 'orderflow', 'footprint', 'delta', 'absorption', 'aggress',
+  'dom', 'tape', 'cvd', 'imbalance', 'bookmap', 'liquidity',
+]
 
 const PT_TIME_FMT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Los_Angeles',
@@ -119,6 +218,31 @@ export async function POST(req: Request) {
     }
   }
 
+  // Full day sequence (ALL trades, not just the framed ones) so the timeline's
+  // running P&L, consecutive-direction counts and re-entry gaps are correct.
+  const timelineById = new Map<string, TimelineRow>()
+  if (dayIds.length > 0) {
+    const { data: dayTradeRows } = await supabase
+      .from('trades')
+      .select('id, trading_day_id, direction, entry_time, exit_time, pnl')
+      .in('trading_day_id', dayIds)
+    const byDay = new Map<string, DayTrade[]>()
+    for (const r of (dayTradeRows ?? []) as DayTrade[]) {
+      const arr = byDay.get(r.trading_day_id)
+      if (arr) arr.push(r)
+      else byDay.set(r.trading_day_id, [r])
+    }
+    for (const rows of byDay.values()) {
+      for (const [id, row] of buildDayTimeline(rows)) timelineById.set(id, row)
+    }
+  }
+
+  // Trader profile — the master switch (lever A). RLS-scoped: getTraderProfile
+  // reads the caller's OWN id='default' row, so on the multi-tenant cloud each
+  // user gets their own standing context. Empty string when unset.
+  const traderProfile = await getTraderProfile()
+  const usesOrderFlow = OF_HINTS.some(h => traderProfile.preferences_md.toLowerCase().includes(h))
+
   // Mistake library — constrain the AI's suggestions to the trader's taxonomy.
   const { data: mistakeRows } = await supabase
     .from('trade_tags').select('label').eq('category', 'mistakes').order('sort_order') as { data: { label: string }[] | null }
@@ -192,10 +316,12 @@ export async function POST(req: Request) {
     const setups = (t.tags_json?.setups as string[] | undefined)?.join(', ') || '—'
     const orderFlow = (t.tags_json?.order_flow as string[] | undefined)?.join(', ') || '—'
     const mistakes = (t.tags_json?.mistakes as string[] | undefined)?.join(', ') || '—'
-    const notes = t.notes?.trim() ? `\n  notes: ${t.notes.trim()}` : ''
+    const notes = t.notes?.trim() ? `\n  notes (their words): ${t.notes.trim()}` : ''
+    const tl = timelineById.get(f.id)
+    const timeline = tl ? `\n  session: ${timelineLine(tl, dir)}` : ''
     descriptions.push(`Trade ${idx} (id=${f.id}): ${dir} ${t.quantity ?? '?'} @ ${t.entry_price ?? '?'} → ${t.exit_price ?? '?'} | PnL ${pnl}
-  setups: ${setups} | order_flow: ${orderFlow} | mistakes: ${mistakes}
-  exit/heat: ${excLine}${notes}`)
+  trader's OWN labels (their claim — verify against the frame, don't just repeat): setups ${setups} | order_flow ${orderFlow} | mistakes ${mistakes}
+  exit/heat (interpreted): ${excLine}${timeline}${notes}`)
   }
 
   if (blocks.length === 0) {
@@ -209,11 +335,19 @@ export async function POST(req: Request) {
     ? `\n\nAvailable mistake tags (suggest 0–3 per trade, ONLY from this list — copy labels verbatim, do not invent new ones; pick ONLY mistakes clearly visible in the frame, not speculative):\n${mistakeLibrary.map(m => `  - ${m}`).join('\n')}`
     : ''
 
-  const prompt = `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is the trader's chart at a precise moment — an ENTRY frame (when they pulled the trigger) and, when present, an EXIT frame (when they closed).
+  // Lever D — order-flow lens is gated on the profile; PA/structure/location/
+  // risk are always judged (feedback_no_forced_orderflow).
+  const orderFlowClause = usesOrderFlow
+    ? `Because this trader's profile uses order flow, ALSO read the tape where it's visible on the frame — footprint delta, DOM, absorption, who's aggressing — and factor it into the read.`
+    : `This trader does NOT trade order flow — judge purely on price action, market structure, location and risk. Do NOT fault them for any missing order-flow/tape confirmation or invoke a lens their profile doesn't use.`
+
+  const prompt = profileContextBlock(traderProfile) + `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is the trader's actual chart at a precise moment — an ENTRY frame (when they pulled the trigger) and, when present, an EXIT frame (when they closed).
+
+Your job is an INDEPENDENT read, NOT a summary of what the trader already told you. Under each trade you'll see the trader's OWN labels (setups, tags) and their P&L — treat those as CLAIMS to verify, never as facts to restate. Read the chart yourself and be willing to DISAGREE: if the frame doesn't support the tagged setup, or structure/location argues against the entry, say so plainly. Do not parrot the P&L or the tags back — the trader already knows those; your value is the read they can't get from their own notes.
 
 For each trade you see frames of, do TWO things:
 
-1) Write 1–3 sentences of HONEST commentary tying what's visibly on screen — chart structure, key levels, order flow, where price sat relative to the setup — to the trade the trader took. Be specific and direct, not encouraging. IMPORTANT: factor in the exit/heat line for each trade (it is already INTERPRETED for you: capture % of the favorable move, $ left on the table, and heat taken as a share of the planned stop / ×ATR). If a trade captured little of a large favorable move, or took most of its stop in heat before working, SAY SO — those are the coachable moments. If an EXIT frame is present and price did something obvious between entry and exit that the trader missed (ran further, reversed at a level), point it out. If the entry frame doesn't support the tagged setup, say so.
+1) Write 1–3 sentences of HONEST, INDEPENDENT commentary. LEAD with what you actually see on the chart — market structure (higher-highs/higher-lows vs lower-highs/lower-lows, break vs reclaim), where price sits relative to key levels / session levels / range extremes, and whether the entry is WITH or AGAINST the prevailing move. Then weigh the risk using the interpreted exit/heat line (it is already computed for you: capture % of the favorable move, $ left on the table, heat taken as a share of the planned stop / ×ATR) — if a trade captured little of a large favorable move, or took most of its stop in heat before working, SAY SO. ${orderFlowClause} If an EXIT frame is present and price did something obvious between entry and exit that the trader missed (ran further, reversed at a level), point it out. Use the per-trade session line to catch BEHAVIORAL patterns the isolated chart can't show — a quick re-entry right after a loss (possible revenge/tilt), the Nth consecutive trade in the same direction, or pressing deeper into a drawdown — and name it when the sequence shows it.
 
 2) From the ENTRY frame ONLY (not the exit frame), identify the trader's PLANNED order levels by reading horizontal lines / DOM order labels on the chart:
    - entry_price: the price the order was waiting at
