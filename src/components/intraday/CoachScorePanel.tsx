@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { GraduationCap, Loader2, Sparkles } from 'lucide-react'
+import { ChevronDown, GraduationCap, Loader2, Sparkles } from 'lucide-react'
 import { computeCoachScore, applyAiResolutions, type GradableTrade, type CriterionStatus } from '@/lib/coach-score'
 
 const SYM: Record<CriterionStatus, string> = { pass: '✓', fail: '✗', na: '–', unknown: '?' }
@@ -25,6 +25,10 @@ type Resolutions = Record<string, { status: 'pass' | 'fail' | 'na'; reason?: str
  * that resolves the remaining `unknown` (judgment) criteria from the notes.
  * AI resolutions are held in local state (ephemeral) and folded in with
  * applyAiResolutions so the score refines live.
+ *
+ * Compact by default: only the header (score + pass/fail summary) shows; the
+ * per-criterion breakdown is folded behind a click on all viewports so it
+ * doesn't dominate the expanded trade row.
  */
 export default function CoachScorePanel({
   trade,
@@ -41,6 +45,7 @@ export default function CoachScorePanel({
   const [ai, setAi] = useState<Resolutions>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
 
   const cs = useMemo(() => applyAiResolutions(base, ai), [base, ai])
   const remaining = cs.unknownCount
@@ -64,15 +69,22 @@ export default function CoachScorePanel({
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3">
-      <div className="flex items-center justify-between mb-2 gap-2">
-        <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-200 flex-wrap">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          title={open ? 'Hide criterion breakdown' : 'Show criterion breakdown'}
+          className="flex items-center gap-1.5 text-sm font-semibold text-gray-200 flex-wrap flex-1 min-w-0 text-left"
+        >
+          <ChevronDown className={`w-4 h-4 text-gray-500 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
           <GraduationCap className="w-4 h-4 text-gray-400" />
           Coach Score
           <span className={`ml-1 text-base font-bold ${band(cs.score)}`}>
             {cs.score ?? '—'}<span className="text-xs text-gray-500">/10</span>
           </span>
           <span className="text-[11px] text-gray-500">({cs.passes}✓ {cs.fails}✗ of {cs.total} rated)</span>
-        </div>
+        </button>
         {remaining > 0 && (
           <button
             type="button"
@@ -86,17 +98,19 @@ export default function CoachScorePanel({
           </button>
         )}
       </div>
-      {error && <div className="text-xs text-red-400 mb-2">{error}</div>}
-      <ul className="space-y-0.5 text-xs">
-        {cs.criteria.map(c => (
-          <li key={c.key} className="flex items-start gap-2">
-            <span className={`font-bold ${STATUS_COLOR[c.status]}`}>{SYM[c.status]}</span>
-            <span className="text-gray-300">{c.label}</span>
-            {c.reason && <span className="text-gray-500">— {c.reason}</span>}
-            {c.source === 'ai' && <span className="text-[10px] text-amber-500/80 uppercase mt-0.5">ai</span>}
-          </li>
-        ))}
-      </ul>
+      {error && <div className="text-xs text-red-400 mt-2">{error}</div>}
+      {open && (
+        <ul className="space-y-0.5 text-xs mt-2">
+          {cs.criteria.map(c => (
+            <li key={c.key} className="flex items-start gap-2">
+              <span className={`font-bold ${STATUS_COLOR[c.status]}`}>{SYM[c.status]}</span>
+              <span className="text-gray-300">{c.label}</span>
+              {c.reason && <span className="text-gray-500">— {c.reason}</span>}
+              {c.source === 'ai' && <span className="text-[10px] text-amber-500/80 uppercase mt-0.5">ai</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
