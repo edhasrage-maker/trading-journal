@@ -494,7 +494,7 @@ function ConsolidatedVerdict({
     : outcome.consolidated.explanation
   return (
     <div className={`border rounded-xl px-5 py-4 ${bg}`}>
-      <div className="flex items-baseline justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
         <div className="flex items-baseline gap-3">
           <span className="text-3xl">{VERDICT_EMOJI[verdict]}</span>
           <div>
@@ -502,12 +502,12 @@ function ConsolidatedVerdict({
             <div className="text-xs text-gray-400 mt-0.5" title={`Internal code: ${verdict}`}>{VERDICT_DISPLAY[verdict]}</div>
           </div>
         </div>
-        <div className="text-right text-xs text-gray-500 space-y-1.5">
+        <div className="text-left sm:text-right text-xs text-gray-500 space-y-1.5">
           <div className="font-mono">{explanation}</div>
           {/* Override dropdown — small, only visible when there's something
               to switch to (both views have a match). */}
           {outcome.best_median && outcome.best_tertile && (
-            <div className="flex items-center justify-end gap-1.5">
+            <div className="flex items-center gap-1.5 sm:justify-end">
               <span className="text-[10px] uppercase tracking-wider text-gray-600">View:</span>
               <select
                 value={viewOverride}
