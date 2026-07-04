@@ -24,10 +24,13 @@ import {
   LogOut,
   Menu,
   X,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
+import { useSidebarCollapsed } from '@/lib/sidebar-collapsed'
 
 // Settings nav. Coaching + Tags are for EVERY user. The rest are ADMIN-only:
 // Condition Lookup is power-user config; Bar Data / SC Archives ALSO depend on
@@ -53,6 +56,9 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
     item => (!item.localOnly || LOCAL_FEATURES_ENABLED) && (!item.adminOnly || isAdmin),
   )
   const { mode, setMode } = useUiMode()
+  // Desktop rail collapse — icon-only when collapsed; main content expands to
+  // fill the reclaimed space (AppMain tracks the same state).
+  const [collapsed, setCollapsed] = useSidebarCollapsed()
 
   // Mobile "More" sheet state (the bottom-tab-bar overflow menu). Desktop (md+)
   // shows the full sidebar and ignores this. Close on any route change so
@@ -152,20 +158,36 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
         </span>
       </div>
 
-      {/* Desktop sidebar (md+ only). Mobile navigates via the bottom tab bar below. */}
-      <aside className="hidden md:flex fixed left-0 top-0 h-dvh w-60 bg-gray-900 border-r border-gray-800 flex-col overflow-y-auto z-50">
-      {/* Logo — TapeScore lockup: mark + wordmark, tagline aligned under the wordmark */}
-      <div className="flex items-center gap-3 px-5 py-6 border-b border-gray-800">
+      {/* Desktop sidebar (md+ only). Mobile navigates via the bottom tab bar below.
+          Collapses to an icon rail (w-16); AppMain's left margin tracks the same
+          state so content expands into the reclaimed space. */}
+      <aside className={cn(
+        'hidden md:flex fixed left-0 top-0 h-dvh bg-gray-900 border-r border-gray-800 flex-col overflow-y-auto overflow-x-hidden z-50 transition-[width] duration-200',
+        collapsed ? 'w-16' : 'w-60',
+      )}>
+      {/* Logo + collapse toggle */}
+      <div className={cn('flex items-center border-b border-gray-800', collapsed ? 'flex-col gap-2 px-2 py-4' : 'gap-3 px-5 py-6')}>
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG, no image optimization needed */}
-        <img src="/brand/tapescore-favicon.svg" alt="TapeScore" className="w-10 h-10 flex-shrink-0" />
-        <div className="flex flex-col gap-1 leading-none">
-          <span className="text-xl tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
-            <span className="font-medium">Tape</span><span className="font-extrabold">Score</span>
-          </span>
-          <span className="font-mono text-[9px] uppercase text-gray-500 whitespace-nowrap" style={{ letterSpacing: '0.1em' }}>
-            Game film for traders
-          </span>
-        </div>
+        <img src="/brand/tapescore-favicon.svg" alt="TapeScore" className={cn('flex-shrink-0', collapsed ? 'w-8 h-8' : 'w-10 h-10')} />
+        {!collapsed && (
+          <div className="flex flex-col gap-1 leading-none">
+            <span className="text-xl tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+              <span className="font-medium">Tape</span><span className="font-extrabold">Score</span>
+            </span>
+            <span className="font-mono text-[9px] uppercase text-gray-500 whitespace-nowrap" style={{ letterSpacing: '0.1em' }}>
+              Game film for traders
+            </span>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={collapsed ? 'Expand' : 'Collapse'}
+          className={cn('text-gray-500 hover:text-white transition-colors', collapsed ? '' : 'ml-auto')}
+        >
+          {collapsed ? <ChevronsRight className="w-4 h-4" /> : <ChevronsLeft className="w-4 h-4" />}
+        </button>
       </div>
 
       {/* Main nav */}
@@ -176,15 +198,17 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
             <Link
               key={href}
               href={href}
+              title={collapsed ? label : undefined}
               className={cn(
                 'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                collapsed && 'justify-center',
                 active
                   ? 'bg-blue-600/20 text-blue-400'
                   : 'text-gray-400 hover:text-white hover:bg-gray-800'
               )}
             >
               <Icon className="w-4 h-4 flex-shrink-0" />
-              {label}
+              {!collapsed && label}
             </Link>
           )
         })}
@@ -193,29 +217,33 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
       {/* Settings — hidden entirely when no settings items are visible. */}
       {visibleSettings.length > 0 && (
       <div className="px-3 py-4 border-t border-gray-800 space-y-0.5">
-        <p className="px-3 text-xs text-gray-600 uppercase tracking-wider mb-2">Settings</p>
+        {!collapsed && <p className="px-3 text-xs text-gray-600 uppercase tracking-wider mb-2">Settings</p>}
         {visibleSettings.map(({ href, label, icon: Icon }) => {
           const active = pathname.startsWith(href)
           return (
             <Link
               key={href}
               href={href}
+              title={collapsed ? label : undefined}
               className={cn(
                 'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                collapsed && 'justify-center',
                 active
                   ? 'bg-blue-600/20 text-blue-400'
                   : 'text-gray-400 hover:text-white hover:bg-gray-800'
               )}
             >
               <Icon className="w-4 h-4 flex-shrink-0" />
-              {label}
+              {!collapsed && label}
             </Link>
           )
         })}
       </div>
       )}
 
-      {/* View mode — Beginner (plain-English, default) vs Pro (full metrics) */}
+      {/* View mode — Beginner (plain-English, default) vs Pro (full metrics).
+          Hidden on the collapsed rail (needs width); expand to change it. */}
+      {!collapsed && (
       <div className="px-3 pt-4 border-t border-gray-800">
         <p className="px-3 text-xs text-gray-600 uppercase tracking-wider mb-2">View</p>
         <div className="flex items-center gap-1 bg-gray-950/60 border border-gray-800 rounded-lg p-1">
@@ -235,16 +263,21 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
           ))}
         </div>
       </div>
+      )}
 
       {/* Sign out */}
       <div className="px-3 py-4">
         <button
           type="button"
           onClick={signOut}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          title={collapsed ? 'Sign out' : undefined}
+          className={cn(
+            'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors',
+            collapsed && 'justify-center',
+          )}
         >
           <LogOut className="w-4 h-4 flex-shrink-0" />
-          Sign out
+          {!collapsed && 'Sign out'}
         </button>
       </div>
       </aside>

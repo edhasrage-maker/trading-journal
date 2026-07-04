@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
+import AppMain from '@/components/AppMain'
 import CoachChat from '@/components/CoachChat'
 import { UiModeProvider } from '@/lib/ui-mode'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
@@ -19,9 +20,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <UiModeProvider>
       <div className="flex min-h-screen">
         <Sidebar isAdmin={isAdmin} />
-        <main className="flex-1 md:ml-60 p-6 pt-20 md:pt-6 pb-24 md:pb-6 overflow-y-auto">
-          {children}
-        </main>
+        <AppMain>{children}</AppMain>
         {/* Floating Trade Coach — bottom-right icon on every page; click to expand */}
         <CoachChat />
       </div>
