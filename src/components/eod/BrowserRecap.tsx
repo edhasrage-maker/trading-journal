@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare, SlidersHorizontal, Check, Copy } from 'lucide-react'
+import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare, SlidersHorizontal, Check, Copy, ChevronDown } from 'lucide-react'
 import { VideoFrameGrabber, parseObsFilenameStartMs } from '@/lib/browser-frames'
 import { createClient } from '@/lib/supabase/client'
 import type { Trade } from '@/lib/supabase/types'
@@ -132,6 +132,9 @@ export default function BrowserRecap({ trades, date }: Props) {
   const [entryDelta, setEntryDelta] = useState<Record<string, number>>({})
   // Which trade's ±60s nudge panel is open (only one at a time).
   const [nudgingId, setNudgingId] = useState<string | null>(null)
+  // Per-trade frames-expanded override. Undefined = use the default (open until
+  // AI commentary lands, then collapse so the grid reads as a compact list).
+  const [framesOpen, setFramesOpen] = useState<Record<string, boolean>>({})
   const [extracting, setExtracting] = useState(false)
   const [extractProgress, setExtractProgress] = useState(0)
 
@@ -179,6 +182,7 @@ export default function BrowserRecap({ trades, date }: Props) {
     setExitFrames({})
     setEntryDelta({})
     setNudgingId(null)
+    setFramesOpen({})
     setLoadingVideo(true)
     // Dispose any previous grabber before replacing it.
     setGrabber(prev => { prev?.dispose(); return null })
@@ -295,7 +299,9 @@ export default function BrowserRecap({ trades, date }: Props) {
     setFrames(outEntry)
     setExitFrames(outExit)
     setExtracting(false)
-    // A fresh extraction invalidates any prior commentary (new anchor/frames).
+    // A fresh extraction invalidates any prior commentary (new anchor/frames)
+    // and resets frame-expand overrides so defaults recompute.
+    setFramesOpen({})
     setCommentary({})
     setCommentaryError(null)
     setCommentaryNote(null)
@@ -636,66 +642,84 @@ export default function BrowserRecap({ trades, date }: Props) {
             const exitFrame = exitFrames[t.id]
             const delta = entryDelta[t.id] ?? 0
             const nudging = nudgingId === t.id
+            // Frames collapse so the grid reads as a compact commentary list.
+            // Default: open until AI commentary lands for the trade (extract →
+            // verify/nudge flow needs the frames visible), then auto-collapse.
+            const open = framesOpen[t.id] ?? !commentary[t.id]
             const dir = t.direction?.toUpperCase() ?? '—'
             const dirTone = t.direction === 'long' ? 'text-green-300 bg-green-900/30 border-green-800'
               : t.direction === 'short' ? 'text-red-300 bg-red-900/30 border-red-800'
                 : 'text-gray-400 bg-gray-800 border-gray-700'
             return (
-              <div key={t.id} className="border border-gray-800 rounded-lg overflow-hidden">
-                <div className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={frame} alt={`Trade ${i + 1} entry frame`} className="w-full block bg-black" />
-                  <span className="absolute top-1 left-1 text-[9px] font-bold uppercase tracking-wider text-white/90 bg-black/60 rounded px-1.5 py-0.5">
-                    Entry{delta !== 0 ? ` ${delta > 0 ? '+' : ''}${delta}s` : ''}
-                  </span>
-                </div>
-                {exitFrame && (
-                  <div className="relative border-t border-gray-800">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={exitFrame} alt={`Trade ${i + 1} exit frame`} className="w-full block bg-black" />
-                    <span className="absolute top-1 left-1 text-[9px] font-bold uppercase tracking-wider text-white/90 bg-black/60 rounded px-1.5 py-0.5">
-                      Exit {fmtPT(t.exit_time)} PT
-                    </span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] font-mono text-gray-400">
+              <div key={t.id} className="border border-gray-800 rounded-lg overflow-hidden self-start">
+                {/* Header — always visible; the whole row toggles the frames. */}
+                <button
+                  type="button"
+                  onClick={() => setFramesOpen(prev => ({ ...prev, [t.id]: !open }))}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] font-mono text-gray-400 hover:bg-gray-800/40 transition-colors text-left"
+                >
+                  <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-gray-500 transition-transform ${open ? '' : '-rotate-90'}`} />
                   <span>#{i + 1}</span>
                   <span>{fmtPT(t.entry_time)} PT</span>
                   <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${dirTone}`}>{dir}</span>
                   <span>{t.quantity ?? '?'} @ {t.entry_price ?? '?'}</span>
+                  {!open && <Film className="w-3 h-3 text-gray-600 shrink-0" />}
                   {t.pnl != null && (
                     <span className={`ml-auto font-bold ${t.pnl > 0 ? 'text-green-400' : t.pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
                       {t.pnl >= 0 ? '+' : ''}{t.pnl.toFixed(2)}
                     </span>
                   )}
-                </div>
-                {/* ±60s nudge — re-pick the exact entry frame. Client-side re-grab
-                    (no server round-trip); the video is already decoded locally. */}
-                {grabber && anchor && (
-                  nudging ? (
-                    <RecapFrameNudge
-                      grabber={grabber}
-                      baseOffset={offsetForTime(t.entry_time!)}
-                      duration={duration}
-                      initialDelta={delta}
-                      initialPreview={frame}
-                      onPicked={(d, url) => {
-                        setFrames(prev => ({ ...prev, [t.id]: url }))
-                        setEntryDelta(prev => ({ ...prev, [t.id]: d }))
-                        setNudgingId(null)
-                      }}
-                      onClose={() => setNudgingId(null)}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setNudgingId(t.id)}
-                      className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-gray-400 hover:text-blue-300 border-t border-gray-800 transition-colors"
-                    >
-                      <SlidersHorizontal className="w-3 h-3" /> Adjust entry frame
-                    </button>
-                  )
+                </button>
+
+                {/* Collapsible frames + nudge. */}
+                {open && (
+                  <div className="border-t border-gray-800">
+                    <div className="relative">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={frame} alt={`Trade ${i + 1} entry frame`} className="w-full block bg-black" />
+                      <span className="absolute top-1 left-1 text-[9px] font-bold uppercase tracking-wider text-white/90 bg-black/60 rounded px-1.5 py-0.5">
+                        Entry{delta !== 0 ? ` ${delta > 0 ? '+' : ''}${delta}s` : ''}
+                      </span>
+                    </div>
+                    {exitFrame && (
+                      <div className="relative border-t border-gray-800">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={exitFrame} alt={`Trade ${i + 1} exit frame`} className="w-full block bg-black" />
+                        <span className="absolute top-1 left-1 text-[9px] font-bold uppercase tracking-wider text-white/90 bg-black/60 rounded px-1.5 py-0.5">
+                          Exit {fmtPT(t.exit_time)} PT
+                        </span>
+                      </div>
+                    )}
+                    {/* ±60s nudge — re-pick the exact entry frame. Client-side
+                        re-grab (no server round-trip); video is decoded locally. */}
+                    {grabber && anchor && (
+                      nudging ? (
+                        <RecapFrameNudge
+                          grabber={grabber}
+                          baseOffset={offsetForTime(t.entry_time!)}
+                          duration={duration}
+                          initialDelta={delta}
+                          initialPreview={frame}
+                          onPicked={(d, url) => {
+                            setFrames(prev => ({ ...prev, [t.id]: url }))
+                            setEntryDelta(prev => ({ ...prev, [t.id]: d }))
+                            setNudgingId(null)
+                          }}
+                          onClose={() => setNudgingId(null)}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setNudgingId(t.id)}
+                          className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-gray-400 hover:text-blue-300 border-t border-gray-800 transition-colors"
+                        >
+                          <SlidersHorizontal className="w-3 h-3" /> Adjust entry frame
+                        </button>
+                      )
+                    )}
+                  </div>
                 )}
+
                 {commentary[t.id] && (
                   <p className="px-2.5 pb-2.5 text-xs text-gray-200 leading-snug border-t border-gray-800 pt-2">
                     {commentary[t.id]}
