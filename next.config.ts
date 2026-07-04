@@ -16,6 +16,22 @@ const securityHeaders = [
 ]
 
 const nextConfig: NextConfig = {
+  // Keep heavy, non-imported project dirs out of the serverless function
+  // trace (docs/ alone is ~220MB of PDFs/SVGs; research/ ~16MB). Nothing in
+  // the app imports these at runtime, so excluding them only shrinks the
+  // deploy bundle — it can't drop a file a route actually needs. We do NOT
+  // set outputFileTracingRoot: a wrong root silently omits needed files and
+  // 500s the deploy, and the inferred root (single lockfile here) is correct.
+  outputFileTracingExcludes: {
+    '*': [
+      'docs/**',
+      'research/**',
+      'scripts/**',
+      'supabase/**',
+      '**/*.scid',
+      '**/*.pdf',
+    ],
+  },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
   },
