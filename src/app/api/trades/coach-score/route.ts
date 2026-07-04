@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { consumeAiUsage } from '@/lib/ai-usage'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { computeCoachScore, type GradableTrade } from '@/lib/coach-score'
 
@@ -18,8 +19,10 @@ type AnyClient = any
  * so the user pays for AI only on the gaps their tags didn't cover. Returns
  * per-key { status, reason }; the client folds them in via applyAiResolutions().
  *
- * No usage cap here — this is the private tool. The public port applies the
- * ai_usage cap (see [[project_coach_score_transfer]]).
+ * Capped per user/day (`coach_score`, generous — see AI_LIMITS) but ONLY when a
+ * model call actually happens: if tags already resolve every criterion we return
+ * early below WITHOUT consuming a unit. Fail-open on the personal DB (no ai_usage
+ * RPC) so local mode is unaffected.
  */
 
 // Rubric definitions for the criteria that come back `unknown` (mirrors
@@ -47,6 +50,10 @@ export async function POST(req: Request) {
   const cs = computeCoachScore(trade, { setupLibrary })
   const unknowns = cs.criteria.filter(c => c.status === 'unknown')
   if (unknowns.length === 0) return NextResponse.json({ resolutions: {}, resolved: 0 })
+
+  // A model call is now unavoidable — consume one unit of the daily budget.
+  const gate = await consumeAiUsage(supabase, 'coach_score')
+  if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
 
   const notes = (trade.notes ?? '').trim()
   const tj = trade.tags_json ?? {}

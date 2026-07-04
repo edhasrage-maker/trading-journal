@@ -27,7 +27,20 @@ type AnyClient = any
  *  routes (summaries, themes, spell-check) are generous so a normal reviewing
  *  session never trips them — they exist to bound abuse, not to ration use. */
 export const AI_LIMITS: Record<string, number> = {
-  coach_score: 3,
+  // Per-trade AI grade — one call grades ONE trade (the panel renders a button
+  // per trade), and it's cheap (600 max tokens, and it skips the model entirely
+  // when tags already cover every criterion). Generous so a normal multi-trade
+  // review day never trips it. (NB: not the "3 clicks/day" batch design — this
+  // route is per-trade.)
+  coach_score: 25,
+  // Coach chat is the heaviest route (180-day aggregates + 150 trades + up to 4
+  // images re-sent every turn, streamed) — ~$0.03–0.09/call. 20/day still covers
+  // a thorough back-and-forth while bounding the scripted-abuse ceiling to
+  // ~$18–54/user/month worst case. The real cost lever is prompt-caching the
+  // context block (stable within a conversation) — see project_storage_hardening
+  // sibling note; caching cuts turns 2+ by ~90% regardless of this cap. The
+  // Anthropic-workspace spend cap remains the hard $ backstop.
+  coach_chat: 20,
   profile_synth: 6,
   analyze_eod: 15,
   analyze_prep: 15,

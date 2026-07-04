@@ -22,6 +22,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
 import { getTraderProfile, profileContextBlock, focusContextBlock } from '@/lib/trader-profile'
 import { buildCoachContext } from '@/lib/coach-context'
+import { consumeAiUsage } from '@/lib/ai-usage'
 
 const client = new Anthropic()
 
@@ -54,6 +55,15 @@ export async function POST(req: Request) {
   }
 
   const supabase: AnyClient = await createClient()
+
+  // Per-user daily cap. Consume BEFORE the expensive context build + model call.
+  // Fail-open on the personal DB (no ai_usage RPC) so local mode is unaffected.
+  const gate = await consumeAiUsage(supabase, 'coach_chat')
+  if (!gate.allowed) {
+    return new Response(JSON.stringify({ error: gate.message, ...gate }), {
+      status: 429, headers: { 'Content-Type': 'application/json' },
+    })
+  }
 
   // Build the coach context block. The same helper backs the weekly recap
   // synthesis (with a narrower window), guaranteeing chatbox and recap
