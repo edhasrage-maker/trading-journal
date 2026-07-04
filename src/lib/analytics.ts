@@ -643,6 +643,40 @@ export function avgMaeHeatRatio(trades: TradeWithExcursion[]): { avg: number | n
   return { avg: n > 0 ? sum / n : null, count: n }
 }
 
+/**
+ * Size-weighted MFE:MAE ratio for a set of trades: total favorable dollars ÷
+ * total adverse dollars, where each trade contributes its peak MFE and peak
+ * MAE in points × contracts × multiplier. Because it sums dollars BEFORE
+ * dividing, a larger position weights that trade proportionally more — and the
+ * result equals avg(MFE_$) / avg(MAE_$) (the per-trade count cancels), i.e. the
+ * quotient of the two figures the AvgMfeMaeCard already shows in $ mode.
+ *
+ * Stop-independent: uses only bar-derived MFE/MAE points (mfeMaePoints), so it
+ * computes on every trade with excursion data — unlike maeHeatRatio, whose
+ * denominator is the planned stop distance and which silently drops stop-less
+ * fills. Dollar basis (not raw points) so a mixed NQ/MNQ day weights by
+ * contract VALUE, not contract count.
+ *
+ * Returns { ratio, count }; ratio is null when no trade has data or total
+ * adverse dollars is 0 (a spotless day — undefined rather than infinite).
+ */
+export function avgMfeMaeRatio(trades: TradeWithExcursion[]): { ratio: number | null; count: number } {
+  let mfeSum = 0
+  let maeSum = 0
+  let n = 0
+  for (const t of trades) {
+    const xc = mfeMaePoints(t)
+    if (!xc) continue
+    const mult = symbolToMultiplier(t.symbol ?? '')
+    if (mult === 0) continue
+    const qty = t.quantity ?? 1
+    mfeSum += xc.mfe * qty * mult
+    maeSum += xc.mae * qty * mult
+    n++
+  }
+  return { ratio: maeSum > 0 ? mfeSum / maeSum : null, count: n }
+}
+
 /** Aggregate a set of trades into performance stats. */
 export function computeStats(trades: TradeLike[]): PerformanceStats {
   if (trades.length === 0) return ZERO_STATS

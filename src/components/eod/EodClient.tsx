@@ -23,7 +23,7 @@ import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import MfeMaeEfficiency from './MfeMaeEfficiency'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
-import { avgCaptureRatio, avgMaeHeatRatio, avgMfeMaeAtr, type BarLike } from '@/lib/analytics'
+import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, type BarLike } from '@/lib/analytics'
 import type {
   TradingDay,
   Trade,
@@ -142,23 +142,23 @@ export default function EodClient({
   // Help-popup state for the header MFE/MAE definitions. Same pattern as the
   // dashboard RecentDaysList — click to toggle, click outside to dismiss.
   const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
-  const [maeInfoOpen, setMaeInfoOpen] = useState(false)
+  const [ratioInfoOpen, setRatioInfoOpen] = useState(false)
   const mfeInfoRef = useRef<HTMLDivElement>(null)
-  const maeInfoRef = useRef<HTMLDivElement>(null)
+  const ratioInfoRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (!mfeInfoOpen && !maeInfoOpen) return
+    if (!mfeInfoOpen && !ratioInfoOpen) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
       if (mfeInfoOpen && mfeInfoRef.current && !mfeInfoRef.current.contains(t)) setMfeInfoOpen(false)
-      if (maeInfoOpen && maeInfoRef.current && !maeInfoRef.current.contains(t)) setMaeInfoOpen(false)
+      if (ratioInfoOpen && ratioInfoRef.current && !ratioInfoRef.current.contains(t)) setRatioInfoOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setMfeInfoOpen(false); setMaeInfoOpen(false) }
+      if (e.key === 'Escape') { setMfeInfoOpen(false); setRatioInfoOpen(false) }
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
-  }, [mfeInfoOpen, maeInfoOpen])
+  }, [mfeInfoOpen, ratioInfoOpen])
 
   // Most-common trade symbol on this day — feeds LiveChart's bars query.
   // Days with no trades return null; LiveChart shows a "no symbol" message.
@@ -534,10 +534,12 @@ export default function EodClient({
   const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
 
-  // Day-level execution quality: avg MFE capture and avg MAE loss across all
-  // trades that have the data (entry/stop/direction/high/low present).
+  // Day-level execution quality: avg MFE capture (% of the favorable move
+  // banked) and the size-weighted MFE:MAE ratio (favorable $ vs adverse $).
+  // Both are bar-derived (entry/direction/high/low) — no planned stop needed,
+  // so they compute on stop-less fills too.
   const captureStats = useMemo(() => avgCaptureRatio(trades), [trades])
-  const heatStats = useMemo(() => avgMaeHeatRatio(trades), [trades])
+  const ratioStats = useMemo(() => avgMfeMaeRatio(trades), [trades])
   // Entry-efficiency (avg MFE vs MAE in ATR units) for the verdict card. Prefers
   // the per-trade live ATR, falls back to stored entry_atr_1m; bar-derived, so it
   // works on a fills-only import with no planned stops.
@@ -811,7 +813,7 @@ export default function EodClient({
               MFE Realized %
               <button
                 type="button"
-                onClick={() => { setMfeInfoOpen(o => !o); setMaeInfoOpen(false) }}
+                onClick={() => { setMfeInfoOpen(o => !o); setRatioInfoOpen(false) }}
                 className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
                 title="What is MFE Realized %?"
               >
@@ -851,44 +853,44 @@ export default function EodClient({
           </div>
           <div className="relative">
             <div className="text-[10px] text-gray-500 whitespace-nowrap flex items-center gap-1">
-              MAE Heat %
+              MFE : MAE
               <button
                 type="button"
-                onClick={() => { setMaeInfoOpen(o => !o); setMfeInfoOpen(false) }}
-                className={`transition-colors ${maeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                title="What is MAE Heat %?"
+                onClick={() => { setRatioInfoOpen(o => !o); setMfeInfoOpen(false) }}
+                className={`transition-colors ${ratioInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                title="What is the MFE : MAE ratio?"
               >
                 <HelpCircle className="w-3 h-3" />
               </button>
             </div>
-            <div className={`font-mono text-sm ${heatStats.avg == null ? 'text-gray-500'
-              : heatStats.avg > 1.0 ? 'text-red-400 font-bold'
-              : 'text-gray-400'}`}>
-              {heatStats.avg == null ? '—' : `${(heatStats.avg * 100).toFixed(0)}%`}
+            <div className={`font-mono text-sm ${ratioStats.ratio == null ? 'text-gray-500'
+              : ratioStats.ratio >= 1 ? 'text-green-400 font-bold'
+              : 'text-red-400'}`}>
+              {ratioStats.ratio == null ? '—' : `${ratioStats.ratio.toFixed(1)}×`}
             </div>
-            {maeInfoOpen && (
+            {ratioInfoOpen && (
               <div
-                ref={maeInfoRef}
+                ref={ratioInfoRef}
                 className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
               >
                 <div className="flex items-start justify-between mb-2">
-                  <p className="font-semibold text-white">MAE Heat %</p>
-                  <button type="button" onClick={() => setMaeInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
+                  <p className="font-semibold text-white">MFE : MAE ratio</p>
+                  <button type="button" onClick={() => setRatioInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
                 <p className="mb-2">
-                  Averaged across <strong>{heatStats.count}</strong> trade{heatStats.count === 1 ? '' : 's'} on this day. <em>How much of your planned risk did you sit through before exiting?</em>
+                  Across <strong>{ratioStats.count}</strong> trade{ratioStats.count === 1 ? '' : 's'} with data. <em>Did the market give you more room than it took — weighted by how big you were?</em>
                 </p>
                 <p className="mb-2 text-gray-400">
-                  = peak adverse excursion ÷ planned stop distance (entry − stop_price) — separate from realized $ PnL.
+                  = total favorable $ ÷ total adverse $ (each trade&apos;s peak MFE and peak MAE × contracts, summed). Bar-derived, so it needs no stop — and sizing up on a trade weights that trade more.
                 </p>
                 <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
-                  <li><strong>0–50%</strong>: clean entry, light pressure</li>
-                  <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
-                  <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — moved, slipped, or reversed in time to save you</li>
+                  <li><strong>&gt; 1×</strong>: <strong className="text-green-300">favorable travel dominated</strong> — more opportunity than heat</li>
+                  <li><strong>~1×</strong>: balanced — room given ≈ room taken</li>
+                  <li><strong>&lt; 1×</strong>: <strong className="text-red-300">heat dominated</strong> — trades ran against you more than for you</li>
                 </ul>
-                <p className="text-gray-500">Red bold appears only when the day averaged &gt; 100%.</p>
+                <p className="text-gray-500">Opportunity vs. heat only — whether you actually <em>banked</em> the move is MFE Realized %.</p>
               </div>
             )}
           </div>
