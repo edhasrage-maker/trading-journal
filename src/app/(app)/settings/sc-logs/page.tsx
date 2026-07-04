@@ -14,7 +14,7 @@ export default async function ScLogsPage() {
     }
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div>
       {error ? (
         <div className="bg-red-950/40 border border-red-900 text-red-300 rounded-xl p-5 text-sm">
           Could not list sc-logs bucket: {error.message}

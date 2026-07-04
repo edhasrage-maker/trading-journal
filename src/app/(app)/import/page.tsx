@@ -69,7 +69,7 @@ export default function ImportPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <div>
       <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-white mb-6">
         <ArrowLeft className="w-4 h-4" /> Back to dashboard
       </Link>

@@ -101,7 +101,7 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
   } catch { /* table may not exist yet — silently fall back */ }
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div>
       <WeeklyRecapClient
         weekStart={weekStart}
         weekLabelText={weekLabel(weekStart)}

@@ -25,7 +25,7 @@ export default async function ConditionLookupPage() {
   const refreshedAt = meta?.value?.at ?? null
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div>
       <ConditionLookupSettings
         initialThresholds={thresholds ?? []}
         initialLookupCount={lookupCount ?? 0}

@@ -540,7 +540,7 @@ export default async function DashboardPage() {
 
   if (isEmptyAccount) {
     return (
-      <div className="max-w-5xl mx-auto">
+      <div>
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-gray-400 text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
@@ -552,7 +552,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div>
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>

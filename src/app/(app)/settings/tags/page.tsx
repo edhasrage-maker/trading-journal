@@ -54,7 +54,7 @@ export default async function TagsSettingsPage() {
   for (const [k, v] of counts) usage[k] = v
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div>
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-white">Tag Management</h1>
         <p className="text-sm text-gray-500 mt-1">

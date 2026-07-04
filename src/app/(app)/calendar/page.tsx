@@ -44,7 +44,7 @@ export default async function CalendarPage() {
   ).sort()
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div>
       <CalendarClient
         summaries={summaries}
         defaultStartDate={defaultStartDate}

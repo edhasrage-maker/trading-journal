@@ -14,7 +14,7 @@ export default async function BarsSettingsPage() {
     .limit(50) as { data: BarImport[] | null }
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div>
       <BarImportClient initialImports={importsRaw ?? []} />
     </div>
   )

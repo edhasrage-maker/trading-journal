@@ -33,7 +33,7 @@ export default async function IntradayPage({
   const { data: tags } = await supabase.from('trade_tags').select('*').order('sort_order')
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div>
       <IntradayClient
         date={date}
         initialTrades={trades}

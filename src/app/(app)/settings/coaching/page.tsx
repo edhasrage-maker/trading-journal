@@ -5,7 +5,7 @@ export const revalidate = 0
 
 export default function CoachingSettingsPage() {
   return (
-    <div className="max-w-3xl mx-auto">
+    <div>
       <h1 className="text-2xl font-bold text-white mb-2">Player Profile</h1>
       <p className="text-gray-400 text-sm mb-8">
         The context your AI coach uses to read your game. It&apos;s injected into every AI
