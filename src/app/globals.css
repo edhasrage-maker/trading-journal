@@ -108,3 +108,20 @@ h1, h2, h3 {
 .bg-blue-600 {
   color: var(--color-accent-contrast);
 }
+
+/* Mobile: lift the floating Trade Coach above the bottom tab bar so the brain
+   FAB (and its expanded panel) don't sit on top of it. Positioned from the
+   coach's mount point (#coach-fab-root in the app layout) so CoachChat.tsx is
+   untouched. The tab bar is min-h-[56px] plus the iOS safe-area inset; clear it
+   with a 1rem gap. Unlayered → overrides the component's bottom-6 utility.
+   Scoped to <768px, matching the tab bar's md:hidden. */
+@media (max-width: 767px) {
+  #coach-fab-root > button,
+  #coach-fab-root > div {
+    bottom: calc(56px + env(safe-area-inset-bottom) + 1rem);
+  }
+  /* Keep the expanded chat panel fully above the bar at this taller offset. */
+  #coach-fab-root > div {
+    max-height: calc(100dvh - 56px - env(safe-area-inset-bottom) - 2rem);
+  }
+}

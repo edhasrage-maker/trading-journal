@@ -26,8 +26,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {!LOCAL_FEATURES_ENABLED && <OnboardingGate />}
           {children}
         </AppMain>
-        {/* Floating Trade Coach — bottom-right icon on every page; click to expand */}
-        <CoachChat />
+        {/* Floating Trade Coach — bottom-right icon on every page; click to
+            expand. Wrapped in #coach-fab-root so globals.css can lift the FAB
+            above the mobile bottom tab bar without editing CoachChat.tsx. */}
+        <div id="coach-fab-root">
+          <CoachChat />
+        </div>
       </div>
     </UiModeProvider>
   )
