@@ -41,6 +41,10 @@ export const AI_LIMITS: Record<string, number> = {
   // sibling note; caching cuts turns 2+ by ~90% regardless of this cap. The
   // Anthropic-workspace spend cap remains the hard $ backstop.
   coach_chat: 20,
+  // Video-recap frame commentary — one click sends every in-window entry frame
+  // in a single multimodal call (vision-heavy, Opus for tiered users). 15/day
+  // covers re-runs across a normal review session while bounding spend.
+  recap_commentary: 15,
   profile_synth: 6,
   analyze_eod: 15,
   analyze_prep: 15,

@@ -11,6 +11,8 @@
  * Returns a compact, structured text block suitable for prompt injection.
  */
 
+import { interpretExcursion } from './trade-excursion'
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
@@ -29,12 +31,6 @@ export interface CoachContextOptions {
   recentTradesLimit?: number
 }
 
-const SYM_MULT: Record<string, number> = { NQ: 20, MNQ: 2, ES: 50, MES: 5 }
-const mult = (s: string | null) => {
-  if (!s) return 1
-  const root = s.replace(/\.[A-Z]+$/, '').replace(/[HMUZ]\d+$/, '')
-  return SYM_MULT[root] ?? 1
-}
 const fmt = (n: number) => (n >= 0 ? '+' : '') + '$' + Math.round(n).toLocaleString()
 const sortByCount = <T extends { count: number }>(map: Map<string, T>, n = 10) =>
   Array.from(map.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, n)
@@ -157,65 +153,26 @@ NO TRADE DATA — the trader logged no trades in this window.
 
   for (const t of trades) {
     const pnl = t.pnl ?? 0
-    const isWin = pnl > 0
-    const stopDist = (t.entry_price != null && t.stop_price != null) ? Math.abs(t.entry_price - t.stop_price) : null
-    const r = (stopDist && t.quantity) ? pnl / (stopDist * t.quantity * mult(t.symbol)) : null
+    // All per-trade MFE/MAE interpretation lives in the shared helper so the
+    // coach, the weekly recap, and the video-recap commentary can't drift.
+    const { isWin, r, mfeUsd, capPct, leftUsd, mfeR, maePts, maePct } = interpretExcursion(t)
 
-    // Dollar-basis capture (primary; no stop needed). mfe_dollars_per_leg is the
-    // best-case $ if each leg exited at its peak; capPct = the share a winner
-    // actually banked, left = $ given back. Winners only — capture on a loser is
-    // meaningless. Capped at 100% for the rare avg-exit-past-peak rounding case.
-    // Clamp the per-leg MFE-$ at the tick-precise full-position ceiling
-    // (favorable extreme × qty × multiplier). A correct per-leg value can never
-    // exceed it; a stored value above it is corrupt (old un-capped backfill
-    // walking a bad bar tick) and would massively inflate "$ left on the table".
-    let mfeUsd = t.mfe_dollars_per_leg
-    if (t.entry_price != null && t.quantity != null) {
-      const favPts = t.direction === 'short'
-        ? (t.low_during_position != null ? t.entry_price - t.low_during_position : null)
-        : (t.high_during_position != null ? t.high_during_position - t.entry_price : null)
-      if (favPts != null && favPts >= 0) {
-        // Tick-precise full-position ceiling (favorable extreme × qty × mult).
-        const ceiling = favPts * t.quantity * mult(t.symbol)
-        // Imported trades have the raw extremes but NO per-leg backfill: use the
-        // ceiling as the best-case $ directly. Otherwise clamp the per-leg value
-        // to it (a stored value above it is corrupt un-capped backfill).
-        if (mfeUsd == null) mfeUsd = ceiling
-        else if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
-      }
-    }
-    let capPct: number | null = null
-    if (isWin && mfeUsd != null && mfeUsd > 0) {
-      capPct = Math.min(1, pnl / mfeUsd)
+    // Exit-efficiency $ aggregation — winners only (capPct is set exactly when
+    // the trade won and had a positive best-case $).
+    if (capPct != null && mfeUsd != null) {
       const dl = exitEff.dollar
-      dl.n++; dl.sumCapPct += capPct; dl.sumLeft += Math.max(0, mfeUsd - pnl); dl.sumRealized += pnl; dl.sumMfe += mfeUsd
+      dl.n++; dl.sumCapPct += capPct; dl.sumLeft += leftUsd ?? 0; dl.sumRealized += pnl; dl.sumMfe += mfeUsd
     }
 
-    // R-basis reachability (secondary; needs a logged stop). Long → high, short →
-    // low gives the favorable extreme; ÷ stop distance = MFE in risk units.
-    let mfeR: number | null = null
-    if (stopDist && stopDist > 0 && t.entry_price != null) {
-      const mfePts = t.direction === 'short'
-        ? (t.low_during_position != null ? t.entry_price - t.low_during_position : null)
-        : (t.high_during_position != null ? t.high_during_position - t.entry_price : null)
-      if (mfePts != null && mfePts >= 0) mfeR = mfePts / stopDist
-    }
+    // TP2 reachability aggregation — trades with a logged stop.
     if (mfeR != null) {
       const rb = exitEff.r
       rb.withStop++; if (mfeR >= 2) rb.ge2R++; if (mfeR >= 3) rb.ge3R++
       if (isWin) { rb.winners++; if (mfeR >= 2) rb.winGe2R++; if (mfeR >= 3) rb.winGe3R++ }
     }
 
-    // MAE (heat taken) — adverse excursion in points (long→low, short→high),
-    // and as a fraction of the planned stop distance. Needs entry + a known
-    // direction + the adverse extreme; the % needs a logged stop.
-    let maePts: number | null = null
-    if (t.entry_price != null && t.direction) {
-      maePts = t.direction === 'short'
-        ? (t.high_during_position != null ? Math.max(0, t.high_during_position - t.entry_price) : null)
-        : (t.low_during_position != null ? Math.max(0, t.entry_price - t.low_during_position) : null)
-    }
-    const maePct = (maePts != null && stopDist && stopDist > 0) ? maePts / stopDist : null
+    // MAE / heat-taken aggregation — winners-vs-losers heat + the
+    // win-rate-by-heat-taken buckets.
     if (maePct != null && maePts != null) {
       const side = isWin ? maeAgg.win : (pnl < 0 ? maeAgg.loss : null)
       if (side) { side.n++; side.sumPts += maePts; side.sumPct += maePct }

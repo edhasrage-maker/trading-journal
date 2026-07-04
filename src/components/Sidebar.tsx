@@ -36,14 +36,17 @@ import { useSidebarCollapsed } from '@/lib/sidebar-collapsed'
 // Condition Lookup is power-user config; Bar Data / SC Archives ALSO depend on
 // local files (`.scid`, the SC data dir), so they're additionally local-only.
 // Filtered per-user in the component (needs the runtime isAdmin), not here.
+// `cloudOnly` items need the hosted service role (multi-tenant admin tools), so
+// they're hidden in the local single-tenant owner build.
 const settingsItems = [
-  { href: '/settings/coaching', label: 'Player Profile', icon: Brain, localOnly: false, adminOnly: false },
-  { href: '/settings/account', label: 'Account Settings', icon: SlidersHorizontal, localOnly: false, adminOnly: false },
-  { href: '/settings/metrics', label: 'Metrics', icon: Gauge, localOnly: false, adminOnly: false },
-  { href: '/settings/tags', label: 'Tags', icon: Tag, localOnly: false, adminOnly: false },
-  { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database, localOnly: false, adminOnly: true },
-  { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart, localOnly: true, adminOnly: true },
-  { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive, localOnly: true, adminOnly: true },
+  { href: '/settings/coaching', label: 'Player Profile', icon: Brain, localOnly: false, cloudOnly: false, adminOnly: false },
+  { href: '/settings/account', label: 'Account Settings', icon: SlidersHorizontal, localOnly: false, cloudOnly: false, adminOnly: false },
+  { href: '/settings/metrics', label: 'Metrics', icon: Gauge, localOnly: false, cloudOnly: false, adminOnly: false },
+  { href: '/settings/tags', label: 'Tags', icon: Tag, localOnly: false, cloudOnly: false, adminOnly: false },
+  { href: '/settings/condition-lookup', label: 'Condition Lookup', icon: Database, localOnly: false, cloudOnly: false, adminOnly: true },
+  { href: '/settings/model-tiers', label: 'Model Tiers', icon: Sparkles, localOnly: false, cloudOnly: true, adminOnly: true },
+  { href: '/settings/bars', label: 'Bar Data', icon: CandlestickChart, localOnly: true, cloudOnly: false, adminOnly: true },
+  { href: '/settings/sc-logs', label: 'SC Archives', icon: Archive, localOnly: true, cloudOnly: false, adminOnly: true },
 ]
 
 export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
@@ -53,7 +56,9 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   // gets Condition Lookup, plus Bar Data / SC Archives in the local build (they
   // need `.scid` files).
   const visibleSettings = settingsItems.filter(
-    item => (!item.localOnly || LOCAL_FEATURES_ENABLED) && (!item.adminOnly || isAdmin),
+    item => (!item.localOnly || LOCAL_FEATURES_ENABLED)
+      && (!item.cloudOnly || !LOCAL_FEATURES_ENABLED)
+      && (!item.adminOnly || isAdmin),
   )
   const { mode, setMode } = useUiMode()
   // Desktop rail collapse — icon-only when collapsed; main content expands to

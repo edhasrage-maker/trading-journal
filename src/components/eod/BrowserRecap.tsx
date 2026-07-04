@@ -1,9 +1,46 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info } from 'lucide-react'
+import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare } from 'lucide-react'
 import { VideoFrameGrabber, parseObsFilenameStartMs } from '@/lib/browser-frames'
+import { createClient } from '@/lib/supabase/client'
 import type { Trade } from '@/lib/supabase/types'
+
+/**
+ * Pull the AI text out of a `trades.recording_commentary` value, tolerant of
+ * every shape that's shown up in the wild: a proper object `{ text, … }`, a
+ * JSON-stringified object (legacy backfill), or a plain string. Lenient on
+ * video_file — saved/transferred commentary should surface regardless of which
+ * (if any) recording is loaded now. Returns null when there's no usable text.
+ */
+function savedCommentaryText(raw: unknown): string | null {
+  if (raw == null) return null
+  if (typeof raw === 'object') {
+    const o = raw as { text?: unknown }
+    return typeof o.text === 'string' && o.text.length > 0 ? o.text : null
+  }
+  if (typeof raw === 'string') {
+    const s = raw.trim()
+    if (s.startsWith('{') && s.endsWith('}')) {
+      try {
+        const p = JSON.parse(s) as { text?: unknown }
+        if (typeof p.text === 'string' && p.text.length > 0) return p.text
+      } catch { /* fall through */ }
+    }
+    return s.length > 0 ? s : null
+  }
+  return null
+}
+
+/** Convert a `data:image/jpeg;base64,…` URL to a Blob for upload. */
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [head, b64] = dataUrl.split(',')
+  const mime = head.match(/data:([^;]+)/)?.[1] ?? 'image/jpeg'
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new Blob([bytes], { type: mime })
+}
 
 /**
  * BrowserRecap — Phase 1 of the cloud video recap.
@@ -84,6 +121,13 @@ export default function BrowserRecap({ trades, date }: Props) {
   const [extracting, setExtracting] = useState(false)
   const [extractProgress, setExtractProgress] = useState(0)
 
+  // AI commentary (Phase 2): upload frames → server AI call → per-trade text.
+  const [commentary, setCommentary] = useState<Record<string, string>>({})
+  const [commentaryRunning, setCommentaryRunning] = useState(false)
+  const [commentaryStage, setCommentaryStage] = useState<'idle' | 'uploading' | 'thinking'>('idle')
+  const [commentaryError, setCommentaryError] = useState<string | null>(null)
+  const [commentaryNote, setCommentaryNote] = useState<string | null>(null)
+
   // Pin-to-trade scrubber state.
   const [pinning, setPinning] = useState(false)
   const [pinTradeId, setPinTradeId] = useState<string>('')
@@ -96,6 +140,18 @@ export default function BrowserRecap({ trades, date }: Props) {
     () => trades.filter(t => t.entry_time && Number.isFinite(Date.parse(t.entry_time))),
     [trades],
   )
+
+  // Commentary already stored on the trades (from an earlier session on this or
+  // another device, or transferred from the local app). Read straight from the
+  // DB rows so it survives reload and shows without re-extracting frames.
+  const savedCommentary = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const t of trades) {
+      const txt = savedCommentaryText(t.recording_commentary)
+      if (txt) out[t.id] = txt
+    }
+    return out
+  }, [trades])
 
   // Tear down the grabber when it changes or the component unmounts.
   useEffect(() => () => { grabber?.dispose() }, [grabber])
@@ -205,7 +261,56 @@ export default function BrowserRecap({ trades, date }: Props) {
     }
     setFrames(out)
     setExtracting(false)
+    // A fresh extraction invalidates any prior commentary (new anchor/frames).
+    setCommentary({})
+    setCommentaryError(null)
+    setCommentaryNote(null)
   }, [grabber, anchor, timedTrades, offsetForEntry, duration])
+
+  // Upload the extracted entry frames to the user's own storage folder, then run
+  // the server-side AI commentary (capped + model-tiered). The video itself
+  // never leaves the device — only these small entry-frame JPEGs.
+  const runCommentary = useCallback(async () => {
+    const entries = Object.entries(frames)
+    if (entries.length === 0) return
+    setCommentaryRunning(true)
+    setCommentaryError(null)
+    setCommentaryNote(null)
+    setCommentaryStage('uploading')
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { setCommentaryError('You must be signed in to run commentary.'); return }
+
+      const uploaded: Array<{ id: string; path: string }> = []
+      const ts = Date.now()
+      for (const [tradeId, dataUrl] of entries) {
+        // Unique path → always an INSERT (the screenshots bucket has no UPDATE
+        // policy). Per-user folder matches the route's ownership guard + folder RLS.
+        const path = `${user.id}/recap/${tradeId}-${ts}.jpg`
+        const { error } = await supabase.storage.from('screenshots')
+          .upload(path, dataUrlToBlob(dataUrl), { contentType: 'image/jpeg', upsert: false })
+        if (!error) uploaded.push({ id: tradeId, path })
+      }
+      if (uploaded.length === 0) { setCommentaryError('Frame upload failed — check your connection and try again.'); return }
+
+      setCommentaryStage('thinking')
+      const res = await fetch('/api/recap/commentary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoFile: file?.name ?? '<unknown>', frames: uploaded }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setCommentaryError(data.error ?? 'Commentary failed'); return }
+      setCommentary(prev => ({ ...prev, ...(data.commentary ?? {}) }))
+      if (data.note) setCommentaryNote(data.note)
+    } catch (e) {
+      setCommentaryError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setCommentaryRunning(false)
+      setCommentaryStage('idle')
+    }
+  }, [frames, file])
 
   const inRangeCount = useMemo(() => {
     if (!anchor) return 0
@@ -232,7 +337,7 @@ export default function BrowserRecap({ trades, date }: Props) {
         Pick your screen recording of this session. Your browser reads a frame at each trade&apos;s entry so you can see
         what was on your chart when you pulled the trigger.{' '}
         <span className="text-gray-400">The video never leaves your device</span> — frames are extracted right here.
-        MP4 / H.264 recordings work best. AI commentary is coming soon.
+        MP4 / H.264 recordings work best. Once frames are extracted you can run AI commentary on them.
       </p>
 
       {/* File picker */}
@@ -401,6 +506,39 @@ export default function BrowserRecap({ trades, date }: Props) {
         </>
       )}
 
+      {/* AI commentary run bar */}
+      {Object.keys(frames).length > 0 && (
+        <div className="space-y-2 pt-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={runCommentary}
+              disabled={commentaryRunning}
+              className="bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors inline-flex items-center gap-2"
+            >
+              {commentaryRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
+              {commentaryStage === 'uploading' ? 'Uploading frames…'
+                : commentaryStage === 'thinking' ? 'Coach is reading…'
+                  : Object.keys(commentary).length > 0 ? 'Re-run AI commentary' : 'Run AI commentary'}
+            </button>
+            <span className="text-[11px] text-gray-500">
+              Uploads the {Object.keys(frames).length} extracted frame{Object.keys(frames).length === 1 ? '' : 's'} and has the coach read each entry.
+            </span>
+          </div>
+          {commentaryError && (
+            <div className="bg-red-950/40 border border-red-800/60 rounded-lg p-3 text-sm text-red-200 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>{commentaryError}</div>
+            </div>
+          )}
+          {commentaryNote && !commentaryError && (
+            <div className="text-[11px] text-amber-300/80 bg-amber-950/30 border border-amber-900/50 rounded px-2 py-1.5">
+              {commentaryNote}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Frame grid */}
       {Object.keys(frames).length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
@@ -426,6 +564,48 @@ export default function BrowserRecap({ trades, date }: Props) {
                     </span>
                   )}
                 </div>
+                {commentary[t.id] && (
+                  <p className="px-2.5 pb-2.5 text-xs text-gray-200 leading-snug border-t border-gray-800 pt-2">
+                    {commentary[t.id]}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Saved commentary — text already stored on these trades (an earlier
+          session, another device, or transferred from the local app). Shown
+          without needing a video loaded; a trade drops out of here once it has
+          fresh commentary from a run this session (it appears in the grid above). */}
+      {timedTrades.some(t => savedCommentary[t.id] && !commentary[t.id]) && (
+        <div className="space-y-2 pt-1">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="w-3.5 h-3.5 text-gray-500" />
+            <span className="text-xs font-semibold text-gray-300">Saved commentary</span>
+            <span className="text-[10px] text-gray-500">from earlier sessions</span>
+          </div>
+          {timedTrades.map((t, i) => {
+            if (!savedCommentary[t.id] || commentary[t.id]) return null
+            const dir = t.direction?.toUpperCase() ?? '—'
+            const dirTone = t.direction === 'long' ? 'text-green-300 bg-green-900/30 border-green-800'
+              : t.direction === 'short' ? 'text-red-300 bg-red-900/30 border-red-800'
+                : 'text-gray-400 bg-gray-800 border-gray-700'
+            return (
+              <div key={t.id} className="border border-gray-800 rounded-lg p-3 text-xs">
+                <div className="flex items-center gap-2 mb-1 font-mono text-gray-400">
+                  <span>#{i + 1}</span>
+                  <span>{fmtPT(t.entry_time)} PT</span>
+                  <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${dirTone}`}>{dir}</span>
+                  <span>{t.quantity ?? '?'} @ {t.entry_price ?? '?'}</span>
+                  {t.pnl != null && (
+                    <span className={`ml-auto font-bold ${t.pnl > 0 ? 'text-green-400' : t.pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
+                      {t.pnl >= 0 ? '+' : ''}{t.pnl.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+                <p className="text-gray-200 leading-snug">{savedCommentary[t.id]}</p>
               </div>
             )
           })}

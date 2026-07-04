@@ -524,6 +524,27 @@ grant execute on function public.consume_ai_usage(text, int) to authenticated;
 
 
 -- ----------------------------------------------------------------------------
+-- 13. Per-user AI model tier.
+--     Default model is Sonnet for everyone; a user runs on Opus if they're the
+--     admin (ADMIN_EMAIL / local build, resolved in code) OR an admin has
+--     granted them the 'opus' tier here. Only explicit grants get a row.
+--     READS: owner reads their own tier (an AI route resolves the model from
+--     the caller's own row). WRITES: service-role admin route only
+--     (/api/admin/model-tiers) — no client write policy, so no self-upgrade.
+--     Mirrored in migrations/20260703_ai_model_grants.public.sql.
+-- ----------------------------------------------------------------------------
+create table if not exists public.ai_model_grants (
+  user_id    uuid primary key references auth.users(id) on delete cascade default auth.uid(),
+  tier       text not null default 'basic' check (tier in ('basic','opus')),
+  updated_at timestamptz not null default now()
+);
+alter table public.ai_model_grants enable row level security;
+drop policy if exists "Owner reads own tier" on public.ai_model_grants;
+create policy "Owner reads own tier" on public.ai_model_grants
+  for select using (auth.uid() = user_id);
+
+
+-- ----------------------------------------------------------------------------
 -- 10. Per-user Morning Conditions methodology.
 --     condition_thresholds + condition_lookup were originally shared reference
 --     tables; they are now per-user so each trader's prep grades come from their
