@@ -733,7 +733,7 @@ function DayRowItem({
               // Double Inside (PD + ON), Medium Mush Market (Indecisive)")
               // from pushing the Date column wide enough to clip PnL on the
               // right edge of the table. Full text still on hover.
-              className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap truncate max-w-[200px] inline-block"
+              className="hidden sm:inline-block text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap truncate max-w-[200px]"
               title={day.day_types.join(', ')}
             >
               {day.day_types.join(', ')}

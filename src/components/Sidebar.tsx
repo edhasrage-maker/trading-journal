@@ -282,9 +282,12 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
       </div>
       </aside>
 
-      {/* Mobile bottom tab bar (md:hidden) — four primary tabs + More. */}
+      {/* Mobile bottom tab bar (md:hidden) — four primary tabs + More. pr-20
+          reserves the bottom-right corner so the floating coach FAB (fixed
+          bottom-6 right-6, ~80px of corner) doesn't sit on top of the More tab
+          and block it. */}
       <nav
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex bg-gray-900 border-t border-gray-800"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex pr-20 bg-gray-900 border-t border-gray-800"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {mobileTabs.map(({ href, label, icon: Icon, match }) => {

@@ -262,7 +262,7 @@ export default function DashboardStats({ days }: Props) {
       {/* Stat cards. Order: P&L → Day Win % → Trade Win % → Avg MFE/MAE →
           Median Process. 5 columns fit fine on the standard >1100px dashboard
           width. */}
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5">
         <StatCard
           label={`${PERIOD_LABELS[period]} P&L`}
           value={(() => {
