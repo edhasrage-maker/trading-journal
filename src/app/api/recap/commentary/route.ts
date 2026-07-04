@@ -10,16 +10,25 @@
  * trades.recording_commentary (identical shape to the ffmpeg path) and back-fills
  * a missing screenshot with the entry frame.
  *
- * Body: { videoFile: string, frames: Array<{ id: string, path: string }> }
+ * Body: { videoFile: string, frames: Array<{ id: string, path: string, exitPath?: string }> }
  *   - videoFile: the recording filename (stored on the commentary row so the UI
  *     can flag stale commentary if the user re-runs against a different file).
  *   - frames[].path: `<uid>/recap/<tradeId>-<ts>.jpg` in the `screenshots`
- *     bucket. Server verifies each path is under the caller's own folder.
+ *     bucket — the ENTRY frame. Server verifies each path is under the caller's
+ *     own folder.
+ *   - frames[].exitPath (optional): the EXIT frame, same folder rules. When
+ *     present it's sent alongside the entry frame (mirrors the ffmpeg path's
+ *     entry+exit pair) so the coach can see what price did by the exit.
  *
  * Gating: per-user daily cap (recap_commentary) consumed BEFORE the model call;
  * model tier resolved server-side (Sonnet default, Opus for admin + granted
  * users). The excursion framing fed to the model is INTERPRETED (capture %,
  * $ left, heat vs stop, ×ATR) — never raw point averages, which the model skips.
+ *
+ * Screenshot back-fill: a trade with no screenshot_url gets its ENTRY frame's
+ * storage PATH written as screenshot_url (bare path — the bucket is private +
+ * folder-RLS, so the server read boundary signs it; never a public URL, which
+ * would 400 on the private bucket). Marked screenshot_source:'obs'.
  */
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -35,7 +44,7 @@ const client = new Anthropic()
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
-interface FrameRef { id: string; path: string }
+interface FrameRef { id: string; path: string; exitPath?: string }
 
 const PT_TIME_FMT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Los_Angeles',
@@ -58,7 +67,11 @@ export async function POST(req: Request) {
   let body: { videoFile?: string; frames?: FrameRef[] }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid body' }, { status: 400 }) }
   const videoFile = typeof body.videoFile === 'string' ? body.videoFile : ''
-  const frames = Array.isArray(body.frames) ? body.frames.filter(f => f && typeof f.id === 'string' && typeof f.path === 'string') : []
+  const frames = Array.isArray(body.frames)
+    ? body.frames
+        .filter(f => f && typeof f.id === 'string' && typeof f.path === 'string')
+        .map(f => ({ id: f.id, path: f.path, exitPath: typeof f.exitPath === 'string' ? f.exitPath : undefined }))
+    : []
   if (!videoFile || frames.length === 0) {
     return NextResponse.json({ error: 'videoFile and non-empty frames[] required' }, { status: 400 })
   }
@@ -67,10 +80,10 @@ export async function POST(req: Request) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
 
-  // Every uploaded frame must live under the caller's own storage folder — a
-  // client can't ask us to read someone else's object.
+  // Every uploaded frame (entry AND exit) must live under the caller's own
+  // storage folder — a client can't ask us to read someone else's object.
   const prefix = `${user.id}/`
-  if (frames.some(f => !f.path.startsWith(prefix))) {
+  if (frames.some(f => !f.path.startsWith(prefix) || (f.exitPath && !f.exitPath.startsWith(prefix)))) {
     return NextResponse.json({ error: 'frame path outside your storage folder' }, { status: 403 })
   }
 
@@ -116,26 +129,50 @@ export async function POST(req: Request) {
   const labels: string[] = []
   const descriptions: string[] = []
   const skipped: Array<{ id: string; reason: string }> = []
+  // Entry frames adopted as the trade's screenshot when it had none — id → the
+  // frame's bare storage PATH (NOT a public URL; the bucket is private + folder-
+  // RLS, so the read boundary signs it). Best-effort back-fill.
+  const backfillScreenshot: Record<string, string> = {}
+
+  // Pull a stored object back as base64 (RLS-scoped to the user's folder). Null
+  // on any failure so callers can skip just that frame.
+  const downloadB64 = async (path: string): Promise<string | null> => {
+    try {
+      const { data: blob, error } = await supabase.storage.from('screenshots').download(path)
+      if (error || !blob) return null
+      return Buffer.from(await blob.arrayBuffer()).toString('base64')
+    } catch {
+      return null
+    }
+  }
 
   let idx = 0
   for (const f of frames) {
     const t = tradesById.get(f.id)
     if (!t) { skipped.push({ id: f.id, reason: 'trade not found' }); continue }
 
-    // Pull the frame bytes back from storage (RLS-scoped to the user's folder).
-    let dataB64: string
-    try {
-      const { data: blob, error } = await supabase.storage.from('screenshots').download(f.path)
-      if (error || !blob) { skipped.push({ id: f.id, reason: 'frame download failed' }); continue }
-      const buf = Buffer.from(await blob.arrayBuffer())
-      dataB64 = buf.toString('base64')
-    } catch {
-      skipped.push({ id: f.id, reason: 'frame download error' }); continue
-    }
+    // Pull the ENTRY frame bytes back from storage.
+    const dataB64 = await downloadB64(f.path)
+    if (dataB64 == null) { skipped.push({ id: f.id, reason: 'frame download failed' }); continue }
 
     idx++
     blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: dataB64 } })
     labels.push(`Trade ${idx} (id=${f.id}) ENTRY @ ${fmtPT(t.entry_time)}`)
+
+    // EXIT frame, when the client uploaded one (exit meaningfully after entry &
+    // in range — the client already gated that). Same trade number in the label
+    // so the model pairs them. A failed exit download drops only the exit frame.
+    if (f.exitPath) {
+      const exitB64 = await downloadB64(f.exitPath)
+      if (exitB64 != null) {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: exitB64 } })
+        labels.push(`Trade ${idx} (id=${f.id}) EXIT @ ${fmtPT(t.exit_time)}`)
+      }
+    }
+
+    // Back-fill a missing screenshot with the entry frame's storage path. Never
+    // overwrite a manual capture.
+    if (!t.screenshot_url) backfillScreenshot[f.id] = f.path
 
     // ── INTERPRETED excursion framing (capture %, $ left, heat vs stop, ×ATR) ──
     const exc = interpretExcursion(t)
@@ -172,13 +209,13 @@ export async function POST(req: Request) {
     ? `\n\nAvailable mistake tags (suggest 0–3 per trade, ONLY from this list — copy labels verbatim, do not invent new ones; pick ONLY mistakes clearly visible in the frame, not speculative):\n${mistakeLibrary.map(m => `  - ${m}`).join('\n')}`
     : ''
 
-  const prompt = `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is the trader's chart at the exact moment they entered a trade.
+  const prompt = `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is the trader's chart at a precise moment — an ENTRY frame (when they pulled the trigger) and, when present, an EXIT frame (when they closed).
 
-For each ENTRY frame, do TWO things:
+For each trade you see frames of, do TWO things:
 
-1) Write 1–3 sentences of HONEST commentary tying what's visibly on screen — chart structure, key levels, order flow, where price sat relative to the setup — to the trade the trader took. Be specific and direct, not encouraging. IMPORTANT: factor in the exit/heat line for each trade (it is already INTERPRETED for you: capture % of the favorable move, $ left on the table, and heat taken as a share of the planned stop / ×ATR). If a trade captured little of a large favorable move, or took most of its stop in heat before working, SAY SO — those are the coachable moments. If the entry frame doesn't support the tagged setup, say so.
+1) Write 1–3 sentences of HONEST commentary tying what's visibly on screen — chart structure, key levels, order flow, where price sat relative to the setup — to the trade the trader took. Be specific and direct, not encouraging. IMPORTANT: factor in the exit/heat line for each trade (it is already INTERPRETED for you: capture % of the favorable move, $ left on the table, and heat taken as a share of the planned stop / ×ATR). If a trade captured little of a large favorable move, or took most of its stop in heat before working, SAY SO — those are the coachable moments. If an EXIT frame is present and price did something obvious between entry and exit that the trader missed (ran further, reversed at a level), point it out. If the entry frame doesn't support the tagged setup, say so.
 
-2) From the ENTRY frame, identify the trader's PLANNED order levels by reading horizontal lines / DOM order labels on the chart:
+2) From the ENTRY frame ONLY (not the exit frame), identify the trader's PLANNED order levels by reading horizontal lines / DOM order labels on the chart:
    - entry_price: the price the order was waiting at
    - stop_price: the working stop line (BELOW entry for longs, ABOVE for shorts). Sierra labels these "Stop|Child-Client" with a "(-N.NNp)" distance suffix.
    - tp1_price / tp2_price: working limit / TP lines (ABOVE entry for longs, BELOW for shorts). TP1 is closer to entry.
@@ -275,23 +312,33 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
 
     // Persist per-trade commentary (same shape as the ffmpeg path) so it
     // survives reload + syncs across devices. Silent-fail on a missing column so
-    // the AI text still returns. NB: unlike the local ffmpeg path this route does
-    // NOT back-fill screenshot_url — the entry frame → screenshot wiring is
-    // deferred to Phase 3 so it can adopt the storage-hardening track's
-    // path-store + signed-URL format rather than writing a soon-stale public URL.
+    // the AI text still returns. Also back-fills screenshot_url with the entry
+    // frame's storage PATH for trades that had none — adopting the storage-
+    // hardening track's path-store format (bare path; the read boundary signs
+    // it) rather than a public URL, which would 400 against the private bucket.
     try {
       const generatedAt = new Date().toISOString()
-      const writes = Object.entries(commentary).map(([id, textOut]) =>
-        supabase.from('trades').update({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const writes: Array<Promise<any>> = Object.entries(commentary).map(([id, textOut]) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const update: Record<string, any> = {
           recording_commentary: {
             text: textOut,
             video_file: videoFile,
             model,
             generated_at: generatedAt,
             detected_levels: detectedLevels[id],
+            ...(backfillScreenshot[id] ? { screenshot_source: 'obs' } : {}),
           },
-        }).eq('id', id),
-      )
+        }
+        if (backfillScreenshot[id]) update.screenshot_url = backfillScreenshot[id]
+        return supabase.from('trades').update(update).eq('id', id)
+      })
+      // A back-filled trade that got no commentary text still needs its
+      // screenshot_url written (rare — frame read but the model skipped that id).
+      for (const [id, path] of Object.entries(backfillScreenshot)) {
+        if (!commentary[id]) writes.push(supabase.from('trades').update({ screenshot_url: path }).eq('id', id))
+      }
       const results = await Promise.allSettled(writes)
       const firstReject = results.find(r => r.status === 'rejected')
       if (firstReject && firstReject.status === 'rejected') console.warn('[recap/commentary] persistence skipped:', firstReject.reason)
@@ -303,6 +350,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
       commentary,
       suggested_mistakes: suggested,
       detected_levels: detectedLevels,
+      auto_screenshots: backfillScreenshot,
       skipped,
       framesUsed: blocks.length - 1,
       model,

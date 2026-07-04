@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare } from 'lucide-react'
+import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare, SlidersHorizontal, Check, Copy } from 'lucide-react'
 import { VideoFrameGrabber, parseObsFilenameStartMs } from '@/lib/browser-frames'
 import { createClient } from '@/lib/supabase/client'
 import type { Trade } from '@/lib/supabase/types'
@@ -113,11 +113,25 @@ export default function BrowserRecap({ trades, date }: Props) {
   const [duration, setDuration] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loadingVideo, setLoadingVideo] = useState(false)
+  // When a recording fails to decode (MKV / unsupported codec), we can't read it
+  // in-browser and ffmpeg.wasm can't either (it would need to load the whole
+  // multi-GB file into wasm memory → OOM). Instead we show a remux recipe: a
+  // stream-copy to MP4 is instant when the video is already H.264 (OBS's usual
+  // encoder), and browsers seek MP4/H.264 natively.
+  const [remuxHelpFor, setRemuxHelpFor] = useState<string | null>(null)
+  const [copiedRemux, setCopiedRemux] = useState(false)
 
   const [anchor, setAnchor] = useState<AnchorState | null>(null)
 
   // Per-trade extracted entry frames (data URLs) + extraction progress.
   const [frames, setFrames] = useState<Record<string, string>>({})
+  // Exit frames (data URLs) for trades whose exit falls inside the recording.
+  const [exitFrames, setExitFrames] = useState<Record<string, string>>({})
+  // Per-trade fine nudge (seconds) applied to the entry frame — lets the user
+  // re-pick the exact moment when the minute-rounded entry_time lands early.
+  const [entryDelta, setEntryDelta] = useState<Record<string, number>>({})
+  // Which trade's ±60s nudge panel is open (only one at a time).
+  const [nudgingId, setNudgingId] = useState<string | null>(null)
   const [extracting, setExtracting] = useState(false)
   const [extractProgress, setExtractProgress] = useState(0)
 
@@ -159,7 +173,12 @@ export default function BrowserRecap({ trades, date }: Props) {
   // Load a picked file → build a grabber, read metadata, seed/restore the anchor.
   const onPick = useCallback(async (picked: File) => {
     setLoadError(null)
+    setRemuxHelpFor(null)
+    setCopiedRemux(false)
     setFrames({})
+    setExitFrames({})
+    setEntryDelta({})
+    setNudgingId(null)
     setLoadingVideo(true)
     // Dispose any previous grabber before replacing it.
     setGrabber(prev => { prev?.dispose(); return null })
@@ -171,6 +190,9 @@ export default function BrowserRecap({ trades, date }: Props) {
       g.dispose()
       setLoadingVideo(false)
       setLoadError(e instanceof Error ? e.message : 'Could not load recording.')
+      // A decode failure is almost always a container/codec the browser can't
+      // play (MKV, etc.) — surface the remux recipe for this exact file.
+      setRemuxHelpFor(picked.name)
       return
     }
     setFile(picked)
@@ -212,8 +234,9 @@ export default function BrowserRecap({ trades, date }: Props) {
     try { localStorage.setItem(anchorKey(date), JSON.stringify(anchor)) } catch { /* ignore */ }
   }, [anchor, date])
 
-  /** Video seconds to seek to for a trade's entry, under the current anchor. */
-  const offsetForEntry = useCallback((iso: string): number => {
+  /** Video seconds to seek to for a trade timestamp (entry or exit), under the
+   *  current anchor. Per-trade entry nudges are applied by the caller. */
+  const offsetForTime = useCallback((iso: string): number => {
     if (!anchor) return NaN
     return (Date.parse(iso) - anchor.recordingStartMs) / 1000 + anchor.fineOffsetSec
   }, [anchor])
@@ -244,28 +267,39 @@ export default function BrowserRecap({ trades, date }: Props) {
     setScrubPreview(null)
   }, [pinTradeId, scrubSec, timedTrades, anchor])
 
-  // Extract an entry frame for every timed trade in range, sequentially.
+  // Extract an entry frame (and an exit frame, when the exit falls inside the
+  // recording) for every timed trade in range, sequentially.
   const extractAll = useCallback(async () => {
     if (!grabber || !anchor) return
     setExtracting(true)
     setExtractProgress(0)
-    const out: Record<string, string> = {}
+    const outEntry: Record<string, string> = {}
+    const outExit: Record<string, string> = {}
     let done = 0
     for (const t of timedTrades) {
-      const off = offsetForEntry(t.entry_time!)
-      if (Number.isFinite(off) && off >= 0 && off <= duration) {
-        try { out[t.id] = await grabber.grab(off) } catch { /* skip this frame */ }
+      const entryOff = offsetForTime(t.entry_time!) + (entryDelta[t.id] ?? 0)
+      if (Number.isFinite(entryOff) && entryOff >= 0 && entryOff <= duration) {
+        try { outEntry[t.id] = await grabber.grab(entryOff) } catch { /* skip this frame */ }
+        // Exit frame — only when the exit is meaningfully after entry AND still
+        // inside the recording (mirrors the ffmpeg path's entry+exit pairing).
+        if (t.exit_time) {
+          const exitOff = offsetForTime(t.exit_time)
+          if (Number.isFinite(exitOff) && exitOff > entryOff + 1 && exitOff <= duration) {
+            try { outExit[t.id] = await grabber.grab(exitOff) } catch { /* skip exit only */ }
+          }
+        }
       }
       done++
       setExtractProgress(done / timedTrades.length)
     }
-    setFrames(out)
+    setFrames(outEntry)
+    setExitFrames(outExit)
     setExtracting(false)
     // A fresh extraction invalidates any prior commentary (new anchor/frames).
     setCommentary({})
     setCommentaryError(null)
     setCommentaryNote(null)
-  }, [grabber, anchor, timedTrades, offsetForEntry, duration])
+  }, [grabber, anchor, timedTrades, offsetForTime, duration, entryDelta])
 
   // Upload the extracted entry frames to the user's own storage folder, then run
   // the server-side AI commentary (capped + model-tiered). The video itself
@@ -282,7 +316,7 @@ export default function BrowserRecap({ trades, date }: Props) {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { setCommentaryError('You must be signed in to run commentary.'); return }
 
-      const uploaded: Array<{ id: string; path: string }> = []
+      const uploaded: Array<{ id: string; path: string; exitPath?: string }> = []
       const ts = Date.now()
       for (const [tradeId, dataUrl] of entries) {
         // Unique path → always an INSERT (the screenshots bucket has no UPDATE
@@ -290,7 +324,18 @@ export default function BrowserRecap({ trades, date }: Props) {
         const path = `${user.id}/recap/${tradeId}-${ts}.jpg`
         const { error } = await supabase.storage.from('screenshots')
           .upload(path, dataUrlToBlob(dataUrl), { contentType: 'image/jpeg', upsert: false })
-        if (!error) uploaded.push({ id: tradeId, path })
+        if (error) continue
+        const ref: { id: string; path: string; exitPath?: string } = { id: tradeId, path }
+        // Upload the exit frame too, when we have one. Failure drops only the
+        // exit — the entry frame still drives commentary.
+        const exitUrl = exitFrames[tradeId]
+        if (exitUrl) {
+          const exitPath = `${user.id}/recap/${tradeId}-exit-${ts}.jpg`
+          const { error: exErr } = await supabase.storage.from('screenshots')
+            .upload(exitPath, dataUrlToBlob(exitUrl), { contentType: 'image/jpeg', upsert: false })
+          if (!exErr) ref.exitPath = exitPath
+        }
+        uploaded.push(ref)
       }
       if (uploaded.length === 0) { setCommentaryError('Frame upload failed — check your connection and try again.'); return }
 
@@ -310,15 +355,15 @@ export default function BrowserRecap({ trades, date }: Props) {
       setCommentaryRunning(false)
       setCommentaryStage('idle')
     }
-  }, [frames, file])
+  }, [frames, exitFrames, file])
 
   const inRangeCount = useMemo(() => {
     if (!anchor) return 0
     return timedTrades.reduce((n, t) => {
-      const off = offsetForEntry(t.entry_time!)
+      const off = offsetForTime(t.entry_time!)
       return n + (Number.isFinite(off) && off >= 0 && off <= duration ? 1 : 0)
     }, 0)
-  }, [timedTrades, offsetForEntry, duration, anchor])
+  }, [timedTrades, offsetForTime, duration, anchor])
 
   const anchorLabel = anchor
     ? anchor.source === 'pinned' ? 'Pinned to a trade'
@@ -370,6 +415,49 @@ export default function BrowserRecap({ trades, date }: Props) {
           <div>{loadError}</div>
         </div>
       )}
+
+      {/* Remux recipe — shown when a recording won't decode in-browser (MKV /
+          unsupported codec). A stream copy to MP4 is instant when the video is
+          already H.264 and makes the file browser-readable. */}
+      {remuxHelpFor && (() => {
+        const base = remuxHelpFor.replace(/\.[^.]+$/, '')
+        const cmd = `ffmpeg -i "${remuxHelpFor}" -c copy "${base}.mp4"`
+        return (
+          <div className="bg-gray-950/50 border border-gray-800 rounded-lg p-3 space-y-2.5 text-xs">
+            <div className="flex items-center gap-2 text-gray-200 font-semibold">
+              <Film className="w-3.5 h-3.5 text-blue-400" /> Convert this recording to MP4
+            </div>
+            <p className="text-gray-400 leading-relaxed">
+              Browsers can only read MP4 / H.264 in-page. This file&apos;s container (e.g. MKV) can&apos;t be decoded here,
+              and converting a multi-GB recording inside the browser isn&apos;t practical. Run this once on your machine —
+              it just re-wraps the video (no re-encode), so it&apos;s near-instant if you recorded with H.264:
+            </p>
+            <div className="flex items-stretch gap-2">
+              <code className="flex-1 bg-black/50 border border-gray-800 rounded px-2.5 py-2 font-mono text-[11px] text-blue-200 break-all">
+                {cmd}
+              </code>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(cmd).then(() => {
+                    setCopiedRemux(true)
+                    setTimeout(() => setCopiedRemux(false), 1500)
+                  }).catch(() => { /* clipboard unavailable */ })
+                }}
+                className="inline-flex items-center gap-1 shrink-0 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-[11px] rounded px-2.5 transition-colors"
+              >
+                {copiedRemux ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedRemux ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <p className="text-gray-500 leading-relaxed">
+              Then pick the new <span className="font-mono text-gray-400">.mp4</span> above. To avoid this next time, set OBS →
+              Settings → Output → Recording to <span className="text-gray-300">Hybrid MP4</span> with the{' '}
+              <span className="text-gray-300">NVIDIA NVENC H.264</span> encoder — crash-safe AND browser-readable.
+            </p>
+          </div>
+        )
+      })()}
 
       {grabber && anchor && (
         <>
@@ -426,7 +514,7 @@ export default function BrowserRecap({ trades, date }: Props) {
                   const first = timedTrades[0]
                   setPinTradeId(first?.id ?? '')
                   // Start the scrubber near where that trade should be.
-                  const off = first?.entry_time ? offsetForEntry(first.entry_time) : 0
+                  const off = first?.entry_time ? offsetForTime(first.entry_time) : 0
                   setScrubSec(Number.isFinite(off) && off >= 0 && off <= duration ? off : 0)
                 }}
                 disabled={timedTrades.length === 0}
@@ -545,14 +633,31 @@ export default function BrowserRecap({ trades, date }: Props) {
           {timedTrades.map((t, i) => {
             const frame = frames[t.id]
             if (!frame) return null
+            const exitFrame = exitFrames[t.id]
+            const delta = entryDelta[t.id] ?? 0
+            const nudging = nudgingId === t.id
             const dir = t.direction?.toUpperCase() ?? '—'
             const dirTone = t.direction === 'long' ? 'text-green-300 bg-green-900/30 border-green-800'
               : t.direction === 'short' ? 'text-red-300 bg-red-900/30 border-red-800'
                 : 'text-gray-400 bg-gray-800 border-gray-700'
             return (
               <div key={t.id} className="border border-gray-800 rounded-lg overflow-hidden">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={frame} alt={`Trade ${i + 1} entry frame`} className="w-full block bg-black" />
+                <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={frame} alt={`Trade ${i + 1} entry frame`} className="w-full block bg-black" />
+                  <span className="absolute top-1 left-1 text-[9px] font-bold uppercase tracking-wider text-white/90 bg-black/60 rounded px-1.5 py-0.5">
+                    Entry{delta !== 0 ? ` ${delta > 0 ? '+' : ''}${delta}s` : ''}
+                  </span>
+                </div>
+                {exitFrame && (
+                  <div className="relative border-t border-gray-800">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={exitFrame} alt={`Trade ${i + 1} exit frame`} className="w-full block bg-black" />
+                    <span className="absolute top-1 left-1 text-[9px] font-bold uppercase tracking-wider text-white/90 bg-black/60 rounded px-1.5 py-0.5">
+                      Exit {fmtPT(t.exit_time)} PT
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] font-mono text-gray-400">
                   <span>#{i + 1}</span>
                   <span>{fmtPT(t.entry_time)} PT</span>
@@ -564,6 +669,33 @@ export default function BrowserRecap({ trades, date }: Props) {
                     </span>
                   )}
                 </div>
+                {/* ±60s nudge — re-pick the exact entry frame. Client-side re-grab
+                    (no server round-trip); the video is already decoded locally. */}
+                {grabber && anchor && (
+                  nudging ? (
+                    <RecapFrameNudge
+                      grabber={grabber}
+                      baseOffset={offsetForTime(t.entry_time!)}
+                      duration={duration}
+                      initialDelta={delta}
+                      initialPreview={frame}
+                      onPicked={(d, url) => {
+                        setFrames(prev => ({ ...prev, [t.id]: url }))
+                        setEntryDelta(prev => ({ ...prev, [t.id]: d }))
+                        setNudgingId(null)
+                      }}
+                      onClose={() => setNudgingId(null)}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setNudgingId(t.id)}
+                      className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-gray-400 hover:text-blue-300 border-t border-gray-800 transition-colors"
+                    >
+                      <SlidersHorizontal className="w-3 h-3" /> Adjust entry frame
+                    </button>
+                  )
+                )}
                 {commentary[t.id] && (
                   <p className="px-2.5 pb-2.5 text-xs text-gray-200 leading-snug border-t border-gray-800 pt-2">
                     {commentary[t.id]}
@@ -611,6 +743,90 @@ export default function BrowserRecap({ trades, date }: Props) {
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Per-trade ±60s entry-frame nudge. Unlike the local FrameNudge (which round-
+ * trips /api/video/frame + ffmpeg), the recording is already decoded in the
+ * browser here, so this re-grabs frames client-side off the shared
+ * VideoFrameGrabber. Typed entry times round to the minute, so the true fill can
+ * sit up to ~59s after the logged time — a ±60s window reaches it.
+ */
+function RecapFrameNudge({
+  grabber, baseOffset, duration, initialDelta, initialPreview, onPicked, onClose,
+}: {
+  grabber: VideoFrameGrabber
+  baseOffset: number
+  duration: number
+  initialDelta: number
+  initialPreview: string
+  onPicked: (delta: number, dataUrl: string) => void
+  onClose: () => void
+}) {
+  const RANGE = 60
+  const [delta, setDelta] = useState(initialDelta)
+  const [preview, setPreview] = useState(initialPreview)
+  const [loading, setLoading] = useState(false)
+
+  // Debounced re-grab whenever the slider moves. Skip when the target is outside
+  // the recording (can't seek there). The grabber serialises seeks internally.
+  useEffect(() => {
+    const target = baseOffset + delta
+    if (!(Number.isFinite(target) && target >= 0 && target <= duration)) return
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show the spinner immediately while the debounced grab runs
+    setLoading(true)
+    const id = setTimeout(() => {
+      grabber.grab(target)
+        .then(url => { if (!cancelled) setPreview(url) })
+        .catch(() => { /* transient seek error */ })
+        .finally(() => { if (!cancelled) setLoading(false) })
+    }, 200)
+    return () => { cancelled = true; clearTimeout(id) }
+  }, [delta, baseOffset, duration, grabber])
+
+  const label = delta === 0 ? 'at logged entry' : `${delta > 0 ? '+' : ''}${delta}s from entry`
+
+  return (
+    <div className="border-t border-gray-800 p-2.5 space-y-2 bg-gray-950/40">
+      <div className="relative w-full rounded-md overflow-hidden bg-black/40 border border-gray-800" style={{ minHeight: 100 }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={preview} alt="entry frame preview" className="w-full block" />
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+            <Loader2 className="w-4 h-4 animate-spin text-gray-300" />
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-gray-500 font-mono w-8 text-right">-{RANGE}s</span>
+        <input
+          type="range" min={-RANGE} max={RANGE} step={1}
+          value={delta}
+          onChange={e => setDelta(Number(e.target.value))}
+          className="flex-1 accent-blue-500"
+        />
+        <span className="text-[10px] text-gray-500 font-mono w-8">+{RANGE}s</span>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-mono text-blue-300">{label}</span>
+        <div className="flex items-center gap-2">
+          {delta !== 0 && (
+            <button type="button" onClick={() => setDelta(0)} className="text-[10px] text-gray-400 hover:text-white">Reset</button>
+          )}
+          <button type="button" onClick={onClose} className="text-[10px] text-gray-400 hover:text-white px-1">Cancel</button>
+          <button
+            type="button"
+            onClick={() => onPicked(delta, preview)}
+            disabled={loading}
+            className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[11px] font-medium px-2.5 py-1 rounded-md transition-colors"
+          >
+            <Check className="w-3 h-3" /> Use this frame
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
