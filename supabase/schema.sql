@@ -610,6 +610,10 @@ create table if not exists trader_profile (
   default_instrument text,
   account_size numeric,
   timezone text,
+  -- First-time setup wizard state + per-user risk/process/execution scoring
+  -- profile (the Coach Score grades against this). Migration: 20260703_onboarding_profile.sql.
+  onboarding_json jsonb not null default '{}'::jsonb,
+  scoring_profile_json jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 
