@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 import { resilientUpsert } from '@/lib/resilient-upsert'
 import { userConflict } from '@/lib/tenant-conflict'
 import { normalizeTagArray, type TradeTags } from '@/lib/supabase/types'
+import { signDayScreenshots, screenshotStoragePath, normalizeStoredScreenshot } from '@/lib/storage-url'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -15,6 +17,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ date: s
     .from('trading_days').select('*').eq('date', date).single() as { data: TradingDay | null }
   const { data: context } = await supabase
     .from('market_context').select('*').eq('trading_day_id', day?.id ?? '').single() as { data: MarketContext | null }
+  await signDayScreenshots(supabase, day)
   return NextResponse.json({ day: day ?? null, context: context ?? null })
 }
 
@@ -22,7 +25,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
   const { date } = await params
   const supabase: AnyClient = await createClient()
   const body = await req.json()
-  const { marketContext, prepNotes, chartScreenshotUrl, dayType, dayTypes, aiAnalysis, prepStartedAt, prepCompletedAt } = body
+  const { marketContext, prepNotes, dayType, dayTypes, aiAnalysis, prepStartedAt, prepCompletedAt } = body
+  let { chartScreenshotUrl } = body
+  // Hosted build: de-sign an echoed signed URL back to a stable storage path.
+  if (!LOCAL_FEATURES_ENABLED && chartScreenshotUrl !== undefined) {
+    chartScreenshotUrl = normalizeStoredScreenshot(chartScreenshotUrl)
+  }
 
   // For prep_started_at: only set if not already set on the row (preserve the
   // original first-edit timestamp across subsequent saves). Read the existing
@@ -128,6 +136,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     }
   }
 
+  await signDayScreenshots(supabase, day)
   return NextResponse.json({ day, droppedColumns: droppedColumns.length > 0 ? droppedColumns : undefined })
 }
 
@@ -177,13 +186,11 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ date:
     if (t.screenshot_url) blobUrls.push(t.screenshot_url)
   }
 
-  // Convert public URLs → storage paths and delete from the screenshots bucket
-  const marker = '/storage/v1/object/public/screenshots/'
+  // Recover storage paths from each stored value (bare path, signed URL, or
+  // legacy public URL) and delete from the screenshots bucket. Cross-project
+  // absolute URLs yield null and are skipped.
   const paths = blobUrls
-    .map(u => {
-      const idx = u.indexOf(marker)
-      return idx === -1 ? null : decodeURIComponent(u.slice(idx + marker.length).split('?')[0])
-    })
+    .map(u => screenshotStoragePath(u))
     .filter((p): p is string => p != null)
 
   let blobsDeleted = 0

@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import IntradayClient from '@/components/intraday/IntradayClient'
+import { signTradeScreenshots } from '@/lib/storage-url'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,6 +29,8 @@ export default async function IntradayPage({
     const { data } = await supabase
       .from('trades').select('*').eq('trading_day_id', day.id).order('entry_time', { ascending: true })
     trades = (data ?? []) as Trade[]
+    // Sign private-bucket screenshot paths for the client (no-op on public URLs).
+    await signTradeScreenshots(supabase, trades)
   }
 
   const { data: tags } = await supabase.from('trade_tags').select('*').order('sort_order')

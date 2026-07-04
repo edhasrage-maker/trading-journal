@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { clientError } from '@/lib/api-error'
+import { signTradeScreenshot, normalizeStoredScreenshot } from '@/lib/storage-url'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { NextResponse } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -15,6 +17,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { date: _date, ...tradeData } = body
   void _date
 
+  // Hosted build: de-sign echoed screenshot URLs back to a stable storage path.
+  if (!LOCAL_FEATURES_ENABLED && 'screenshot_url' in tradeData) {
+    tradeData.screenshot_url = normalizeStoredScreenshot(tradeData.screenshot_url)
+  }
+
   const { data, error } = await supabase
     .from('trades')
     .update({ ...tradeData, updated_at: new Date().toISOString() })
@@ -22,6 +29,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     .select().single()
 
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
+  await signTradeScreenshot(supabase, data)
   return NextResponse.json(data)
 }
 

@@ -3,6 +3,7 @@ import PrepClient from '@/components/prep/PrepClient'
 import { computeDrAdr } from '@/lib/dr-adr'
 import { fetchHighImpactNews } from '@/lib/economic-calendar'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 export default async function PrepPage({ params }: { params: Promise<{ date: string }> }) {
@@ -90,6 +91,10 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
   let best = 0
   for (const [sym, c] of symbolCounts) if (c > best) { chartSymbol = sym; best = c }
   if (!chartSymbol) chartSymbol = symbolForBars
+
+  // Sign private-bucket screenshot paths for the client (no-op on public URLs).
+  await signDayScreenshots(supabase, day)
+  await signTradeScreenshots(supabase, trades)
 
   return (
     <PrepClient

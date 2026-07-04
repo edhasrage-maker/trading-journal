@@ -3,6 +3,7 @@ import EodClient from '@/components/eod/EodClient'
 import { fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from '@/lib/atr'
 import { configuredAtr } from '@/lib/atr-config'
 import { getAtrConfig } from '@/lib/atr-config-server'
+import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,6 +89,13 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       if (ext != null) postExitByTradeId[t.id] = ext
     }
   }
+
+  // Private-bucket screenshots are stored as storage paths; mint signed URLs at
+  // this server boundary so the client renders them. Legacy/public URLs pass
+  // through unchanged (local owner build). Runs after the ATR/post-exit loops
+  // above, which only read numeric/time fields.
+  await signDayScreenshots(supabase, day)
+  await signTradeScreenshots(supabase, trades)
 
   return (
     <EodClient
