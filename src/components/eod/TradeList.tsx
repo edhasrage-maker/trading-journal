@@ -245,7 +245,7 @@ export default function TradeList({
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
       <div className="flex items-center justify-between mb-3">
         <h2 className="font-semibold text-white text-sm">Trades ({trades.length})</h2>
-        <div className="relative" ref={colsRef}>
+        <div className="relative hidden md:block" ref={colsRef}>
           <button
             type="button"
             onClick={() => setColsOpen(o => !o)}
@@ -277,7 +277,98 @@ export default function TradeList({
           )}
         </div>
       </div>
-      <div className="overflow-x-auto">
+      {/* Mobile: each trade as a stacked card — the wide table is unreadable on
+          a phone. Shows all fields (vertical space is cheap). Desktop keeps the
+          full sortable table below. */}
+      <div className="md:hidden space-y-2.5">
+        {sortedTrades.map(t => {
+          const pnl = t.pnl ?? 0
+          const isSelected = selectedIds.has(t.id)
+          const isLong = t.direction === 'long'
+          const isShort = t.direction === 'short'
+          const setup = t.tags_json?.setups?.[0]
+          const time = t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'
+          const summary = summaries[t.id]
+          const liveAtr = liveAtrByTradeId?.[t.id]
+          const r = rMultiple(t, liveAtr)
+          const rAtrBased = r != null && t.stop_price == null
+          const rCls = r == null ? 'text-gray-600' : r >= 1 ? 'text-green-400' : r >= 0 ? 'text-green-500' : r >= -0.5 ? 'text-orange-400' : 'text-red-400'
+          const xc = mfeMaePoints(t)
+          const maePts = xc?.mae ?? null
+          const atrRef = liveAtr ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m
+          const maeAtr = (maePts != null && atrRef != null && atrRef > 0) ? maePts / atrRef : null
+          const maeMag = maePts == null ? '—'
+            : mfeUnit === 'dollars' ? '$' + Math.round(maePts * (t.quantity ?? 1) * symbolToMultiplier(t.symbol ?? '')).toLocaleString()
+            : mfeUnit === 'atr' ? (maeAtr == null ? '—' : `${maeAtr.toFixed(1)}×`)
+            : maePts.toFixed(1)
+          const winnerHeat = (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
+          const stopHeat = t.stop_price != null ? maeHeatRatio(t) : null
+          const ext = postExitByTradeId?.[t.id]
+          let postLabel = '—'
+          let postCls = 'text-gray-600'
+          if (ext) {
+            const capturedPts = (t.entry_price != null && t.exit_price != null)
+              ? (isLong ? t.exit_price - t.entry_price : t.entry_price - t.exit_price) : null
+            const cont = ext.continued_favorable_pts
+            const against = ext.continued_against_pts
+            if (cont > against) {
+              const pct = (capturedPts != null && capturedPts > 0) ? Math.round((cont / capturedPts) * 100) : null
+              postLabel = `+${cont.toFixed(1)} pts${pct != null ? ` (${pct}%)` : ''}`
+              postCls = cont >= 3 ? 'text-green-400' : 'text-yellow-400'
+            } else if (against > 0.1) {
+              postLabel = `−${against.toFixed(1)} pts`
+              postCls = 'text-red-400'
+            }
+          }
+          return (
+            <div
+              key={t.id}
+              onClick={() => onRowOpen?.(t.id)}
+              className={`rounded-xl border overflow-hidden ${isSelected ? 'border-blue-600 bg-blue-950/20' : 'border-gray-800 bg-gray-950/40'}`}
+            >
+              <div className="flex items-center gap-2.5 px-3 py-2.5 border-b border-gray-800/70">
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onToggleSelect(t.id) }}
+                  className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-blue-600 border-blue-500 text-white' : 'border-gray-600 bg-gray-900'}`}
+                  aria-label="Select trade"
+                >
+                  {isSelected ? <Check className="w-3 h-3" /> : null}
+                </button>
+                <span className="text-sm text-gray-300" style={{ fontVariantNumeric: 'tabular-nums' }}>{time}</span>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isLong ? 'bg-green-500/15 text-green-400' : isShort ? 'bg-red-500/15 text-red-400' : 'bg-gray-700 text-gray-400'}`}>
+                  {isLong ? '▲ LONG' : isShort ? '▼ SHORT' : '—'}
+                </span>
+                <span className="flex-1" />
+                <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
+                </span>
+              </div>
+              <div className="px-3 py-2.5">
+                {setup && (
+                  <span className="inline-block text-[11px] text-gray-300 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded mb-2">{setup}</span>
+                )}
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[13px]">
+                  <MobileMetric label="Entry" value={t.entry_price ?? '—'} />
+                  <MobileMetric label="Qty" value={t.quantity ?? '—'} />
+                  <MobileMetric label="Stop" value={t.stop_price ?? '—'} />
+                  <MobileMetric label="ATR@" value={liveAtr != null ? liveAtr.toFixed(2) : '—'} />
+                  <MobileMetric label="TP1" value={t.tp1_price ?? '—'} />
+                  <MobileMetric label="R" value={r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R${rAtrBased ? '*' : ''}`} valueClass={rCls} />
+                  <MobileMetric label="MFE" value={captureDisplay(t, bars ?? undefined) ?? '—'} />
+                  <MobileMetric label="MAE" value={maeMag + (stopHeat != null ? ` · ${Math.round(Math.max(0, stopHeat) * 100)}%` : '')} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} />
+                  <MobileMetric label="Post-Exit" value={postLabel} valueClass={postCls} />
+                </div>
+                {(summary || t.notes?.trim()) && (
+                  <p className="mt-2.5 text-xs text-gray-400 leading-snug">{summary ?? t.notes?.trim()}</p>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="hidden md:block overflow-x-auto">
         <table className="w-full text-xs font-mono">
           {/* Sticky header: stays pinned to the top of the viewport as the
               user scrolls through trades. bg-gray-900 (matches the card
@@ -706,4 +797,14 @@ function SortIcon({ col, current, dir }: { col: SortKey; current: SortKey; dir: 
   return dir === 'asc'
     ? <ArrowUp className="w-2.5 h-2.5 text-blue-400" />
     : <ArrowDown className="w-2.5 h-2.5 text-blue-400" />
+}
+
+/** One label/value row inside a mobile trade card. */
+function MobileMetric({ label, value, valueClass }: { label: string; value: string | number; valueClass?: string }) {
+  return (
+    <div className="flex items-center justify-between border-b border-gray-800/50 pb-1">
+      <span className="text-gray-500 text-xs">{label}</span>
+      <span className={valueClass ?? 'text-gray-300'} style={{ fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+    </div>
+  )
 }
