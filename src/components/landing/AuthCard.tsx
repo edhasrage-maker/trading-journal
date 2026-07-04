@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Mail, Loader2, Lock } from 'lucide-react'
+import { Mail, Loader2, Lock, Eye } from 'lucide-react'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 
 type Mode = 'magic' | 'password' | 'signup'
 
@@ -17,6 +18,21 @@ export default function AuthCard() {
   const [sent, setSent] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const demo = async () => {
+    setError(null); setLoading(true)
+    try {
+      const res = await fetch('/api/demo-login', { method: 'POST' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'Demo is unavailable right now.')
+      }
+      window.location.href = '/dashboard'
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Demo is unavailable right now.')
+      setLoading(false)
+    }
+  }
 
   const oauth = async (provider: 'google' | 'discord') => {
     setError(null); setLoading(true)
@@ -71,6 +87,24 @@ export default function AuthCard() {
     <div className="w-full max-w-sm rounded-2xl border border-gray-800 bg-gray-900 p-6 shadow-xl">
       <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Get started free</h2>
       <p className="text-gray-400 text-sm mt-0.5">Enter your email to start reviewing your trading game.</p>
+
+      {/* Explore the demo — one-click, no signup (hosted build only) */}
+      {!LOCAL_FEATURES_ENABLED && (
+        <>
+          <button
+            type="button" onClick={demo} disabled={loading}
+            className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-amber-500/60 bg-amber-500/10 text-amber-300 font-semibold py-2.5 text-sm hover:bg-amber-500/20 transition-colors disabled:opacity-60"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+            Explore the demo — no signup
+          </button>
+          <div className="flex items-center gap-3 my-4">
+            <div className="h-px flex-1 bg-gray-800" />
+            <span className="text-[11px] uppercase tracking-wide text-gray-600">or sign up</span>
+            <div className="h-px flex-1 bg-gray-800" />
+          </div>
+        </>
+      )}
 
       {/* Social */}
       <div className="mt-4 space-y-2">

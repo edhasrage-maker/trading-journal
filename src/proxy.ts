@@ -1,5 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { isDemoEmail } from '@/lib/demo'
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -27,6 +29,27 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
+
+  // Read-only demo guard. The seeded "Explore the demo" account may browse every
+  // screen but must never mutate (edit/delete the demo data, or spend Anthropic
+  // budget via the AI routes). Every write in the app is a non-GET request, so
+  // blocking non-GET for the demo user here — reusing the `user` we already
+  // fetched — covers all ~46 write routes + ~15 AI routes + server actions at
+  // once. Allowlisted: establishing/ending its own session. Hosted build only;
+  // the local single-user app has no demo account.
+  if (
+    !LOCAL_FEATURES_ENABLED &&
+    !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
+    !pathname.startsWith('/api/demo-login') &&
+    !pathname.startsWith('/auth') &&
+    isDemoEmail(user?.email)
+  ) {
+    return NextResponse.json(
+      { error: "This is a read-only demo. Sign up (it's free) to save your own trades." },
+      { status: 403 },
+    )
+  }
+
   // Public (no auth): the marketing landing (/), the login entry, and the auth
   // callback. Everything else requires a signed-in user. NB `/` must be an
   // EXACT match — `startsWith('/')` would make every route public.
