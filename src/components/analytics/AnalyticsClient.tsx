@@ -390,7 +390,7 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
         </>
       )}
 
-      <JournalThemes from={startDate} to={endDate} />
+      <JournalThemes />
 
       {/* Drilldown drawer — uses `filtered` (date-range-scoped) and includes
           both native + historical trades. Closes via Escape, backdrop, or X. */}
