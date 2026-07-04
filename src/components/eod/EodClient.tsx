@@ -902,9 +902,9 @@ export default function EodClient({
           new live-bars rendering. Screenshot path will be removed in Phase 5
           of the chart migration once Live has proven itself across the
           intraday + dashboard surfaces too.
-          Hidden on mobile (hidden md:block) — the chart isn't usable on a phone
-          yet, so we drop the whole toggle + chart area there. */}
-      <div className="hidden md:block space-y-6">
+          Shown on mobile too — LiveChart now self-measures its width and uses
+          a shorter mobile height, so the chart + toggle are usable on a phone. */}
+      <div className="space-y-6">
       <div className="flex justify-end -mb-2">
         <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
           <button

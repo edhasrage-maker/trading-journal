@@ -292,6 +292,18 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // Mobile gets a shorter chart so it doesn't swallow the phone viewport.
+  // Tracks the same `md` breakpoint (max-width: 767px) the page layout uses.
+  // Starts false so SSR/first paint matches desktop, then corrects on mount.
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)')
+    const update = () => setIsMobile(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+  const effHeight = isMobile ? Math.min(height, 360) : height
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   // Current candle OHLC (kept in a ref) so the price-scale autoscale provider
@@ -709,10 +721,14 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // Initialize chart once
   useEffect(() => {
     if (!containerRef.current) return
-    if (LIVECHART_DEBUG) console.log('[livechart] CHART-CREATE', { tf: chartTfMins, height })
+    if (LIVECHART_DEBUG) console.log('[livechart] CHART-CREATE', { tf: chartTfMins, height: effHeight })
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
-      height,
+      height: effHeight,
+      // Touch: let a vertical finger-drag scroll the PAGE instead of trapping
+      // the chart (so the user can scroll past it on a phone). Horizontal drag
+      // still pans; pinch still zooms (handleScale defaults stay on).
+      handleScroll: { vertTouchDrag: false },
       layout: {
         background: { color: '#030712' },
         textColor: '#9ca3af',
@@ -811,10 +827,26 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       ...overlayOpts,
     })
 
-    const obs = new ResizeObserver(([entry]) => {
-      chart.applyOptions({ width: entry.contentRect.width })
-    })
+    // Keep the chart width in sync with its container. Guarded against 0 —
+    // a 0-width apply (e.g. while the container is briefly display:none on a
+    // layout flip) would blank the canvas, and the correcting resize doesn't
+    // always re-fire. We read clientWidth (the real laid-out width) rather
+    // than trusting a possibly-stale contentRect.
+    const syncWidth = () => {
+      const w = containerRef.current?.clientWidth ?? 0
+      if (w > 0) chart.applyOptions({ width: w })
+    }
+    const obs = new ResizeObserver(() => syncWidth())
     obs.observe(containerRef.current)
+    // Safety net for the mobile blank-render: when the chart was created while
+    // its container had no width yet (hidden/off-screen at mount), remeasure
+    // and resize the moment it scrolls into view. rAF defers to after layout.
+    const io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) requestAnimationFrame(syncWidth)
+    })
+    io.observe(containerRef.current)
+    // And once right after creation, in case clientWidth was 0 at createChart.
+    requestAnimationFrame(syncWidth)
 
     // Hover-to-show-trade: when the crosshair lands within ~90s of a trade's
     // entry time, surface that trade in a popup. Reads tradesRef so we never
@@ -850,6 +882,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     return () => {
       if (LIVECHART_DEBUG) console.log('[livechart] CHART-DESTROY', { tf: chartTfMins })
       obs.disconnect()
+      io.disconnect()
       priceLinesRef.current = []
       levelLinesRef.current = []
       tradeLinesRef.current = []
@@ -862,7 +895,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       tradeArrowsRef.current = null
       annotationsPrimRef.current = null
     }
-  }, [height, chartTfMins])
+  }, [effHeight, chartTfMins])
 
   // When TF changes, force the saved-view restore path to fire again on the
   // fresh chart instance (the chart-creation effect just above this depends
@@ -1885,7 +1918,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
 
       {/* Chart container — always rendered so the chart instance can mount */}
       <div className="relative">
-        <div ref={containerRef} onClick={handleClick} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
+        <div ref={containerRef} onClick={handleClick} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} style={{ height: effHeight, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
 
         {/* Draw overlay — present only in Drawing Mode. Captures the mouse:
             right-click opens the tool menu, left-drag draws a zone once armed,
@@ -1893,7 +1926,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         {drawingMode && (
           <div
             className={`absolute inset-0 z-30 ${armedTool === 'zone' ? 'cursor-crosshair' : 'cursor-default'}`}
-            style={{ height }}
+            style={{ height: effHeight }}
             onMouseDown={onDrawDown}
             onMouseMove={onDrawMove}
             onMouseUp={onDrawUp}
