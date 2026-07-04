@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import AppMain from '@/components/AppMain'
 import CoachChat from '@/components/CoachChat'
+import OnboardingGate from '@/components/onboarding/OnboardingGate'
 import { UiModeProvider } from '@/lib/ui-mode'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 
@@ -20,7 +21,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <UiModeProvider>
       <div className="flex min-h-screen">
         <Sidebar isAdmin={isAdmin} />
-        <AppMain>{children}</AppMain>
+        <AppMain>
+          {/* Cloud-only setup nudge; the local owner's app is untouched. */}
+          {!LOCAL_FEATURES_ENABLED && <OnboardingGate />}
+          {children}
+        </AppMain>
         {/* Floating Trade Coach — bottom-right icon on every page; click to expand */}
         <CoachChat />
       </div>
