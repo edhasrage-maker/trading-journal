@@ -124,6 +124,7 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
             trades={chartTrades}
             hoverTradeId={hoverTradeId}
             onTradeActivate={onTradeActivate}
+            onDismissHover={() => setHoverTradeId(null)}
             prefsOverride={chartPrefs ?? null}
             readOnly
             height={520}

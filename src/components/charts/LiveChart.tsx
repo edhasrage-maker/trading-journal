@@ -40,6 +40,9 @@ interface Props {
    *  trade list is on-screen), the parent scrolls to that trade's row. When
    *  omitted, LiveChart falls back to navigating to /eod/<date>?trade=<id>. */
   onTradeActivate?: (tradeId: string) => void
+  /** Called when the user clicks a blank chart spot while a trade popup is
+   *  pinned — lets the parent clear its hoverTradeId so the popup dismisses. */
+  onDismissHover?: () => void
   /** Fires whenever the computed session levels load/refresh — the prep page
    *  uses this to auto-fill the Market Context form (PDH/PDL/IBH/IBL/ONH/ONL)
    *  from the same values the chart draws, for fields the user hasn't edited. */
@@ -285,7 +288,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onLevels, readOnly = false, prefsOverride = null },
+  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onDismissHover, onLevels, readOnly = false, prefsOverride = null },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -591,6 +594,18 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     setArrowMenu(null)
     if (onTradeActivate) onTradeActivate(id)
     else if (!readOnly) router.push(`/eod/${date}?trade=${id}`)
+  }
+
+  // Single left-click on a BLANK spot (not an arrow) dismisses a pinned trade
+  // popup — so a row-clicked/hovered popup can be closed by clicking away.
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const id = arrowAt(e.clientX - rect.left, e.clientY - rect.top)
+    if (id || !hover) return
+    suppressCrosshairRef.current = false
+    chartRef.current?.clearCrosshairPosition()
+    setHover(null)
+    onDismissHover?.()
   }
 
   const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1868,7 +1883,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
 
       {/* Chart container — always rendered so the chart instance can mount */}
       <div className="relative">
-        <div ref={containerRef} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
+        <div ref={containerRef} onClick={handleClick} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} style={{ height, width: '100%' }} className={loading || error ? 'opacity-30' : ''} />
 
         {/* Draw overlay — present only in Drawing Mode. Captures the mouse:
             right-click opens the tool menu, left-drag draws a zone once armed,
