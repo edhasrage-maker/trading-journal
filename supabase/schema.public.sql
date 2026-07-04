@@ -28,10 +28,13 @@
 --   Per-user (owner RLS `auth.uid() = user_id`, default `auth.uid()`):
 --     trading_days, market_context, trades, trade_tags, daily_prep,
 --     chart_prefs, bar_imports, historical_trades,
---     eod_themes_analysis, trader_profile, weekly_recap, chart_annotations
+--     eod_themes_analysis, trader_profile, weekly_recap, chart_annotations,
+--     condition_thresholds, condition_lookup, condition_lookup_meta  (section 10 —
+--       each trader's Morning Conditions buckets are computed from their own
+--       history by the nightly cron; the service role writes across users)
 --   Shared read-only (any authenticated user may SELECT; writes via service
 --   role only, which bypasses RLS):
---     performance_stats, condition_thresholds, condition_lookup, lookup_metadata,
+--     performance_stats, lookup_metadata,
 --     ohlcv_bars  (market bars are identical for every user — fed centrally)
 -- ============================================================================
 
@@ -240,7 +243,9 @@ do $$
 declare
   t text;
   p record;
-  shared text[] := array['performance_stats','condition_thresholds','condition_lookup','lookup_metadata','ohlcv_bars'];
+  -- condition_thresholds + condition_lookup were shared once; they are now
+  -- PER-USER (see section 10). lookup_metadata stays shared (generic KV).
+  shared text[] := array['performance_stats','lookup_metadata','ohlcv_bars'];
 begin
   foreach t in array shared loop
     execute format('alter table public.%I enable row level security', t);
@@ -516,4 +521,75 @@ begin
   end if;
 end $$;
 grant execute on function public.consume_ai_usage(text, int) to authenticated;
+
+
+-- ----------------------------------------------------------------------------
+-- 10. Per-user Morning Conditions methodology.
+--     condition_thresholds + condition_lookup were originally shared reference
+--     tables; they are now per-user so each trader's prep grades come from their
+--     own history. The nightly cron (/api/cron/refresh-condition-lookup) rebuilds
+--     every user via the service role (which bypasses the owner RLS below).
+--     Idempotent — safe to re-run; empty on a fresh project so NOT NULL/PK
+--     recomposition never fails.
+--
+--     NB the EXISTING public project migrates via
+--     supabase/migrations/20260703_condition_lookup_per_user.public.sql (which
+--     also backfills the founder's rows). This block is the fresh-provision form.
+-- ----------------------------------------------------------------------------
+do $$
+declare t text; p record;
+begin
+  foreach t in array array['condition_thresholds','condition_lookup'] loop
+    -- add user_id (default auth.uid() so the Settings self-refresh stamps it)
+    execute format(
+      'alter table public.%I add column if not exists user_id uuid '
+      || 'references auth.users(id) on delete cascade default auth.uid()', t);
+    execute format('alter table public.%I alter column user_id set not null', t);
+    -- owner RLS in place of the old shared-read policy
+    execute format('alter table public.%I enable row level security', t);
+    for p in select policyname from pg_policies where schemaname = 'public' and tablename = t loop
+      execute format('drop policy if exists %I on public.%I', p.policyname, t);
+    end loop;
+    execute format(
+      $f$create policy "Owner access" on public.%I
+           for all using (auth.uid() = user_id) with check (auth.uid() = user_id)$f$, t);
+  end loop;
+
+  -- recompose primary keys to (user_id, natural-key)
+  if not exists (
+    select 1 from pg_constraint con
+    join unnest(con.conkey) ak(attnum) on true
+    join pg_attribute a on a.attrelid = con.conrelid and a.attnum = ak.attnum
+    where con.conrelid = 'public.condition_thresholds'::regclass and con.contype = 'p' and a.attname = 'user_id'
+  ) then
+    execute (select format('alter table public.condition_thresholds drop constraint %I', conname)
+             from pg_constraint where conrelid = 'public.condition_thresholds'::regclass and contype = 'p');
+    alter table public.condition_thresholds add primary key (user_id, metric);
+  end if;
+  if not exists (
+    select 1 from pg_constraint con
+    join unnest(con.conkey) ak(attnum) on true
+    join pg_attribute a on a.attrelid = con.conrelid and a.attnum = ak.attnum
+    where con.conrelid = 'public.condition_lookup'::regclass and con.contype = 'p' and a.attname = 'user_id'
+  ) then
+    execute (select format('alter table public.condition_lookup drop constraint %I', conname)
+             from pg_constraint where conrelid = 'public.condition_lookup'::regclass and contype = 'p');
+    alter table public.condition_lookup add primary key (user_id, condition_id);
+  end if;
+end $$;
+
+create index if not exists condition_thresholds_user_idx on public.condition_thresholds(user_id);
+create index if not exists condition_lookup_user_idx     on public.condition_lookup(user_id);
+
+-- per-user refresh vintage (replaces the single lookup_metadata key on cloud)
+create table if not exists public.condition_lookup_meta (
+  user_id          uuid primary key references auth.users(id) on delete cascade default auth.uid(),
+  refreshed_at     timestamptz,
+  lookup_row_count integer,
+  updated_at       timestamptz default now()
+);
+alter table public.condition_lookup_meta enable row level security;
+drop policy if exists "Owner access" on public.condition_lookup_meta;
+create policy "Owner access" on public.condition_lookup_meta
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 -- ============================================================================

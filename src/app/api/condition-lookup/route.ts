@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { runLookup, type MetricInputs } from '@/lib/condition-lookup'
 import type { ConditionLookupRow, ConditionThreshold } from '@/lib/supabase/types'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,34 +46,42 @@ async function handle(req: Request) {
 
   const supabase: AnyClient = await createClient()
 
+  // Vintage source differs by deployment: the LOCAL single-tenant build stamps
+  // one global key in lookup_metadata; the CLOUD per-user build keeps a row per
+  // user in condition_lookup_meta (RLS scopes the read to the caller).
+  const vintagePromise = LOCAL_FEATURES_ENABLED
+    ? (supabase.from('lookup_metadata').select('value').eq('key', 'condition_lookup_refreshed_at').maybeSingle() as Promise<{ data: { value: { at: string } | null } | null }>)
+      .then(({ data }) => data?.value?.at ?? null)
+    : (supabase.from('condition_lookup_meta').select('refreshed_at').maybeSingle() as Promise<{ data: { refreshed_at: string | null } | null }>)
+      .then(({ data }) => data?.refreshed_at ?? null)
+
   const [
     { data: thresholds, error: tErr },
     { data: lookup, error: lErr },
-    { data: meta },
+    refreshedAt,
   ] = await Promise.all([
     supabase.from('condition_thresholds').select('*') as Promise<{ data: ConditionThreshold[] | null; error: { message: string } | null }>,
     supabase.from('condition_lookup').select('*') as Promise<{ data: ConditionLookupRow[] | null; error: { message: string } | null }>,
-    supabase.from('lookup_metadata').select('value, updated_at').eq('key', 'condition_lookup_refreshed_at').maybeSingle() as Promise<{ data: { value: { at: string } | null; updated_at: string } | null }>,
+    vintagePromise,
   ])
 
   if (tErr) return NextResponse.json({ error: `Failed to load thresholds: ${tErr.message}` }, { status: 500 })
   if (lErr) return NextResponse.json({ error: `Failed to load lookup: ${lErr.message}` }, { status: 500 })
 
+  // Per-user builds: a new trader with little/no history has no buckets yet. The
+  // local build should always have data (the manual button seeds it), so keep
+  // pointing there for setup. Both surface via the panel's `error` string.
+  const emptyMsg = LOCAL_FEATURES_ENABLED
+    ? 'No condition data loaded. Click "Refresh now" in Settings → Morning Conditions.'
+    : 'Not enough trade history yet — your Morning Conditions populate after the nightly refresh once you’ve logged enough sessions.'
   if (!thresholds || thresholds.length === 0) {
-    return NextResponse.json(
-      { error: 'No condition thresholds loaded. Upload the CSVs at /settings/condition-lookup first.' },
-      { status: 503 },
-    )
+    return NextResponse.json({ error: emptyMsg }, { status: 503 })
   }
   if (!lookup || lookup.length === 0) {
-    return NextResponse.json(
-      { error: 'No condition lookup rows loaded. Upload the CSVs at /settings/condition-lookup first.' },
-      { status: 503 },
-    )
+    return NextResponse.json({ error: emptyMsg }, { status: 503 })
   }
 
   const outcome = runLookup(inputs, thresholds, lookup)
-  const refreshedAt = meta?.value?.at ?? null
 
   return NextResponse.json({
     ...outcome,

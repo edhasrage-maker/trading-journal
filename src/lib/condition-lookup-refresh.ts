@@ -6,6 +6,11 @@ import type {
   ConditionComboType,
 } from '@/lib/supabase/types'
 
+// Supabase clients are structurally identical for our purposes (server session
+// client OR service-role client); we only call .from(...).select/insert/delete.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyClient = any
+
 /**
  * Pure aggregation logic to derive the condition_thresholds + condition_lookup
  * tables directly from the live trade history. Replaces the manual CSV-upload
@@ -442,6 +447,163 @@ export function buildLookupRows(
   }
 
   return rows
+}
+
+// ─── Orchestration: read → build → write ─────────────────────────────────────
+
+export interface RefreshResult {
+  thresholds_inserted: number
+  lookup_inserted: number
+  trades_aggregated: number
+  market_context_rows: number
+  refreshed_at: string
+}
+
+/**
+ * Recompute condition_thresholds + condition_lookup directly from live history
+ * and stamp the vintage. This is the shared engine behind BOTH the manual
+ * "Refresh now" button and the nightly Vercel cron.
+ *
+ * `userId`:
+ *   - `null`  → GLOBAL pass (the single-tenant LOCAL build, whose condition
+ *               tables have no `user_id`). Reads all trades, wipes+rewrites the
+ *               whole table, stamps `lookup_metadata.condition_lookup_refreshed_at`.
+ *   - string  → PER-USER pass (the multi-tenant CLOUD build). Scopes every read
+ *               to that user, stamps each written row with `user_id`, wipes only
+ *               that user's rows, and records the vintage in `condition_lookup_meta`.
+ *
+ * The pure aggregation (deriveMetrics / computeThresholds / buildLookupRows) is
+ * identical for both — only the query scope + write target differ.
+ *
+ * `refreshedAtIso` is injected so a caller looping many users can stamp them all
+ * with one consistent timestamp; defaults to now.
+ */
+export async function refreshConditionLookup(
+  supabase: AnyClient,
+  userId: string | null,
+  refreshedAtIso?: string,
+): Promise<RefreshResult> {
+  const scope = <T extends { eq: (c: string, v: string) => T }>(q: T): T =>
+    userId ? q.eq('user_id', userId) : q
+
+  // ── 1. market_context + trading_days (id → date) ──
+  const [{ data: contextsRaw, error: cErr }, { data: daysRaw, error: dErr }] = await Promise.all([
+    scope(supabase.from('market_context').select('trading_day_id, rvol, rvol_at_ib_close, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_1m')),
+    scope(supabase.from('trading_days').select('id, date')),
+  ]) as [
+    { data: MarketContextLite[] | null; error: { message: string } | null },
+    { data: { id: string; date: string }[] | null; error: { message: string } | null },
+  ]
+  if (cErr) throw new Error(`Failed to load market_context: ${cErr.message}`)
+  if (dErr) throw new Error(`Failed to load trading_days: ${dErr.message}`)
+  const contexts = contextsRaw ?? []
+  const days = daysRaw ?? []
+  const dayDateById = new Map(days.map(d => [d.id, d.date]))
+
+  const metricsByDate = new Map<string, MetricRow>()
+  for (const ctx of contexts) {
+    const date = dayDateById.get(ctx.trading_day_id)
+    if (!date) continue
+    metricsByDate.set(date, deriveMetrics(ctx))
+  }
+
+  // ── 2. thresholds ──
+  const thresholds = computeThresholds(contexts.map(ctx => deriveMetrics(ctx)))
+
+  // ── 3. trades (native + historical), paginated past the 1000 cap ──
+  const PAGE = 1000
+  const native: { pnl: number | null; entry_time: string | null; trading_day_id: string | null }[] = []
+  for (let p = 0; p < 50; p++) {
+    const { data, error } = await scope(supabase
+      .from('trades')
+      .select('pnl, entry_time, trading_day_id'))
+      .order('entry_time', { ascending: true })
+      .order('id', { ascending: true })
+      .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (error) { console.error('[refreshConditionLookup] trades page', p, error.message); break }
+    const rows = (data ?? []) as typeof native
+    native.push(...rows)
+    if (rows.length < PAGE) break
+  }
+  const hist: { net_pnl: number | null; trade_date: string | null }[] = []
+  for (let p = 0; p < 50; p++) {
+    const { data, error } = await scope(supabase
+      .from('historical_trades')
+      .select('net_pnl, trade_date'))
+      .order('trade_date', { ascending: true })
+      .order('id', { ascending: true })
+      .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (error) { console.error('[refreshConditionLookup] historical_trades page', p, error.message); break }
+    const rows = (data ?? []) as typeof hist
+    hist.push(...rows)
+    if (rows.length < PAGE) break
+  }
+
+  const trades: TradeLite[] = []
+  for (const t of native) {
+    const date = t.trading_day_id ? dayDateById.get(t.trading_day_id) : null
+    if (!date) continue
+    trades.push({ date, pnl: t.pnl })
+  }
+  for (const t of hist) {
+    if (!t.trade_date) continue
+    trades.push({ date: t.trade_date, pnl: t.net_pnl })
+  }
+
+  // ── 4. build lookup ──
+  const lookup = buildLookupRows(trades, metricsByDate, thresholds)
+
+  // Stamp user_id on every written row in the per-user (cloud) pass.
+  const stampedThresholds = userId ? thresholds.map(r => ({ ...r, user_id: userId })) : thresholds
+  const stampedLookup = userId ? lookup.map(r => ({ ...r, user_id: userId })) : lookup
+
+  // ── 5. wipe (scoped) + insert ──
+  const delThresholds = userId
+    ? supabase.from('condition_thresholds').delete().eq('user_id', userId)
+    : supabase.from('condition_thresholds').delete().neq('metric', '__never__')
+  const { error: delT } = await delThresholds
+  if (delT) throw new Error(`Could not clear thresholds: ${delT.message}`)
+  const delLookup = userId
+    ? supabase.from('condition_lookup').delete().eq('user_id', userId)
+    : supabase.from('condition_lookup').delete().neq('condition_id', '__never__')
+  const { error: delL } = await delLookup
+  if (delL) throw new Error(`Could not clear lookup: ${delL.message}`)
+
+  const { error: insT } = await supabase.from('condition_thresholds').insert(stampedThresholds)
+  if (insT) throw new Error(`Could not insert thresholds: ${insT.message}`)
+
+  const CHUNK = 100
+  for (let i = 0; i < stampedLookup.length; i += CHUNK) {
+    const batch = stampedLookup.slice(i, i + CHUNK)
+    const { error: insL } = await supabase.from('condition_lookup').insert(batch)
+    if (insL) throw new Error(`Could not insert lookup rows ${i}-${i + batch.length}: ${insL.message}`)
+  }
+
+  // ── 6. stamp vintage ──
+  const refreshedAt = refreshedAtIso ?? new Date().toISOString()
+  if (userId) {
+    await supabase
+      .from('condition_lookup_meta')
+      .upsert(
+        { user_id: userId, refreshed_at: refreshedAt, lookup_row_count: lookup.length, updated_at: refreshedAt },
+        { onConflict: 'user_id' },
+      )
+  } else {
+    await supabase
+      .from('lookup_metadata')
+      .upsert(
+        { key: 'condition_lookup_refreshed_at', value: { at: refreshedAt }, updated_at: refreshedAt },
+        { onConflict: 'key' },
+      )
+  }
+
+  return {
+    thresholds_inserted: thresholds.length,
+    lookup_inserted: lookup.length,
+    trades_aggregated: trades.length,
+    market_context_rows: contexts.length,
+    refreshed_at: refreshedAt,
+  }
 }
 
 function buildRow(
