@@ -2,11 +2,17 @@ import { createClient } from '@/lib/supabase/server'
 import PrepClient from '@/components/prep/PrepClient'
 import { computeDrAdr } from '@/lib/dr-adr'
 import { fetchHighImpactNews } from '@/lib/economic-calendar'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 export default async function PrepPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params
   const supabase = await createClient()
+  // Admin = local owner build, OR the hosted user whose email matches
+  // ADMIN_EMAIL. The Morning Conditions panel is admin-only (mirrors the
+  // admin-only Condition Lookup settings page). Same check as (app)/layout.tsx.
+  const { data: { user } } = await supabase.auth.getUser()
+  const isAdmin = LOCAL_FEATURES_ENABLED || (!!user?.email && user.email === process.env.ADMIN_EMAIL)
   // Red-folder economic news for the day (server-fetched, cached, never throws).
   const highImpactNews = await fetchHighImpactNews(date)
 
@@ -95,6 +101,7 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
       chartSymbol={chartSymbol}
       initialTrades={trades}
       highImpactNews={highImpactNews}
+      isAdmin={isAdmin}
     />
   )
 }

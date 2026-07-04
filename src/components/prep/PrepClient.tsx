@@ -49,9 +49,12 @@ interface Props {
   initialTrades: Trade[]
   /** High-impact ("red folder") economic news for the day, server-fetched. */
   highImpactNews: NewsEvent[]
+  /** Admin (owner) flag — the Morning Conditions panel is admin-only, matching
+   *  the admin-only Condition Lookup settings page. Computed server-side. */
+  isAdmin: boolean
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades, highImpactNews }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades, highImpactNews, isAdmin }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -954,7 +957,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           first so screenshot re-extraction updates the pill immediately.
           drAdrAuto (server-computed, may be bar-based) is the fallback for
           days where the screenshot hasn't been extracted yet. */}
-      {mode === 'pro' && (
+      {mode === 'pro' && isAdmin && (
         <ConditionFilterPanel
           date={date}
           marketContext={{
