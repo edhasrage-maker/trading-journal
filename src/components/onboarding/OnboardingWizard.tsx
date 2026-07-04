@@ -3,11 +3,15 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AccountStep from './AccountStep'
+import PlaybookStep from './PlaybookStep'
+import RulesStep from './RulesStep'
 
-// Steps grow as later phases land (playbook, rules, your-game, review). Each
-// renders with the nav callbacks below.
+// Steps grow as later phases land (your-game, AI review). Each renders with the
+// nav callbacks below.
 const STEPS = [
   { key: 'account', title: 'Account & markets' },
+  { key: 'playbook', title: 'Your playbook' },
+  { key: 'rules', title: 'Risk & rules' },
 ] as const
 
 /**
@@ -71,6 +75,8 @@ export default function OnboardingWizard() {
 
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
         {STEPS[step].key === 'account' && <AccountStep onNext={next} onSkipAll={skipAll} />}
+        {STEPS[step].key === 'playbook' && <PlaybookStep onNext={next} onSkipAll={skipAll} />}
+        {STEPS[step].key === 'rules' && <RulesStep onNext={next} onSkipAll={skipAll} />}
       </div>
 
       {step > 0 && (
