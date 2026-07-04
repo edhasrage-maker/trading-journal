@@ -281,6 +281,34 @@ export default function TradeList({
           a phone. Shows all fields (vertical space is cheap). Desktop keeps the
           full sortable table below. */}
       <div className="md:hidden space-y-2.5">
+        {/* Mobile sort control — the sortable column headers are desktop-only,
+            so on a phone this is the only way to reorder the cards. Drives the
+            same sortKey/sortDir the desktop table uses. */}
+        <div className="flex items-center gap-2">
+          <label htmlFor="mobile-trade-sort" className="text-xs text-gray-500 shrink-0">Sort by</label>
+          <select
+            id="mobile-trade-sort"
+            value={sortKey}
+            onChange={e => { const k = e.target.value as SortKey; setSortKey(k); setSortDir(naturalDir(k)) }}
+            className="flex-1 min-w-0 bg-gray-900 border border-gray-800 rounded-lg px-2.5 py-1.5 text-sm text-gray-200"
+          >
+            <option value="time">Time</option>
+            <option value="r">R</option>
+            <option value="mfe">MFE</option>
+            <option value="mae">MAE</option>
+            <option value="pnl">P&amp;L</option>
+            <option value="atr">ATR@</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
+            className="shrink-0 px-2.5 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-300 hover:text-white transition-colors"
+            aria-label={sortDir === 'asc' ? 'Ascending order — tap for descending' : 'Descending order — tap for ascending'}
+            title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+          >
+            {sortDir === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
+          </button>
+        </div>
         {sortedTrades.map(t => {
           const pnl = t.pnl ?? 0
           const isSelected = selectedIds.has(t.id)
