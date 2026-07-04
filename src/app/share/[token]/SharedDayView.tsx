@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import LiveChart, { type ChartPrefs } from '@/components/charts/LiveChart'
+import ScreenshotLightbox from '@/components/intraday/ScreenshotLightbox'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import { chartSeriesRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import type { Trade, TradingDay } from '@/lib/supabase/types'
@@ -252,18 +253,9 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
         </p>
       </main>
 
-      {/* Full-screen screenshot lightbox — click anywhere (or the image) to close. */}
-      {lightbox && (
-        <div
-          onClick={() => setLightbox(null)}
-          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out"
-          role="dialog"
-          aria-label="Enlarged trade screenshot"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element -- lightbox of a user screenshot */}
-          <img src={lightbox} alt="Trade screenshot enlarged" className="max-w-full max-h-full rounded-lg" />
-        </div>
-      )}
+      {/* Full-screen screenshot lightbox — same zoom (1/2/3×) + drag-to-pan as
+          the main app, via the shared ScreenshotLightbox component. */}
+      <ScreenshotLightbox src={lightbox} onClose={() => setLightbox(null)} />
     </div>
   )
 }
