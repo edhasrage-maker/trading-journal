@@ -207,7 +207,7 @@ export default async function AnalyticsPage() {
   }))
 
   return (
-    <div>
+    <div className="max-w-7xl mx-auto">
       <AnalyticsClient
         trades={merged}
         dayStats={dayStats}

@@ -78,7 +78,7 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd }: Pr
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 max-w-3xl">
       {/* Header: month nav (left) + monthly stats (right) */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-1">
