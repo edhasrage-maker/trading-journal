@@ -28,6 +28,7 @@ type AnyClient = any
  *  session never trips them — they exist to bound abuse, not to ration use. */
 export const AI_LIMITS: Record<string, number> = {
   coach_score: 3,
+  profile_synth: 6,
   analyze_eod: 15,
   analyze_prep: 15,
   analyze_week: 8,

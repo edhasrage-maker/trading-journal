@@ -5,13 +5,17 @@ import { useRouter } from 'next/navigation'
 import AccountStep from './AccountStep'
 import PlaybookStep from './PlaybookStep'
 import RulesStep from './RulesStep'
+import YourGameStep from './YourGameStep'
+import ReviewStep from './ReviewStep'
 
-// Steps grow as later phases land (your-game, AI review). Each renders with the
-// nav callbacks below.
+// Each step renders with the nav callbacks below. Review (last) drafts the AI
+// Player Profile and saves it on finish.
 const STEPS = [
   { key: 'account', title: 'Account & markets' },
   { key: 'playbook', title: 'Your playbook' },
   { key: 'rules', title: 'Risk & rules' },
+  { key: 'yourgame', title: 'Your game' },
+  { key: 'review', title: 'Review profile' },
 ] as const
 
 /**
@@ -77,6 +81,8 @@ export default function OnboardingWizard() {
         {STEPS[step].key === 'account' && <AccountStep onNext={next} onSkipAll={skipAll} />}
         {STEPS[step].key === 'playbook' && <PlaybookStep onNext={next} onSkipAll={skipAll} />}
         {STEPS[step].key === 'rules' && <RulesStep onNext={next} onSkipAll={skipAll} />}
+        {STEPS[step].key === 'yourgame' && <YourGameStep onNext={next} onSkipAll={skipAll} />}
+        {STEPS[step].key === 'review' && <ReviewStep onNext={next} onSkipAll={skipAll} />}
       </div>
 
       {step > 0 && (
