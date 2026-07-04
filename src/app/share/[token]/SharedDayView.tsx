@@ -62,6 +62,8 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
   const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(defaultSymbol, trades)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [hoverTradeId, setHoverTradeId] = useState<string | null>(null)
+  // Enlarged screenshot (click a trade's screenshot to open full-screen).
+  const [lightbox, setLightbox] = useState<string | null>(null)
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({})
 
   // Row click: expand its detail, switch the chart to that trade's instrument if
@@ -163,7 +165,8 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
                     .filter(g => g.items.length > 0)
                   const note = t.notes && t.notes.trim() ? t.notes : ''
                   const hasStats = cap != null || adv != null || r != null || fav != null
-                  const hasDetail = tagGroups.length > 0 || !!note || hasStats
+                  const shot = t.screenshot_url
+                  const hasDetail = tagGroups.length > 0 || !!note || hasStats || !!shot
                   return (
                     <Fragment key={t.id}>
                       <tr
@@ -214,6 +217,18 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
                             {note && (
                               <p className="text-sm text-gray-300 whitespace-pre-wrap border-l-2 border-gray-700 pl-3">{note}</p>
                             )}
+                            {shot && (
+                              <div className="mt-3">
+                                {/* eslint-disable-next-line @next/next/no-img-element -- user screenshot; next/image adds no value on a public share page */}
+                                <img
+                                  src={shot}
+                                  alt="Trade screenshot"
+                                  onClick={e => { e.stopPropagation(); setLightbox(shot) }}
+                                  className="max-h-64 rounded-lg border border-gray-700 cursor-zoom-in hover:border-gray-500 transition-colors"
+                                />
+                                <p className="text-[10px] text-gray-600 mt-1">Click the screenshot to enlarge</p>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       )}
@@ -236,6 +251,19 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
           Read-only shared session · <span style={DISPLAY} className="text-gray-400">TapeScore</span> — game film for traders
         </p>
       </main>
+
+      {/* Full-screen screenshot lightbox — click anywhere (or the image) to close. */}
+      {lightbox && (
+        <div
+          onClick={() => setLightbox(null)}
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out"
+          role="dialog"
+          aria-label="Enlarged trade screenshot"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- lightbox of a user screenshot */}
+          <img src={lightbox} alt="Trade screenshot enlarged" className="max-w-full max-h-full rounded-lg" />
+        </div>
+      )}
     </div>
   )
 }
