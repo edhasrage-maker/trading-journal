@@ -826,7 +826,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       {/* Chart — toggle between the morning Sierra Chart screenshot (with
           MGI levels marked, used for AI auto-fill) and the in-app LiveChart
           (live bars from .scid + session levels). Same pattern as EodClient. */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+      <div className="hidden md:block bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-white">
             {chartView === 'screenshot' ? 'Chart Screenshot (with MGI levels marked)' : 'Live Chart'}

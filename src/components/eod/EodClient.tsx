@@ -18,6 +18,7 @@ import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import RecordingCommentary from './RecordingCommentary'
+import BrowserRecap from './BrowserRecap'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import MfeMaeEfficiency from './MfeMaeEfficiency'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
@@ -900,7 +901,10 @@ export default function EodClient({
       {/* Chart area — toggle between legacy screenshot+calibration and the
           new live-bars rendering. Screenshot path will be removed in Phase 5
           of the chart migration once Live has proven itself across the
-          intraday + dashboard surfaces too. */}
+          intraday + dashboard surfaces too.
+          Hidden on mobile (hidden md:block) — the chart isn't usable on a phone
+          yet, so we drop the whole toggle + chart area there. */}
+      <div className="hidden md:block space-y-6">
       <div className="flex justify-end -mb-2">
         <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
           <button
@@ -1001,6 +1005,7 @@ export default function EodClient({
           Last import: {format(new Date(day.last_sc_import_at), 'MMM d, HH:mm')}
         </p>
       )}
+      </div>
 
       {selectedIds.size > 0 && (
         <div className="bg-blue-950/60 border border-blue-800 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-y-2 text-sm">
@@ -1060,6 +1065,12 @@ export default function EodClient({
       {/* OBS frame commentary reads local recordings via ffmpeg — local only. */}
       {LOCAL_FEATURES_ENABLED && (
         <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
+      )}
+
+      {/* Cloud build: no ffmpeg/filesystem, so recap runs in the browser —
+          the user's recording is decoded client-side and never uploaded. */}
+      {!LOCAL_FEATURES_ENABLED && (
+        <BrowserRecap trades={trades} date={date} />
       )}
 
       {/* EOD Notes */}
