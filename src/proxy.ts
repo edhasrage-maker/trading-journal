@@ -58,6 +58,7 @@ export async function proxy(request: NextRequest) {
     pathname === '/login' ||
     pathname.startsWith('/auth') ||
     pathname.startsWith('/share') ||        // coach-review share pages (token-gated)
+    pathname.startsWith('/api/demo-login') || // one-click demo sign-in (logged-out by definition)
     pathname.startsWith('/api/bars')        // public market bars for the shared chart
 
   // Logged-out visitor on a protected route → send them to the landing (which
