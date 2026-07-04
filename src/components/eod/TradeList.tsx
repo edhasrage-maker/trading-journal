@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3 } from 'lucide-react'
-import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaeAtr, type BarLike } from '@/lib/analytics'
+import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
@@ -47,17 +49,6 @@ function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
   const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
   if (r == null) return null
   return `${Math.max(-999, Math.min(999, r * 100)).toFixed(0)}%`
-}
-
-/** Display MAE Heat as a percentage per trade. 100% = MAE touched stop level.
- *  Negative heat (= low-during-position above entry for a long, or high below
- *  entry for a short — i.e. the trade was instantly favorable and never went
- *  red) is floored at 0% for display. Render callers separately surface a
- *  "never breached entry" marker when the raw ratio is negative. */
-function heatDisplay(t: Trade): string | null {
-  const r = maeHeatRatio(t)
-  if (r == null) return null
-  return `${Math.round(Math.max(0, r) * 100)}%`
 }
 
 interface Props {
@@ -107,6 +98,9 @@ export default function TradeList({
   // Beginner renders a simple plain list (below); Pro renders the full sortable
   // table. (docs/BEGINNER_PRO_MODES.md)
   const { mode } = useUiMode()
+  // Heat display unit (pts / $ / ×ATR), shared globally with the dashboard +
+  // AvgMfeMaeCard via useMfeUnit. Defaults to ×ATR.
+  const [mfeUnit, setMfeUnit] = useMfeUnit()
   // Sort state. Default is Time asc — preserves the existing fill-order view.
   // Click a sortable column header to toggle; clicking a different column
   // resets to that column's "natural" direction (time asc, everything else desc).
@@ -354,15 +348,26 @@ export default function TradeList({
                     type="button"
                     onClick={() => onSort('mae')}
                     className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
-                    title="Sort by MAE %"
+                    title="Sort by MAE (heat taken)"
                   >
-                    MAE % <SortIcon col="mae" current={sortKey} dir={sortDir} />
+                    MAE <SortIcon col="mae" current={sortKey} dir={sortDir} />
                   </button>
+                  <select
+                    value={mfeUnit}
+                    onChange={e => setMfeUnit(e.target.value as MfeUnit)}
+                    onClick={e => e.stopPropagation()}
+                    className="bg-gray-800 border border-gray-700 text-gray-400 text-[9px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight normal-case tracking-normal"
+                    title="Heat display unit (shared with the dashboard)"
+                  >
+                    <option value="atr">×ATR</option>
+                    <option value="pts">pts</option>
+                    <option value="dollars">$</option>
+                  </select>
                   <button
                     type="button"
                     onClick={() => { setMaeOpen(o => !o); setMfeOpen(false) }}
                     className={`transition-colors ${maeOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                    title="What is MAE %?"
+                    title="What is MAE?"
                   >
                     <HelpCircle className="w-3 h-3" />
                   </button>
@@ -373,23 +378,23 @@ export default function TradeList({
                     className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
                   >
                     <div className="flex items-start justify-between mb-2">
-                      <p className="font-semibold text-white">MAE % (per-trade)</p>
+                      <p className="font-semibold text-white">MAE — heat taken</p>
                       <button type="button" onClick={() => setMaeOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                     <p className="mb-2 text-gray-300">
-                      <em>How much of your planned risk did you sit through on this trade before exiting?</em>
-                    </p>
-                    <p className="mb-2 text-gray-400">
-                      = peak adverse excursion ÷ planned stop distance (entry − stop_price) — separate from realized $ PnL.
+                      <em>How far did the trade go against you before it resolved?</em> Peak adverse excursion from entry, in your chosen unit:
                     </p>
                     <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
-                      <li><strong>0–50%</strong>: clean entry, light pressure</li>
-                      <li><strong>50–100%</strong>: meaningful heat but stop respected</li>
-                      <li><strong>&gt; 100%</strong>: <strong className="text-red-300">past stop</strong> — moved, slipped, or reversed in time to save you</li>
+                      <li><strong>×ATR</strong> (default): heat ÷ 1 ATR at entry — comparable across days and instruments. 1.7× = you sat through 1.7 ATRs of heat.</li>
+                      <li><strong>pts</strong>: raw price points against you.</li>
+                      <li><strong>$</strong>: points × size × contract multiplier.</li>
                     </ul>
-                    <p className="text-gray-500">Red bold on lucky-escape winners (heat &gt; 100% but trade closed green) or on standout heat (≥ 100%).</p>
+                    <p className="mb-2 text-gray-400">
+                      On a <strong>winner</strong>, heat ≥ 1×ATR turns <strong className="text-amber-300">amber</strong> — you won despite a late/lucky entry, worth reviewing. Losers stay neutral (adverse movement is expected when you&apos;re wrong). <span className="text-emerald-400">↑</span> = never traded below entry.
+                    </p>
+                    <p className="text-gray-500">If the trade has a planned stop, a small <span className="text-gray-400">· NN%</span> shows heat as a % of that stop — over 100% means you held past it.</p>
                   </div>
                 )}
               </th>}
@@ -526,28 +531,25 @@ export default function TradeList({
                       Bold marks high-signal cross-cases that deserve attention
                       on review (give-back loser, lucky-escape winner). */}
                   {(() => {
-                    const heat = maeHeatRatio(t)
                     const isGiveBack = isGiveBackTrade(t)
-                    const isLuckyEscape = (t.pnl ?? 0) > 0 && heat != null && heat > 1.0
-                    // Negative heat = trade was instantly favorable and never traded
-                    // back through entry. Render a small ↑ marker so the lossless-
-                    // from-entry signal isn't hidden by the 0% floor.
-                    const neverRed = heat != null && heat < 0
-                    // Gray default; standout cells (give-back, lucky escape, heat past stop)
-                    // get red+bold so the eye lands on trades that need review.
-                    const capStandout = isGiveBack
-                    const heatStandout = isLuckyEscape || (heat != null && heat > 1.0)
-                    const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
-                    const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
-                    // MAE column is stop-aware. With a planned stop → heat as % of stop
-                    // distance (answers "held past my stop?"). Without a stop → heat in
-                    // ATR units; amber ONLY on a winner that took real heat (>=1 ATR = a
-                    // late/lucky entry to review). Losers stay neutral — adverse movement
-                    // is expected when you're wrong, not a mistake to flag red.
-                    const hasStop = t.stop_price != null
-                    const maeAtr = hasStop ? null : (mfeMaeAtr(t, liveAtrByTradeId?.[t.id])?.mae ?? null)
-                    const atrWinnerHeat = !hasStop && (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
-                    const atrNeverRed = !hasStop && maeAtr === 0
+                    const capCls = isGiveBack ? 'text-red-400 font-bold' : 'text-gray-400'
+                    // MAE magnitude ("heat taken"), shown in the active unit (pts / $ /
+                    // ×ATR via useMfeUnit). The amber "took heat to win" flag is computed
+                    // in ATR regardless of display unit (>=1 ATR on a WINNER = a late/
+                    // lucky entry to review); losers stay neutral (adverse is expected
+                    // when you're wrong). When a planned stop exists we ALSO append heat
+                    // as % of that stop (answers "held past my stop?"; red over 100%).
+                    const xc = mfeMaePoints(t)
+                    const maePts = xc?.mae ?? null
+                    const atrRef = liveAtrByTradeId?.[t.id] ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m
+                    const maeAtr = (maePts != null && atrRef != null && atrRef > 0) ? maePts / atrRef : null
+                    const maeMag = maePts == null ? '—'
+                      : mfeUnit === 'dollars' ? '$' + Math.round(maePts * (t.quantity ?? 1) * symbolToMultiplier(t.symbol ?? '')).toLocaleString()
+                      : mfeUnit === 'atr' ? (maeAtr == null ? '—' : `${maeAtr.toFixed(1)}×`)
+                      : maePts.toFixed(1)
+                    const winnerHeat = (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
+                    const neverAdverse = maePts === 0
+                    const stopHeat = t.stop_price != null ? maeHeatRatio(t) : null
                     return (
                       <>
                         {cols.mfe && (
@@ -556,25 +558,23 @@ export default function TradeList({
                             {captureDisplay(t, bars ?? undefined) ?? '—'}
                           </td>
                         )}
-                        {cols.mae && (hasStop ? (
-                          <td className={`py-1.5 pr-3 text-right ${heatCls}`}
-                            title={isLuckyEscape ? 'Lucky escape: winning trade that violated planned stop.' : 'Heat as % of planned stop distance. Over 100% = you held past your stop.'}>
-                            {heatDisplay(t) ?? '—'}
-                            {neverRed && (
-                              <span className="ml-1 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
-                            )}
-                          </td>
-                        ) : (
-                          <td className={`py-1.5 pr-3 text-right ${atrWinnerHeat ? 'text-amber-400 font-bold' : 'text-gray-400'}`}
-                            title={maeAtr == null ? 'Heat unavailable — no ATR at entry for this trade.'
-                              : atrWinnerHeat ? `Won but sat through ${maeAtr.toFixed(1)}×ATR of heat — a late/lucky entry worth reviewing.`
-                              : `Heat in ATR units: peak adverse excursion ÷ 1 ATR at entry.${(t.pnl ?? 0) <= 0 ? ' Adverse movement is expected on a losing trade.' : ''}`}>
-                            {maeAtr == null ? '—' : `${maeAtr.toFixed(1)}×`}
-                            {atrNeverRed && (
+                        {cols.mae && (
+                          <td className="py-1.5 pr-3 text-right whitespace-nowrap"
+                            title={maePts == null ? 'Heat unavailable — no excursion data for this trade.'
+                              : winnerHeat ? `Won but sat through ${maeAtr!.toFixed(1)}×ATR of heat — a late/lucky entry worth reviewing.`
+                              : `Max adverse excursion (heat taken).${(t.pnl ?? 0) <= 0 ? ' Adverse movement is expected on a losing trade.' : ''}`}>
+                            <span className={winnerHeat ? 'text-amber-400 font-bold' : 'text-gray-400'}>{maeMag}</span>
+                            {neverAdverse && (
                               <span className="ml-1 text-emerald-400" title="Never traded below entry — instantly favorable.">↑</span>
                             )}
+                            {stopHeat != null && (
+                              <span className={`ml-1 text-[10px] ${stopHeat > 1 ? 'text-red-400 font-semibold' : 'text-gray-600'}`}
+                                title="Peak adverse as % of your planned stop distance. Over 100% = you held past your stop.">
+                                · {Math.round(Math.max(0, stopHeat) * 100)}%
+                              </span>
+                            )}
                           </td>
-                        ))}
+                        )}
                       </>
                     )
                   })()}
