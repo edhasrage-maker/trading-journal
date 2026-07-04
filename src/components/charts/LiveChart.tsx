@@ -1675,9 +1675,11 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-2">
-      {/* Header: legend + symbol + bar count */}
-      <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-3 text-gray-400">
+      {/* Header: legend + symbol + bar count. flex-wrap so on a phone the
+          controls + legend stack onto two lines instead of overflowing the
+          card and pushing the whole page sideways. */}
+      <div className="flex flex-wrap items-center justify-between gap-y-2 text-xs">
+        <div className="flex flex-wrap items-center gap-3 text-gray-400 min-w-0">
           {symbolOptions && symbolOptions.length > 1 && onSymbolChange ? (
             <select
               value={symbol ?? ''}
