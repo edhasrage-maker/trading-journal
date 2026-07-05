@@ -7,6 +7,7 @@ import type { PrepNotes, AiAnalysis, Trade, MarketContext } from '@/lib/supabase
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { buildEodPrompt, parseEodResponse, applyDeterministicOverrides } from '@/lib/eod-prompt'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
+import { behavioralProxiesPromptBlock } from '@/lib/behavioral-proxies'
 import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
@@ -58,6 +59,7 @@ async function handle(req: Request) {
   // the trader's standing context — see /settings/coaching.
   const traderProfile = await getTraderProfile()
   const prompt = profileContextBlock(traderProfile)
+    + behavioralProxiesPromptBlock(trades)
     + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage })
 
   const userContent: Anthropic.MessageParam['content'] = hasImage

@@ -21,6 +21,7 @@ import RecordingCommentary from './RecordingCommentary'
 import BrowserRecap from './BrowserRecap'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import MfeMaeEfficiency from './MfeMaeEfficiency'
+import BehavioralProxiesPanel from './BehavioralProxiesPanel'
 import AchievementBadges from '@/components/AchievementBadges'
 import { dayAchievements } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
@@ -1064,6 +1065,8 @@ export default function EodClient({
       )}
 
       <MfeMaeEfficiency mfe={mfeMaeAtrStats.mfe} mae={mfeMaeAtrStats.mae} count={mfeMaeAtrStats.count} />
+
+      <BehavioralProxiesPanel trades={trades} />
 
       <TradeList
         trades={trades}
