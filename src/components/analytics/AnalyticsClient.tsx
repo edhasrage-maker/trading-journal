@@ -8,6 +8,7 @@ import ConditionBuckets from './ConditionBuckets'
 import RollingPerformance from './RollingPerformance'
 import PeriodComparison from './PeriodComparison'
 import JournalThemes from './JournalThemes'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import CsvExportButton from './CsvExportButton'
 import TradeListModal, { type ModalCategory } from './TradeListModal'
 import { useUiMode } from '@/lib/ui-mode'
@@ -390,7 +391,10 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
         </>
       )}
 
-      <JournalThemes />
+      {/* Journal Themes is still an "Under Construction" placeholder — only show
+          it in the local power-user build; hide it entirely on the hosted/public
+          build (incl. the demo account) so prospects don't see a stub feature. */}
+      {LOCAL_FEATURES_ENABLED && <JournalThemes />}
 
       {/* Drilldown drawer — uses `filtered` (date-range-scoped) and includes
           both native + historical trades. Closes via Escape, backdrop, or X. */}
