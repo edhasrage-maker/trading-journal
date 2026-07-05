@@ -168,14 +168,14 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+        <div data-tour="analytics-header">
           <h1 className="text-2xl font-bold text-white">Analytics</h1>
           <p className="text-gray-400 text-sm mt-1">
             {format(new Date(startDate + 'T12:00:00'), 'MMM d, yyyy')} – {format(new Date(endDate + 'T12:00:00'), 'MMM d, yyyy')}
           </p>
         </div>
 
-        <div className="flex flex-col items-end gap-2">
+        <div data-tour="analytics-range" className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-3">
             <CsvExportButton from={startDate} to={endDate} />
 

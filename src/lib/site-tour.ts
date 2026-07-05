@@ -41,14 +41,14 @@ export const TOUR_STEPS: TourStep[] = [
     route: '/dashboard',
     title: 'Welcome to TapeScore 👋',
     description:
-      "Quick 30-second tour so you know where everything lives and what it does. You can leave any time with “Skip tour”.",
+      "A 30-second walk through where everything lives and what it does. You can leave any time with “Skip tour”.",
   },
   {
     route: '/dashboard',
     anchor: 'dash-import',
     title: 'Start with your trades',
     description:
-      'Import a CSV or Sierra Chart file — or log a trade by hand — and your dashboard fills in: P&L, win rate, your best and worst days. Everything else is built from these trades.',
+      'Import a CSV or Sierra Chart file — or log one by hand — and your dashboard fills in: P&L, win rate, your best and worst days. Everything else is built from these trades.',
     side: 'top',
     align: 'center',
   },
@@ -59,6 +59,84 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Ask anything about your trading in plain English — “What are my patterns when I trade poorly?” It answers from YOUR logged trades, not generic advice.',
     side: 'left',
+    align: 'end',
+  },
+  {
+    route: '/dashboard',
+    anchor: 'nav-prep',
+    title: 'Next: plan your day',
+    description:
+      "Daily Prep is where you set your bias and levels before the session. Click Next and we'll head there →",
+  },
+  // --------------------------------------------------------------------- Prep
+  {
+    route: '/prep',
+    anchor: 'prep-header',
+    title: 'Daily Prep',
+    description:
+      'Plan the day before you trade — your bias, key levels, and what would make you wrong. Your coach reads this too, so a good plan means sharper feedback.',
+    side: 'bottom',
+    align: 'start',
+  },
+  {
+    route: '/prep',
+    anchor: 'prep-chart',
+    title: 'Your chart & levels',
+    description:
+      'Live bars with the session levels auto-marked. Mark up your spots here so you know them cold before the open.',
+    side: 'top',
+    align: 'center',
+  },
+  {
+    route: '/prep',
+    anchor: 'nav-eod',
+    title: 'Next: review your day',
+    description:
+      'After the session, EOD Recap is where you grade what you actually did. Click Next →',
+  },
+  // ---------------------------------------------------------------------- EOD
+  {
+    route: '/eod',
+    anchor: 'eod-header',
+    title: 'EOD Recap',
+    description:
+      'Every trade you took, with the stats that matter — how much of the move you captured, the heat you took, and your MFE:MAE. This is your game film.',
+    side: 'bottom',
+    align: 'start',
+  },
+  {
+    route: '/eod',
+    anchor: 'eod-analyze',
+    title: 'Grade your execution',
+    description:
+      'One click gives you an AI read on how well you followed your plan and your rules — the process, not just the P&L.',
+    side: 'top',
+    align: 'center',
+  },
+  {
+    route: '/eod',
+    anchor: 'nav-analytics',
+    title: 'Next: the big picture',
+    description:
+      'Analytics rolls up every trade to show where your real edge is. Last stop — click Next →',
+  },
+  // ---------------------------------------------------------------- Analytics
+  {
+    route: '/analytics',
+    anchor: 'analytics-header',
+    title: 'Analytics',
+    description:
+      'Your edge across every trade — win rate and expectancy broken down by setup, structure, day type, and more.',
+    side: 'bottom',
+    align: 'start',
+  },
+  {
+    route: '/analytics',
+    anchor: 'analytics-range',
+    title: 'Slice it your way',
+    description:
+      "Filter by time window and the tables below update. That's the tour — you're all set. Import some trades and start exploring!",
+    side: 'bottom',
     align: 'end',
   },
 ]

@@ -716,7 +716,7 @@ export default function EodClient({
           compressed; the gap-4 guarantees clear space before the action buttons
           (no more date sitting under the Watch-folder button). */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
-        <div className="shrink-0">
+        <div data-tour="eod-header" className="shrink-0">
           <h1 className="text-xl font-bold text-white">EOD Recap</h1>
           {/* Date + action buttons share one row, aligned under the title. */}
           <div className="flex items-center gap-2 mt-1">
@@ -1092,16 +1092,18 @@ export default function EodClient({
           when any trade has been modified after the analysis was generated —
           common when the user backfills tags, stops, or detected levels post-
           analysis. */}
-      <EodAnalysisCard
-        analysis={aiAnalysis}
-        loading={analyzing}
-        onAnalyze={runAnalysis}
-        disabled={trades.length === 0 && !day?.eod_notes}
-        latestTradeUpdate={trades.reduce<string | null>((max, t) => {
-          if (!t.updated_at) return max
-          return max == null || t.updated_at > max ? t.updated_at : max
-        }, null)}
-      />
+      <div data-tour="eod-analyze">
+        <EodAnalysisCard
+          analysis={aiAnalysis}
+          loading={analyzing}
+          onAnalyze={runAnalysis}
+          disabled={trades.length === 0 && !day?.eod_notes}
+          latestTradeUpdate={trades.reduce<string | null>((max, t) => {
+            if (!t.updated_at) return max
+            return max == null || t.updated_at > max ? t.updated_at : max
+          }, null)}
+        />
+      </div>
 
       {/* Danger Zone delete moved exclusively to the dashboard's per-row
           trash button + bulk-delete — duplicate entry point on the EOD page

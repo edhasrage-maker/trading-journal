@@ -766,7 +766,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       {/* Red-folder economic news for the day — pinned to the very top. */}
       <HighImpactNews events={highImpactNews} />
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div data-tour="prep-header" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-white">Daily Prep</h1>
           <div className="flex items-center gap-3 mt-1">
@@ -829,7 +829,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       {/* Chart — toggle between the morning Sierra Chart screenshot (with
           MGI levels marked, used for AI auto-fill) and the in-app LiveChart
           (live bars from .scid + session levels). Same pattern as EodClient. */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+      <div data-tour="prep-chart" className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-white">
             {chartView === 'screenshot' ? 'Chart Screenshot (with MGI levels marked)' : 'Live Chart'}
