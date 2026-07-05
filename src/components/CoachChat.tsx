@@ -1,14 +1,21 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { X, Send, Loader2, Brain, Trash2, Download, Archive, ChevronLeft } from 'lucide-react'
+import { X, Send, Loader2, Brain, Trash2, Download, Archive, ChevronLeft, ImagePlus } from 'lucide-react'
+import { useUiMode } from '@/lib/ui-mode'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   /** Marker for the in-flight streaming message so we can append tokens to it. */
   streaming?: boolean
+  /** Attached chart images (data URLs) for this turn. Shown in the bubble but
+   *  NOT persisted to localStorage (base64 would blow the storage cap). */
+  images?: string[]
 }
+
+const MAX_ATTACH = 4        // cap attached images per message (matches the API cap)
+const MAX_IMG_DIM = 1568    // longest-side px — Claude's optimal; also bounds payload/token cost
 
 /** An archived conversation — snapshotted when the active chat goes idle. */
 interface ArchivedConversation {
@@ -20,11 +27,28 @@ interface ArchivedConversation {
 const STORAGE_KEY = 'coach-chat-history-v1'
 const ARCHIVE_KEY = 'coach-chat-archives-v1'
 const ACTIVITY_KEY = 'coach-chat-last-activity-v1'
+
+// Canned starter prompts shown in the empty state — click to send immediately.
+const SUGGESTIONS = [
+  'How did I do month over month?',
+  'What are my patterns when I trade poorly?',
+  'Am I better following or fading 5m structure?',
+  'Which mistakes cost me the most money?',
+]
 const MAX_PERSISTED_MESSAGES = 100   // localStorage cap so the key doesn't grow unbounded
 const MAX_ARCHIVES = 50              // keep the most recent N archived conversations
 const IDLE_MS = 30 * 60 * 1000       // 30 minutes of inactivity → auto-archive + clear
 
-export default function CoachChat() {
+/** Canned reply shown to the read-only demo account instead of hitting the
+ *  (403-blocked) coach API — turns a raw error into a friendly sign-up nudge. */
+const DEMO_COACH_REPLY =
+  "You're exploring the read-only TapeScore demo, so live coaching is turned off here. " +
+  "In a real account, the coach reads your logged trades — MFE/MAE capture, execution vs. " +
+  "compliance, day-type selectivity, recurring behavioral patterns — and answers questions " +
+  'like "what are my patterns when I trade poorly?" in your own framework, citing your actual ' +
+  'trades and numbers.\n\nSign up to point it at your own trading and get real, quantified feedback.'
+
+export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -34,8 +58,55 @@ export default function CoachChat() {
   const [view, setView] = useState<'chat' | 'archives'>('chat')
   const [archives, setArchives] = useState<ArchivedConversation[]>([])
   const [openArchiveId, setOpenArchiveId] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<string[]>([])   // data URLs for the next send
+  // Coach verbosity follows the GLOBAL sidebar View toggle (useUiMode): Highlights
+  // (beginner) = short verdict + offer to drill in; Detailed Tape (pro) = full breakdown.
+  const { mode: uiMode } = useUiMode()
+  const mode: 'highlights' | 'detailed' = uiMode === 'pro' ? 'detailed' : 'highlights'
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Image attachments ─────────────────────────────────────────────────────
+  // Read a File, downscale to MAX_IMG_DIM longest side (bounds tokens + payload),
+  // and return a JPEG data URL. Falls back to the raw data URL if canvas fails.
+  const fileToDataUrl = (file: File): Promise<string | null> => new Promise(resolve => {
+    if (!file.type.startsWith('image/')) { resolve(null); return }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const raw = typeof reader.result === 'string' ? reader.result : null
+      const img = new Image()
+      img.onload = () => {
+        const scale = Math.min(1, MAX_IMG_DIM / Math.max(img.width, img.height))
+        const w = Math.round(img.width * scale)
+        const h = Math.round(img.height * scale)
+        const canvas = document.createElement('canvas')
+        canvas.width = w; canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) { resolve(raw); return }
+        ctx.drawImage(img, 0, 0, w, h)
+        try { resolve(canvas.toDataURL('image/jpeg', 0.92)) } catch { resolve(raw) }
+      }
+      img.onerror = () => resolve(raw)
+      if (raw) img.src = raw; else resolve(null)
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+
+  const addFiles = async (files: FileList | File[]) => {
+    const results = await Promise.all(Array.from(files).map(fileToDataUrl))
+    const valid = results.filter((r): r is string => !!r)
+    if (valid.length) setAttachments(prev => [...prev, ...valid].slice(0, MAX_ATTACH))
+  }
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const imgs: File[] = []
+    for (const item of Array.from(e.clipboardData.items)) {
+      if (item.type.startsWith('image/')) { const f = item.getAsFile(); if (f) imgs.push(f) }
+    }
+    if (imgs.length) { e.preventDefault(); void addFiles(imgs) }
+  }
 
   // ── localStorage helpers ────────────────────────────────────────────────
   const loadArchives = (): ArchivedConversation[] => {
@@ -110,10 +181,14 @@ export default function CoachChat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, sending])
 
-  // Persist on every messages change. Skip the streaming flag from storage.
+  // Persist on every messages change. Skip the streaming flag AND images from
+  // storage — base64 images would blow the ~5MB localStorage cap fast.
   useEffect(() => {
     try {
-      const toStore = messages.filter(m => !m.streaming).slice(-MAX_PERSISTED_MESSAGES)
+      const toStore = messages
+        .filter(m => !m.streaming)
+        .slice(-MAX_PERSISTED_MESSAGES)
+        .map(m => ({ role: m.role, content: m.content }))
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore))
     } catch { /* ignore */ }
   }, [messages])
@@ -128,23 +203,43 @@ export default function CoachChat() {
     if (open) setTimeout(() => textareaRef.current?.focus(), 50)
   }, [open])
 
-  const send = async () => {
-    const trimmed = input.trim()
-    if (!trimmed || sending) return
-    setInput('')
+  const send = async (override?: string) => {
+    const trimmed = (override ?? input).trim()
+    const imgs = attachments
+    // `override` = a canned suggestion pill fired its text directly. Allow an
+    // image-only send too (default the text so the API still gets a message).
+    if ((!trimmed && imgs.length === 0) || sending) return
+    const outMessage = trimmed || 'Please analyze the attached chart(s).'
+    // Read-only demo: /api/coach is 403-blocked for the demo user. Instead of
+    // surfacing the raw error, echo the message and reply with a sign-up nudge.
+    if (isDemo) {
+      if (override == null) setInput('')
+      setAttachments([])
+      setError(null)
+      setView('chat')
+      setMessages(prev => [
+        ...prev,
+        { role: 'user', content: outMessage, images: imgs.length ? imgs : undefined },
+        { role: 'assistant', content: DEMO_COACH_REPLY },
+      ])
+      return
+    }
+    if (override == null) setInput('')   // leave the composer untouched on a suggestion click
+    setAttachments([])
     setError(null)
     setSending(true)
     setView('chat')   // sending always returns to the active conversation
     bumpActivity()    // reset the idle clock on every send
     // Snapshot history BEFORE adding the new user message so /api/coach gets
     // the prior turns and we don't duplicate the new turn in both places.
+    // History is text-only — images are dropped here by the {role,content} map.
     const priorHistory = messages.filter(m => !m.streaming).map(({ role, content }) => ({ role, content }))
-    setMessages(prev => [...prev, { role: 'user', content: trimmed }, { role: 'assistant', content: '', streaming: true }])
+    setMessages(prev => [...prev, { role: 'user', content: outMessage, images: imgs.length ? imgs : undefined }, { role: 'assistant', content: '', streaming: true }])
     try {
       const res = await fetch('/api/coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, history: priorHistory }),
+        body: JSON.stringify({ message: outMessage, history: priorHistory, images: imgs, mode }),
       })
       if (!res.ok || !res.body) {
         const errData = await res.json().catch(() => ({}))
@@ -294,7 +389,9 @@ export default function CoachChat() {
           <>
             <Brain className="w-4 h-4 text-blue-400 shrink-0" />
             <span className="font-semibold text-white text-sm">Trade Coach</span>
-            <span className="ml-1 text-[10px] text-gray-500 truncate hidden sm:inline">Answers from your actual trades</span>
+            <span className="ml-1 text-[10px] text-gray-500 truncate hidden sm:inline">
+              {mode === 'detailed' ? 'Detailed tape' : 'Highlights'} · follows sidebar View
+            </span>
           </>
         )}
         <div className="ml-auto flex items-center gap-2 shrink-0">
@@ -408,12 +505,20 @@ export default function CoachChat() {
           <div className="text-gray-500 text-xs space-y-2">
             <p>Ask me anything about your trading. I have your last 180 days — month-by-month performance, setups, mistakes, day types, orderflow, 5m structure, and your last 150 trades in detail.</p>
             <p className="text-gray-600">Try:</p>
-            <ul className="list-disc pl-4 space-y-1 text-gray-600">
-              <li>&ldquo;How did I do month over month?&rdquo;</li>
-              <li>&ldquo;What are my patterns when I trade poorly?&rdquo;</li>
-              <li>&ldquo;Am I better following or fading 5m structure?&rdquo;</li>
-              <li>&ldquo;Which mistakes cost me the most money?&rdquo;</li>
-            </ul>
+            <div className="flex flex-wrap gap-1.5">
+              {SUGGESTIONS.map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => void send(s)}
+                  disabled={sending}
+                  className="text-left text-[11px] text-blue-300 bg-blue-950/30 hover:bg-blue-900/40 border border-blue-900/50 rounded-full px-2.5 py-1 transition-colors disabled:opacity-50"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            <p className="text-gray-600 pt-1">Or attach a chart (image button / paste a screenshot) and ask me to read the structure — note I can&apos;t reliably read precise footprint/delta numbers.</p>
           </div>
         )}
         {messages.map((m, i) => (
@@ -425,6 +530,14 @@ export default function CoachChat() {
                   : 'bg-gray-800 text-gray-200 border border-gray-700'
               }`}
             >
+              {m.images && m.images.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-1.5">
+                  {m.images.map((src, j) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={j} src={src} alt="attached chart" className="max-h-40 rounded border border-white/25" />
+                  ))}
+                </div>
+              )}
               {m.content}
               {m.streaming && <span className="inline-block w-2 h-3 ml-1 bg-current opacity-60 animate-pulse" />}
             </div>
@@ -441,11 +554,48 @@ export default function CoachChat() {
       {/* Input (chat view only) */}
       {view === 'chat' && (
       <div className="border-t border-gray-800 p-3">
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {attachments.map((src, i) => (
+              <div key={i} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt="attachment preview" className="h-14 w-14 object-cover rounded border border-gray-700" />
+                <button
+                  type="button"
+                  onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}
+                  className="absolute -top-1.5 -right-1.5 bg-gray-800 border border-gray-600 rounded-full p-0.5 text-gray-300 hover:text-white"
+                  aria-label="Remove attachment"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={e => { if (e.target.files) void addFiles(e.target.files); e.target.value = '' }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending || attachments.length >= MAX_ATTACH}
+            title={attachments.length >= MAX_ATTACH ? `Max ${MAX_ATTACH} images` : 'Attach a chart image'}
+            className="text-gray-400 hover:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed p-2 rounded-lg transition-colors h-[68px] flex items-center"
+            aria-label="Attach image"
+          >
+            <ImagePlus className="w-5 h-5" />
+          </button>
           <textarea
             ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
+            onPaste={handlePaste}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -460,14 +610,14 @@ export default function CoachChat() {
           <button
             type="button"
             onClick={() => void send()}
-            disabled={sending || !input.trim()}
+            disabled={sending || (!input.trim() && attachments.length === 0)}
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg transition-colors h-[68px] flex items-center"
             aria-label="Send"
           >
             {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </button>
         </div>
-        <p className="text-[10px] text-gray-600 mt-1.5">Enter to send · Shift+Enter for new line · auto-archives after 30m idle</p>
+        <p className="text-[10px] text-gray-600 mt-1.5">Enter to send · Shift+Enter for new line · attach or paste a chart image · auto-archives after 30m idle</p>
       </div>
       )}
     </div>

@@ -31,6 +31,7 @@ import { consumeAiUsage } from '@/lib/ai-usage'
 import { createClient } from '@/lib/supabase/server'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { buildCoachContext } from '@/lib/coach-context'
+import { ANALYSIS_APPROACH } from '@/lib/coach-methodology'
 import { weekEnd, weekLabel, previousWeekStart } from '@/lib/week-dates'
 
 const client = new Anthropic()
@@ -120,6 +121,8 @@ export async function POST(req: Request) {
   const systemPrompt = `${profileContextBlock(traderProfile)}You are the trader's personal coach producing a structured weekly recap. You have TWO data blocks below: this week, and the prior week (for trend comparison). Synthesize across the week — patterns, themes, what worked, what didn't, where to focus next week.
 
 Be specific. Cite trade dates, setup names, PnL figures, day types from the actual data. Don't give generic advice. When the data doesn't support a confident call, say so explicitly. Defer to the trader's coaching preferences (above) over any generic best practice.
+
+${ANALYSIS_APPROACH}
 
 ${thisWeekContext}
 

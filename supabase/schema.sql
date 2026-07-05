@@ -100,6 +100,12 @@ create table if not exists trades (
   symbol text, -- e.g. "MNQM6.CME"; used for per-contract multiplier lookup when displaying MFE/MAE in dollars
   high_during_position numeric(10,2), -- tick-precise high price reached while position was open (Sierra's HighDuringPosition)
   low_during_position numeric(10,2),  -- tick-precise low price reached while position was open (Sierra's LowDuringPosition)
+  -- Post-exit continuation (30-min window after exit, points, direction-relative):
+  -- favorable = price continued the trade's way, against = reversed. Market-sense
+  -- / directional-read signal, NOT an exit grade. Migration 20260705_trades_post_exit.sql;
+  -- backfill scripts/backfill-post-exit.ts.
+  post_exit_favorable_pts numeric,
+  post_exit_against_pts numeric,
   -- Per-trade entry-time snapshots (backfilled by scripts/backfill-entry-metrics.ts).
   -- ATR/RVOL inherited from market_context is day-level; these capture the
   -- actual condition AT the minute of entry so analytics buckets reflect

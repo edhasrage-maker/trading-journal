@@ -37,6 +37,9 @@ export interface TradeExcursionInput {
   high_during_position: number | null
   low_during_position: number | null
   mfe_dollars_per_leg: number | null
+  /** ATR-10 (1m) at entry. Optional — enables volatility-normalized (×ATR)
+   *  excursion. Null/absent → the ×ATR fields come back null. */
+  entry_atr_1m?: number | null
 }
 
 export interface TradeExcursion {
@@ -58,6 +61,16 @@ export interface TradeExcursion {
   maePts: number | null
   /** Heat taken as a fraction of the planned stop distance (maePts ÷ stopDist). */
   maePct: number | null
+  /** Favorable excursion in points (best in-trade move in the trade's favor).
+   *  Covers ~all trades (no stop needed) — the points twin of mfeUsd. */
+  mfePts: number | null
+  /** Favorable excursion in ATR units (mfePts ÷ entry ATR). Null without ATR.
+   *  NOTE: ×ATR is size-agnostic; a big ×ATR capture on small size can be small
+   *  $, and a smaller ×ATR capture on big size more $. Read ×ATR next to $, not
+   *  instead of it. */
+  mfeAtr: number | null
+  /** Heat taken in ATR units (maePts ÷ entry ATR). Null without ATR. */
+  maeAtr: number | null
 }
 
 /**
@@ -73,18 +86,22 @@ export function interpretExcursion(t: TradeExcursionInput): TradeExcursion {
     : null
   const r = (stopDist && t.quantity) ? pnl / (stopDist * t.quantity * mult) : null
 
+  // Favorable excursion in points — the best in-trade move in the trade's favor.
+  // Computed once (no stop needed) and reused for $, R, and ×ATR below.
+  let mfePts: number | null = null
+  if (t.entry_price != null && t.direction) {
+    mfePts = t.direction === 'short'
+      ? (t.low_during_position != null ? Math.max(0, t.entry_price - t.low_during_position) : null)
+      : (t.high_during_position != null ? Math.max(0, t.high_during_position - t.entry_price) : null)
+  }
+
   // Dollar-basis best case (primary; no stop needed). Clamp the per-leg MFE-$ at
   // the tick-precise full-position ceiling (favorable extreme × qty × mult).
   let mfeUsd = t.mfe_dollars_per_leg
-  if (t.entry_price != null && t.quantity != null) {
-    const favPts = t.direction === 'short'
-      ? (t.low_during_position != null ? t.entry_price - t.low_during_position : null)
-      : (t.high_during_position != null ? t.high_during_position - t.entry_price : null)
-    if (favPts != null && favPts >= 0) {
-      const ceiling = favPts * t.quantity * mult
-      if (mfeUsd == null) mfeUsd = ceiling
-      else if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
-    }
+  if (mfePts != null && t.quantity != null) {
+    const ceiling = mfePts * t.quantity * mult
+    if (mfeUsd == null) mfeUsd = ceiling
+    else if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
   }
   let capPct: number | null = null
   let leftUsd: number | null = null
@@ -94,13 +111,7 @@ export function interpretExcursion(t: TradeExcursionInput): TradeExcursion {
   }
 
   // R-basis reachability (secondary; needs a logged stop).
-  let mfeR: number | null = null
-  if (stopDist && stopDist > 0 && t.entry_price != null) {
-    const mfePts = t.direction === 'short'
-      ? (t.low_during_position != null ? t.entry_price - t.low_during_position : null)
-      : (t.high_during_position != null ? t.high_during_position - t.entry_price : null)
-    if (mfePts != null && mfePts >= 0) mfeR = mfePts / stopDist
-  }
+  const mfeR = (mfePts != null && stopDist && stopDist > 0) ? mfePts / stopDist : null
 
   // MAE / heat taken (adverse excursion in points; % needs a stop).
   let maePts: number | null = null
@@ -111,5 +122,11 @@ export function interpretExcursion(t: TradeExcursionInput): TradeExcursion {
   }
   const maePct = (maePts != null && stopDist && stopDist > 0) ? maePts / stopDist : null
 
-  return { isWin, stopDist, r, mfeUsd, capPct, leftUsd, mfeR, maePts, maePct }
+  // Volatility-normalized (×ATR) — the third unit. Lets $ / points / ×ATR be
+  // compared so size can be pulled apart (big ×ATR ≠ big $ when size is small).
+  const atr = t.entry_atr_1m
+  const mfeAtr = (atr != null && atr > 0 && mfePts != null) ? mfePts / atr : null
+  const maeAtr = (atr != null && atr > 0 && maePts != null) ? maePts / atr : null
+
+  return { isWin, stopDist, r, mfeUsd, capPct, leftUsd, mfeR, maePts, maePct, mfePts, mfeAtr, maeAtr }
 }

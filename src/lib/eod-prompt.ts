@@ -18,6 +18,7 @@ import path from 'path'
 // TS path aliases from tsconfig. Next.js + Webpack handle both fine.
 import type { PrepNotes, AiAnalysis, Trade, MarketContext, EodAiAnalysis } from './supabase/types.ts'
 import { symbolToMultiplier } from './futures-symbols.ts'
+import { CAPTURE_UNITS_DISCIPLINE } from './coach-methodology.ts'
 
 // ─── Ruleset loader ──────────────────────────────────────────────────────────
 
@@ -425,6 +426,12 @@ If the data shows ONE LH and no LL, write "after a lower-high formed" or
 "into a failing-continuation structure", NOT "into an active downtrend."
 Inflated terminology makes the trade sound worse than it was; that bleeds
 into how the trader internalizes the day.
+
+**7. ${CAPTURE_UNITS_DISCIPLINE}** This is NARRATION guidance for how you
+describe MFE capture / "left on the table" in summary, execution.notes,
+what_worked, and mistakes — express it in $ AND ×ATR, and never call a
+small-×ATR / big-$ trade a poor capture. It does NOT change the deterministic
+mfe_capture math above.
 
 **5. Enumerate before counting.** When scoring criterion #5 (two_thirds_orderflow),
 LIST each of the 3 signals you find in the trade's tags / notes / commentary

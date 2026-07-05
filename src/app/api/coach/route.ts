@@ -23,6 +23,8 @@ import { createClient } from '@/lib/supabase/server'
 import { getTraderProfile, profileContextBlock, focusContextBlock } from '@/lib/trader-profile'
 import { buildCoachContext } from '@/lib/coach-context'
 import { consumeAiUsage } from '@/lib/ai-usage'
+import { normalizeAnthropicMediaType, type AnthropicMediaType } from '@/lib/anthropic-image'
+import { ANALYSIS_APPROACH } from '@/lib/coach-methodology'
 
 const client = new Anthropic()
 
@@ -37,6 +39,31 @@ interface ChatMessage {
 interface CoachBody {
   message: string
   history?: ChatMessage[]
+  /** Optional chart images for the CURRENT turn only, as data URLs
+   *  ("data:image/png;base64,..."). History stays text-only to keep tokens
+   *  and client storage sane. Unsupported types are dropped, not rejected. */
+  images?: string[]
+  /** Response verbosity. 'highlights' (default) = short verdict + offer to
+   *  drill in; 'detailed' = full trade-by-trade tape, no asking first. */
+  mode?: 'highlights' | 'detailed'
+}
+
+type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: AnthropicMediaType; data: string } }
+
+/** Parse data-URL images into Anthropic image blocks. Drops anything that
+ *  isn't a base64 data URL of a supported media type. Capped at 4. */
+function parseImages(images: unknown): ImageBlock[] {
+  if (!Array.isArray(images)) return []
+  const out: ImageBlock[] = []
+  for (const url of images.slice(0, 4)) {
+    if (typeof url !== 'string') continue
+    const m = url.match(/^data:([^;]+);base64,(.+)$/)
+    if (!m) continue
+    const media = normalizeAnthropicMediaType(m[1])
+    if (!media) continue
+    out.push({ type: 'image', source: { type: 'base64', media_type: media, data: m[2] } })
+  }
+  return out
 }
 
 export async function POST(req: Request) {
@@ -83,19 +110,46 @@ export async function POST(req: Request) {
   })
   const traderProfile = await getTraderProfile()
 
+  const detailed = body.mode === 'detailed'
+  const styleInstruction = detailed
+    ? `The trader is in DETAILED (tape) mode — they've explicitly opted into depth. Be thorough and comprehensive: go trade-by-trade, use tables where they aid clarity, cover every relevant point, and do NOT ask permission before expanding — they already want the full breakdown. Still no fluff — every line must carry information. No preamble ("Great question!"), no closing platitudes.`
+    : `Keep responses SHORT (the trader is in HIGHLIGHTS mode). Lead with the verdict/answer in 1-3 sentences, then AT MOST 2-4 bullets for the points that matter most. Do NOT dump exhaustive per-trade tables, multi-section audits, or a line for every trade — surface the headline and the one or two things to act on, not the full breakdown. When more detail exists (a trade-by-trade breakdown, a specific example, the full list), do NOT pre-empt it: END by OFFERING it as a question — e.g. "Want me to break down the worst one?" or "Want the trade-by-trade?" — and only expand if they ask. Simple factual questions: 1-2 sentences. No preamble ("Great question!"), no closing platitudes. Get to the point.`
+
+  // Shared diagnostic order (coach + weekly recap use the same text) plus a
+  // chat-specific lead-in about leading broad questions with the altitude check.
+  const analysisApproach = `${ANALYSIS_APPROACH}
+
+LEAD any broad question ("how am I doing", "where do I improve") with the FOUNDATION/altitude check above before drilling into individual trades. Each recent trade below shows qty, $ pnl, and ×ATR so you can pull size apart per point 4.`
+
+  // Inquisitive behaviour — probe on behavioural input, stay direct on data.
+  const probeDirective = `PROBE WHEN IT'S BEHAVIOURAL, ANSWER WHEN IT'S FACTUAL. When the trader describes a DECISION, a FEELING, or their REASONING ("I moved my stop", "I felt rushed", "I bailed because it looked weak"), don't just react — end with ONE sharp "why" follow-up that surfaces the driver (what they saw, what they felt, which rule was in play). But when they ask a direct DATA question ("how did I do month over month?", "win rate on range days?"), just answer with the numbers — do NOT interrogate. One probe max, never an interview, never stack questions. In Highlights mode, this behavioural probe REPLACES the generic "want me to drill in?" offer — don't do both.`
+
+  const imageBlocks = parseImages(body.images)
+  const visionNote = imageBlocks.length > 0
+    ? `\n\nThe trader attached ${imageBlocks.length} chart image(s) with this message. Read visible price structure, levels, and gross orderflow (obvious absorption/exhaustion/imbalance zones) confidently — but do NOT invent precise delta or footprint numbers; vision is unreliable on dense footprint text. If a specific delta read matters, describe what you can see and ask them to confirm from the chart. Tie what you see back to their logged data and profile.`
+    : ''
+
   const systemPrompt = `${profileContextBlock(traderProfile)}You are the trader's personal coach, embedded in their trading journal app. You have access to their trading history (summarized below). Your job: answer their questions directly using their actual data. Be SPECIFIC — cite trade counts, dates, PnL figures, win rates, tag names. Don't give generic trading advice; reference what THIS trader has actually done.
 
 When the data doesn't support a confident answer, say so explicitly ("I don't have enough trades in this bucket to call it") rather than guessing. When the trader's coaching preferences (above) conflict with what generic advice would suggest, ALWAYS defer to the preferences — the trader knows their system better than you do.
 
-Keep responses tight. 2-4 sentences for simple questions; bullet points or a short table when listing things. No preamble ("Great question!"), no closing platitudes. Get to the point.
+${styleInstruction}${visionNote}
+
+${analysisApproach}
+
+${probeDirective}
 
 ${contextBlock}${focusContextBlock(traderProfile)}`
 
-  // Build the messages array — trader's prior history + new message.
+  // Build the messages array — trader's prior history + new message. History is
+  // text-only; images ride on the current turn's content array (images first).
   const history = Array.isArray(body.history) ? body.history.slice(-20) : []  // cap at 20 turns to stay sensible
+  const currentContent: Anthropic.MessageParam['content'] = imageBlocks.length > 0
+    ? [...imageBlocks, { type: 'text', text: body.message }]
+    : body.message
   const messages: Anthropic.MessageParam[] = [
     ...history.map(m => ({ role: m.role, content: m.content })),
-    { role: 'user' as const, content: body.message },
+    { role: 'user' as const, content: currentContent },
   ]
 
   // Stream the response back as SSE so the chat panel can show tokens as
