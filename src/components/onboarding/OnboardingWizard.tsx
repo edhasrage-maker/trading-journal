@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import PathForkStep from './PathForkStep'
+import NewTraderStep from './NewTraderStep'
 import AccountStep from './AccountStep'
 import PlaybookStep from './PlaybookStep'
 import RulesStep from './RulesStep'
 import YourGameStep from './YourGameStep'
 import ReviewStep from './ReviewStep'
 
-// Each step renders with the nav callbacks below. Review (last) drafts the AI
-// Player Profile and saves it on finish.
+// The veteran ("I trade a system") path — full capture. The new-trader path is
+// a single screen (NewTraderStep) reached via the opening fork.
 const STEPS = [
   { key: 'account', title: 'Account & markets' },
   { key: 'playbook', title: 'Your playbook' },
@@ -18,13 +20,17 @@ const STEPS = [
   { key: 'review', title: 'Review profile' },
 ] as const
 
+type Phase = 'fork' | 'veteran' | 'new'
+
 /**
- * First-time setup wizard shell. Tracks progress in onboarding_json, lets the
- * user skip at any point (never blocks the app), and marks itself completed at
- * the end. Reachable at /welcome/setup; not auto-triggered until Phase 5.
+ * First-time setup wizard shell. Opens with a one-tap fork (veteran vs new); the
+ * veteran path runs the full multi-step capture, the new path is a single light
+ * screen. Progress is tracked in onboarding_json, the user can skip at any point
+ * (never blocks the app), and it marks itself completed at the end.
  */
 export default function OnboardingWizard() {
   const router = useRouter()
+  const [phase, setPhase] = useState<Phase>('fork')
   const [step, setStep] = useState(0)
   const total = STEPS.length
 
@@ -50,12 +56,21 @@ export default function OnboardingWizard() {
       body: JSON.stringify({ onboarding }),
     }).catch(() => {})
 
+  const pickPath = (p: 'veteran' | 'new') => {
+    patch({ path: p })
+    setStep(0)
+    setPhase(p)
+  }
+
   const next = () => {
     patch({ [`step_${STEPS[step].key}`]: true })
     if (step < total - 1) setStep(step + 1)
     else finish()
   }
-  const back = () => setStep(s => Math.max(0, s - 1))
+  const back = () => {
+    if (step === 0) setPhase('fork')
+    else setStep(s => s - 1)
+  }
   const finish = () => {
     patch({ status: 'completed', completed_at: new Date().toISOString() })
     router.push('/dashboard')
@@ -63,6 +78,26 @@ export default function OnboardingWizard() {
   const skipAll = () => {
     patch({ status: 'skipped' })
     router.push('/dashboard')
+  }
+
+  if (phase === 'fork') {
+    return (
+      <div className="max-w-2xl mx-auto px-6 py-10">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+          <PathForkStep onPick={pickPath} onSkipAll={skipAll} />
+        </div>
+      </div>
+    )
+  }
+
+  if (phase === 'new') {
+    return (
+      <div className="max-w-2xl mx-auto px-6 py-10">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+          <NewTraderStep onDone={finish} onSkipAll={skipAll} onBack={() => setPhase('fork')} />
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -85,9 +120,7 @@ export default function OnboardingWizard() {
         {STEPS[step].key === 'review' && <ReviewStep onNext={next} onSkipAll={skipAll} />}
       </div>
 
-      {step > 0 && (
-        <button type="button" onClick={back} className="mt-4 text-sm text-gray-500 hover:text-gray-300">← Back</button>
-      )}
+      <button type="button" onClick={back} className="mt-4 text-sm text-gray-500 hover:text-gray-300">← Back</button>
     </div>
   )
 }
