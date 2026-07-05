@@ -2,6 +2,8 @@
 
 You're working on a personal trading journal that's been built across many sessions. This file captures the *Claude-relevant* context — architecture quirks, conventions, tolerated lint, and open threads. Read it once at the start of every session so you don't relearn the same gotchas. The user's README.md is for *humans onboarding the app*; that's a different doc.
 
+> **Product & coach vision:** `docs/product-overview.md` (what TapeScore is + domain vocabulary) and `docs/coach-brief.md` (how the coaching AI should behave) distill a founder walkthrough. Read them when the work touches product direction or coach behavior; this file stays the *technical* reference.
+
 ## Architecture
 
 - **Stack:** Next.js 16 (App Router, Turbopack) · TypeScript · Tailwind · Supabase (Postgres + Storage + Auth) · `@anthropic-ai/sdk` (model `claude-sonnet-4-6`) · lightweight-charts v5 · Recharts where used.
