@@ -246,15 +246,16 @@ function DayCell({
         {dom}
       </div>
 
-      {/* Center stack — grade as the focal point, supporting stats below */}
+      {/* Center stack. Mobile: just the PnL on one line (the cell is already
+          tinted green/red by PnL sign, so win/loss still reads at a glance).
+          Desktop (sm+): grade as the focal point with supporting stats below. */}
       {inMonth && hasTrades && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pt-3 pb-1 px-1 gap-0.5">
-          {/* Grade — large, middle (scaled down on mobile's tighter cells) */}
-          <div className={`text-base sm:text-2xl font-bold font-mono leading-none ${grade != null ? gradeText(grade) : 'text-gray-700'}`}>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 px-0.5 sm:pt-3 sm:pb-1 sm:px-1">
+          {/* Grade — large, middle (desktop only; too big for the tight mobile cell) */}
+          <div className={`hidden sm:block text-2xl font-bold font-mono leading-none ${grade != null ? gradeText(grade) : 'text-gray-700'}`}>
             {grade != null ? grade : '—'}
           </div>
-          {/* Supporting label + secondary stats — hidden on mobile where the
-              cell is too small to hold the full stack legibly. */}
+          {/* Supporting label + secondary stats — desktop only. */}
           <div className="hidden sm:block text-[8px] text-gray-500 uppercase tracking-wider -mt-0.5 mb-0.5">Grade</div>
 
           {/* Trades */}
@@ -269,9 +270,9 @@ function DayCell({
             </div>
           )}
 
-          {/* PnL — anchored to bottom of the stack; kept on mobile */}
+          {/* PnL — the one thing kept on mobile; single line, no wrap. */}
           {pnl != null && (
-            <div className={`text-[10px] sm:text-xs font-mono font-bold leading-tight mt-0.5 ${
+            <div className={`text-[11px] sm:text-xs font-mono font-bold leading-tight whitespace-nowrap sm:mt-0.5 ${
               pnl > 0 ? 'text-green-300' : pnl < 0 ? 'text-red-300' : 'text-gray-300'
             }`}>
               {fmtPnlShort(pnl)}
