@@ -7,16 +7,16 @@ import NewTraderStep from './NewTraderStep'
 import AccountStep from './AccountStep'
 import PlaybookStep from './PlaybookStep'
 import RulesStep from './RulesStep'
-import YourGameStep from './YourGameStep'
 import ReviewStep from './ReviewStep'
 
-// The veteran ("I trade a system") path — full capture. The new-trader path is
-// a single screen (NewTraderStep) reached via the opening fork.
+// The veteran ("I trade a system") path — full capture, streamlined to 4 steps:
+// step 1 required, 2–3 optional (opt-in grids / dismissable rails), and the
+// "Your game" reflection demoted to an optional card inside Review. The
+// new-trader path is a single screen (NewTraderStep) reached via the opening fork.
 const STEPS = [
   { key: 'account', title: 'Account & markets' },
   { key: 'playbook', title: 'Your playbook' },
   { key: 'rules', title: 'Risk & rules' },
-  { key: 'yourgame', title: 'Your game' },
   { key: 'review', title: 'Review profile' },
 ] as const
 
@@ -116,7 +116,6 @@ export default function OnboardingWizard() {
         {STEPS[step].key === 'account' && <AccountStep onNext={next} onSkipAll={skipAll} />}
         {STEPS[step].key === 'playbook' && <PlaybookStep onNext={next} onSkipAll={skipAll} />}
         {STEPS[step].key === 'rules' && <RulesStep onNext={next} onSkipAll={skipAll} />}
-        {STEPS[step].key === 'yourgame' && <YourGameStep onNext={next} onSkipAll={skipAll} />}
         {STEPS[step].key === 'review' && <ReviewStep onNext={next} onSkipAll={skipAll} />}
       </div>
 
