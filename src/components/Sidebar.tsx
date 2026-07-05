@@ -26,6 +26,7 @@ import {
   X,
   ChevronsLeft,
   ChevronsRight,
+  Compass,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
@@ -88,6 +89,12 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
     await createClient().auth.signOut()
     router.push('/')
     router.refresh()
+  }
+  // Replay the first-login guided tour on demand (SiteTour listens for this).
+  // Cloud-only, matching where the tour runs.
+  const startTour = () => {
+    setMoreOpen(false)
+    window.dispatchEvent(new Event('tapescore:start-tour'))
   }
   // `today` is the PT session date (todayPT), not machine-local — a mis-set OS
   // timezone on either synced machine would otherwise point these links at the
@@ -283,6 +290,24 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
       </div>
       )}
 
+      {/* Take the tour — cloud-only replay of the first-login walkthrough. */}
+      {!LOCAL_FEATURES_ENABLED && (
+        <div className="px-3 pt-4">
+          <button
+            type="button"
+            onClick={startTour}
+            title={collapsed ? 'Take the tour' : undefined}
+            className={cn(
+              'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors',
+              collapsed && 'justify-center',
+            )}
+          >
+            <Compass className="w-4 h-4 flex-shrink-0" />
+            {!collapsed && 'Take the tour'}
+          </button>
+        </div>
+      )}
+
       {/* Sign out */}
       <div className="px-3 py-4">
         <button
@@ -371,6 +396,16 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
                   </Link>
                 )
               })}
+              {!LOCAL_FEATURES_ENABLED && (
+                <button
+                  type="button"
+                  onClick={startTour}
+                  className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
+                >
+                  <Compass className="w-4 h-4 flex-shrink-0" />
+                  Take the tour
+                </button>
+              )}
             </div>
             {visibleSettings.length > 0 && (
               <div className="px-3 py-3 border-t border-gray-800 space-y-0.5">
