@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { consumeAiUsage } from '@/lib/ai-usage'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { computeCoachScore, type GradableTrade } from '@/lib/coach-score'
+import { resolveRubric, scoringProfileSummary, type ScoringProfile } from '@/lib/scoring-profile'
 
 const client = new Anthropic()
 
@@ -26,12 +27,14 @@ type AnyClient = any
  */
 
 // Rubric definitions for the criteria that come back `unknown` (mirrors
-// eod-prompt.ts §Execution Parameters).
+// eod-prompt.ts §Execution Parameters). Methodology-neutral: location,
+// structure, and risk are judged for EVERY trader; the order-flow lens is
+// profile-gated below (feedback_no_forced_orderflow). `tp1_at_2r` is built
+// per-user in the handler (the R-multiple + TP target come from the profile).
 const CRITERION_DEF: Record<string, string> = {
-  clear_aoi: 'clear_area_of_interest — PASS if the entry is anchored to a specific structural level (PDH/PDL, IBH/IBL, ONH/ONL, an HTF zone, an LVN, or a demand/supply cluster). A generic mid-range entry with no level FAILS. "na" only if there is genuinely no location context in the notes to judge.',
-  valid_entry_trigger: 'valid_entry_trigger — PASS if the entry used a DEFINED trigger/model from the trader\'s playbook (1 ATR entry, break of candle, POC break, Heiken-Ashi flip, break of cluster/bubble, a price-based trigger, etc.). A purely discretionary poke with no method described FAILS. Do not require any ONE specific model.',
-  rule_based_exit: 'rule_based_exit — this exit was NOT a clean TP-hit or stop-out (those already auto-pass). Judge the discretionary exit: PASS if driven by a technical/structural read (e.g. "a big buyer stepped in above and did not get rewarded"); FAIL if PnL-anchored emotion (e.g. "scared to give back profits before target"). "na" if there is no exit reasoning to judge.',
-  tp1_at_2r: 'tp1_at_2r_or_reasoned — this trade\'s planned TP1 was BELOW 2R. PASS only if the notes give an explicit structural reason for the sub-2R target (a one-off level / specific structural target). No reason = FAIL.',
+  clear_aoi: 'clear_area_of_interest — PASS if the entry is anchored to a specific level or structure the trader trades from (session levels, prior-day levels, an HTF zone, S/R, a demand/supply area, an LVN, etc.). A generic mid-range entry with no level FAILS. "na" only if there is genuinely no location context in the notes to judge.',
+  valid_entry_trigger: 'valid_entry_trigger — PASS if the entry used a DEFINED trigger/model from the TRADER\'S OWN playbook (whatever that is for them — a break/retest, a candle trigger, a level reclaim, an indicator flip, a price-based trigger, etc.). A purely discretionary poke with no method described FAILS. Do not require any ONE specific model, and do not impose a methodology they don\'t use.',
+  rule_based_exit: 'rule_based_exit — this exit was NOT a clean TP-hit or stop-out (those already auto-pass). Judge the discretionary exit: PASS if driven by a technical/structural read; FAIL if PnL-anchored emotion (e.g. "scared to give back profits before target"). "na" if there is no exit reasoning to judge.',
 }
 
 export async function POST(req: Request) {
@@ -47,7 +50,16 @@ export async function POST(req: Request) {
   const { data: tagRows } = await supabase.from('trade_tags').select('label').eq('category', 'setups')
   const setupLibrary = new Set<string>(((tagRows ?? []) as { label: string }[]).map(r => r.label.toLowerCase()))
 
-  const cs = computeCoachScore(trade, { setupLibrary })
+  // Per-user rules: grade against the trader's own scoring profile (onboarding),
+  // not the owner's Ruleset v1.3. Empty/missing → default rubric (owner-parity).
+  const { data: profRow } = await supabase
+    .from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle()
+  const scoringProfile: ScoringProfile =
+    profRow?.scoring_profile_json && typeof profRow.scoring_profile_json === 'object'
+      ? (profRow.scoring_profile_json as ScoringProfile) : {}
+  const rubric = resolveRubric(scoringProfile)
+
+  const cs = computeCoachScore(trade, { setupLibrary, scoringProfile })
   const unknowns = cs.criteria.filter(c => c.status === 'unknown')
   if (unknowns.length === 0) return NextResponse.json({ resolutions: {}, resolved: 0 })
 
@@ -61,7 +73,16 @@ export async function POST(req: Request) {
     .map(([k, v]) => `${k}: ${Array.isArray(v) ? (v.join(', ') || '—') : (v ?? '—')}`)
     .join('; ')
   const profile = await getTraderProfile()
-  const criteriaList = unknowns.map((c, i) => `${i + 1}. key="${c.key}" — ${CRITERION_DEF[c.key] ?? c.label}`).join('\n')
+
+  // Per-user TP criterion — the threshold + the trader's stated TP approach.
+  const tp1Def = `tp1_at_2r_or_reasoned — this trade's planned TP1 was BELOW the trader's ${rubric.tp1RMultiple}R target${scoringProfile.tp ? ` (their stated TP approach: "${scoringProfile.tp}")` : ''}. PASS only if the notes give an explicit reason for the lower target (a one-off level / specific structural target that fits their approach). No reason = FAIL.`
+  const defFor = (key: string) => (key === 'tp1_at_2r' ? tp1Def : (CRITERION_DEF[key] ?? key))
+  const criteriaList = unknowns.map((c, i) => `${i + 1}. key="${c.key}" — ${defFor(c.key)}`).join('\n')
+
+  const rulesLine = scoringProfileSummary(scoringProfile)
+  const lensNote = rubric.usesOrderFlow
+    ? ''
+    : `\nIMPORTANT: this trader does NOT trade order flow. Judge entirely within their price-action / structure / location / risk framework. NEVER fail or penalize a criterion for a missing order-flow / footprint / delta / absorption read — that lens does not apply to them.`
 
   const prompt = `You are grading ONE trade against specific execution criteria. Resolve ONLY the criteria listed, using the trade's notes + tags. Be strict and honest — if the notes don't support a pass, don't invent one.
 
@@ -70,6 +91,7 @@ TRADE
 - entry: ${trade.entry_price ?? '—'}, stop: ${trade.stop_price ?? '—'}, TP1: ${trade.tp1_price ?? '—'}
 - tags: ${tagSummary || '(none)'}
 - notes: ${notes || '(none)'}
+${rulesLine ? `\nTHE TRADER'S OWN RULES (grade against THESE, not generic best practice): ${rulesLine}` : ''}${lensNote}
 ${profileContextBlock(profile)}
 
 CRITERIA TO RESOLVE

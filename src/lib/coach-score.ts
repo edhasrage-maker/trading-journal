@@ -9,7 +9,14 @@
  * 9-criterion per-trade checklist" so a trade's live Coach Score lines up with
  * the EOD Execution score. `na` criteria are skipped in the denominator (same
  * as the EOD rubric); `unknown` is likewise excluded until the AI resolves it.
+ *
+ * Per-user thresholds: pass a `scoringProfile` (the trader's onboarding rules)
+ * and the ATR stop target, TP1 R-multiple, and order-flow gate come from THEIR
+ * profile instead of the owner's Ruleset v1.3. An empty/omitted profile falls
+ * back to the v1.3 defaults, so the owner's local app is unchanged.
  */
+
+import { resolveRubric, type ScoringProfile } from '@/lib/scoring-profile'
 
 export interface GradableTrade {
   entry_price: number | null
@@ -73,7 +80,7 @@ export function summarizeCoachScore(criteria: Criterion[]): CoachScore {
  */
 export function computeCoachScore(
   t: GradableTrade,
-  opts?: { setupLibrary?: Set<string>; instrumentHasBars?: boolean },
+  opts?: { setupLibrary?: Set<string>; instrumentHasBars?: boolean; scoringProfile?: ScoringProfile | null },
 ): CoachScore {
   const tj = t.tags_json ?? {}
   const setups = arr(tj.setups)
@@ -82,6 +89,7 @@ export function computeCoachScore(
   const entryModel = arr(tj.entry_model)
   const mistakes = arr(tj.mistakes)
   const emotions = arr(tj.emotions)
+  const rubric = resolveRubric(opts?.scoringProfile)
   const c: Criterion[] = []
 
   // 1. setup_in_playbook — a curated setup tag is present.
@@ -92,36 +100,44 @@ export function computeCoachScore(
     c.push({ key: 'setup_in_playbook', label: 'Setup in playbook', status: inLib ? 'pass' : 'fail', source: 'auto', reason: inLib ? undefined : 'Setup not in library' })
   }
 
-  // 2. stop_in_atr_band — |entry−stop| ÷ entry ATR-10 within [0.5, 1.5]
-  //    (1.25 upper for size-ups > 5 lots). N/A without an entry ATR (e.g. GBX).
+  // 2. stop_in_atr_band — |entry−stop| ÷ entry ATR-10 within [0.5, 1.5]× the
+  //    trader's ATR stop target (default 1 → [0.5, 1.5]; e.g. a 2-ATR trader →
+  //    [1.0, 3.0]). 1.25 upper (× target) for size-ups. N/A without an ATR.
   {
     const e = t.entry_price, s = t.stop_price, atr = t.entry_atr_1m
+    const tgt = rubric.atrStopTarget
+    const lo = 0.5 * tgt
+    // Label reflects the band; keep the familiar "0.5–1.5× ATR" for the default.
+    const bandLabel = tgt === 1 ? 'Stop 0.5–1.5× ATR' : `Stop ${lo}–${(1.5 * tgt)}× ATR`
     if (opts?.instrumentHasBars === false) {
       // No bar data for this instrument → any stored entry_atr_1m is from a
       // DIFFERENT instrument (e.g. an ES trade carrying a stale NQ ATR). Don't
       // judge the stop against a wrong-scale ATR — mark N/A until bars exist.
-      c.push({ key: 'stop_in_atr_band', label: 'Stop 0.5–1.5× ATR', status: 'na', source: 'auto', reason: 'No bars for this instrument' })
+      c.push({ key: 'stop_in_atr_band', label: bandLabel, status: 'na', source: 'auto', reason: 'No bars for this instrument' })
     } else if (e == null || s == null || atr == null || atr <= 0) {
-      c.push({ key: 'stop_in_atr_band', label: 'Stop 0.5–1.5× ATR', status: 'na', source: 'auto', reason: atr == null ? 'No entry ATR' : 'Missing stop/entry' })
+      c.push({ key: 'stop_in_atr_band', label: bandLabel, status: 'na', source: 'auto', reason: atr == null ? 'No entry ATR' : 'Missing stop/entry' })
     } else {
       const mult = Math.abs(e - s) / atr
-      const upper = (t.quantity ?? 0) > 5 ? 1.25 : 1.5
-      const ok = mult >= 0.5 && mult <= upper
-      c.push({ key: 'stop_in_atr_band', label: 'Stop 0.5–1.5× ATR', status: ok ? 'pass' : 'fail', source: 'auto', reason: `${mult.toFixed(2)}× ATR` })
+      const upper = ((t.quantity ?? 0) > rubric.sizeUpLots ? 1.25 : 1.5) * tgt
+      const ok = mult >= lo && mult <= upper
+      c.push({ key: 'stop_in_atr_band', label: bandLabel, status: ok ? 'pass' : 'fail', source: 'auto', reason: `${mult.toFixed(2)}× ATR` })
     }
   }
 
-  // 3. tp1_at_2r_or_reasoned — planned TP1 ÷ planned stop ≥ 2R. Below 2R needs a
-  //    logged reason (judgment) → unknown for the AI to check the notes.
+  // 3. tp1_at_2r_or_reasoned — planned TP1 ÷ planned stop ≥ the trader's TP
+  //    R-multiple (default 2). Below it needs a logged reason (judgment) →
+  //    unknown for the AI to check the notes.
   {
     const e = t.entry_price, s = t.stop_price, tp = t.tp1_price
+    const rMult = rubric.tp1RMultiple
+    const label = `TP1 ≥ ${rMult}R`
     if (e == null || s == null || tp == null || Math.abs(e - s) === 0) {
-      c.push({ key: 'tp1_at_2r', label: 'TP1 ≥ 2R', status: 'na', source: 'auto', reason: 'Missing TP1/stop' })
+      c.push({ key: 'tp1_at_2r', label, status: 'na', source: 'auto', reason: 'Missing TP1/stop' })
     } else {
       const r = Math.abs(tp - e) / Math.abs(e - s)
-      c.push(r >= 2
-        ? { key: 'tp1_at_2r', label: 'TP1 ≥ 2R', status: 'pass', source: 'auto', reason: `${r.toFixed(1)}R` }
-        : { key: 'tp1_at_2r', label: 'TP1 ≥ 2R', status: 'unknown', source: 'auto', reason: `${r.toFixed(1)}R — needs a logged reason` })
+      c.push(r >= rMult
+        ? { key: 'tp1_at_2r', label, status: 'pass', source: 'auto', reason: `${r.toFixed(1)}R` }
+        : { key: 'tp1_at_2r', label, status: 'unknown', source: 'auto', reason: `${r.toFixed(1)}R — needs a logged reason` })
     }
   }
 
@@ -131,14 +147,19 @@ export function computeCoachScore(
     ? { key: 'clear_aoi', label: 'Clear area of interest', status: 'pass', source: 'auto' }
     : { key: 'clear_aoi', label: 'Clear area of interest', status: 'unknown', source: 'auto', reason: 'No confluence tagged' })
 
-  // 5. two_thirds_orderflow — ONLY gates the size-up (> 5 lots): ≥2/3 OF reads.
-  //    ≤5 lots is N/A (never a fail — see feedback_2of3_orderflow_is_sizing_gate).
+  // 5. two_thirds_orderflow — an order-flow rule, so it only applies to traders
+  //    whose profile uses order flow (feedback_no_forced_orderflow): if they
+  //    don't trade OF it's ALWAYS N/A (never a fail). For OF traders it gates the
+  //    size-up (> sizeUpLots): ≥2/3 OF reads; base size is N/A (never a fail —
+  //    see feedback_2of3_orderflow_is_sizing_gate).
   {
     const qty = t.quantity ?? 0
-    if (qty > 5) {
+    if (!rubric.usesOrderFlow) {
+      c.push({ key: 'two_thirds_of', label: '2/3 order flow (size-up)', status: 'na', source: 'auto', reason: "Doesn't trade order flow — N/A" })
+    } else if (qty > rubric.sizeUpLots) {
       c.push({ key: 'two_thirds_of', label: '2/3 order flow (size-up)', status: orderFlow.length >= 2 ? 'pass' : 'fail', source: 'auto', reason: `${orderFlow.length}/3 OF` })
     } else {
-      c.push({ key: 'two_thirds_of', label: '2/3 order flow (size-up)', status: 'na', source: 'auto', reason: '≤5 lots — N/A' })
+      c.push({ key: 'two_thirds_of', label: '2/3 order flow (size-up)', status: 'na', source: 'auto', reason: `≤${rubric.sizeUpLots} lots — N/A` })
     }
   }
 

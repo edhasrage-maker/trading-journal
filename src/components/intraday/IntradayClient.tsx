@@ -17,6 +17,7 @@ import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBac
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { useMfeUnit, formatMfeMae } from '@/lib/mfe-unit'
 import { mergeTradeTags } from '@/lib/suggest-tags'
+import type { ScoringProfile } from '@/lib/scoring-profile'
 import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
 
 interface Props {
@@ -30,6 +31,9 @@ interface Props {
   /** trading_days.eod_notes — shared with the EOD page so the trader can write
    *  during the session and the same text is there waiting at EOD. */
   initialSessionNotes?: string
+  /** The trader's own onboarding scoring rules → per-user Coach Score. Null on
+   *  the owner's local app (no onboarding) → default (Ruleset v1.3) rubric. */
+  scoringProfile?: ScoringProfile | null
 }
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
@@ -140,7 +144,7 @@ function CapHeatInline({ trade, rDisplay, bars, instrumentHasBars = true }: { tr
   )
 }
 
-export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '' }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '', scoringProfile = null }: Props) {
   const router = useRouter()
   // Live MFE/MAE display unit, synced with AvgMfeMaeCard via custom event +
   // localStorage. Drives the Peak MFE / Peak MAE rows in per-trade details
@@ -593,7 +597,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
               </div>
 
               {/* Coach Score — deterministic per-trade execution grade (0–10). */}
-              <CoachScoreBadge trade={trade} setupLibrary={setupLibrary} instrumentHasBars={tradeHasBars(trade)} />
+              <CoachScoreBadge trade={trade} setupLibrary={setupLibrary} instrumentHasBars={tradeHasBars(trade)} scoringProfile={scoringProfile} />
 
               {/* P&L · R · Capture % · Loss ×R. Capture and loss are bolded when
                   the trade matches a high-signal cross-case pattern:
@@ -612,7 +616,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             {/* Expanded detail */}
             {isOpen && (
               <div className="border-t border-gray-800 px-4 py-4 space-y-4">
-                <CoachScorePanel trade={trade} notes={trade.notes} setupLibrary={setupLibrary} instrumentHasBars={tradeHasBars(trade)} />
+                <CoachScorePanel trade={trade} notes={trade.notes} setupLibrary={setupLibrary} instrumentHasBars={tradeHasBars(trade)} scoringProfile={scoringProfile} />
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
                   {[
                     { label: 'Entry', value: fmt(trade.entry_price) },

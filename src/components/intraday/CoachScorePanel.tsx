@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { ChevronDown, GraduationCap, Loader2, Sparkles } from 'lucide-react'
 import { computeCoachScore, applyAiResolutions, type GradableTrade, type CriterionStatus } from '@/lib/coach-score'
+import type { ScoringProfile } from '@/lib/scoring-profile'
 
 const SYM: Record<CriterionStatus, string> = { pass: '✓', fail: '✗', na: '–', unknown: '?' }
 const STATUS_COLOR: Record<CriterionStatus, string> = {
@@ -35,13 +36,15 @@ export default function CoachScorePanel({
   notes,
   setupLibrary,
   instrumentHasBars,
+  scoringProfile,
 }: {
   trade: GradableTrade
   notes?: string | null
   setupLibrary?: Set<string>
   instrumentHasBars?: boolean
+  scoringProfile?: ScoringProfile | null
 }) {
-  const base = useMemo(() => computeCoachScore(trade, { setupLibrary, instrumentHasBars }), [trade, setupLibrary, instrumentHasBars])
+  const base = useMemo(() => computeCoachScore(trade, { setupLibrary, instrumentHasBars, scoringProfile }), [trade, setupLibrary, instrumentHasBars, scoringProfile])
   const [ai, setAi] = useState<Resolutions>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

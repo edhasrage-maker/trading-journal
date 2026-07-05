@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import IntradayClient from '@/components/intraday/IntradayClient'
 import { signTradeScreenshots } from '@/lib/storage-url'
+import type { ScoringProfile } from '@/lib/scoring-profile'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -35,12 +36,22 @@ export default async function IntradayPage({
 
   const { data: tags } = await supabase.from('trade_tags').select('*').order('sort_order')
 
+  // Per-user Coach Score rules (onboarding). Empty/missing → default rubric, so
+  // the owner's local app grades exactly as before. `*`-style resilience: a bad
+  // read just yields undefined → defaults.
+  const { data: profRow } = await supabase
+    .from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle()
+  const scoringProfile =
+    (profRow?.scoring_profile_json && typeof profRow.scoring_profile_json === 'object'
+      ? profRow.scoring_profile_json : null) as ScoringProfile | null
+
   return (
     <div>
       <IntradayClient
         date={date}
         initialTrades={trades}
         allTags={(tags ?? []) as TradeTag[]}
+        scoringProfile={scoringProfile}
         initialOpenTradeId={openTradeId ?? null}
         initialSessionNotes={(day?.eod_notes as string | null) ?? ''}
         prepDayTypes={

@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import { GraduationCap } from 'lucide-react'
 import { computeCoachScore, type GradableTrade } from '@/lib/coach-score'
+import type { ScoringProfile } from '@/lib/scoring-profile'
 
 const SYM: Record<string, string> = { pass: '✓', fail: '✗', na: '–', unknown: '?' }
 
@@ -25,12 +26,14 @@ export default function CoachScoreBadge({
   trade,
   setupLibrary,
   instrumentHasBars,
+  scoringProfile,
 }: {
   trade: GradableTrade
   setupLibrary?: Set<string>
   instrumentHasBars?: boolean
+  scoringProfile?: ScoringProfile | null
 }) {
-  const cs = useMemo(() => computeCoachScore(trade, { setupLibrary, instrumentHasBars }), [trade, setupLibrary, instrumentHasBars])
+  const cs = useMemo(() => computeCoachScore(trade, { setupLibrary, instrumentHasBars, scoringProfile }), [trade, setupLibrary, instrumentHasBars, scoringProfile])
 
   const lines = cs.criteria.map(c => `${SYM[c.status]} ${c.label}${c.reason ? ` (${c.reason})` : ''}`)
   const tip =
