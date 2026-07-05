@@ -111,14 +111,14 @@ export default function EodClient({
   const [hoveredTradeId, setHoveredTradeId] = useState<string | null>(null)
   // Temporary spotlight on the row we just JUMPED to (chart double-click or
   // ?trade= deep-link). Unlike hoveredTradeId (which follows the cursor), this
-  // persists ~2.2s regardless of mouse movement so it's obvious WHICH trade the
+  // persists ~5s regardless of mouse movement so it's obvious WHICH trade the
   // chart scrolled to, then fades. A ref holds the pending clear timer.
   const [flashTradeId, setFlashTradeId] = useState<string | null>(null)
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flashTrade = (id: string) => {
     setFlashTradeId(id)
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
-    flashTimerRef.current = setTimeout(() => setFlashTradeId(null), 2200)
+    flashTimerRef.current = setTimeout(() => setFlashTradeId(null), 5000)
   }
   useEffect(() => () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current) }, [])
   const [analyzing, setAnalyzing] = useState(false)

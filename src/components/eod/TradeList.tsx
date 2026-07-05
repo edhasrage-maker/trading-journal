@@ -55,7 +55,7 @@ interface Props {
   trades: Trade[]
   hoveredTradeId: string | null
   /** Row to spotlight briefly after a jump (chart double-click / deep-link).
-   *  Distinct from hoveredTradeId — a prominent ring that persists ~2s so the
+   *  Distinct from hoveredTradeId — a prominent ring that persists ~5s so the
    *  user can see which trade the chart scrolled to. */
   flashTradeId?: string | null
   onHoverEnter: (tradeId: string, e: React.MouseEvent) => void
