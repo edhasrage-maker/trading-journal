@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Mail, Loader2, Lock, Eye } from 'lucide-react'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import Turnstile, { CAPTCHA_SITE_KEY } from './Turnstile'
 
 type Mode = 'magic' | 'password' | 'signup'
 
@@ -18,6 +19,11 @@ export default function AuthCard() {
   const [sent, setSent] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Turnstile CAPTCHA token (null until solved). Only meaningful when
+  // NEXT_PUBLIC_TURNSTILE_SITE_KEY is set; otherwise stays null and is omitted.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const [captchaReset, setCaptchaReset] = useState(0)
+  const resetCaptcha = () => { setCaptchaToken(null); setCaptchaReset(n => n + 1) }
 
   const demo = async () => {
     setError(null); setLoading(true)
@@ -47,17 +53,19 @@ export default function AuthCard() {
     e.preventDefault()
     setError(null); setMsg(null); setLoading(true)
     const sb = createClient()
+    // Only send a captcha token when CAPTCHA is provisioned; undefined is a no-op.
+    const captcha = CAPTCHA_SITE_KEY ? (captchaToken ?? undefined) : undefined
     try {
       if (mode === 'magic') {
-        const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo() } })
+        const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo(), captchaToken: captcha } })
         if (error) throw error
         setSent(true)
       } else if (mode === 'password') {
-        const { error } = await sb.auth.signInWithPassword({ email, password })
+        const { error } = await sb.auth.signInWithPassword({ email, password, options: { captchaToken: captcha } })
         if (error) throw error
         window.location.href = '/dashboard'
       } else {
-        const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo() } })
+        const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo(), captchaToken: captcha } })
         if (error) throw error
         if (data.session) window.location.href = '/dashboard'      // email confirmation off → in immediately
         else setMsg('Account created — check your email to confirm, then sign in.')
@@ -66,6 +74,7 @@ export default function AuthCard() {
       setError(err instanceof Error ? err.message : 'Something went wrong.')
     } finally {
       setLoading(false)
+      resetCaptcha()   // tokens are single-use — force a fresh challenge for the next attempt
     }
   }
 
@@ -156,8 +165,9 @@ export default function AuthCard() {
             className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2.5 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
           />
         )}
+        <Turnstile onToken={setCaptchaToken} resetSignal={captchaReset} />
         <button
-          type="submit" disabled={loading || !email}
+          type="submit" disabled={loading || !email || (!!CAPTCHA_SITE_KEY && !captchaToken)}
           className="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-gray-950 font-semibold py-2.5 rounded-lg text-sm transition-colors"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : (mode === 'magic' ? <Mail className="w-4 h-4" /> : <Lock className="w-4 h-4" />)}
