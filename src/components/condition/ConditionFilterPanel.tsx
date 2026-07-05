@@ -539,8 +539,10 @@ function ConsolidatedVerdict({
   )
 }
 
-/** Highlights (beginner) readout — just Win rate + Profit factor for the
- *  matched historical bucket, no grade / EV / sample mechanics. */
+/** Highlights (beginner) readout — Win rate + EV/trade + Profit factor for the
+ *  matched historical bucket, no grade / sample mechanics. EV/trade (expectancy,
+ *  average $/trade) is the middle headline: it's the single number that says
+ *  whether this environment pays. */
 function ConditionsHighlight({ match }: { match: MatchResult }) {
   const r = match.row
   const wr = r.trade_wr != null ? `${(r.trade_wr * 100).toFixed(0)}%` : '—'
@@ -548,12 +550,23 @@ function ConditionsHighlight({ match }: { match: MatchResult }) {
   const pfTone = r.profit_factor == null
     ? 'text-gray-300'
     : r.profit_factor >= 1 ? 'text-green-400' : 'text-red-400'
+  const ev = r.ev_per_trade != null
+    ? `${r.ev_per_trade >= 0 ? '+' : '−'}$${Math.abs(r.ev_per_trade).toFixed(0)}`
+    : '—'
+  const evTone = r.ev_per_trade == null
+    ? 'text-gray-300'
+    : r.ev_per_trade > 0 ? 'text-green-400' : r.ev_per_trade < 0 ? 'text-red-400' : 'text-gray-400'
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-3 gap-3">
       <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
         <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Win rate</div>
         <div className="font-mono text-2xl font-bold text-white">{wr}</div>
         <div className="text-[11px] text-gray-500 mt-0.5">in conditions like today</div>
+      </div>
+      <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">EV / trade</div>
+        <div className={`font-mono text-2xl font-bold ${evTone}`}>{ev}</div>
+        <div className="text-[11px] text-gray-500 mt-0.5">avg $ in conditions like today</div>
       </div>
       <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
         <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Profit factor</div>

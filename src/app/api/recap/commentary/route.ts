@@ -338,7 +338,7 @@ export async function POST(req: Request) {
   // Lever D — order-flow lens is gated on the profile; PA/structure/location/
   // risk are always judged (feedback_no_forced_orderflow).
   const orderFlowClause = usesOrderFlow
-    ? `Because this trader's profile uses order flow, ALSO read the tape where it's visible on the frame — footprint delta, DOM, absorption, who's aggressing — and factor it into the read.`
+    ? `Because this trader's profile uses order flow, ALSO read the tape where it's visible on the frame — footprint/delta, absorption, who's aggressing — and factor it into the read. Do NOT assume a DOM/depth ladder is on the chart unless one is clearly visible.`
     : `This trader does NOT trade order flow — judge purely on price action, market structure, location and risk. Do NOT fault them for any missing order-flow/tape confirmation or invoke a lens their profile doesn't use.`
 
   const prompt = profileContextBlock(traderProfile) + `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is the trader's actual chart at a precise moment — an ENTRY frame (when they pulled the trigger) and, when present, an EXIT frame (when they closed).
@@ -349,7 +349,7 @@ For each trade you see frames of, do TWO things:
 
 1) Write 1–3 sentences of HONEST, INDEPENDENT commentary. LEAD with what you actually see on the chart — market structure (higher-highs/higher-lows vs lower-highs/lower-lows, break vs reclaim), where price sits relative to key levels / session levels / range extremes, and whether the entry is WITH or AGAINST the prevailing move. Then weigh the risk using the interpreted exit/heat line (it is already computed for you: capture % of the favorable move, $ left on the table, heat taken as a share of the planned stop / ×ATR) — if a trade captured little of a large favorable move, or took most of its stop in heat before working, SAY SO. ${orderFlowClause} If an EXIT frame is present and price did something obvious between entry and exit that the trader missed (ran further, reversed at a level), point it out. Use the per-trade session line to catch BEHAVIORAL patterns the isolated chart can't show — a quick re-entry right after a loss (possible revenge/tilt), the Nth consecutive trade in the same direction, or pressing deeper into a drawdown — and name it when the sequence shows it.
 
-2) From the ENTRY frame ONLY (not the exit frame), identify the trader's PLANNED order levels by reading horizontal lines / DOM order labels on the chart:
+2) From the ENTRY frame ONLY (not the exit frame), identify the trader's PLANNED order levels by reading the labeled horizontal ORDER LINES on the price scale (stop / target / entry lines drawn across the chart — NOT a DOM/depth ladder; do not describe these as being "on the DOM"):
    - entry_price: the price the order was waiting at
    - stop_price: the working stop line (BELOW entry for longs, ABOVE for shorts). Sierra labels these "Stop|Child-Client" with a "(-N.NNp)" distance suffix.
    - tp1_price / tp2_price: working limit / TP lines (ABOVE entry for longs, BELOW for shorts). TP1 is closer to entry.

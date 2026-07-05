@@ -12,6 +12,11 @@ interface Props {
   ibh?: number | null
   ibl?: number | null
   ibSize?: number | null
+  /** Show the "Above / Below HTF MGI" position section. It's part of the
+   *  trader's own methodology (not the simplified public prep), so PrepClient
+   *  passes `isAdmin && mode === 'pro'` — Detailed Tape, owner only. Defaults to
+   *  false so the public/beginner prep stays simple. */
+  showMgi?: boolean
 }
 
 // "Still developing" is the default — it represents the pre-break state before
@@ -46,7 +51,7 @@ function calcExts(ibh: number, ibl: number, ibSize: number) {
   return result
 }
 
-export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Props) {
+export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showMgi = false }: Props) {
   const [mgiOpen, setMgiOpen] = useState(false)
   const [extsOpen, setExtsOpen] = useState(false)
   const set = (key: keyof PrepNotes, val: unknown) => onChange({ ...value, [key]: val })
@@ -207,8 +212,9 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize }: Pro
         </div>
       </div>
 
-      {/* HTF MGI Position — local-only (hidden in the simplified public prep). */}
-      {LOCAL_FEATURES_ENABLED && (
+      {/* HTF MGI Position — owner's methodology, Detailed Tape only (showMgi =
+          isAdmin && mode==='pro'). Hidden in the simplified public/beginner prep. */}
+      {showMgi && (
       <div className="border border-gray-800 rounded-xl overflow-hidden">
         <button
           type="button"

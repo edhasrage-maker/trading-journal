@@ -988,6 +988,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           ibh={context.ibh as number | null}
           ibl={context.ibl as number | null}
           ibSize={context.ib_size as number | null}
+          // Above/Below HTF MGI section: owner's methodology, Detailed Tape only.
+          showMgi={isAdmin && mode === 'pro'}
         />
       </CollapsibleCard>
 
@@ -1024,9 +1026,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         }
       />
 
-      {/* Discord prep-share card — a personal community feature; hidden in the
-          cloud build, kept in the local build. */}
-      {LOCAL_FEATURES_ENABLED && (
+      {/* Discord prep-share card — the owner's personal community workflow
+          (generates a prep-summary PNG to post to Discord). Admin-gated so it's
+          available on the cloud site for the owner, hidden for public users. */}
+      {isAdmin && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
           <DiscordDashboard
             date={date}

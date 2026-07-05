@@ -229,7 +229,7 @@ export default async function DashboardPage() {
   }
   tick('liveAtr from entry_atr_1m', liveAtrByTradeId.size)
 
-  const recentDays = recentDaysBase.map(d => {
+  const recentDaysMapped = recentDaysBase.map(d => {
     const trades = tradesByDay.get(d.id) ?? []
     // Top 2 most-frequent setups across the day's trades.
     const setupCounts = new Map<string, number>()
@@ -431,6 +431,15 @@ export default async function DashboardPage() {
       avg_mae_atr: avgMaeAtr,
     }
   })
+
+  // Drop BLANK days: an empty `trading_days` row (e.g. prep opened for a date
+  // but no trades logged and no eod_pnl override saved) carries no result and
+  // renders as a meaningless empty row in the Recent Days table / calendar and
+  // an empty beginner session. The equity/bars charts already skip null-pnl
+  // days, so this only affects those list surfaces. A day is kept if it has at
+  // least one trade OR an explicit eod_pnl (including a logged $0 flat day,
+  // whose displayed eod_pnl is 0, not null).
+  const recentDays = recentDaysMapped.filter(d => d.trade_count > 0 || d.eod_pnl != null)
 
   // Global filter dropdown values — distinct setups and day types across the
   // 180-day window. Empty strings filtered out. day_types is the array

@@ -959,8 +959,8 @@ export default function EodClient({
           trades={chartTrades}
           refreshKey={barsVersion}
           hoverTradeId={hoveredTradeId}
-          // Double-click an arrow → scroll to + highlight that trade's row in
-          // the log below (the chart and list are on the same page here).
+          // Click (or double-click) an arrow → scroll to + highlight that
+          // trade's row in the log below (chart and list share this page).
           onTradeActivate={id => {
             setHoveredTradeId(id)
             document.getElementById(`eod-trade-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })

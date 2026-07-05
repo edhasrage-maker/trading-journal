@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { sessionUtcWindow } from '@/lib/pt-time'
+import { sessionUtcWindow, todayPT } from '@/lib/pt-time'
 import { chartSeriesRoot, miniContractSymbol } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { clientError } from '@/lib/api-error'
@@ -54,26 +54,64 @@ export async function GET(req: Request) {
   // 1m bars is up to 1440 rows, so this is typically 2 round-trips.
   const PAGE = 1000
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const all: any[] = []
-  let from = 0
-  // Hard ceiling so a bad query can't loop forever (10 pages = 10k bars).
-  for (let page = 0; page < 10; page++) {
-    const { data, error } = await supabase
-      .from('ohlcv_bars')
-      .select('ts, open, high, low, close, volume')
-      .eq('symbol', querySymbol)
-      .gte('ts', start)
-      .lte('ts', end)
-      .order('ts', { ascending: true })
-      .range(from, from + PAGE - 1)
-    if (error) {
-      console.error('[api/bars] query failed:', error)
-      return NextResponse.json({ error: clientError(error) }, { status: 500 })
+  async function fetchWindow(startIso: string, endIso: string): Promise<{ rows: any[]; error: unknown }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: any[] = []
+    let from = 0
+    // Hard ceiling so a bad query can't loop forever (10 pages = 10k bars).
+    for (let page = 0; page < 10; page++) {
+      const { data, error } = await supabase
+        .from('ohlcv_bars')
+        .select('ts, open, high, low, close, volume')
+        .eq('symbol', querySymbol)
+        .gte('ts', startIso)
+        .lte('ts', endIso)
+        .order('ts', { ascending: true })
+        .range(from, from + PAGE - 1)
+      if (error) return { rows, error }
+      const page_rows = data ?? []
+      rows.push(...page_rows)
+      if (page_rows.length < PAGE) break
+      from += PAGE
     }
-    const rows = data ?? []
-    all.push(...rows)
-    if (rows.length < PAGE) break
-    from += PAGE
+    return { rows, error: null }
+  }
+
+  const { rows: all, error: barsError } = await fetchWindow(start, end)
+  if (barsError) {
+    console.error('[api/bars] query failed:', barsError)
+    return NextResponse.json({ error: clientError(barsError) }, { status: 500 })
+  }
+
+  // Requested session has no bars (e.g. today before the day's bars have
+  // imported, a weekend/holiday, or a date the user typed that never traded).
+  // Rather than leave the chart a blank pane, SNAP to the most recent session
+  // on-or-before this date that DOES have bars for the symbol, and tell the
+  // client which day it landed on so it can show a "showing <date>" note.
+  if (all.length === 0) {
+    const { data: lastRow } = await supabase
+      .from('ohlcv_bars')
+      .select('ts')
+      .eq('symbol', querySymbol)
+      .lte('ts', end)
+      .order('ts', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const lastTs = lastRow?.ts as string | undefined
+    if (lastTs) {
+      // Map the bar's UTC timestamp back to its PT session date (DST-exact),
+      // then re-fetch that whole session's window.
+      const fallbackDate = todayPT(new Date(lastTs))
+      if (fallbackDate !== date) {
+        const win = sessionUtcWindow(fallbackDate)
+        const { rows: fbRows, error: fbError } = await fetchWindow(win.start, win.end)
+        if (fbError) {
+          console.error('[api/bars] fallback query failed:', fbError)
+          return NextResponse.json({ error: clientError(fbError) }, { status: 500 })
+        }
+        return NextResponse.json({ bars: fbRows, fallbackDate })
+      }
+    }
   }
 
   return NextResponse.json({ bars: all })

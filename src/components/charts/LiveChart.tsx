@@ -36,9 +36,10 @@ interface Props {
   refreshKey?: number
   /** Trade currently hovered in the EOD list — highlight it on the chart + show its popup. */
   hoverTradeId?: string | null
-  /** Double-click on a trade arrow. When provided (e.g. the EOD page, where the
-   *  trade list is on-screen), the parent scrolls to that trade's row. When
-   *  omitted, LiveChart falls back to navigating to /eod/<date>?trade=<id>. */
+  /** Click (or double-click) a trade arrow. When provided (e.g. the EOD page,
+   *  where the trade list is on-screen), the parent scrolls to that trade's row.
+   *  When omitted, a double-click falls back to navigating to
+   *  /eod/<date>?trade=<id> (single click does nothing on those mounts). */
   onTradeActivate?: (tradeId: string) => void
   /** Called when the user clicks a blank chart spot while a trade popup is
    *  pinned — lets the parent clear its hoverTradeId so the popup dismisses. */
@@ -385,6 +386,11 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   const [bars, setBars] = useState<ApiBar[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // When the requested `date` has no bars, the server snaps to the most recent
+  // session that does and returns its date here — so we can label the chart
+  // "showing <fallbackDate>" instead of leaving a blank pane. Null = the bars
+  // are for the requested date.
+  const [fallbackDate, setFallbackDate] = useState<string | null>(null)
   // Display timeframe in minutes. Stored 1-min bars get aggregated client-side
   // when this is > 1. Persisted PER (symbol, date) so each day remembers its
   // own TF — 5m on 06/04 stays 5m, 1m on 06/05 stays 1m. Saved logical-range
@@ -608,12 +614,21 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     else if (!readOnly) router.push(`/eod/${date}?trade=${id}`)
   }
 
-  // Single left-click on a BLANK spot (not an arrow) dismisses a pinned trade
-  // popup — so a row-clicked/hovered popup can be closed by clicking away.
+  // Single left-click on a trade arrow → activate that trade. On the EOD page
+  // the parent scrolls to + highlights the trade's row in the log below
+  // (onTradeActivate is provided there). On other mounts (intraday / prep) we
+  // deliberately leave navigation to double-click, so a single click can't
+  // accidentally change the page. A single click on a BLANK spot dismisses a
+  // pinned trade popup — so a row-clicked/hovered popup can be closed by
+  // clicking away.
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const id = arrowAt(e.clientX - rect.left, e.clientY - rect.top)
-    if (id || !hover) return
+    if (id) {
+      if (onTradeActivate) { setArrowMenu(null); onTradeActivate(id) }
+      return
+    }
+    if (!hover) return
     suppressCrosshairRef.current = false
     chartRef.current?.clearCrosshairPosition()
     setHover(null)
@@ -691,8 +706,8 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       const r = await fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}&date=${date}`)
       const data = await r.json()
       if (reqId !== barsReqRef.current) return // superseded by a newer request
-      if (!r.ok) { setError(data.error ?? 'Failed to fetch bars'); setBars(null) }
-      else { setBars(data.bars ?? []) }
+      if (!r.ok) { setError(data.error ?? 'Failed to fetch bars'); setBars(null); setFallbackDate(null) }
+      else { setBars(data.bars ?? []); setFallbackDate(data.fallbackDate ?? null) }
     } catch (err) {
       if (reqId !== barsReqRef.current) return
       if (!silent) setError(err instanceof Error ? err.message : 'Network error')
@@ -2184,6 +2199,20 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center">
             <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
+          </div>
+        )}
+
+        {/* Snapped-to-latest-data note: the requested date had no bars, so the
+            server returned the most recent session's bars instead. Non-blocking
+            pill so the chart underneath stays fully interactive. */}
+        {!loading && !error && fallbackDate && bars && bars.length > 0 && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+            <div className="flex items-center gap-1.5 bg-gray-900/90 border border-gray-700 rounded-full px-3 py-1 shadow-lg">
+              <Database className="w-3 h-3 text-amber-400" />
+              <span className="text-[11px] text-gray-300">
+                No data for {date} — showing {fallbackDate}
+              </span>
+            </div>
           </div>
         )}
 
