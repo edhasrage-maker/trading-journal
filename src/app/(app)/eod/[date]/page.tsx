@@ -45,6 +45,16 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
     .select('*')
     .order('sort_order') as { data: TradeTag[] | null }
 
+  // Realized session P&L history for achievement badges (Career Day percentile
+  // + Heat Check streak). RLS scopes it to this user. Only days with a set
+  // eod_pnl (real sessions / overrides) — the same source the dashboard plots.
+  const { data: dayPnlRows } = await supabase
+    .from('trading_days')
+    .select('date, eod_pnl')
+    .not('eod_pnl', 'is', null)
+    .order('date', { ascending: true }) as { data: { date: string; eod_pnl: number }[] | null }
+  const pnlHistory = (dayPnlRows ?? []).map(d => ({ date: d.date, pnl: d.eod_pnl }))
+
   // Per-trade LIVE ATR: compute ATR-10 Wilder from 1-min bars at each trade's
   // entry_time and pass to EodClient as a map { tradeId → atrPts }. The trade
   // list surfaces this as an "ATR @ entry" chip so the trader can see how
@@ -106,6 +116,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       allTags={tags ?? []}
       liveAtrByTradeId={liveAtrByTradeId}
       postExitByTradeId={postExitByTradeId}
+      pnlHistory={pnlHistory}
     />
   )
 }

@@ -21,6 +21,8 @@ import RecordingCommentary from './RecordingCommentary'
 import BrowserRecap from './BrowserRecap'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import MfeMaeEfficiency from './MfeMaeEfficiency'
+import AchievementBadges from '@/components/AchievementBadges'
+import { dayAchievements } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, type BarLike } from '@/lib/analytics'
@@ -43,6 +45,10 @@ interface Props {
   liveAtrByTradeId?: Record<string, number>
   /** Map of trade.id → post-exit continuation @30m. Computed server-side from bars; powers the trade list's Post-Exit column. */
   postExitByTradeId?: Record<string, import('@/lib/atr').PostExitData>
+  /** All the user's realized session P&Ls ({date, pnl}) for achievement badges
+   *  (Career Day percentile + Heat Check streak). Server-fetched; omit to skip
+   *  those two badges. */
+  pnlHistory?: { date: string; pnl: number }[]
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -65,6 +71,7 @@ export default function EodClient({
   initialMarketContext,
   liveAtrByTradeId,
   postExitByTradeId,
+  pnlHistory,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -545,6 +552,16 @@ export default function EodClient({
   // works on a fills-only import with no planned stops.
   const mfeMaeAtrStats = useMemo(() => avgMfeMaeAtr(trades, liveAtrByTradeId), [trades, liveAtrByTradeId])
 
+  // Achievement badges earned this day — pure derivation (src/lib/achievements.ts).
+  const achievements = useMemo(() => {
+    const dayPnl = day?.eod_pnl ?? (trades.length > 0 ? trades.reduce((s, t) => s + (t.pnl ?? 0), 0) : null)
+    // Clean Tape needs the EOD process score: all rules pass = zero breaches.
+    const perRule = (aiAnalysis?.process as { per_rule?: Record<string, { status?: string }> } | undefined)?.per_rule
+    const processRuleCount = perRule ? Object.keys(perRule).length : null
+    const processPassCount = perRule ? Object.values(perRule).filter(r => r?.status === 'pass').length : null
+    return dayAchievements({ date, dayPnl, trades, pnlHistory, processPassCount, processRuleCount })
+  }, [date, day?.eod_pnl, trades, aiAnalysis, pnlHistory])
+
   // --- Trade-selection state (shared by merge + bulk-delete actions) ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [merging, setMerging] = useState(false)
@@ -718,6 +735,8 @@ export default function EodClient({
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
         <div data-tour="eod-header" className="shrink-0">
           <h1 className="text-xl font-bold text-white">EOD Recap</h1>
+          {/* Achievement badges earned this day (Sniper, Grand Slam, …). */}
+          <AchievementBadges items={achievements} className="mt-1.5" />
           {/* Date + action buttons share one row, aligned under the title. */}
           <div className="flex items-center gap-2 mt-1">
             <input
