@@ -36,10 +36,9 @@ interface Props {
   refreshKey?: number
   /** Trade currently hovered in the EOD list — highlight it on the chart + show its popup. */
   hoverTradeId?: string | null
-  /** Click (or double-click) a trade arrow. When provided (e.g. the EOD page,
-   *  where the trade list is on-screen), the parent scrolls to that trade's row.
-   *  When omitted, a double-click falls back to navigating to
-   *  /eod/<date>?trade=<id> (single click does nothing on those mounts). */
+  /** Double-click a trade arrow. When provided (e.g. the EOD page, where the
+   *  trade list is on-screen), the parent scrolls to that trade's row. When
+   *  omitted, LiveChart falls back to navigating to /eod/<date>?trade=<id>. */
   onTradeActivate?: (tradeId: string) => void
   /** Called when the user clicks a blank chart spot while a trade popup is
    *  pinned — lets the parent clear its hoverTradeId so the popup dismisses. */
@@ -345,6 +344,13 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   const router = useRouter()
   // Right-click-on-arrow context menu (container-relative px + the trade it hit).
   const [arrowMenu, setArrowMenu] = useState<{ x: number; y: number; tradeId: string } | null>(null)
+  // Manual double-click detection on the CLICK stream. React's native
+  // onDoubleClick fires unreliably over the lightweight-charts canvas, so a
+  // double-click on a trade arrow (to jump to its row) often did nothing. We
+  // instead remember the last arrow-click (id + timestamp) and treat a second
+  // click on the SAME arrow within the threshold as the activation.
+  const lastArrowClickRef = useRef<{ id: string; t: number } | null>(null)
+  const DBLCLICK_MS = 400
   useEffect(() => {
     if (!arrowMenu) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setArrowMenu(null) }
@@ -587,7 +593,11 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // the settings popover's "Hidden levels" chips or "Show all".
   // Map a container-relative click (px, py) to the nearest trade arrow within
   // ~16px. Returns the trade id, or null if the click didn't land on an arrow.
-  const arrowAt = (px: number, py: number): string | null => {
+  // `tol` = hit radius in px. Default 16; the double-click activation passes a
+  // more generous radius because the arrows are only ~10px triangles and a
+  // precise second click landed just outside the tight radius (a big reason the
+  // double-click-to-jump felt broken).
+  const arrowAt = (px: number, py: number, tol = 16): string | null => {
     const candle = candleRef.current
     const ts = chartRef.current?.timeScale()
     if (!candle || !ts) return null
@@ -600,34 +610,46 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       const d = Math.hypot(ax - px, ay - py)
       if (d < bestDist) { bestDist = d; bestId = h.tradeId }
     }
-    return bestDist <= 16 ? bestId : null
+    return bestDist <= tol ? bestId : null
   }
 
-  // Double-click an arrow → jump to that trade. On the EOD page the parent
-  // scrolls to the trade row (onTradeActivate); elsewhere we navigate to it.
-  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const id = arrowAt(e.clientX - rect.left, e.clientY - rect.top)
-    if (!id) return
+  // Jump to a trade. On the EOD page the parent scrolls to + highlights the
+  // trade's row (onTradeActivate); elsewhere we navigate to it.
+  const activateArrow = (id: string) => {
     setArrowMenu(null)
     if (onTradeActivate) onTradeActivate(id)
     else if (!readOnly) router.push(`/eod/${date}?trade=${id}`)
   }
 
-  // Single left-click on a trade arrow → activate that trade. On the EOD page
-  // the parent scrolls to + highlights the trade's row in the log below
-  // (onTradeActivate is provided there). On other mounts (intraday / prep) we
-  // deliberately leave navigation to double-click, so a single click can't
-  // accidentally change the page. A single click on a BLANK spot dismisses a
-  // pinned trade popup — so a row-clicked/hovered popup can be closed by
-  // clicking away.
+  // Native double-click (kept as a belt-and-suspenders path alongside the
+  // manual detection in handleClick — activating twice is idempotent).
+  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const id = arrowAt(e.clientX - rect.left, e.clientY - rect.top, 30)
+    if (id) activateArrow(id)
+  }
+
+  // Left-click. A DOUBLE-click on a trade arrow jumps to its row — detected here
+  // on the click stream (see lastArrowClickRef) so it works even when the native
+  // onDoubleClick doesn't fire over the chart canvas. A SINGLE click on an arrow
+  // is deliberately inert (no accidental jump). A single click on a BLANK spot
+  // dismisses a pinned trade popup so a row-clicked/hovered popup can be closed
+  // by clicking away.
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
-    const id = arrowAt(e.clientX - rect.left, e.clientY - rect.top)
+    const id = arrowAt(e.clientX - rect.left, e.clientY - rect.top, 30)
     if (id) {
-      if (onTradeActivate) { setArrowMenu(null); onTradeActivate(id) }
+      const prev = lastArrowClickRef.current
+      const now = Date.now()
+      if (prev && prev.id === id && now - prev.t < DBLCLICK_MS) {
+        lastArrowClickRef.current = null
+        activateArrow(id)
+      } else {
+        lastArrowClickRef.current = { id, t: now }
+      }
       return
     }
+    lastArrowClickRef.current = null
     if (!hover) return
     suppressCrosshairRef.current = false
     chartRef.current?.clearCrosshairPosition()

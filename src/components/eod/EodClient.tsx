@@ -109,6 +109,18 @@ export default function EodClient({
   // hover-feedback surface (the old cursor-following HoverPopup duplicated it
   // and was removed). TradeList also uses it for row-highlight styling.
   const [hoveredTradeId, setHoveredTradeId] = useState<string | null>(null)
+  // Temporary spotlight on the row we just JUMPED to (chart double-click or
+  // ?trade= deep-link). Unlike hoveredTradeId (which follows the cursor), this
+  // persists ~2.2s regardless of mouse movement so it's obvious WHICH trade the
+  // chart scrolled to, then fades. A ref holds the pending clear timer.
+  const [flashTradeId, setFlashTradeId] = useState<string | null>(null)
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flashTrade = (id: string) => {
+    setFlashTradeId(id)
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+    flashTimerRef.current = setTimeout(() => setFlashTradeId(null), 2200)
+  }
+  useEffect(() => () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current) }, [])
   const [analyzing, setAnalyzing] = useState(false)
   const [aiAnalysis, setAiAnalysis] = useState<EodAiAnalysis | null>(() => {
     const a = initialDay?.eod_ai_analysis_json
@@ -130,6 +142,7 @@ export default function EodClient({
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     // eslint-disable-next-line react-hooks/set-state-in-effect -- deep-link highlight: mark the linked trade so its row + chart arrow stand out on arrival
     setHoveredTradeId(deepLinkTradeId)
+    flashTrade(deepLinkTradeId)
   }, [deepLinkTradeId, trades])
   // Chart view mode: 'screenshot' = legacy ChartScreenshotPanel +
   // calibration + TradeArrowOverlay; 'live' = native lightweight-charts
@@ -959,10 +972,11 @@ export default function EodClient({
           trades={chartTrades}
           refreshKey={barsVersion}
           hoverTradeId={hoveredTradeId}
-          // Click (or double-click) an arrow → scroll to + highlight that
-          // trade's row in the log below (chart and list share this page).
+          // Double-click an arrow → scroll to + spotlight that trade's row in
+          // the log below (the chart and list are on the same page here).
           onTradeActivate={id => {
             setHoveredTradeId(id)
+            flashTrade(id)
             document.getElementById(`eod-trade-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
           }}
         />
@@ -1071,6 +1085,7 @@ export default function EodClient({
       <TradeList
         trades={trades}
         hoveredTradeId={hoveredTradeId}
+        flashTradeId={flashTradeId}
         onHoverEnter={handleHoverEnter}
         onHoverLeave={handleHoverLeave}
         selectedIds={selectedIds}

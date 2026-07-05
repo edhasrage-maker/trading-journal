@@ -54,6 +54,10 @@ function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
 interface Props {
   trades: Trade[]
   hoveredTradeId: string | null
+  /** Row to spotlight briefly after a jump (chart double-click / deep-link).
+   *  Distinct from hoveredTradeId — a prominent ring that persists ~2s so the
+   *  user can see which trade the chart scrolled to. */
+  flashTradeId?: string | null
   onHoverEnter: (tradeId: string, e: React.MouseEvent) => void
   onHoverLeave: () => void
   selectedIds: Set<string>
@@ -81,6 +85,7 @@ interface Props {
 export default function TradeList({
   trades,
   hoveredTradeId,
+  flashTradeId,
   onHoverEnter,
   onHoverLeave,
   selectedIds,
@@ -526,6 +531,7 @@ export default function TradeList({
             {sortedTrades.map(t => {
               const pnl = t.pnl ?? 0
               const isHovered = hoveredTradeId === t.id
+              const isFlashing = flashTradeId === t.id
               const isSelected = selectedIds.has(t.id)
               const isNearDup = nearDuplicateIds.has(t.id)
               const summary = summaries[t.id]
@@ -538,14 +544,18 @@ export default function TradeList({
                   onClick={() => onRowOpen?.(t.id)}
                   title="Open this trade's log in the intraday page"
                   style={{ scrollMarginTop: 80 }}
-                  className={`group border-b border-gray-800 transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${
-                    isSelected
-                      ? 'bg-blue-900/30'
+                  className={`group border-b transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${
+                    // Flash spotlight takes precedence: a bright ring + fill so
+                    // the jumped-to row is unmistakable, holding until it fades.
+                    isFlashing
+                      ? 'bg-blue-700/40 ring-2 ring-inset ring-blue-400 border-blue-700'
+                      : isSelected
+                      ? 'bg-blue-900/30 border-gray-800'
                       : isHovered
-                      ? 'bg-blue-950/30'
+                      ? 'bg-blue-950/30 border-gray-800'
                       : isNearDup
-                      ? 'bg-yellow-950/20 hover:bg-yellow-950/30'
-                      : 'hover:bg-gray-800/50'
+                      ? 'bg-yellow-950/20 hover:bg-yellow-950/30 border-gray-800'
+                      : 'hover:bg-gray-800/50 border-gray-800'
                   }`}
                 >
                   <td className="py-1.5 pr-2 align-middle">

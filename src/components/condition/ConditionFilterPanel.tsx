@@ -378,18 +378,13 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           </div>
         )}
 
-        {/* Match details — single card for the currently-picked view only.
-            The verdict banner above already labels which view was chosen and
-            the dropdown lets the user flip; rendering both side-by-side was
-            redundant clutter. Toggling the override dropdown swaps the card
-            to the other view. */}
+        {/* Detailed Tape stat readout — the SAME clean cards as Highlights, plus
+            EV/trade. The grade verdict + which-view-drove-it + the view-switch
+            dropdown all live in the banner above; the previous dense per-view
+            stats table (CI ranges, sessions, total PnL, condition id, vs-your-avg
+            delta) was retired in favor of this simpler read. */}
         {!beginner && outcome && effectiveMatch && (
-          <MatchCard
-            title={effectivePick === 'median' ? 'Median view' : 'Tertile view'}
-            match={effectiveMatch}
-            picked={true}
-            baselineEv={outcome.baseline_ev}
-          />
+          <ConditionsHighlight match={effectiveMatch} showEv />
         )}
 
         {/* Notes + Save */}
@@ -539,11 +534,11 @@ function ConsolidatedVerdict({
   )
 }
 
-/** Highlights (beginner) readout — Win rate + EV/trade + Profit factor for the
- *  matched historical bucket, no grade / sample mechanics. EV/trade (expectancy,
- *  average $/trade) is the middle headline: it's the single number that says
- *  whether this environment pays. */
-function ConditionsHighlight({ match }: { match: MatchResult }) {
+/** Big-stat readout for a matched historical bucket. Win rate + Profit factor
+ *  always; EV/trade (expectancy, avg $/trade) is added when `showEv` is set.
+ *  Highlights (beginner) uses the 2-stat form; Detailed Tape uses the same card
+ *  WITH EV/trade so the pro view reads like Highlights plus expectancy. */
+function ConditionsHighlight({ match, showEv = false }: { match: MatchResult; showEv?: boolean }) {
   const r = match.row
   const wr = r.trade_wr != null ? `${(r.trade_wr * 100).toFixed(0)}%` : '—'
   const pf = r.profit_factor != null ? r.profit_factor.toFixed(2) : '—'
@@ -557,102 +552,24 @@ function ConditionsHighlight({ match }: { match: MatchResult }) {
     ? 'text-gray-300'
     : r.ev_per_trade > 0 ? 'text-green-400' : r.ev_per_trade < 0 ? 'text-red-400' : 'text-gray-400'
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className={`grid gap-3 ${showEv ? 'grid-cols-3' : 'grid-cols-2'}`}>
       <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
         <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Win rate</div>
         <div className="font-mono text-2xl font-bold text-white">{wr}</div>
         <div className="text-[11px] text-gray-500 mt-0.5">in conditions like today</div>
       </div>
-      <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">EV / trade</div>
-        <div className={`font-mono text-2xl font-bold ${evTone}`}>{ev}</div>
-        <div className="text-[11px] text-gray-500 mt-0.5">avg $ in conditions like today</div>
-      </div>
+      {showEv && (
+        <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">EV / trade</div>
+          <div className={`font-mono text-2xl font-bold ${evTone}`}>{ev}</div>
+          <div className="text-[11px] text-gray-500 mt-0.5">avg $ in conditions like today</div>
+        </div>
+      )}
       <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
         <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Profit factor</div>
         <div className={`font-mono text-2xl font-bold ${pfTone}`}>{pf}</div>
         <div className="text-[11px] text-gray-500 mt-0.5">in conditions like today</div>
       </div>
-    </div>
-  )
-}
-
-function MatchCard({ title, match, picked, baselineEv }: { title: string; match: MatchResult | null; picked: boolean; baselineEv?: number | null }) {
-  if (!match) {
-    return (
-      <div className="bg-gray-950 border border-gray-800 rounded-lg p-3">
-        <div className="text-xs text-gray-500 mb-1">{title}</div>
-        <div className="text-sm text-gray-600 italic">No match</div>
-      </div>
-    )
-  }
-  const r = match.row
-  const tone = VERDICT_TONE[r.verdict]
-  const verdictColor = tone === 'good'
-    ? 'text-green-400'
-    : tone === 'bad'
-      ? 'text-red-400'
-      : tone === 'neutral'
-        ? 'text-yellow-400'
-        : 'text-gray-400'
-
-  return (
-    <div className={`bg-gray-950 border rounded-lg p-3 ${picked ? 'border-blue-700' : 'border-gray-800'}`}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-xs text-gray-500">{title} {picked && <span className="text-blue-400 ml-1">·  picked</span>}</div>
-        <div className="text-[10px] text-gray-600 font-mono">spec {r.specificity}</div>
-      </div>
-      <div className={`text-sm font-semibold ${verdictColor}`} title={`Internal code: ${r.verdict}`}>
-        {VERDICT_EMOJI[r.verdict]} {VERDICT_DISPLAY[r.verdict]}
-      </div>
-      <div className="text-[10px] text-gray-600 font-mono mb-2 truncate" title={r.condition_id}>
-        {r.condition_id}
-      </div>
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] font-mono">
-        <dt className="text-gray-500">Trades</dt>
-        <dd className="text-right text-gray-200">{r.n_trades ?? '—'}</dd>
-        <dt className="text-gray-500">Sessions</dt>
-        <dd className="text-right text-gray-200">{r.n_sessions ?? '—'}</dd>
-        <dt className="text-gray-500">Trade WR</dt>
-        <dd className="text-right text-gray-200">
-          {r.trade_wr != null ? `${(r.trade_wr * 100).toFixed(0)}%` : '—'}
-          {r.trade_wr_ci_lo != null && r.trade_wr_ci_hi != null && (
-            <span className="text-gray-600"> [{(r.trade_wr_ci_lo * 100).toFixed(0)}-{(r.trade_wr_ci_hi * 100).toFixed(0)}%]</span>
-          )}
-        </dd>
-        <dt className="text-gray-500">EV/trade</dt>
-        <dd className={`text-right font-bold ${(r.ev_per_trade ?? 0) > 0 ? 'text-green-400' : (r.ev_per_trade ?? 0) < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-          {r.ev_per_trade != null ? `${r.ev_per_trade >= 0 ? '+' : ''}$${r.ev_per_trade.toFixed(2)}` : '—'}
-          {r.ev_ci_lo != null && r.ev_ci_hi != null && (
-            <div className="text-gray-600 font-normal">[{r.ev_ci_lo.toFixed(0)} to {r.ev_ci_hi.toFixed(0)}]</div>
-          )}
-          {/* EV vs the trader's own baseline EV — flags whether THIS environment
-              runs above/below your average. Bold when the bucket's EV CI clears
-              the baseline entirely (statistically distinct), faint otherwise. */}
-          {baselineEv != null && r.ev_per_trade != null && (() => {
-            const delta = r.ev_per_trade - baselineEv
-            const sigAbove = r.ev_ci_lo != null && r.ev_ci_lo > baselineEv
-            const sigBelow = r.ev_ci_hi != null && r.ev_ci_hi < baselineEv
-            const cls = sigAbove ? 'text-green-400' : sigBelow ? 'text-red-400' : delta >= 0 ? 'text-green-500/60' : 'text-gray-500'
-            const weight = sigAbove || sigBelow ? 'font-semibold' : 'font-normal'
-            return (
-              <div
-                className={`text-[10px] ${cls} ${weight}`}
-                title={`Your overall baseline EV is ${baselineEv >= 0 ? '+' : ''}$${baselineEv.toFixed(2)}/trade. ${sigAbove ? 'This environment is statistically ABOVE it — a favorable regime for you.' : sigBelow ? 'Statistically BELOW it — you underperform your average here.' : 'Within range of your average — no clear edge either way.'}`}
-              >
-                {delta >= 0 ? '↑' : '↓'} {delta >= 0 ? '+' : '−'}${Math.abs(delta).toFixed(0)} vs your avg
-                {!sigAbove && !sigBelow && ' (within range)'}
-              </div>
-            )
-          })()}
-        </dd>
-        <dt className="text-gray-500">Profit factor</dt>
-        <dd className="text-right text-gray-200">{r.profit_factor != null ? r.profit_factor.toFixed(2) : '—'}</dd>
-        <dt className="text-gray-500">Total PnL</dt>
-        <dd className={`text-right ${(r.total_pnl ?? 0) > 0 ? 'text-green-400' : (r.total_pnl ?? 0) < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-          {r.total_pnl != null ? `${r.total_pnl >= 0 ? '+' : ''}$${r.total_pnl.toFixed(0)}` : '—'}
-        </dd>
-      </dl>
     </div>
   )
 }
