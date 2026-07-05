@@ -115,3 +115,95 @@ export function scoringProfileSummary(sp?: ScoringProfile | null): string {
   if (rails.no_add_to_loser) parts.push('never adds to a loser')
   return parts.join(' · ')
 }
+
+// ─── Session-level safety rails (Pt 2 — multi-tenant EOD Process scoring) ─────
+// The per-DAY EOD analyzer's Process layer (P1..P5) grades against these. The
+// per-trade Coach Score above handles Execution criteria; the rails are a
+// separate concern (session-level), resolved here so `computeDeterministicRules`
+// in eod-prompt.ts stays free of hardcoded founder constants.
+
+type PRuleId = 'P1' | 'P2' | 'P3' | 'P4' | 'P5'
+
+/** Concrete numbers the deterministic P-rules need. A `null` rail is one the
+ *  trader never set → that rule is INACTIVE (auto-pass, excluded from the
+ *  verdict count). `isOwner` marks the empty-profile fallback so P2 stays
+ *  AI-driven (the founder's cap is setup-conditional — 10 on Qualifying S&D). */
+export interface RailConfig {
+  isOwner: boolean
+  /** Daily loss limit as a NEGATIVE dollar figure; null = no DLL rule. */
+  dailyLossLimit: number | null
+  /** Slippage buffer on the DLL (a stop that fills past the limit isn't a breach). */
+  dllBuffer: number
+  /** Max position size (contracts); null = no size rule. */
+  maxSize: number | null
+  /** When true, P2 (size cap) is computed deterministically (qty ≤ maxSize).
+   *  Owner = false (P2 left to the AI for the S&D 10-lot exception). */
+  p2Deterministic: boolean
+  /** Post-loss size cap (contracts) for P3; = maxSize. null = no P3 rule. */
+  postLossCap: number | null
+  /** Cooldown after a loss in SECONDS; null = no cooldown rule. */
+  cooldownSec: number | null
+  /** Max trades per session; null = no trade-cap rule. */
+  tradeCap: number | null
+}
+
+/** The founder's Ruleset v1.3 rails — the fallback for an empty/absent profile,
+ *  matching the constants previously hardcoded in `computeDeterministicRules`.
+ *  An empty profile resolving to THIS is what keeps the founder's grading
+ *  byte-identical. */
+export const OWNER_RAILS: RailConfig = {
+  isOwner: true,
+  dailyLossLimit: -500,
+  dllBuffer: 50,
+  maxSize: 5,
+  p2Deterministic: false,   // owner P2 stays AI-driven (10 MNQ on Qualifying S&D)
+  postLossCap: 5,
+  cooldownSec: 90,
+  tradeCap: 7,
+}
+
+/** True when the profile carries no gradable rules → resolve to the owner
+ *  (v1.3) rubric. The founder's local DB has no scoring_profile_json column at
+ *  all, so a fetch there yields `{}` → true → owner path. */
+export function isEmptyScoringProfile(sp?: ScoringProfile | null): boolean {
+  if (!sp || typeof sp !== 'object') return true
+  if (sp.risk_per_trade?.value != null) return false
+  if (sp.stop?.value != null) return false
+  if (sp.tp) return false
+  const r = sp.rails ?? {}
+  if (r.daily_loss_limit != null || r.max_size != null || r.max_trades != null || r.cooldown_min != null || r.no_add_to_loser) return false
+  if (sp.execution && sp.execution.uses_orderflow != null) return false
+  return true
+}
+
+/** Collapse a per-user scoring profile into the concrete P-rule numbers. Empty
+ *  profile → OWNER_RAILS (founder parity). Units per RulesStep.tsx:
+ *  `cooldown_min` is minutes; `daily_loss_limit` is a positive magnitude the
+ *  user typed → negated here. */
+export function resolveRails(sp?: ScoringProfile | null): RailConfig {
+  if (isEmptyScoringProfile(sp)) return { ...OWNER_RAILS }
+  const r = sp!.rails ?? {}
+  const maxSize = r.max_size != null ? r.max_size : null
+  return {
+    isOwner: false,
+    dailyLossLimit: r.daily_loss_limit != null ? -Math.abs(r.daily_loss_limit) : null,
+    dllBuffer: 50,
+    maxSize,
+    p2Deterministic: maxSize != null,
+    postLossCap: maxSize,
+    cooldownSec: r.cooldown_min != null ? r.cooldown_min * 60 : null,
+    tradeCap: r.max_trades != null ? r.max_trades : null,
+  }
+}
+
+/** Which of P1..P5 are actually GRADED for this trader (drive the proportional
+ *  verdict). Owner = all 5 (P2 AI-graded). Per-user: only the rails they set. */
+export function activeRailIds(rc: RailConfig): PRuleId[] {
+  if (rc.isOwner) return ['P1', 'P2', 'P3', 'P4', 'P5']
+  const ids: PRuleId[] = []
+  if (rc.dailyLossLimit != null) ids.push('P1')
+  if (rc.maxSize != null) { ids.push('P2', 'P3') }
+  if (rc.cooldownSec != null) ids.push('P4')
+  if (rc.tradeCap != null) ids.push('P5')
+  return ids
+}

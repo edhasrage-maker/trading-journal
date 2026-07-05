@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { PrepNotes, AiAnalysis, Trade, MarketContext } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { buildEodPrompt, parseEodResponse, applyDeterministicOverrides } from '@/lib/eod-prompt'
+import { resolveRails, type ScoringProfile } from '@/lib/scoring-profile'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { behavioralProxiesPromptBlock } from '@/lib/behavioral-proxies'
 import { clientError } from '@/lib/api-error'
@@ -38,11 +39,26 @@ async function handle(req: Request) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
   }
 
+  // Pt 2 — grade against the trader's OWN scoring_profile_json. On the LOCAL
+  // (founder) build we skip the fetch entirely: an empty profile resolves to
+  // the owner v1.3 rubric, so the founder's grading stays byte-identical AND we
+  // don't query a column that doesn't exist on the personal DB.
+  let scoringProfile: ScoringProfile = {}
   if (!LOCAL_FEATURES_ENABLED) {
     const supabase = await createClient()
     const gate = await consumeAiUsage(supabase, 'analyze_eod')
     if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
+    // scoring_profile_json is a cloud-only column absent from the generated
+    // types (and from the personal DB) — cast to reach it, mirroring
+    // coach-score/route.ts. Missing column → error, data null → {} → owner path.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: profRow } = await (supabase as any)
+      .from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle()
+    if (profRow?.scoring_profile_json && typeof profRow.scoring_profile_json === 'object') {
+      scoringProfile = profRow.scoring_profile_json as ScoringProfile
+    }
   }
+  const rc = resolveRails(scoringProfile)
 
   const body = (await req.json()) as AnalyzeEodBody
   const { trades, eodNotes, prepNotes, prepAnalysis, marketContext, imageBase64, imageMediaType } = body
@@ -60,7 +76,7 @@ async function handle(req: Request) {
   const traderProfile = await getTraderProfile()
   const prompt = profileContextBlock(traderProfile)
     + behavioralProxiesPromptBlock(trades)
-    + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage })
+    + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage, scoringProfile })
 
   const userContent: Anthropic.MessageParam['content'] = hasImage
     ? [
@@ -92,7 +108,7 @@ async function handle(req: Request) {
   // Apply all deterministic overrides (P1-P5 rules, verdict re-derive, profit
   // factor, MFE capture, MAE heat, composite). Shared with the batch rescore
   // script via applyDeterministicOverrides so the two can't drift.
-  applyDeterministicOverrides(parsed, trades, msg => console.log(`[analyze-eod] ${msg}`))
+  applyDeterministicOverrides(parsed, trades, msg => console.log(`[analyze-eod] ${msg}`), rc)
 
   return NextResponse.json(parsed)
 }

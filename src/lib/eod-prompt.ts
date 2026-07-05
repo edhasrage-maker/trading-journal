@@ -16,9 +16,13 @@ import path from 'path'
 // Relative path (not '@/lib/...') so the rescore-eod-stale script can import
 // this lib via raw Node (--experimental-strip-types), which doesn't resolve
 // TS path aliases from tsconfig. Next.js + Webpack handle both fine.
-import type { PrepNotes, AiAnalysis, Trade, MarketContext, EodAiAnalysis } from './supabase/types.ts'
+import type { PrepNotes, AiAnalysis, Trade, MarketContext, EodAiAnalysis, RuleId } from './supabase/types.ts'
 import { symbolToMultiplier } from './futures-symbols.ts'
 import { CAPTURE_UNITS_DISCIPLINE } from './coach-methodology.ts'
+import {
+  OWNER_RAILS, isEmptyScoringProfile, resolveRails, resolveRubric, scoringProfileSummary, activeRailIds,
+  type RailConfig, type ScoringProfile,
+} from './scoring-profile.ts'
 
 // ─── Ruleset loader ──────────────────────────────────────────────────────────
 
@@ -66,6 +70,154 @@ export function fmtTimePT(iso: string | null | undefined): string {
 
 // ─── Prompt building ─────────────────────────────────────────────────────────
 
+/**
+ * Pt 2 — the PER-USER ruleset block, used whenever the trader has a non-empty
+ * `scoring_profile_json`. Generic counterpart to the founder's verbatim v1.3
+ * block: grades against THEIR rails (from `rc`) and THEIR Execution criteria
+ * (thresholds from `resolveRubric`, order-flow gated by `uses_orderflow`, entry
+ * trigger judged against their own `entry_model` library — never S&D / break-of-
+ * cluster). Emits the SAME structured JSON schema, so the parser, overrides,
+ * `EodAiAnalysis` type, and UI are all unchanged. The trader's methodology
+ * itself is supplied by `profileContextBlock` (preferences_md), prepended to the
+ * prompt by the route.
+ */
+function genericRulesetBlock(sp: ScoringProfile, rc: RailConfig): string {
+  const rubric = resolveRubric(sp)
+  const atrTgt = rubric.atrStopTarget
+  const lo = +(0.5 * atrTgt).toFixed(2)
+  const hi = +(1.5 * atrTgt).toFixed(2)
+  const tpR = rubric.tp1RMultiple
+  const usesOF = rubric.usesOrderFlow
+  const tpText = sp.tp ? ` — their stated approach: "${sp.tp}"` : ''
+  const rulesLine = scoringProfileSummary(sp)
+  const cdMin = rc.cooldownSec != null ? +(rc.cooldownSec / 60).toFixed(2) : null
+
+  const railLines = [
+    rc.dailyLossLimit != null
+      ? `  • P1 = Daily loss limit: session net P&L not past $${rc.dailyLossLimit} (with a $${rc.dllBuffer} slippage buffer).`
+      : '  • P1 = Daily loss limit: NOT TRACKED by this trader — always passes, ignore for the verdict.',
+    rc.maxSize != null
+      ? `  • P2 = Max position size: every trade ≤ ${rc.maxSize} contracts.`
+      : '  • P2 = Max position size: NOT TRACKED — always passes.',
+    rc.postLossCap != null
+      ? `  • P3 = No size-up after a loss: the trade after a realized loss stays ≤ ${rc.postLossCap} contracts.`
+      : '  • P3 = No size-up after a loss: NOT TRACKED — always passes.',
+    rc.cooldownSec != null
+      ? `  • P4 = Cooldown after a loss: ≥ ${rc.cooldownSec}s (${cdMin} min) before re-entry.`
+      : '  • P4 = Cooldown after a loss: NOT TRACKED — always passes.',
+    rc.tradeCap != null
+      ? `  • P5 = Trade cap: ≤ ${rc.tradeCap} trades per session.`
+      : '  • P5 = Trade cap: NOT TRACKED — always passes.',
+  ].join('\n')
+
+  const ofCriterion = usesOF
+    ? `  5. two_thirds_orderflow — applies ONLY to trades this trader SIZED UP beyond their
+     base size. ≥2/3 order-flow reads (delta flip, absorption failure, delta fade) GATE
+     the size-up: a sized-up trade needs ≥2 → pass, 0-1 → fail; a base-size trade is N/A
+     (skip it — a base-size trade with weak OF is still valid, never a fail).`
+    : `  5. two_thirds_orderflow — N/A FOR THIS TRADER. They do NOT trade order flow: skip
+     this criterion on EVERY trade (never count it in the denominator, never fail a trade
+     for it). Judge entirely within their price-action / structure / location framework.`
+
+  const enumerateOf = usesOF
+    ? `\n\n**Enumerate before counting (order flow).** When scoring criterion #5, LIST each of
+the 3 signals you find in the trade's tags/notes BEFORE the pass/fail (e.g. "delta flip ✓,
+absorption ✗, delta fade ✗ → 1/3 → fail"). Don't summarize — the trader must be able to audit it.`
+    : ''
+
+  return `
+══ THIS TRADER'S RULESET (grade against THIS — do NOT import any other methodology) ══
+
+This trader has defined their OWN rules (below and in the coaching-preferences context
+above). Grade strictly within THEIR framework. Never require setups, order-flow reads,
+size conventions, or entry triggers they don't use.${rulesLine ? `\nTheir rules in one line: ${rulesLine}.` : ''}
+
+Two orthogonal layers — never combined:
+
+**Process layer — safety rails (per-rule binary, session verdict by threshold):**
+Mark each TRACKED rail pass/fail. Rails marked NOT TRACKED always pass and must not
+affect the verdict.
+${railLines}
+- For per-trade rails (P2/P3/P4), breach_count = number of trades that breached. For
+  session-level rails (P1/P5), breach_count = 1 if breached else 0.
+- Verdict: with 4+ TRACKED rails, one lapse is tolerated (Breach at 2+ breaches); with
+  fewer than 4 tracked rails, ANY single breach is a Breach. P&L never overrides.
+  (These rails are recomputed deterministically server-side — be accurate, but the
+  server has the final say on P-rule status and the verdict.)
+
+**Execution layer (continuous, diagnostic, per-trade aggregation):**
+Execution is computed PER-TRADE and averaged across trades that individually passed the
+per-trade safety rails (size cap / no-size-up / cooldown). Even if the session verdict is
+Breach, the compliant trades still get an Execution score. Return null sub-metrics only
+when ZERO trades passed the per-trade rails.
+
+Compute each sub-metric on 0..1 (higher = better):
+  - execution_parameters (weight 41%): the 9-criterion per-trade checklist below,
+    averaged across compliant trades.
+  - mfe_capture (weight 24%): realized PnL ÷ peak FAVORABLE move WHILE the position was
+    open (high_during_position for longs, low_during_position for shorts). Do NOT frame
+    "price kept running after exit" as a failure here. Computed deterministically server-side.
+  - prep_adherence (weight 24%): did the trades match the plan? Compare prep.bias to trade
+    direction and prep.trade_plans[] to actual entries. 1.0 = bias-aligned with every entry
+    a documented plan; 0.0 = off-plan on a misread day. Null only when prep is entirely
+    blank. A field the trader never filled is NOT an adherence miss.
+  - profit_factor (weight 11%): gross $ profit ÷ gross $ loss (1.0 = break-even). Computed
+    deterministically server-side.
+- Composite = 0.41*exec_params + 0.24*mfe + 0.24*prep + 0.11*pf_score, where pf_score =
+  clamp(profit_factor / 2, 0, 1). Null any sub-metric you can't compute; if all null,
+  composite is null. compliant_trade_count = the number of trades you included.
+
+**Execution Parameters — 9-criterion per-trade checklist (in THIS trader's framework):**
+For each compliant trade, mark each criterion pass (1), fail (0), or N/A (skip in the
+denominator). Per-trade score = passes / (passes+fails). Sub-metric = mean across
+compliant trades. Also produce execution_parameter_breakdown (per-criterion pass rate).
+
+  1. setup_in_playbook — the setup tag exists in the trader's own curated 'setups' library.
+     An improvised setup not in the library fails. N/A if no setup tag at all.
+  2. stop_in_atr_band — |entry − stop| ÷ the trade's OWN entry ATR-10(1m) within
+     [${lo}, ${hi}]× (their ${atrTgt}× ATR stop target). Use the per-trade entry ATR, NOT
+     the session ATR. N/A when the entry ATR is missing.
+  3. tp1_at_2r_or_reasoned — planned TP1 distance ÷ planned stop distance ≥ ${tpR}R (this
+     trader's TP target${tpText}). Below ${tpR}R needs an explicit reason in the notes;
+     missing reason = fail. N/A when TP1 or stop is missing.
+  4. clear_area_of_interest — the entry is anchored to a specific level/structure the
+     trader trades from (session levels, prior-day levels, an HTF zone, S/R, a demand/
+     supply area, an LVN, etc.). A generic mid-range entry with no level fails.
+${ofCriterion}
+  6. break_of_cluster_or_bubble_entry — [for this trader: VALID ENTRY TRIGGER] the entry
+     used a DEFINED trigger from the trader's OWN entry_model library (break/retest, candle
+     trigger, level reclaim, indicator flip, limit-at-AOI, whatever they use). PASS
+     automatically when the trade carries an entry_model tag — that tag IS the trader
+     declaring their trigger; trust it over your read of the prose. A purely discretionary
+     poke with no entry_model tag AND no trigger described in the notes fails. Do NOT
+     require any one specific model or impose a methodology they don't use.
+  7. chart_not_emotion_management — a discretionary exit driven by a technical/structural
+     read passes; a purely PnL-anchored emotional exit ("scared to give back") fails.
+     Hitting the planned TP or getting stopped both pass automatically. A risk-off scratch
+     on a deteriorating read is a VALID read-based exit (pass), not a mistake. NEVER judge
+     the exit by what price did AFTER the trader was out (outcome bias is forbidden).
+  8. no_mistakes_tagged — tags_json.mistakes is empty on the trade.
+  9. stable_emotion — tags_json.emotions includes "Stable". Compromised = fail; MAXRAGE =
+     fail and signals they shouldn't have been trading (call it out in notes).
+
+══ NARRATIVE DISCIPLINE (apply literally — don't soften, don't tell stories) ══
+
+**Causation vs correlation.** The market causes trade outcomes, not the trader's reads. A
+weak read does not "cause" a loss; don't write "the missing read led to the stop-out." A
+setup with positive EV is still valid even without a size-up qualifier.
+
+**Terminology — be literal.** "Active downtrend" needs BOTH lower highs AND lower lows;
+one LH is a "failing continuation", not a downtrend. "Breakdown" needs a confirmed lower
+low; "acceptance" needs bars CLOSING beyond a level.
+
+**${CAPTURE_UNITS_DISCIPLINE}** Narration only — express capture in $ AND ×ATR, and never
+call a small-×ATR / big-$ trade a poor capture. Does not change the mfe_capture math above.
+
+**Time-of-day is NOT a scored rule.** There is no entry-time gate. Never list the time a
+trade was taken as a mistake or a rule breach. A timing tendency from the trader's profile
+may be surfaced in patterns[] / next_session_focus[], never in mistakes[].${enumerateOf}`
+}
+
 export interface BuildEodPromptInput {
   trades: Trade[]
   eodNotes?: string
@@ -75,14 +227,23 @@ export interface BuildEodPromptInput {
   /** Whether to include chart-image instructions. The image itself is attached
    *  by the caller as a separate content part — this lib only deals with text. */
   hasImage?: boolean
+  /** The trader's own scoring rules (onboarding). An empty/absent profile → the
+   *  founder's verbatim Ruleset v1.3 path (byte-identical). A non-empty profile
+   *  → a generic per-user rubric. */
+  scoringProfile?: ScoringProfile | null
 }
 
 /** Returns the full text prompt that gets sent to Claude. */
 export function buildEodPrompt({
-  trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage = false,
+  trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage = false, scoringProfile,
 }: BuildEodPromptInput): string {
   const ruleset = loadRulesetMarkdown()
   const useV13 = ruleset.length > 0
+  // Pt 2 — multi-tenant grading. Empty profile → founder's v1.3 (below,
+  // unchanged); non-empty → a generic per-user ruleset block + the same
+  // structured JSON schema.
+  const ownerPath = isEmptyScoringProfile(scoringProfile)
+  const rc = resolveRails(scoringProfile)
 
   const tradesBlock = trades.length === 0
     ? '  No trades taken today.'
@@ -474,8 +635,14 @@ CRITICAL weighting rules:
 4. Near-TP exits aren't meaningful leaks.
 5. FOMO entries are real mistakes — name them clearly.`
 
+  // OWNER path: the verbatim v1.3 block (+ its legacy fallback) exactly as
+  // before. PER-USER path: a generic ruleset built from the profile, always
+  // using the structured (v1.4) JSON schema so the parser/UI are unchanged.
+  const rulesetSection = ownerPath ? `${v13Block}${legacyFrameworkBlock}` : genericRulesetBlock(scoringProfile!, rc)
+  const useStructuredSchema = ownerPath ? useV13 : true
+
   return `You are an objective trading coach reviewing a trader's completed session${hasImage ? ' and the day\'s chart' : ''}.
-${v13Block}${legacyFrameworkBlock}
+${rulesetSection}
 ${chartInstructions}
 
 Day Prep Summary:
@@ -504,7 +671,7 @@ ${tradesBlock}
 Trader's EOD Reflection:
 ${eodNotes?.trim() || '(none provided)'}
 
-${useV13 ? `Respond with ONLY valid JSON in this exact structure (no markdown, no code fences):
+${useStructuredSchema ? `Respond with ONLY valid JSON in this exact structure (no markdown, no code fences):
 {
   "summary": "<2-3 sentences on the session — call out the process verdict AND a one-line execution read>",
   "what_worked": ["<concrete behavior/decision that was a win>", "<up to 4 total>"],
@@ -690,32 +857,44 @@ export interface DeterministicRuleResult {
 
 export function computeDeterministicRules(
   trades: Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl'>[],
-): { P1: DeterministicRuleResult; P3: DeterministicRuleResult; P4: DeterministicRuleResult; P5: DeterministicRuleResult } {
-  const DAILY_LOSS_LIMIT = -500
-  // Slippage buffer on the DLL. Stop fills aren't perfect — a market stop at
-  // the DLL price routinely fills $5-40 worse than the trigger in fast tape.
-  // Closing at -$507 against a -$500 DLL is a fill artifact, NOT a discipline
-  // breach (the trader DID stop where they planned; the market gapped through).
-  // Only flag P1 when the overshoot exceeds this buffer, which indicates the
-  // trader actually kept trading past the limit rather than just got slipped.
-  const DLL_SLIPPAGE_BUFFER = 50
-  const DLL_HARD_FLOOR = DAILY_LOSS_LIMIT - DLL_SLIPPAGE_BUFFER  // -550
-  const POST_LOSS_QTY_CAP = 5
-  const COOLDOWN_SEC = 90
-  const TRADE_CAP = 7
-
+  rc: RailConfig = OWNER_RAILS,
+): { P1: DeterministicRuleResult; P2?: DeterministicRuleResult; P3: DeterministicRuleResult; P4: DeterministicRuleResult; P5: DeterministicRuleResult } {
   const sorted = [...trades]
     .filter(t => t.entry_time)
     .sort((a, b) => Date.parse(a.entry_time!) - Date.parse(b.entry_time!))
 
   // ── P1: daily loss limit (with slippage buffer) ────────────────────────
-  const netPnl = sorted.reduce((s, t) => s + (t.pnl ?? 0), 0)
-  const withinBuffer = netPnl < DAILY_LOSS_LIMIT && netPnl >= DLL_HARD_FLOOR
-  const P1: DeterministicRuleResult = netPnl < DLL_HARD_FLOOR
-    ? { status: 'fail', breach_count: 1, reason: `Session net P&L $${netPnl.toFixed(2)} blew through the $${DAILY_LOSS_LIMIT} DLL by more than the $${DLL_SLIPPAGE_BUFFER} slippage buffer (hard floor $${DLL_HARD_FLOOR}).` }
-    : withinBuffer
-      ? { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} is past the $${DAILY_LOSS_LIMIT} DLL but within the $${DLL_SLIPPAGE_BUFFER} slippage buffer — counted as a stop-fill artifact, not a breach.` }
-      : { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} within the $${DAILY_LOSS_LIMIT} daily loss limit.` }
+  // A null limit means the trader tracks no DLL → the rule is inactive and
+  // auto-passes (excluded from the verdict count by activeRailIds). The
+  // slippage buffer: a market stop at the DLL price routinely fills $5-40 worse
+  // than the trigger — closing at -$507 against a -$500 DLL is a fill artifact,
+  // not a discipline breach. Only flag P1 when the overshoot exceeds the buffer.
+  let P1: DeterministicRuleResult
+  if (rc.dailyLossLimit == null) {
+    P1 = { status: 'pass', breach_count: 0, reason: 'No daily loss limit set for this trader.' }
+  } else {
+    const DLL = rc.dailyLossLimit
+    const hardFloor = DLL - rc.dllBuffer
+    const netPnl = sorted.reduce((s, t) => s + (t.pnl ?? 0), 0)
+    const withinBuffer = netPnl < DLL && netPnl >= hardFloor
+    P1 = netPnl < hardFloor
+      ? { status: 'fail', breach_count: 1, reason: `Session net P&L $${netPnl.toFixed(2)} blew through the $${DLL} DLL by more than the $${rc.dllBuffer} slippage buffer (hard floor $${hardFloor}).` }
+      : withinBuffer
+        ? { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} is past the $${DLL} DLL but within the $${rc.dllBuffer} slippage buffer — counted as a stop-fill artifact, not a breach.` }
+        : { status: 'pass', breach_count: 0, reason: `Session net P&L $${netPnl.toFixed(2)} within the $${DLL} daily loss limit.` }
+  }
+
+  // ── P2: max position size (per-user only; owner keeps it AI-driven) ─────
+  // Deterministic when the trader set a flat size cap (no setup-conditional
+  // exception). Owner path leaves P2 undefined so the AI's setup-aware P2 (10
+  // MNQ only on Qualifying S&D) is preserved unchanged.
+  let P2: DeterministicRuleResult | undefined
+  if (rc.p2Deterministic && rc.maxSize != null) {
+    const over = sorted.filter(t => t.quantity != null && t.quantity > rc.maxSize!)
+    P2 = over.length === 0
+      ? { status: 'pass', breach_count: 0, reason: `Every trade sized ≤${rc.maxSize} contracts.` }
+      : { status: 'fail', breach_count: over.length, reason: `${over.length} trade${over.length === 1 ? '' : 's'} exceeded the ${rc.maxSize}-contract max size.` }
+  }
 
   // ── P3 + P4: post-loss checks (size + cooldown), REALIZED-LOSS aware ────
   // Both rules react to a loss that has actually CLOSED. Earlier versions
@@ -731,56 +910,68 @@ export function computeDeterministicRules(
   //
   // Fix: for each trade, find the most recent OTHER trade that CLOSED at or
   // before this trade OPENED. Only if THAT trade was a loss do P3/P4 apply.
+  const p3Active = rc.postLossCap != null
+  const p4Active = rc.cooldownSec != null
   const p3Breaches: string[] = []
   const p4Breaches: string[] = []
-  for (let i = 0; i < sorted.length; i++) {
-    const curr = sorted[i]
-    if (!curr.entry_time) continue
-    const openMs = Date.parse(curr.entry_time)
-    if (!Number.isFinite(openMs)) continue
+  if (p3Active || p4Active) {
+    for (let i = 0; i < sorted.length; i++) {
+      const curr = sorted[i]
+      if (!curr.entry_time) continue
+      const openMs = Date.parse(curr.entry_time)
+      if (!Number.isFinite(openMs)) continue
 
-    // Most recent trade that had already closed when `curr` opened.
-    let lastClosed: typeof curr | null = null
-    let lastClosedExitMs = -Infinity
-    for (let j = 0; j < sorted.length; j++) {
-      if (j === i) continue
-      const o = sorted[j]
-      if (!o.exit_time) continue
-      const exitMs = Date.parse(o.exit_time)
-      if (!Number.isFinite(exitMs)) continue
-      if (exitMs <= openMs && exitMs > lastClosedExitMs) {
-        lastClosed = o
-        lastClosedExitMs = exitMs
+      // Most recent trade that had already closed when `curr` opened.
+      let lastClosed: typeof curr | null = null
+      let lastClosedExitMs = -Infinity
+      for (let j = 0; j < sorted.length; j++) {
+        if (j === i) continue
+        const o = sorted[j]
+        if (!o.exit_time) continue
+        const exitMs = Date.parse(o.exit_time)
+        if (!Number.isFinite(exitMs)) continue
+        if (exitMs <= openMs && exitMs > lastClosedExitMs) {
+          lastClosed = o
+          lastClosedExitMs = exitMs
+        }
+      }
+      // P3/P4 only react when the immediately-preceding REALIZED trade was a loss.
+      if (!lastClosed || (lastClosed.pnl ?? 0) >= 0) continue
+
+      // P3 — size after a realized loss must be ≤ the post-loss cap.
+      if (p3Active && curr.quantity != null && curr.quantity > rc.postLossCap!) {
+        p3Breaches.push(`T${i + 1} sized ${curr.quantity} after a realized loss`)
+      }
+
+      // P4 — gap from the loss closing to this trade opening must be ≥ cooldown.
+      if (p4Active) {
+        const gapSec = (openMs - lastClosedExitMs) / 1000
+        if (Number.isFinite(gapSec) && gapSec < rc.cooldownSec!) {
+          p4Breaches.push(`T${i + 1} opened ${gapSec.toFixed(0)}s after the prior loss closed`)
+        }
       }
     }
-    // P3/P4 only react when the immediately-preceding REALIZED trade was a loss.
-    if (!lastClosed || (lastClosed.pnl ?? 0) >= 0) continue
-
-    // P3 — size after a realized loss must be ≤ POST_LOSS_QTY_CAP
-    if (curr.quantity != null && curr.quantity > POST_LOSS_QTY_CAP) {
-      p3Breaches.push(`T${i + 1} sized ${curr.quantity} after a realized loss`)
-    }
-
-    // P4 — gap from the loss closing to this trade opening must be ≥ COOLDOWN_SEC
-    const gapSec = (openMs - lastClosedExitMs) / 1000
-    if (Number.isFinite(gapSec) && gapSec < COOLDOWN_SEC) {
-      p4Breaches.push(`T${i + 1} opened ${gapSec.toFixed(0)}s after the prior loss closed`)
-    }
   }
-  const P3: DeterministicRuleResult = p3Breaches.length === 0
-    ? { status: 'pass', breach_count: 0, reason: `No size-up after a loss; every post-loss trade was ≤${POST_LOSS_QTY_CAP} contracts.` }
-    : { status: 'fail', breach_count: p3Breaches.length, reason: `Post-loss size-up: ${p3Breaches.join('; ')}.` }
-  const P4: DeterministicRuleResult = p4Breaches.length === 0
-    ? { status: 'pass', breach_count: 0, reason: `Every loss was followed by ≥${COOLDOWN_SEC}s pause before re-entry.` }
-    : { status: 'fail', breach_count: p4Breaches.length, reason: `${p4Breaches.length} cooldown breach${p4Breaches.length === 1 ? '' : 'es'}: ${p4Breaches.join('; ')}.` }
+  const P3: DeterministicRuleResult = !p3Active
+    ? { status: 'pass', breach_count: 0, reason: 'No post-loss size rule set for this trader.' }
+    : p3Breaches.length === 0
+      ? { status: 'pass', breach_count: 0, reason: `No size-up after a loss; every post-loss trade was ≤${rc.postLossCap} contracts.` }
+      : { status: 'fail', breach_count: p3Breaches.length, reason: `Post-loss size-up: ${p3Breaches.join('; ')}.` }
+  const P4: DeterministicRuleResult = !p4Active
+    ? { status: 'pass', breach_count: 0, reason: 'No cooldown rule set for this trader.' }
+    : p4Breaches.length === 0
+      ? { status: 'pass', breach_count: 0, reason: `Every loss was followed by ≥${rc.cooldownSec}s pause before re-entry.` }
+      : { status: 'fail', breach_count: p4Breaches.length, reason: `${p4Breaches.length} cooldown breach${p4Breaches.length === 1 ? '' : 'es'}: ${p4Breaches.join('; ')}.` }
 
   // ── P5: trade cap ──────────────────────────────────────────────────────
   const n = sorted.length
-  const P5: DeterministicRuleResult = n <= TRADE_CAP
-    ? { status: 'pass', breach_count: 0, reason: `${n} trade${n === 1 ? '' : 's'} taken; within the ${TRADE_CAP}-trade cap.` }
-    : { status: 'fail', breach_count: n - TRADE_CAP, reason: `${n} trades taken; ${n - TRADE_CAP} past the ${TRADE_CAP}-trade cap.` }
+  const P5: DeterministicRuleResult = rc.tradeCap == null
+    ? { status: 'pass', breach_count: 0, reason: 'No trade cap set for this trader.' }
+    : n <= rc.tradeCap
+      ? { status: 'pass', breach_count: 0, reason: `${n} trade${n === 1 ? '' : 's'} taken; within the ${rc.tradeCap}-trade cap.` }
+      : { status: 'fail', breach_count: n - rc.tradeCap, reason: `${n} trades taken; ${n - rc.tradeCap} past the ${rc.tradeCap}-trade cap.` }
 
-  return { P1, P3, P4, P5 }
+  return P2 ? { P1, P2, P3, P4, P5 } : { P1, P3, P4, P5 }
 }
 
 /** Recompute the execution composite using whatever sub-metrics are non-null.
@@ -846,16 +1037,19 @@ export function applyDeterministicOverrides(
   parsed: EodAiAnalysis,
   trades: Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl' | 'entry_price' | 'stop_price' | 'direction' | 'symbol' | 'high_during_position' | 'low_during_position'>[],
   onLog?: (msg: string) => void,
+  rc: RailConfig = OWNER_RAILS,
 ): EodAiAnalysis {
   const log = onLog ?? (() => {})
 
   if (parsed.process) {
-    const det = computeDeterministicRules(trades)
+    const det = computeDeterministicRules(trades, rc)
     let touchedProcess = false
-    const ruleKeys: Array<'P1' | 'P3' | 'P4' | 'P5'> = ['P1', 'P3', 'P4', 'P5']
+    // Owner keeps P2 AI-driven (setup-conditional cap); a per-user profile with
+    // a flat max size gets P2 deterministically too (det.P2 present).
+    const ruleKeys: RuleId[] = det.P2 ? ['P1', 'P2', 'P3', 'P4', 'P5'] : ['P1', 'P3', 'P4', 'P5']
     for (const k of ruleKeys) {
       const ai = parsed.process.per_rule[k]
-      const calc = det[k]
+      const calc = det[k]!
       const aiBc = ai?.breach_count ?? 0
       const changed = !ai || ai.status !== calc.status || aiBc !== calc.breach_count
       if (changed) {
@@ -870,13 +1064,26 @@ export function applyDeterministicOverrides(
       parsed.process.per_rule[k] = { status: calc.status, breach_count: calc.breach_count, reason: calc.reason }
       if (parsed.process.breach_count_vector) parsed.process.breach_count_vector[k] = calc.breach_count
     }
-    if (touchedProcess) {
-      const passCount = Object.values(parsed.process.per_rule).filter(r => r?.status === 'pass').length
-      const newVerdict: 'Compliant' | 'Breach' = passCount >= 4 ? 'Compliant' : 'Breach'
-      if (parsed.process.verdict !== newVerdict) {
-        log(`verdict re-derived ${parsed.process.verdict} → ${newVerdict} (pass_count ${passCount}/5)`)
-        parsed.process.verdict = newVerdict
+    // Verdict. OWNER: exact historical logic (passCount≥4, touched-gated) so an
+    // untouched founder day is byte-identical. PER-USER: proportional to their
+    // ACTIVE rails — tolerate one lapse only with ≥4 rails tracked, else any
+    // single breach is a Breach. (The founder's 5-rail case is arithmetically
+    // identical to passCount≥4, but we keep the branch explicit to guarantee
+    // no drift on malformed/missing AI P2.)
+    if (touchedProcess || !rc.isOwner) {
+      let newVerdict: 'Compliant' | 'Breach'
+      if (rc.isOwner) {
+        const passCount = Object.values(parsed.process.per_rule).filter(r => r?.status === 'pass').length
+        newVerdict = passCount >= 4 ? 'Compliant' : 'Breach'
+        if (parsed.process.verdict !== newVerdict) log(`verdict re-derived ${parsed.process.verdict} → ${newVerdict} (pass_count ${passCount}/5)`)
+      } else {
+        const active = activeRailIds(rc)
+        const failCount = active.filter(k => parsed.process!.per_rule[k]?.status === 'fail').length
+        const tolerate = active.length >= 4 ? 1 : 0
+        newVerdict = failCount > tolerate ? 'Breach' : 'Compliant'
+        if (parsed.process.verdict !== newVerdict) log(`verdict re-derived ${parsed.process.verdict} → ${newVerdict} (${failCount}/${active.length} active rails failed, tolerate ${tolerate})`)
       }
+      parsed.process.verdict = newVerdict
     }
   }
 
