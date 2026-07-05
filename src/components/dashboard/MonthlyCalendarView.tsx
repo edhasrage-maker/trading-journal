@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
-  format, parse, startOfMonth, endOfMonth, eachDayOfInterval,
+  format, startOfMonth, endOfMonth, eachDayOfInterval,
   startOfWeek, endOfWeek, addMonths, subMonths, isSameMonth, isToday as fnsIsToday,
 } from 'date-fns'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
@@ -129,8 +129,9 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd }: Pr
         </div>
       </div>
 
-      {/* Grid + week sidebar */}
-      <div className="flex gap-3">
+      {/* Grid + week sidebar (sidebar drops below the grid on mobile so each
+          day cell gets full width instead of being squeezed to ~a third) */}
+      <div className="flex flex-col md:flex-row gap-3">
         <div className="flex-1 min-w-0">
           {/* DOW header */}
           <div className="grid grid-cols-7 gap-1 mb-1">
@@ -158,10 +159,11 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd }: Pr
           </div>
         </div>
 
-        {/* Week sidebar */}
-        <div className="w-28 flex flex-col gap-1 flex-shrink-0">
-          {/* Spacer to align with DOW header */}
-          <div className="h-[26px]" />
+        {/* Week sidebar — vertical column beside the grid on desktop; tiles
+            into a compact grid below the calendar on mobile. */}
+        <div className="grid grid-cols-3 gap-1 md:flex md:flex-col md:w-28 md:flex-shrink-0">
+          {/* Spacer to align with DOW header (desktop only) */}
+          <div className="hidden md:block h-[26px]" />
           {weekStats.map((s, i) => (
             <div
               key={i}
@@ -234,7 +236,7 @@ function DayCell({
   const grade = inMonth ? data?.overall_grade ?? null : null
 
   const content = (
-    <div className={`relative aspect-square p-1.5 rounded-md border transition-colors ${cellStyle} ${todayRing}`}>
+    <div className={`relative aspect-square overflow-hidden p-1.5 rounded-md border transition-colors ${cellStyle} ${todayRing}`}>
       {/* Day number — top-right */}
       <div className={`absolute top-1 right-1.5 text-[11px] font-medium ${
         !inMonth ? 'text-gray-700'
@@ -247,27 +249,29 @@ function DayCell({
       {/* Center stack — grade as the focal point, supporting stats below */}
       {inMonth && hasTrades && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pt-3 pb-1 px-1 gap-0.5">
-          {/* Grade — large, middle */}
-          <div className={`text-2xl font-bold font-mono leading-none ${grade != null ? gradeText(grade) : 'text-gray-700'}`}>
+          {/* Grade — large, middle (scaled down on mobile's tighter cells) */}
+          <div className={`text-base sm:text-2xl font-bold font-mono leading-none ${grade != null ? gradeText(grade) : 'text-gray-700'}`}>
             {grade != null ? grade : '—'}
           </div>
-          <div className="text-[8px] text-gray-500 uppercase tracking-wider -mt-0.5 mb-0.5">Grade</div>
+          {/* Supporting label + secondary stats — hidden on mobile where the
+              cell is too small to hold the full stack legibly. */}
+          <div className="hidden sm:block text-[8px] text-gray-500 uppercase tracking-wider -mt-0.5 mb-0.5">Grade</div>
 
           {/* Trades */}
-          <div className="text-[10px] text-gray-400 leading-tight">
+          <div className="hidden sm:block text-[10px] text-gray-400 leading-tight">
             {data.trade_count} trade{data.trade_count === 1 ? '' : 's'}
           </div>
 
           {/* Win rate */}
           {data.win_rate != null && (
-            <div className="text-[10px] text-gray-500 leading-tight">
+            <div className="hidden sm:block text-[10px] text-gray-500 leading-tight">
               {data.win_rate.toFixed(0)}%
             </div>
           )}
 
-          {/* PnL — anchored to bottom of the stack */}
+          {/* PnL — anchored to bottom of the stack; kept on mobile */}
           {pnl != null && (
-            <div className={`text-xs font-mono font-bold leading-tight mt-0.5 ${
+            <div className={`text-[10px] sm:text-xs font-mono font-bold leading-tight mt-0.5 ${
               pnl > 0 ? 'text-green-300' : pnl < 0 ? 'text-red-300' : 'text-gray-300'
             }`}>
               {fmtPnlShort(pnl)}
