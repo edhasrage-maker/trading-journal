@@ -18,12 +18,18 @@ import { ChevronDown } from 'lucide-react'
 export default function CollapsibleCard({
   title,
   defaultOpen = false,
+  desktopCollapsible = false,
   headerRight,
   children,
 }: {
   title: string
-  /** Mobile-only initial state. Desktop is always open regardless. */
+  /** Mobile-only initial state (unless desktopCollapsible — then it's the
+   *  initial state on desktop too). */
   defaultOpen?: boolean
+  /** Opt-in: make the card a real accordion on DESKTOP too (chevron + toggle),
+   *  instead of the default always-open-on-desktop behavior. Used to declutter
+   *  a long page by starting secondary sections collapsed. */
+  desktopCollapsible?: boolean
   headerRight?: React.ReactNode
   children: React.ReactNode
 }) {
@@ -35,16 +41,16 @@ export default function CollapsibleCard({
           type="button"
           onClick={() => setOpen(o => !o)}
           aria-expanded={open}
-          className="md:pointer-events-none md:cursor-default flex items-center gap-2 flex-1 min-w-0 text-left"
+          className={`flex items-center gap-2 flex-1 min-w-0 text-left ${desktopCollapsible ? '' : 'md:pointer-events-none md:cursor-default'}`}
         >
           <ChevronDown
-            className={`w-4 h-4 text-gray-400 shrink-0 transition-transform md:hidden ${open ? '' : '-rotate-90'}`}
+            className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${desktopCollapsible ? '' : 'md:hidden'} ${open ? '' : '-rotate-90'}`}
           />
           <h2 className="font-semibold text-white truncate">{title}</h2>
         </button>
         {headerRight}
       </div>
-      <div className={`${open ? 'block' : 'hidden'} md:block mt-4`}>{children}</div>
+      <div className={`${open ? 'block' : 'hidden'} ${desktopCollapsible ? '' : 'md:block'} mt-4`}>{children}</div>
     </div>
   )
 }

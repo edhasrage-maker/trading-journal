@@ -897,7 +897,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
       {/* Day Type — chips sourced from trade_tags.day_type so prep + intraday
           stay in sync. Falls back to a hint when the library is empty. */}
-      <CollapsibleCard title="Day Type" defaultOpen>
+      <CollapsibleCard title="Day Type" desktopCollapsible>
         {dayTypeOptions.length === 0 ? (
           <p className="text-xs text-gray-500">
             No day types in the library yet. Add some from <span className="font-mono">/settings/tags</span>.
@@ -957,9 +957,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           first so screenshot re-extraction updates the pill immediately.
           drAdrAuto (server-computed, may be bar-based) is the fallback for
           days where the screenshot hasn't been extracted yet. */}
-      {mode === 'pro' && isAdmin && (
+      {isAdmin && (
         <ConditionFilterPanel
           date={date}
+          beginner={mode !== 'pro'}
           marketContext={{
             rvol: context.rvol ?? null,
             ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
@@ -974,7 +975,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
       {/* Market Context — Detailed Tape only (levels / IB / volatility / MGI) */}
       {mode === 'pro' && (
-        <CollapsibleCard title="Market Context">
+        <CollapsibleCard title="Market Context" desktopCollapsible>
           <MarketContextForm value={context} onChange={setContext} />
         </CollapsibleCard>
       )}

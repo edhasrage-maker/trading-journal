@@ -79,11 +79,15 @@ interface Props {
    *  Three fields overlap with this panel and auto-fill on mount / when
    *  Market Context changes (only if the panel field is still empty). */
   marketContext?: MarketContextPrefill
+  /** Highlights (beginner) view: keep the metric cards but replace the grade
+   *  verdict + full stats block with a slim Win rate + Profit factor readout.
+   *  Detailed Tape (pro) shows the full panel. */
+  beginner?: boolean
 }
 
 const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '', atr_entry: '' }
 
-export default function ConditionFilterPanel({ date, marketContext }: Props) {
+export default function ConditionFilterPanel({ date, marketContext, beginner = false }: Props) {
   const [inputs, setInputs] = useState<InputState>(EMPTY)
   const [outcome, setOutcome] = useState<LookupResponse | null>(null)
   const [lookingUp, setLookingUp] = useState(false)
@@ -344,7 +348,7 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
             user can override to inspect the median view when they want a wider
             sample. The select sits inside the verdict card so the connection
             between the verdict and which-view-drove-it is unmissable. */}
-        {v && outcome && (
+        {v && outcome && !beginner && (
           <ConsolidatedVerdict
             verdict={v}
             outcome={outcome}
@@ -355,8 +359,16 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
           />
         )}
 
-        {/* Conflict warning */}
-        {outcome?.conflict && outcome.conflict_reason && (
+        {/* Highlights (beginner): just the two numbers that matter to a quick
+            read — how often you win + your profit factor in conditions like
+            today. The grade, EV, sample sizes, and view mechanics stay in
+            Detailed Tape. */}
+        {beginner && outcome && effectiveMatch && (
+          <ConditionsHighlight match={effectiveMatch} />
+        )}
+
+        {/* Conflict warning — Detailed Tape only (it's a sample-mechanics note). */}
+        {!beginner && outcome?.conflict && outcome.conflict_reason && (
           <div className="bg-orange-950/40 border border-orange-800 rounded-lg px-3 py-2 flex items-start gap-2 text-xs text-orange-200">
             <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-orange-400" />
             <div>
@@ -371,7 +383,7 @@ export default function ConditionFilterPanel({ date, marketContext }: Props) {
             the dropdown lets the user flip; rendering both side-by-side was
             redundant clutter. Toggling the override dropdown swaps the card
             to the other view. */}
-        {outcome && effectiveMatch && (
+        {!beginner && outcome && effectiveMatch && (
           <MatchCard
             title={effectivePick === 'median' ? 'Median view' : 'Tertile view'}
             match={effectiveMatch}
@@ -522,6 +534,31 @@ function ConsolidatedVerdict({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/** Highlights (beginner) readout — just Win rate + Profit factor for the
+ *  matched historical bucket, no grade / EV / sample mechanics. */
+function ConditionsHighlight({ match }: { match: MatchResult }) {
+  const r = match.row
+  const wr = r.trade_wr != null ? `${(r.trade_wr * 100).toFixed(0)}%` : '—'
+  const pf = r.profit_factor != null ? r.profit_factor.toFixed(2) : '—'
+  const pfTone = r.profit_factor == null
+    ? 'text-gray-300'
+    : r.profit_factor >= 1 ? 'text-green-400' : 'text-red-400'
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Win rate</div>
+        <div className="font-mono text-2xl font-bold text-white">{wr}</div>
+        <div className="text-[11px] text-gray-500 mt-0.5">in conditions like today</div>
+      </div>
+      <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Profit factor</div>
+        <div className={`font-mono text-2xl font-bold ${pfTone}`}>{pf}</div>
+        <div className="text-[11px] text-gray-500 mt-0.5">in conditions like today</div>
       </div>
     </div>
   )
