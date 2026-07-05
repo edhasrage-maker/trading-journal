@@ -56,6 +56,8 @@ export async function proxy(request: NextRequest) {
   const isPublic =
     pathname === '/' ||
     pathname === '/login' ||
+    pathname === '/privacy' ||              // public legal pages
+    pathname === '/terms' ||
     pathname.startsWith('/auth') ||
     pathname.startsWith('/share') ||        // coach-review share pages (token-gated)
     pathname.startsWith('/api/demo-login') || // one-click demo sign-in (logged-out by definition)

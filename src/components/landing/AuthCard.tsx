@@ -176,7 +176,12 @@ export default function AuthCard() {
         </p>
       )}
 
-      <p className="text-[11px] text-gray-600 text-center mt-4">Early testing build · free while in beta</p>
+      <p className="text-[11px] text-gray-600 text-center mt-4">
+        By continuing you agree to our{' '}
+        <a href="/terms" className="text-gray-500 hover:text-gray-300 underline">Terms</a> and{' '}
+        <a href="/privacy" className="text-gray-500 hover:text-gray-300 underline">Privacy Policy</a>.
+      </p>
+      <p className="text-[11px] text-gray-600 text-center mt-1">Early testing build · free while in beta</p>
     </div>
   )
 }

@@ -141,7 +141,11 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-6 py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
           {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
           <img src="/brand/tapescore-mark.svg" alt="TapeScore" className="h-8 w-8" />
-          <p className="text-xs text-gray-600">TapeScore — game film for traders · early testing build, free while in beta.</p>
+          <p className="text-xs text-gray-600 order-last sm:order-none">TapeScore — game film for traders · early testing build, free while in beta.</p>
+          <div className="flex items-center gap-5 text-xs">
+            <a href="/privacy" className="text-gray-500 hover:text-gray-300">Privacy</a>
+            <a href="/terms" className="text-gray-500 hover:text-gray-300">Terms</a>
+          </div>
         </div>
       </footer>
     </div>
