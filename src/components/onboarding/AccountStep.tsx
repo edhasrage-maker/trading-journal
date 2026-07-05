@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, X } from 'lucide-react'
 
 const SESSIONS: Array<[string, string]> = [
   ['rth', 'RTH — regular session (06:30–13:00 PT)'],
@@ -17,11 +17,23 @@ const TIMEZONES: Array<[string, string]> = [
   ['UTC', 'UTC'],
 ]
 
-/** Step 1 — account & markets. Writes name/instrument/account/timezone to the
- *  Trading Defaults, and the traded session to the scoring profile. */
+/** Split a stored comma-separated instrument string into normalized chips. */
+function parseInstruments(raw: string): string[] {
+  const out: string[] = []
+  for (const part of raw.split(',')) {
+    const v = part.trim().toUpperCase()
+    if (v && !out.includes(v)) out.push(v)
+  }
+  return out
+}
+
+/** Step 1 — account & markets. Writes name/instrument(s)/account/timezone to the
+ *  Trading Defaults, and the traded session to the scoring profile. The first
+ *  instrument chip is treated as primary (chart/coach default). */
 export default function AccountStep({ onNext, onSkipAll }: { onNext: () => void; onSkipAll: () => void }) {
   const [displayName, setDisplayName] = useState('')
-  const [instrument, setInstrument] = useState('')
+  const [instruments, setInstruments] = useState<string[]>([])
+  const [instDraft, setInstDraft] = useState('')
   const [accountSize, setAccountSize] = useState('')
   const [timezone, setTimezone] = useState('')
   const [session, setSession] = useState('')
@@ -37,7 +49,7 @@ export default function AccountStep({ onNext, onSkipAll }: { onNext: () => void;
     ]).then(([td, ob]) => {
       if (cancelled) return
       setDisplayName(td.display_name ?? '')
-      setInstrument(td.default_instrument ?? '')
+      setInstruments(parseInstruments(td.default_instrument ?? ''))
       setAccountSize(td.account_size != null ? String(td.account_size) : '')
       setTimezone(td.timezone ?? '')
       setSession(ob.scoring_profile?.session ?? '')
@@ -46,13 +58,23 @@ export default function AccountStep({ onNext, onSkipAll }: { onNext: () => void;
     return () => { cancelled = true }
   }, [])
 
+  const addInstrument = (raw?: string) => {
+    const v = (raw ?? instDraft).trim().toUpperCase()
+    if (!v) return
+    if (!instruments.includes(v)) setInstruments([...instruments, v])
+    if (!raw) setInstDraft('')
+  }
+  const removeInstrument = (v: string) => setInstruments(instruments.filter(x => x !== v))
+
   const save = async () => {
     setSaving(true); setError(null)
     try {
       const acc = accountSize.trim() === '' ? null : parseFloat(accountSize)
+      // Fold any half-typed draft into the list so it isn't silently lost.
+      const list = instDraft.trim() ? parseInstruments([...instruments, instDraft].join(',')) : instruments
       await fetch('/api/trading-defaults', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ display_name: displayName, default_instrument: instrument, account_size: acc, timezone }),
+        body: JSON.stringify({ display_name: displayName, default_instrument: list.join(', '), account_size: acc, timezone }),
       })
       await fetch('/api/onboarding', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -83,10 +105,24 @@ export default function AccountStep({ onNext, onSkipAll }: { onNext: () => void;
           <span className="text-xs text-gray-500 mb-1 block">Display name</span>
           <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="e.g. Edison" className={field} />
         </label>
-        <label className="block">
-          <span className="text-xs text-gray-500 mb-1 block">Primary instrument</span>
-          <input value={instrument} onChange={e => setInstrument(e.target.value.toUpperCase())} placeholder="e.g. NQ" className={`${field} font-mono`} />
-        </label>
+        <div className="block">
+          <span className="text-xs text-gray-500 mb-1 block">Instruments you trade</span>
+          <div className={`${field} font-mono flex flex-wrap items-center gap-1.5 min-h-[38px] py-1.5`}>
+            {instruments.map((inst, i) => (
+              <span key={inst} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-gray-700 bg-gray-800/60 text-gray-200">
+                {inst}{i === 0 && <span className="text-[9px] font-sans uppercase tracking-wider text-blue-400">primary</span>}
+                <button type="button" onClick={() => removeInstrument(inst)} className="text-gray-500 hover:text-red-400"><X className="w-3 h-3" /></button>
+              </span>
+            ))}
+            <input value={instDraft}
+              onChange={e => setInstDraft(e.target.value.toUpperCase())}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addInstrument() } else if (e.key === 'Backspace' && !instDraft && instruments.length) { removeInstrument(instruments[instruments.length - 1]) } }}
+              onBlur={() => addInstrument()}
+              placeholder={instruments.length ? 'add another…' : 'e.g. NQ'}
+              className="flex-1 min-w-[80px] bg-transparent outline-none text-sm" />
+          </div>
+          <span className="text-[10px] text-gray-600 mt-1 block">Press Enter or comma to add. First one is your primary (chart &amp; coach default).</span>
+        </div>
         <label className="block">
           <span className="text-xs text-gray-500 mb-1 block">Account size ($)</span>
           <input type="number" inputMode="decimal" min={0} value={accountSize} onChange={e => setAccountSize(e.target.value)} placeholder="e.g. 50000" className={field} />

@@ -59,7 +59,8 @@ export async function PUT(req: Request) {
   }
   if ('default_instrument' in body) {
     if (body.default_instrument != null && typeof body.default_instrument !== 'string') return NextResponse.json({ error: 'default_instrument must be a string' }, { status: 400 })
-    row.default_instrument = body.default_instrument ? String(body.default_instrument).trim().toUpperCase().slice(0, 20) : null
+    // May be a comma-separated list of instruments (first = primary). Cap wide enough to hold a handful.
+    row.default_instrument = body.default_instrument ? String(body.default_instrument).trim().toUpperCase().slice(0, 120) : null
   }
   if ('account_size' in body) {
     const v = body.account_size

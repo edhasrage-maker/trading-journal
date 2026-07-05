@@ -43,6 +43,7 @@ export async function POST() {
     order_flow_reads: byCat('order_flow'),
     entry_model: byCat('entry_model'),
     rules: { risk_per_trade: sp.risk_per_trade, stop: sp.stop, tp: sp.tp, rails: sp.rails },
+    custom_rules: Array.isArray(sp.custom_rules) ? sp.custom_rules : [],
     edge: yg.edge ?? null,
     strengths: yg.strengths ?? null,
     leaks: byCat('mistakes'),
@@ -52,7 +53,7 @@ export async function POST() {
   }
 
   const prompt = `You are configuring an AI trading coach's standing context for a trader. Using the structured profile below, write:
-1. "preferences_md": a concise markdown "Player Profile" the coach reads before every analysis — their instrument(s), style/edge, playbook (setups / confluences / order-flow / entry model), risk & rules, strengths, and known leaks. Specific and factual, no fluff. If uses_orderflow is false, note they don't trade order flow so the coach must NOT flag them for missing OF reads.
+1. "preferences_md": a concise markdown "Player Profile" the coach reads before every analysis — their instrument(s), style/edge, playbook (setups / confluences / order-flow / entry model), risk & rules, strengths, and known leaks. Specific and factual, no fluff. If uses_orderflow is false, note they don't trade order flow so the coach must NOT flag them for missing OF reads. If custom_rules is non-empty, include them under a "Personal rules" note and mark that the coach should CONSIDER these qualitatively (they are not auto-scored).
 2. "focus_md": a short bulleted markdown list (2–4 bullets) of what to weight MOST right now, driven by their #1 goal and biggest leaks.
 
 Return ONLY compact JSON: {"preferences_md":"...","focus_md":"..."}
