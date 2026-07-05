@@ -122,6 +122,25 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
     return () => { cancelled = true }
   }, [pathname])
 
+  // The "Welcome" entry is first-run orientation for new testers. Hide it once
+  // the user has set up their profile (onboarding_json.status === 'completed'),
+  // and always on the local owner build (there's no tester onboarding there — a
+  // permanent Welcome link is just clutter for an established user). Starts
+  // hidden until we know the status, so an established user never sees it flash
+  // in and then out on load.
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (LOCAL_FEATURES_ENABLED) return // owner build has no onboarding flow
+    let cancelled = false
+    fetch('/api/onboarding')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled) setOnboardingCompleted(d?.onboarding?.status === 'completed') })
+      .catch(() => { /* unknown → Welcome stays hidden */ })
+    return () => { cancelled = true }
+  }, [])
+  const showWelcome = !LOCAL_FEATURES_ENABLED && onboardingCompleted === false
+  const welcomeItem = { href: '/welcome', label: 'Welcome', icon: Sparkles }
+
   // On a dated route (/prep|/intraday|/eod/<date>) the tabs stick to THAT date.
   // Otherwise Daily Prep points at today (where you start today's prep), while the
   // review tabs (Intraday/EOD/Weekly) follow the anchor — today once prep is
@@ -144,7 +163,7 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   })()
 
   const navItems = [
-    { href: '/welcome', label: 'Welcome', icon: Sparkles },
+    ...(showWelcome ? [welcomeItem] : []),
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: `/prep/${prepDate}`, label: 'Daily Prep', icon: ClipboardList },
     { href: `/intraday/${reviewDate}`, label: 'Intraday', icon: Activity },
@@ -164,7 +183,7 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
     { href: '/analytics', label: 'Analytics', icon: TrendingUp, match: '/analytics' },
   ]
   const moreNav = [
-    { href: '/welcome', label: 'Welcome', icon: Sparkles },
+    ...(showWelcome ? [welcomeItem] : []),
     { href: `/intraday/${reviewDate}`, label: 'Intraday', icon: Activity },
     { href: `/weekly/${weekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
