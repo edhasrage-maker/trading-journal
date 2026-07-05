@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { ChevronDown } from 'lucide-react'
 import type { DayStat } from './DashboardStats'
 
@@ -404,6 +405,7 @@ function EquityChart({ dates, values, height }: { dates: string[]; values: numbe
 /** Per-day net P&L bars (green up / red down) with a hover tooltip showing the
  *  day + P&L (the native <title> was slow and unreliable). */
 function BarsChart({ bars, height }: { bars: { date: string; pnl: number }[]; height: number }) {
+  const router = useRouter()
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
   const vals = bars.map(b => b.pnl)
   const lo = Math.min(0, ...vals)
@@ -418,11 +420,20 @@ function BarsChart({ bars, height }: { bars: { date: string; pnl: number }[]; he
   const barW = slot * 0.7
   const gap = (slot - barW) / 2
 
-  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  const idxFromEvent = (e: React.MouseEvent<HTMLDivElement>): number | null => {
     const w = e.currentTarget.clientWidth
-    if (w <= 0 || n === 0) return
+    if (w <= 0 || n === 0) return null
     const frac = Math.min(0.9999, Math.max(0, e.nativeEvent.offsetX / w))
-    setHoverIdx(Math.min(n - 1, Math.floor(frac * n)))
+    return Math.min(n - 1, Math.floor(frac * n))
+  }
+  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const i = idxFromEvent(e)
+    if (i != null) setHoverIdx(i)
+  }
+  // Click a bar → jump to that day's EOD Recap to study it.
+  const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const i = idxFromEvent(e)
+    if (i != null) router.push(`/eod/${bars[i].date}`)
   }
 
   return (
@@ -440,8 +451,8 @@ function BarsChart({ bars, height }: { bars: { date: string; pnl: number }[]; he
           })}
         </svg>
 
-        {/* Hover capture + tooltip */}
-        <div className="absolute inset-0" onMouseMove={onMove} onMouseLeave={() => setHoverIdx(null)} />
+        {/* Hover capture + tooltip. Click a bar to open that day's EOD Recap. */}
+        <div className="absolute inset-0 cursor-pointer" onMouseMove={onMove} onMouseLeave={() => setHoverIdx(null)} onClick={onClick} />
         {hoverIdx != null && (() => {
           const b = bars[hoverIdx]
           const cx = hoverIdx * slot + slot / 2
@@ -459,6 +470,7 @@ function BarsChart({ bars, height }: { bars: { date: string; pnl: number }[]; he
               <div className={`text-xs font-mono font-semibold ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {fmtMoney(b.pnl, { signed: true })}
               </div>
+              <div className="text-[9px] text-gray-500 mt-0.5">Click to open day →</div>
             </div>
           )
         })()}
