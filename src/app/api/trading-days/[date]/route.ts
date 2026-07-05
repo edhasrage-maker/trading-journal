@@ -5,6 +5,7 @@ import { userConflict } from '@/lib/tenant-conflict'
 import { normalizeTagArray, type TradeTags } from '@/lib/supabase/types'
 import { signDayScreenshots, screenshotStoragePath, normalizeStoredScreenshot } from '@/lib/storage-url'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { clientError } from '@/lib/api-error'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,7 +72,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     { onConflict: userConflict('date') },
   )
 
-  if (dayError) return NextResponse.json({ error: dayError.message }, { status: 500 })
+  if (dayError) return NextResponse.json({ error: clientError(dayError.message, 'Could not save the day.') }, { status: 500 })
 
   // Auto-add each saved day_type to the trade_tags library if it's a new
   // label. Prep + intraday share the trade_tags.day_type rows as their chip
@@ -110,7 +111,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     const { error: ctxError } = await supabase
       .from('market_context')
       .upsert({ trading_day_id: day.id, ...marketContext }, { onConflict: 'trading_day_id' }) as { error: { message: string } | null }
-    if (ctxError) return NextResponse.json({ error: ctxError.message }, { status: 500 })
+    if (ctxError) return NextResponse.json({ error: clientError(ctxError.message, 'Could not save market context.') }, { status: 500 })
   }
 
   // Retroactive auto-fill: any trade for this date whose tags_json.day_type is
@@ -208,7 +209,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ date:
     .eq('id', day.id) as { error: { message: string } | null }
 
   if (delErr) {
-    return NextResponse.json({ error: delErr.message }, { status: 500 })
+    return NextResponse.json({ error: clientError(delErr.message, 'Could not delete the day.') }, { status: 500 })
   }
 
   return NextResponse.json({

@@ -147,7 +147,7 @@ export async function POST(req: Request) {
     .eq('id', fromId)
   if (delErr) {
     return NextResponse.json(
-      { error: `Tag rows rewritten but delete failed: ${delErr.message}` },
+      { error: clientError(`Tag rows rewritten but delete failed: ${delErr.message}`, 'Tag rows were rewritten but the old tag could not be deleted. Please retry.') },
       { status: 500 },
     )
   }

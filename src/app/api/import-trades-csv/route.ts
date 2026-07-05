@@ -6,6 +6,7 @@ import { isNinjaTraderGrid, parseNinjaTraderGrid } from '@/lib/ninjatrader-impor
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { liveAtr } from '@/lib/atr'
+import { clientError } from '@/lib/api-error'
 
 /**
  * POST /api/import-trades-csv
@@ -336,7 +337,7 @@ export async function POST(req: Request) {
       .from('trading_days').insert({ date }).select('id').single()
     if (error || !created) {
       return NextResponse.json(
-        { error: `Failed to create trading day ${date}: ${error?.message ?? 'unknown error'}` },
+        { error: clientError(`Failed to create trading day ${date}: ${error?.message ?? 'unknown error'}`, `Could not create the trading day for ${date}. Please try again.`) },
         { status: 500 },
       )
     }
@@ -359,7 +360,7 @@ export async function POST(req: Request) {
     .select('id')
   if (insErr) {
     return NextResponse.json(
-      { error: `Insert failed: ${insErr.message}`, total, skipped, warnings },
+      { error: clientError(`Insert failed: ${insErr.message}`, 'Could not import your trades. Please try again.'), total, skipped, warnings },
       { status: 500 },
     )
   }

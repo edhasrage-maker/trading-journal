@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
+import { clientError } from '@/lib/api-error'
 
 /**
  * POST /api/share  { trading_day_id }
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
       .single()
     if (error || !created) {
       return NextResponse.json(
-        { error: `Failed to create share: ${error?.message ?? 'unknown error'}` },
+        { error: clientError(`Failed to create share: ${error?.message ?? 'unknown error'}`, 'Could not create the share link.') },
         { status: 500 },
       )
     }

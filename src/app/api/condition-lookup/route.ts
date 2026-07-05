@@ -65,8 +65,8 @@ async function handle(req: Request) {
     vintagePromise,
   ])
 
-  if (tErr) return NextResponse.json({ error: `Failed to load thresholds: ${tErr.message}` }, { status: 500 })
-  if (lErr) return NextResponse.json({ error: `Failed to load lookup: ${lErr.message}` }, { status: 500 })
+  if (tErr) return NextResponse.json({ error: clientError(`Failed to load thresholds: ${tErr.message}`, 'Could not load condition data.') }, { status: 500 })
+  if (lErr) return NextResponse.json({ error: clientError(`Failed to load lookup: ${lErr.message}`, 'Could not load condition data.') }, { status: 500 })
 
   // Per-user builds: a new trader with little/no history has no buckets yet. The
   // local build should always have data (the manual button seeds it), so keep

@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { clientError } from '@/lib/api-error'
 import type { Trade } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
 
   if (fetchError) {
     console.error('[trades/merge] fetch failed:', fetchError)
-    return NextResponse.json({ error: `Fetch failed: ${fetchError.message}` }, { status: 500 })
+    return NextResponse.json({ error: clientError(`Fetch failed: ${fetchError.message}`, 'Could not merge trades.') }, { status: 500 })
   }
   if (!trades || trades.length !== 2) {
     return NextResponse.json({ error: 'One or both trades not found' }, { status: 404 })
@@ -86,7 +87,7 @@ export async function POST(req: Request) {
 
   if (updateError) {
     console.error('[trades/merge] update failed:', updateError)
-    return NextResponse.json({ error: `Update failed: ${updateError.message}` }, { status: 500 })
+    return NextResponse.json({ error: clientError(`Update failed: ${updateError.message}`, 'Could not merge trades.') }, { status: 500 })
   }
 
   const { error: deleteError } = await supabase
@@ -96,7 +97,7 @@ export async function POST(req: Request) {
 
   if (deleteError) {
     console.error('[trades/merge] delete failed:', deleteError)
-    return NextResponse.json({ error: `Delete failed: ${deleteError.message}` }, { status: 500 })
+    return NextResponse.json({ error: clientError(`Delete failed: ${deleteError.message}`, 'Could not merge trades.') }, { status: 500 })
   }
 
   return NextResponse.json({ keeperId: keeper.id, deletedId: loser.id })

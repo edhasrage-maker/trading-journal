@@ -169,7 +169,7 @@ export async function POST(req: Request) {
     .eq('id', tagId)
   if (updErr) {
     return NextResponse.json(
-      { error: `Trade rows rewritten but tag category update failed: ${updErr.message}` },
+      { error: clientError(`Trade rows rewritten but tag category update failed: ${updErr.message}`, 'Trade rows were rewritten but the tag category could not be updated. Please retry.') },
       { status: 500 },
     )
   }
