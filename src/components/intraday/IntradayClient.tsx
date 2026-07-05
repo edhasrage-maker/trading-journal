@@ -453,9 +453,15 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     return best
   }, [trades])
 
+  // Symbol the chart loads bars for. Falls back to NQ when the day has no traded
+  // symbol (e.g. a fresh day with nothing logged yet) so the chart still renders
+  // and /api/bars can snap it to the most recent session with data — instead of
+  // the chart panel disappearing on an empty day.
+  const effectiveChartSymbol = chartSymbol ?? 'NQ'
+
   // ES/NQ instrument switcher for the chart (shared hook with EOD + prep).
   // `tradeHasBars` gates the bar-derived Coach Score criterion / stats.
-  const { activeSymbol: activeChartSymbol, symbolOptions, onSymbolChange, chartTrades, tradeHasBars } = useChartInstruments(chartSymbol, trades)
+  const { activeSymbol: activeChartSymbol, symbolOptions, onSymbolChange, chartTrades, tradeHasBars } = useChartInstruments(effectiveChartSymbol, trades)
 
   return (
     <div className="space-y-4">
@@ -505,10 +511,10 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
         </div>
       )}
 
-      {/* Day-level chart (native bars) — collapsible. Renders only when the
-          day has trades with a symbol; otherwise there's nothing to anchor
-          the bars query to. */}
-      {chartSymbol && (
+      {/* Day-level chart (native bars) — collapsible. Always renders (uses the
+          NQ fallback symbol on empty days) so the chart snaps to the most recent
+          session with data rather than vanishing. */}
+      {effectiveChartSymbol && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           <button
             type="button"

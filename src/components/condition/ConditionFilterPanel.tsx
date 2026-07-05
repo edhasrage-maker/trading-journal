@@ -384,7 +384,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
             stats table (CI ranges, sessions, total PnL, condition id, vs-your-avg
             delta) was retired in favor of this simpler read. */}
         {!beginner && outcome && effectiveMatch && (
-          <ConditionsHighlight match={effectiveMatch} showEv />
+          <ConditionsHighlight match={effectiveMatch} showEv baselineEv={outcome.baseline_ev} />
         )}
 
         {/* Notes + Save */}
@@ -537,8 +537,9 @@ function ConsolidatedVerdict({
 /** Big-stat readout for a matched historical bucket. Win rate + Profit factor
  *  always; EV/trade (expectancy, avg $/trade) is added when `showEv` is set.
  *  Highlights (beginner) uses the 2-stat form; Detailed Tape uses the same card
- *  WITH EV/trade so the pro view reads like Highlights plus expectancy. */
-function ConditionsHighlight({ match, showEv = false }: { match: MatchResult; showEv?: boolean }) {
+ *  WITH EV/trade so the pro view reads like Highlights plus expectancy.
+ *  `baselineEv` (Detailed Tape only) draws the "vs your avg" delta under EV. */
+function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: MatchResult; showEv?: boolean; baselineEv?: number | null }) {
   const r = match.row
   const wr = r.trade_wr != null ? `${(r.trade_wr * 100).toFixed(0)}%` : '—'
   const pf = r.profit_factor != null ? r.profit_factor.toFixed(2) : '—'
@@ -563,6 +564,25 @@ function ConditionsHighlight({ match, showEv = false }: { match: MatchResult; sh
           <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">EV / trade</div>
           <div className={`font-mono text-2xl font-bold ${evTone}`}>{ev}</div>
           <div className="text-[11px] text-gray-500 mt-0.5">avg $ in conditions like today</div>
+          {/* EV vs the trader's OWN baseline EV — flags whether THIS environment
+              runs above/below your average. Bold when the bucket's EV CI clears
+              the baseline entirely (statistically distinct), faint otherwise. */}
+          {baselineEv != null && r.ev_per_trade != null && (() => {
+            const delta = r.ev_per_trade - baselineEv
+            const sigAbove = r.ev_ci_lo != null && r.ev_ci_lo > baselineEv
+            const sigBelow = r.ev_ci_hi != null && r.ev_ci_hi < baselineEv
+            const cls = sigAbove ? 'text-green-400' : sigBelow ? 'text-red-400' : delta >= 0 ? 'text-green-500/60' : 'text-gray-500'
+            const weight = sigAbove || sigBelow ? 'font-semibold' : 'font-normal'
+            return (
+              <div
+                className={`text-[10px] mt-1 ${cls} ${weight}`}
+                title={`Your overall baseline EV is ${baselineEv >= 0 ? '+' : ''}$${baselineEv.toFixed(2)}/trade. ${sigAbove ? 'This environment is statistically ABOVE it — a favorable regime for you.' : sigBelow ? 'Statistically BELOW it — you underperform your average here.' : 'Within range of your average — no clear edge either way.'}`}
+              >
+                {delta >= 0 ? '↑' : '↓'} {delta >= 0 ? '+' : '−'}${Math.abs(delta).toFixed(0)} vs your avg
+                {!sigAbove && !sigBelow && ' (within range)'}
+              </div>
+            )
+          })()}
         </div>
       )}
       <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
