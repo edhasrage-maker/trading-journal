@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
-import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import AutoGrowTextarea from '@/components/AutoGrowTextarea'
 import type { PrepNotes } from '@/lib/supabase/types'
 
@@ -12,11 +11,12 @@ interface Props {
   ibh?: number | null
   ibl?: number | null
   ibSize?: number | null
-  /** Show the "Above / Below HTF MGI" position section. It's part of the
-   *  trader's own methodology (not the simplified public prep), so PrepClient
-   *  passes `isAdmin && mode === 'pro'` — Detailed Tape, owner only. Defaults to
-   *  false so the public/beginner prep stays simple. */
-  showMgi?: boolean
+  /** Show the owner's full methodology fields — IB Break Timing + IB Extensions,
+   *  Volume Profile, the Above/Below HTF MGI table, and the market-clarity note.
+   *  These are hidden in the simplified public/beginner prep, so PrepClient
+   *  passes `isAdmin && mode === 'pro'` (Detailed Tape, owner only). Defaults to
+   *  false so the public/beginner prep stays Bias / Observations / Mood. */
+  showAdvanced?: boolean
 }
 
 // "Still developing" is the default — it represents the pre-break state before
@@ -51,7 +51,7 @@ function calcExts(ibh: number, ibl: number, ibSize: number) {
   return result
 }
 
-export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showMgi = false }: Props) {
+export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showAdvanced = false }: Props) {
   const [mgiOpen, setMgiOpen] = useState(false)
   const [extsOpen, setExtsOpen] = useState(false)
   const set = (key: keyof PrepNotes, val: unknown) => onChange({ ...value, [key]: val })
@@ -93,9 +93,10 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showM
   return (
     <div className="space-y-6">
 
-      {/* IB Break Timing + Volume Profile — local-only. The public prep is
-          simplified to Bias / Observations / Mood. */}
-      {LOCAL_FEATURES_ENABLED && (<>
+      {/* IB Break Timing + Volume Profile — owner methodology, Detailed Tape
+          only. The public/beginner prep is simplified to Bias / Observations /
+          Mood. */}
+      {showAdvanced && (<>
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">IB Break Timing</h3>
         <div className="space-y-4">
@@ -212,9 +213,9 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showM
         </div>
       </div>
 
-      {/* HTF MGI Position — owner's methodology, Detailed Tape only (showMgi =
-          isAdmin && mode==='pro'). Hidden in the simplified public/beginner prep. */}
-      {showMgi && (
+      {/* HTF MGI Position — owner's methodology, Detailed Tape only (showAdvanced
+          = isAdmin && mode==='pro'). Hidden in the simplified public/beginner prep. */}
+      {showAdvanced && (
       <div className="border border-gray-800 rounded-xl overflow-hidden">
         <button
           type="button"
@@ -321,7 +322,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showM
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
             />
           </div>
-          {LOCAL_FEATURES_ENABLED && (
+          {showAdvanced && (
           <div>
             <label className="block text-xs text-gray-400 mb-1">Does the market feel clear to you?</label>
             <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="Can you clearly see what the market is doing and what setups to take?"

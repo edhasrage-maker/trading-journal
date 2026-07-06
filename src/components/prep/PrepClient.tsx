@@ -988,8 +988,9 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           ibh={context.ibh as number | null}
           ibl={context.ibl as number | null}
           ibSize={context.ib_size as number | null}
-          // Above/Below HTF MGI section: owner's methodology, Detailed Tape only.
-          showMgi={isAdmin && mode === 'pro'}
+          // Owner's full methodology fields (IB timing/extensions, Volume
+          // Profile, HTF MGI, market clarity): Detailed Tape + owner only.
+          showAdvanced={isAdmin && mode === 'pro'}
         />
       </CollapsibleCard>
 
