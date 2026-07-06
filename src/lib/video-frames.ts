@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { existsSync, statSync } from 'fs'
 import { basename } from 'path'
+import sharp from 'sharp'
 
 /**
  * Thin wrappers around ffprobe + ffmpeg for extracting a single JPEG frame at a
@@ -89,7 +90,8 @@ export async function probeVideo(path: string): Promise<VideoInfo> {
 }
 
 /**
- * Extract a single JPEG frame at `offsetSec` and return it base64-encoded.
+ * Extract a single frame at `offsetSec` and return the raw ffmpeg stdout buffer.
+ * `outputArgs` chooses the encoding (mjpeg for a JPEG, png for a lossless frame).
  *
  * Fast + frame-accurate hybrid seek: a fast input seek (`-ss` BEFORE `-i`) lands
  * on the keyframe ~PREROLL seconds before the target, then an output seek
@@ -98,7 +100,7 @@ export async function probeVideo(path: string): Promise<VideoInfo> {
  * matters for the per-second frame-nudge scrubber. PREROLL must exceed the OBS
  * keyframe interval (default ~2s) so the fast seek always lands before target.
  */
-export async function extractFrameJpegBase64(path: string, offsetSec: number): Promise<string> {
+async function extractFrameBuffer(path: string, offsetSec: number, outputArgs: string[]): Promise<Buffer> {
   const target = Math.max(0, offsetSec)
   const PREROLL = 6
   const pre = Math.max(0, target - PREROLL)
@@ -109,12 +111,103 @@ export async function extractFrameJpegBase64(path: string, offsetSec: number): P
     '-i', path,
     '-ss', String(post),
     '-frames:v', '1',
-    '-f', 'mjpeg',
+    ...outputArgs,
     'pipe:1',
   ]
   const { stdout, stderr, code } = await runCapture(FFMPEG, args)
   if (code !== 0 || stdout.length === 0) {
     throw new Error(`ffmpeg frame extraction failed at ${target.toFixed(2)}s (${code}): ${stderr || 'empty output'}`)
   }
-  return stdout.toString('base64')
+  return stdout
+}
+
+/**
+ * Extract a single JPEG frame at `offsetSec`, base64-encoded. `-q:v 2` = near-
+ * lossless MJPEG so small on-chart text stays as crisp as the source allows.
+ */
+export async function extractFrameJpegBase64(path: string, offsetSec: number): Promise<string> {
+  const buf = await extractFrameBuffer(path, offsetSec, ['-q:v', '2', '-f', 'mjpeg'])
+  return buf.toString('base64')
+}
+
+export interface FrameTile {
+  /** base64 JPEG of this tile. */
+  data: string
+  row: number
+  col: number
+  /** Human-readable position, e.g. "top-left", "bottom-right", "center". */
+  label: string
+}
+
+export interface TiledFrame {
+  /** base64 JPEG of the whole frame — overview for layout + screenshot auto-fill. */
+  full: string
+  tiles: FrameTile[]
+  cols: number
+  rows: number
+  width: number
+  height: number
+}
+
+function gridName(i: number, n: number, kind: 'row' | 'col'): string {
+  if (n === 1) return ''
+  if (i === 0) return kind === 'row' ? 'top' : 'left'
+  if (i === n - 1) return kind === 'row' ? 'bottom' : 'right'
+  if (n === 3) return kind === 'row' ? 'middle' : 'center'
+  return `${kind}${i + 1}`
+}
+
+/**
+ * Extract one frame and slice it into a `cols×rows` grid of high-resolution JPEG
+ * tiles, plus a full-frame overview.
+ *
+ * Why: Anthropic's vision API downsizes any image to ~1.15 MP before the model
+ * sees it, so a 3440×1440 ultrawide frame arrives at ~half resolution — the tiny
+ * DOM/footprint/order-line numbers become unreadable. Sending magnified crops
+ * lets each region reach the model at (near) full recorded resolution.
+ *
+ * A lossless PNG intermediate avoids double-JPEG compression; tiles overlap by
+ * `overlapPx` on every side so a number straddling a seam still appears whole in
+ * at least one tile.
+ */
+export async function extractFrameWithTiles(
+  path: string,
+  offsetSec: number,
+  opts?: { cols?: number; rows?: number; overlapPx?: number; quality?: number },
+): Promise<TiledFrame> {
+  const cols = Math.max(1, Math.floor(opts?.cols ?? 3))
+  const rows = Math.max(1, Math.floor(opts?.rows ?? 2))
+  const overlap = Math.max(0, Math.floor(opts?.overlapPx ?? 32))
+  const quality = opts?.quality ?? 90
+
+  const png = await extractFrameBuffer(path, offsetSec, ['-c:v', 'png', '-f', 'image2pipe'])
+  const meta = await sharp(png).metadata()
+  const W = meta.width ?? 0
+  const H = meta.height ?? 0
+  if (!W || !H) throw new Error('could not read frame dimensions for tiling')
+
+  const full = (await sharp(png).jpeg({ quality }).toBuffer()).toString('base64')
+
+  const tiles: FrameTile[] = []
+  const baseW = Math.floor(W / cols)
+  const baseH = Math.floor(H / rows)
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x0 = c * baseW
+      const y0 = r * baseH
+      const w0 = c === cols - 1 ? W - x0 : baseW
+      const h0 = r === rows - 1 ? H - y0 : baseH
+      const left = Math.max(0, x0 - overlap)
+      const top = Math.max(0, y0 - overlap)
+      const right = Math.min(W, x0 + w0 + overlap)
+      const bottom = Math.min(H, y0 + h0 + overlap)
+      const data = (await sharp(png)
+        .extract({ left, top, width: right - left, height: bottom - top })
+        .jpeg({ quality })
+        .toBuffer()).toString('base64')
+      const label = [gridName(r, rows, 'row'), gridName(c, cols, 'col')].filter(Boolean).join('-') || 'full'
+      tiles.push({ data, row: r, col: c, label })
+    }
+  }
+  return { full, tiles, cols, rows, width: W, height: H }
 }

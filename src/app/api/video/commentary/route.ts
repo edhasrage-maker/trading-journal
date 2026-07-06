@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { existsSync } from 'fs'
 import { join, basename } from 'path'
-import { probeVideo, extractFrameJpegBase64 } from '@/lib/video-frames'
+import { probeVideo, extractFrameJpegBase64, extractFrameWithTiles } from '@/lib/video-frames'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { createClient } from '@/lib/supabase/server'
 import { blockIfCloud } from '@/lib/local-features-guard'
@@ -10,6 +10,17 @@ import { OBS_RECORDINGS_DIR } from '../list/route'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 
 const client = new Anthropic()
+
+// Entry frames are sliced into a grid of high-res tiles so the model can read
+// the tiny DOM/footprint/order-line numbers that a single downsized ultrawide
+// frame destroys (see extractFrameWithTiles). Tunable per deployment; set
+// FRAME_TILING=off to fall back to single frames (cheaper, less legible).
+const TILING_ENABLED = process.env.FRAME_TILING !== 'off'
+const TILE_COLS = Math.max(1, Math.floor(Number(process.env.FRAME_TILE_COLS) || 3))
+const TILE_ROWS = Math.max(1, Math.floor(Number(process.env.FRAME_TILE_ROWS) || 2))
+// Stay well under Anthropic's 100-images-per-request ceiling on busy days — once
+// the batch nears this many images, later entries fall back to single frames.
+const IMAGE_BUDGET = 90
 
 interface CommentaryTrade {
   id: string
@@ -109,6 +120,9 @@ export async function POST(req: Request) {
   const blocks: Anthropic.MessageParam['content'] = []
   const labels: string[] = []
   const skipped: Array<{ id: string; reason: string }> = []
+  // Set when the per-request image budget forced some entries back to single
+  // (untiled) frames — surfaced so the client can note reduced legibility.
+  let tilingTruncated = false
   // Entry frames uploaded as screenshots for trades that had none — id → public
   // URL. Best-effort: a storage failure must never break the commentary run.
   const autoScreenshots: Record<string, string> = {}
@@ -125,16 +139,34 @@ export async function POST(req: Request) {
     }
 
     try {
-      const entryFrame = await extractFrameJpegBase64(fullPath, entryOffset)
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: entryFrame } })
-      labels.push(`Trade ${i + 1} (id=${t.id}) ENTRY @ ${fmtPT(t.entry_time)}`)
+      // Entry frame: tiled (overview + high-res crops) so the model can read the
+      // fine numbers. `screenshotFrame` is the full-frame base64 reused for the
+      // screenshot auto-fill below (identical whether or not we tiled). Falls
+      // back to a single frame when tiling is off or the image budget is spent.
+      let screenshotFrame: string
+      const wouldFit = blocks.length + 1 + TILE_COLS * TILE_ROWS <= IMAGE_BUDGET
+      if (TILING_ENABLED && wouldFit) {
+        const entry = await extractFrameWithTiles(fullPath, entryOffset, { cols: TILE_COLS, rows: TILE_ROWS })
+        screenshotFrame = entry.full
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: entry.full } })
+        labels.push(`Trade ${i + 1} (id=${t.id}) ENTRY OVERVIEW @ ${fmtPT(t.entry_time)} — whole screen (lower detail; use for layout)`)
+        for (const tile of entry.tiles) {
+          blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: tile.data } })
+          labels.push(`Trade ${i + 1} (id=${t.id}) ENTRY TILE [${tile.label}] — high-res magnified crop of the ${tile.label} region (read fine numbers here)`)
+        }
+      } else {
+        screenshotFrame = await extractFrameJpegBase64(fullPath, entryOffset)
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: screenshotFrame } })
+        labels.push(`Trade ${i + 1} (id=${t.id}) ENTRY @ ${fmtPT(t.entry_time)}`)
+        if (TILING_ENABLED && !wouldFit) tilingTruncated = true
+      }
 
       // Auto-fill a missing screenshot with this entry frame (the trader's
       // actual screen at the fill). Only when the trade has none — never
       // overwrite a manual capture. Best-effort: upload failure is swallowed.
       if (!t.screenshot_url) {
         try {
-          const buf = Buffer.from(entryFrame, 'base64')
+          const buf = Buffer.from(screenshotFrame, 'base64')
           // Unique path → always an INSERT (overwriting an existing object hits a
           // missing storage UPDATE policy). Matches /api/video/frame + the manual
           // uploader, all of which use fresh filenames.
@@ -185,6 +217,12 @@ export async function POST(req: Request) {
     ? `\n\nAvailable mistake tags (suggest 0–3 per trade, ONLY from this list — copy labels verbatim, do not invent new ones; pick ONLY mistakes clearly visible in the frames, not speculative):\n${mistakeLibrary.map(m => `  - ${m}`).join('\n')}`
     : ''
 
+  // When tiling is on, entries arrive as an overview + magnified crops. Tell the
+  // model to read fine numbers off the tiles (the whole reason we tile).
+  const tilingExplainBlock = TILING_ENABLED
+    ? `\n\nHOW THE ENTRY IMAGES ARE PROVIDED: each entry moment is an OVERVIEW image (the whole trading screen, downsized so fine text is soft) followed by several high-resolution TILES — magnified crops of that same screen. Use the OVERVIEW only to understand the layout and which panel is which (DOM, footprint, order-flow, chart). READ THE ACTUAL NUMBERS — DOM ladder prices, footprint cell values, and the prices on horizontal order lines — off the TILES, where they are legible. Do NOT read fine numbers off the OVERVIEW. A tile labeled e.g. "top-right" is the magnified top-right region of the same screen; a price is real only if you can read it on a tile.`
+    : ''
+
   const traderProfile = await getTraderProfile()
   const prompt = profileContextBlock(traderProfile) + `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is what the trader was looking at on the chart at a precise moment.
 
@@ -196,7 +234,7 @@ For each trade you see frames of (an ENTRY frame and, when distinct, an EXIT fra
    - entry_price: the price the order was waiting at
    - stop_price: the working stop line (BELOW entry for longs, ABOVE for shorts). Sierra labels these as "Stop|Child-Client" with a "(-N.NNp)" suffix indicating distance — when you see "(-20.00p)" on a short, the stop is 20 points above entry.
    - tp1_price / tp2_price: working limit / TP lines (ABOVE entry for longs, BELOW for shorts). TP1 is closer to entry.
-   CRITICAL: return null for any field you cannot confidently read off the price scale or a labeled order line. DO NOT GUESS. A null is far more useful than a hallucinated number — the trader will be using these to backfill missing data. levels_confidence is "high" only if every non-null field came from a clearly-labeled order line at a readable price; "medium" if inferred from line position; "low" if the chart was hard to read.${mistakeListBlock}
+   CRITICAL: return null for any field you cannot confidently read off the price scale or a labeled order line. DO NOT GUESS. A null is far more useful than a hallucinated number — the trader will be using these to backfill missing data. levels_confidence is "high" only if every non-null field came from a clearly-labeled order line at a readable price; "medium" if inferred from line position; "low" if the chart was hard to read.${mistakeListBlock}${tilingExplainBlock}
 
 The image array above is ordered as follows:
 ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}
@@ -373,6 +411,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
       auto_screenshots: autoScreenshots,
       skipped,
       framesUsed: blocks.length - 1,
+      tiling: { enabled: TILING_ENABLED, cols: TILE_COLS, rows: TILE_ROWS, truncated: tilingTruncated },
       recordingStartIso: new Date(info.creationTimeMs).toISOString(),
       durationSec,
     })
