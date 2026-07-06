@@ -319,9 +319,9 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
             as broken); Pro always shows MFE Realized %. */}
         {(mode === 'pro' || overall.avg_capture != null) && (
           <StatCard
-            label={mode === 'beginner' ? 'Move captured' : 'MFE Realized %'}
+            label={mode === 'beginner' ? 'Profit Conversion' : 'MFE Realized %'}
             value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
-            hint={mode === 'beginner' ? 'of the move offered' : `${overall.capture_count} of ${overall.count}`}
+            hint={mode === 'beginner' ? "of your trade's best point" : `${overall.capture_count} of ${overall.count}`}
             positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
           />
         )}

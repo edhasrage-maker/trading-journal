@@ -51,10 +51,10 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
           <div className="text-2xl font-semibold text-gray-100" style={{ fontVariantNumeric: 'tabular-nums' }}>{winRate == null ? '—' : `${Math.round(winRate)}%`}</div>
         </div>
         {capturePct != null && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4" title="How much of the favorable move you kept, on average (your MFE capture).">
-            <div className="text-xs text-gray-500 mb-1">Move captured</div>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4" title="Of the best point your trade reached in your favor, how much you kept at exit, on average. 100% = you exited at the high.">
+            <div className="text-xs text-gray-500 mb-1">Profit conversion</div>
             <div className="text-2xl font-semibold text-gray-100" style={{ fontVariantNumeric: 'tabular-nums' }}>{capturePct}%</div>
-            <div className="text-[10px] text-gray-600 mt-0.5">of the move offered</div>
+            <div className="text-[10px] text-gray-600 mt-0.5">of your trade&apos;s best point</div>
           </div>
         )}
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
