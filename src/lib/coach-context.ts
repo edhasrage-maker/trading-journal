@@ -14,6 +14,7 @@
 import { interpretExcursion } from './trade-excursion'
 import { computeBehavioralProxies } from './behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from './journal-language-heatmap'
+import { fetchOpenThread, coachingThreadPromptBlock } from './coaching-thread'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -490,6 +491,12 @@ ${regimeLine(atrRegimeBuckets, ['low volatility', 'normal', 'high volatility']) 
   const journalEntries = await fetchJournalEntries(supabase, { startDate, endDate, trades })
   const journalBlock = journalLanguageHeatmapPromptBlock(journalEntries).trim()
 
+  // Coaching thread (Pt 4) — the coach's OWN prior directives + the trader's
+  // commitments, distilled from finished chats. Placed LAST (highest recency
+  // within this block; the route still appends Focus after) so follow-ups feel
+  // present, not buried. Best-effort — empty/no-op until the table exists.
+  const coachingThread = coachingThreadPromptBlock(await fetchOpenThread(supabase)).trim()
+
   // EOD Process/Execution verdicts (#2b) — cite these, don't re-derive.
   const analyzedDays = compliantDays + breachDays
   const verdictBlock = analyzedDays === 0
@@ -551,6 +558,6 @@ ${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} tra
 
 RECENT TRADES (newest first, terse format, capped at ${recentTradesLimit}):
 ${recent}
-
+${coachingThread ? '\n' + coachingThread + '\n' : ''}
 ═══ END TRADER DATA ═══`
 }

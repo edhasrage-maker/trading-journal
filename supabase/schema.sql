@@ -592,6 +592,37 @@ create policy "Authenticated full access" on eod_themes_analysis
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================
+-- coaching_thread: distilled session memory for the AI coach (2026-07-05)
+-- ============================================================
+-- What the coach told the trader to work on + the commitments they made,
+-- distilled from finished coach conversations by /api/coach/distill (one Sonnet
+-- call, fired when a chat is archived in CoachChat). Fed back into
+-- buildCoachContext + the EOD read so the coach FOLLOWS UP next session instead
+-- of starting cold. NOT raw transcripts — a handful of structured, reconcilable
+-- action-items (fetchOpenThread caps live items at MAX_OPEN_ITEMS). Mirrors the
+-- eod_themes_analysis cache pattern; schema.public.sql adds user_id + owner RLS.
+create table if not exists coaching_thread (
+  id uuid primary key default uuid_generate_v4(),
+  category text not null default 'other',       -- exits|entries|risk|sizing|psychology|process|other
+  directive text not null,                      -- what the coach advised
+  commitment text,                              -- what the trader agreed to (nullable)
+  evidence_hint text,                           -- a metric/behavior to check next time
+  status text not null default 'open',          -- open|followed_up|resolved|dropped
+  source text not null default 'coach_chat',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+
+create index if not exists coaching_thread_status_idx
+  on coaching_thread(status, created_at desc);
+
+alter table coaching_thread enable row level security;
+drop policy if exists "Authenticated full access" on coaching_thread;
+create policy "Authenticated full access" on coaching_thread
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
 -- Trader profile / coaching preferences (2026-06-17)
 -- ============================================================
 -- Standing context the trader provides about their style, system, and

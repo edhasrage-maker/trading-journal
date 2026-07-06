@@ -131,9 +131,20 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
   const archiveAndClear = (msgs: ChatMessage[]) => {
     const real = msgs.filter(m => !m.streaming && m.content.trim())
     if (real.length === 0) return
+    // Distill this finished conversation into the coaching thread so the coach
+    // can follow up next session. Archiving is the single choke point for
+    // "conversation ended" (idle timer / stale-on-open / manual archive), which
+    // makes it the right place to fire. Fire-and-forget with keepalive so it
+    // survives navigation/tab-close; text-only (images are dropped). Skipped for
+    // the read-only demo account (its coach API is 403-blocked). The Trash
+    // (clearChat) path deliberately does NOT distill — that's an explicit
+    // throw-away.
+    if (!isDemo) void distillConversation(real)
+    // eslint-disable-next-line react-hooks/purity -- called from handlers/effects, not render
+    const now = Date.now()
     const entry: ArchivedConversation = {
-      id: `${Date.now()}-${real.length}`,
-      archivedAt: Date.now(),
+      id: `${now}-${real.length}`,
+      archivedAt: now,
       messages: real,
     }
     const next = [entry, ...loadArchives()].slice(0, MAX_ARCHIVES)
@@ -141,6 +152,23 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
     setArchives(next)
     setMessages([])
     try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+  }
+
+  /** POST the finished conversation to the distiller (fire-and-forget). Only
+   *  fires when there's a real trader↔coach exchange; failures are swallowed. */
+  const distillConversation = async (real: ChatMessage[]) => {
+    const hasUser = real.some(m => m.role === 'user')
+    const hasCoach = real.some(m => m.role === 'assistant')
+    if (!hasUser || !hasCoach) return
+    const payload = real.map(({ role, content }) => ({ role, content }))
+    try {
+      await fetch('/api/coach/distill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: payload }),
+        keepalive: true,
+      })
+    } catch { /* background memory-keeping — never surface */ }
   }
 
   // Hydrate history + archives on mount. If the persisted active chat has been

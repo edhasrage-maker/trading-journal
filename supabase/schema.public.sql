@@ -29,6 +29,7 @@
 --     trading_days, market_context, trades, trade_tags, daily_prep,
 --     chart_prefs, bar_imports, historical_trades,
 --     eod_themes_analysis, trader_profile, weekly_recap, chart_annotations,
+--     coaching_thread,
 --     condition_thresholds, condition_lookup, condition_lookup_meta  (section 10 —
 --       each trader's Morning Conditions buckets are computed from their own
 --       history by the nightly cron; the service role writes across users)
@@ -49,7 +50,8 @@ declare
   peruser text[] := array[
     'trading_days','market_context','trades','trade_tags','daily_prep',
     'chart_prefs','bar_imports','historical_trades',
-    'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations'
+    'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations',
+    'coaching_thread'
   ];
 begin
   foreach t in array peruser loop
@@ -84,7 +86,8 @@ declare
   peruser text[] := array[
     'trading_days','market_context','trades','trade_tags','daily_prep',
     'chart_prefs','bar_imports','historical_trades',
-    'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations'
+    'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations',
+    'coaching_thread'
   ];
 begin
   foreach t in array peruser loop
@@ -106,7 +109,8 @@ declare
   peruser text[] := array[
     'trading_days','market_context','trades','trade_tags','daily_prep',
     'chart_prefs','bar_imports','historical_trades',
-    'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations'
+    'eod_themes_analysis','trader_profile','weekly_recap','chart_annotations',
+    'coaching_thread'
   ];
 begin
   foreach t in array peruser loop

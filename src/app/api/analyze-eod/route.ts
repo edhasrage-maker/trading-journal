@@ -10,6 +10,7 @@ import { resolveRails, type ScoringProfile } from '@/lib/scoring-profile'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { behavioralProxiesPromptBlock } from '@/lib/behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from '@/lib/journal-language-heatmap'
+import { fetchOpenThread, coachingThreadPromptBlock } from '@/lib/coaching-thread'
 import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
@@ -94,9 +95,23 @@ async function handle(req: Request) {
     console.warn('[analyze-eod] journal heatmap skipped:', e)
   }
 
+  // Coaching thread (Pt 4) — the coach's prior directives + the trader's
+  // commitments. EOD READS them as context so the day's analysis is aware of
+  // what the trader is working on (it does NOT update thread status — that's
+  // owned by the distiller). Best-effort: empty/no-op until the table exists.
+  let coachingBlock = ''
+  try {
+    const sb = await createClient()
+    coachingBlock = coachingThreadPromptBlock(await fetchOpenThread(sb))
+    if (coachingBlock) coachingBlock = '\n\n' + coachingBlock + '\n'
+  } catch (e) {
+    console.warn('[analyze-eod] coaching thread skipped:', e)
+  }
+
   const prompt = profileContextBlock(traderProfile)
     + behavioralProxiesPromptBlock(trades)
     + journalBlock
+    + coachingBlock
     + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage, scoringProfile })
 
   const userContent: Anthropic.MessageParam['content'] = hasImage
