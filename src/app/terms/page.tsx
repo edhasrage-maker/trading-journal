@@ -93,10 +93,19 @@ export default function TermsPage() {
       <h2>11. Indemnification</h2>
       <p>You agree to indemnify and hold TapeScore harmless from claims arising out of your use of the Service or your violation of these Terms.</p>
 
-      <h2>12. Changes to these Terms</h2>
+      <h2>12. Governing law and disputes</h2>
+      <p>
+        These Terms are governed by the laws of the State of California, United States, without regard to
+        its conflict-of-laws rules. You agree that any dispute arising out of or relating to these Terms or
+        the Service will be brought exclusively in the state or federal courts located in California, and
+        you consent to the personal jurisdiction and venue of those courts. Nothing in this section prevents
+        either party from seeking injunctive or equitable relief in any court of competent jurisdiction.
+      </p>
+
+      <h2>13. Changes to these Terms</h2>
       <p>We may update these Terms as the product evolves. Material changes will be reflected by the &ldquo;Last updated&rdquo; date above and, where appropriate, a notice in the app. Continued use after changes take effect constitutes acceptance.</p>
 
-      <h2>13. Contact</h2>
+      <h2>14. Contact</h2>
       <p>Questions about these Terms? Email <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.</p>
     </LegalShell>
   )
