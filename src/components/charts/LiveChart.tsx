@@ -19,6 +19,7 @@ import { AnnotationsPrimitive, type ChartAnnotation, type AnnGeom } from './Anno
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
+import { todayPT } from '@/lib/pt-time'
 import { migrateChartPrefs, schedulePushChartPref, pullChartPref } from '@/lib/chart-prefs'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 
@@ -397,6 +398,9 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // "showing <fallbackDate>" instead of leaving a blank pane. Null = the bars
   // are for the requested date.
   const [fallbackDate, setFallbackDate] = useState<string | null>(null)
+  // Incremented by the live-poll interval (today only) to drive silent bars +
+  // levels refreshes. Declared here so the refresh effects below can read it.
+  const [pollTick, setPollTick] = useState(0)
   // Display timeframe in minutes. Stored 1-min bars get aggregated client-side
   // when this is > 1. Persisted PER (symbol, date) so each day remembers its
   // own TF — 5m on 06/04 stays 5m, 1m on 06/05 stays 1m. Saved logical-range
@@ -709,7 +713,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       })
       .catch(() => { if (!cancelled) setLevels(null) })
     return () => { cancelled = true }
-  }, [symbol, date, prefs.emaTimeframeMins, refreshKey])
+  }, [symbol, date, prefs.emaTimeframeMins, refreshKey, pollTick])
 
   // Fetch bars. `silent` skips the loading spinner — used for the background
   // bar-watcher refresh so the chart doesn't flash a loader every few minutes.
@@ -753,7 +757,26 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   useEffect(() => {
     if (firstRefreshRef.current) { firstRefreshRef.current = false; return }
     loadBarsRef.current(true)
-  }, [refreshKey])
+  }, [refreshKey, pollTick])
+
+  // Live auto-refresh: while viewing TODAY's session, silently re-fetch on an
+  // interval so the chart picks up newly-imported (local BarWatcher) or
+  // feed-pushed (cloud) bars without a manual reload — and, when today started
+  // empty, swaps off the "showing <last day>" fallback the moment data lands.
+  // Gated to today because past sessions never change. Runs on EVERY mount
+  // (intraday / prep / EOD, local + cloud), which is why the intraday chart —
+  // that has no BarWatcher — now updates too. Bumping pollTick drives BOTH the
+  // bars refresh AND the levels re-fetch (below) so VWAP/EMA/session lines
+  // advance with the candles instead of freezing. Skips while a tab is hidden.
+  // 45s ≈ the 1-minute bar cadence without hammering.
+  useEffect(() => {
+    if (date !== todayPT()) return
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      setPollTick(t => t + 1)
+    }, 45_000)
+    return () => clearInterval(id)
+  }, [date])
 
   // Initialize chart once
   useEffect(() => {
