@@ -572,24 +572,23 @@ export default async function DashboardPage() {
       {/* Beginner (default) = plain summary + one focus + simple session list.
           Pro = the full instrument (period stats grid + Recent Days table).
 
-          Charts (cumulative equity curve + per-day net P&L bars) stay at the
-          top in Beginner, but sit BELOW the period stat cards in Pro — the
-          stat cards are the at-a-glance headline the user wants first. */}
+          Both modes put the headline boxes FIRST, then the charts (cumulative
+          equity curve + per-day net P&L bars): in Beginner the charts render
+          below the plain summary boxes (passed into BeginnerDashboard as a
+          slot); in Pro they render below the period stat cards. */}
       <DashboardModeSwitch
         beginner={
-          <>
-            <DashboardCharts days={statsDays} />
-            <BeginnerDashboard
-              pnl={beginnerPnl}
-              winRate={beginnerWinRate}
-              capturePct={beginnerCapturePct}
-              greenDays={beginnerGreenDays}
-              tradedDays={beginnerTradedDays}
-              bestDay={beginnerBestDay}
-              focus={beginnerFocus}
-              sessions={beginnerSessions}
-            />
-          </>
+          <BeginnerDashboard
+            pnl={beginnerPnl}
+            winRate={beginnerWinRate}
+            capturePct={beginnerCapturePct}
+            greenDays={beginnerGreenDays}
+            tradedDays={beginnerTradedDays}
+            bestDay={beginnerBestDay}
+            focus={beginnerFocus}
+            sessions={beginnerSessions}
+            charts={<DashboardCharts days={statsDays} />}
+          />
         }
       >
         {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,

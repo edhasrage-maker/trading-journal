@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { Target } from 'lucide-react'
 
@@ -19,6 +20,9 @@ type Props = {
   bestDay: number | null
   focus: string
   sessions: Session[]
+  // Performance charts, rendered directly below the summary boxes so the
+  // Highlights layout mirrors Detailed Tape (boxes → charts → the rest).
+  charts?: ReactNode
 }
 
 function money(n: number | null): string {
@@ -30,7 +34,7 @@ function fmtDate(d: string): string {
   return new Date(`${d}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, focus, sessions }: Props) {
+export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, focus, sessions, charts }: Props) {
   return (
     <div className="space-y-4">
       {/* Plain summary — a few "how am I doing" signals in plain language.
@@ -61,6 +65,9 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
           <div className="text-2xl font-semibold text-green-400" style={{ fontVariantNumeric: 'tabular-nums' }}>{money(bestDay)}</div>
         </div>
       </div>
+
+      {/* Performance charts — directly below the summary boxes (mirrors Pro). */}
+      {charts}
 
       {/* Your one focus — the coach, in plain English */}
       <div className="rounded-xl border p-4" style={{ background: 'rgba(224,163,60,0.08)', borderColor: 'rgba(224,163,60,0.35)' }}>
