@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Loader2, Save, X, ScanLine, Sparkles, Film } from 'lucide-react'
 import PinPlacement, { type PinType, type Pin } from './PinPlacement'
 import FrameNudge from '@/components/FrameNudge'
+import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 // PinType / Pin still used by the legacy pin-position fields kept in FormState
 // so existing trades load + save their saved pin coordinates without loss.
 import ScreenshotLightbox from './ScreenshotLightbox'
@@ -140,7 +141,12 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   })()
   const recVideoFile = recCommentary?.video_file ?? null
   const recDelta = recCommentary?.screenshot_delta_sec ?? 0
-  const canNudgeFrame = !!(trade?.id && recVideoFile && trade.entry_time)
+  // Frame-nudge needs the local OBS recording + ffmpeg (/api/video/frame is
+  // blockIfCloud-gated), so it only works on the owner's local desktop build.
+  // On cloud, migrated trades can still carry a stored recording_commentary.
+  // video_file — gate on LOCAL_FEATURES_ENABLED so cloud never shows a control
+  // that only 404s.
+  const canNudgeFrame = !!(LOCAL_FEATURES_ENABLED && trade?.id && recVideoFile && trade.entry_time)
   // Zoom lightbox state — independent of IntradayClient's lightbox since
   // TradeForm is mounted as a modal/inline form with its own scope.
   const [zoomedScreenshot, setZoomedScreenshot] = useState<string | null>(null)

@@ -17,6 +17,11 @@ interface Props {
    *  passes `isAdmin && mode === 'pro'` (Detailed Tape, owner only). Defaults to
    *  false so the public/beginner prep stays Bias / Observations / Mood. */
   showAdvanced?: boolean
+  /** Beginner (Highlights) prep: swap the free-text Mood box for one-tap
+   *  readiness chips (stored in the same `mood` field) and turn Observations
+   *  into an optional one-liner. Keeps the input near zero-effort. PrepClient
+   *  passes `mode !== 'pro'`. Defaults to false (Detailed Tape / owner). */
+  beginner?: boolean
 }
 
 // "Still developing" is the default — it represents the pre-break state before
@@ -31,6 +36,15 @@ const EXT_LEVELS = ['25', '50', '100'] as const
 const EXT_MULT: Record<string, number> = { '25': 0.25, '50': 0.50, '100': 1.00 }
 
 const HTF_MGI_LEVELS = ['PDH', 'PDL', 'ONH', 'ONL', 'IBH', 'IBL', 'HTF S/R', 'HTF S/D', 'WK-OP', 'PWH', 'PWL', 'VWAP', 'EMA']
+
+// Beginner readiness chips — one-tap emotional state, stored in the `mood`
+// field (single-select). Split so "clear" states read emerald and the
+// cautionary flags read amber — a gentle affect-labeling cue, never alarming
+// (no red). State is the single best predictor of a bad day; one tap beats a
+// paragraph and gives the coach a structured signal.
+const READINESS_CLEAR = ['Calm', 'Focused'] as const
+const READINESS_FLAG = ['Tired', 'Anxious', 'Rushed', 'Tilted'] as const
+const READINESS_CHIPS = [...READINESS_CLEAR, ...READINESS_FLAG] as const
 
 const SLOPE_LEVELS: Record<string, { field: 'vwap_slope' | 'ema_slope'; label: string }> = {
   VWAP: { field: 'vwap_slope', label: 'slope' },
@@ -51,7 +65,7 @@ function calcExts(ibh: number, ibl: number, ibSize: number) {
   return result
 }
 
-export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showAdvanced = false }: Props) {
+export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showAdvanced = false, beginner = false }: Props) {
   const [mgiOpen, setMgiOpen] = useState(false)
   const [extsOpen, setExtsOpen] = useState(false)
   const set = (key: keyof PrepNotes, val: unknown) => onChange({ ...value, [key]: val })
@@ -304,8 +318,11 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
           working through the levels above. Reasoning often references which
           MGI levels the bias is built on. */}
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Observations / reasoning</label>
-        <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="What are you seeing? Why this bias, and what would change it?"
+        <label className="block text-xs text-gray-400 mb-1">
+          {beginner ? 'Anything on your mind? (optional)' : 'Observations / reasoning'}
+        </label>
+        <AutoGrowTextarea rows={beginner ? 1 : 2} spellCheck autoCorrect="on"
+          placeholder={beginner ? 'One line — why this bias, or what you’re watching.' : 'What are you seeing? Why this bias, and what would change it?'}
           value={value.bias_notes ?? ''} onChange={e => set('bias_notes', e.target.value)}
           className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
         />
@@ -317,10 +334,35 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-400 mb-1">How are you feeling today?</label>
-            <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="Be honest. Any stress, fatigue, emotional events affecting you?"
-              value={value.mood ?? ''} onChange={e => set('mood', e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
-            />
+            {beginner ? (
+              /* One-tap readiness — single-select, stored in `mood`. Tap the
+                 selected chip again to clear. Free-text mood from a prior
+                 Detailed-Tape prep won't match a chip (nothing selected) until
+                 the trader taps one, which overwrites it. */
+              <div className="flex flex-wrap gap-2">
+                {READINESS_CHIPS.map(chip => {
+                  const selected = value.mood === chip
+                  const isFlag = (READINESS_FLAG as readonly string[]).includes(chip)
+                  return (
+                    <button key={chip} type="button"
+                      onClick={() => set('mood', selected ? '' : chip)}
+                      className={`px-3.5 py-2 rounded-full text-sm font-medium border transition-colors ${
+                        selected
+                          ? isFlag
+                            ? 'bg-amber-600 border-amber-500 text-white'
+                            : 'bg-emerald-600 border-emerald-500 text-white'
+                          : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                      }`}
+                    >{chip}</button>
+                  )
+                })}
+              </div>
+            ) : (
+              <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="Be honest. Any stress, fatigue, emotional events affecting you?"
+                value={value.mood ?? ''} onChange={e => set('mood', e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
+              />
+            )}
           </div>
           {showAdvanced && (
           <div>

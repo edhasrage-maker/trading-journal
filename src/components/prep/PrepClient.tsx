@@ -991,6 +991,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           // Owner's full methodology fields (IB timing/extensions, Volume
           // Profile, HTF MGI, market clarity): Detailed Tape + owner only.
           showAdvanced={isAdmin && mode === 'pro'}
+          // Highlights: one-tap readiness chips + optional one-liner observations.
+          beginner={mode !== 'pro'}
         />
       </CollapsibleCard>
 
