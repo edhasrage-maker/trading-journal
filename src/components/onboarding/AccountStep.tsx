@@ -103,7 +103,7 @@ export default function AccountStep({ onNext, onSkipAll }: { onNext: () => void;
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <label className="block">
           <span className="text-xs text-gray-500 mb-1 block">Display name</span>
-          <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="e.g. Edison" className={field} />
+          <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="e.g. Edhasrage" className={field} />
         </label>
         <div className="block">
           <span className="text-xs text-gray-500 mb-1 block">Instruments you trade</span>
