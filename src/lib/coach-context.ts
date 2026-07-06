@@ -13,6 +13,7 @@
 
 import { interpretExcursion } from './trade-excursion'
 import { computeBehavioralProxies } from './behavioral-proxies'
+import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from './journal-language-heatmap'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -56,6 +57,7 @@ interface TradeContextRow {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tags_json: any
   structure_5m_alignment: string | null
+  notes: string | null                 // trader's per-trade free text — fuels the journal heatmap
 }
 
 export async function buildCoachContext(supabase: AnyClient, opts: CoachContextOptions): Promise<string> {
@@ -100,7 +102,7 @@ NO TRADE DATA — no trading days in this window.
   for (let p = 0; p < 10; p++) {
     const { data } = await supabase
       .from('trades')
-      .select('id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment')
+      .select('id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, notes')
       .in('trading_day_id', dayIds)
       .order('entry_time', { ascending: false })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -480,6 +482,14 @@ ${regimeLine(atrRegimeBuckets, ['low volatility', 'normal', 'high volatility']) 
   Directional read kept working (continued your way) on ${held}/${n} (${Math.round((held / n) * 100)}%). Persistently more 'against' than 'favorable' = repeatedly on the wrong side (directional-bias problem). This is a MARKET-SENSE read — do NOT use it to grade exit timing; if early-exit is a stated edge, price continuing after exit is expected, not an error.`
       })()
 
+  // Journal language heatmap (Pt 3) — mine the trader's OWN free text (prep,
+  // per-trade notes, EOD, weekly) for recurring words/phrases + emotional
+  // language, correlated to outcomes, so the coach can react (uplift on
+  // self-criticism that lands on good days; flag hedged reads that lose). Reuses
+  // the trades already in hand; fetches the other three surfaces. Best-effort.
+  const journalEntries = await fetchJournalEntries(supabase, { startDate, endDate, trades })
+  const journalBlock = journalLanguageHeatmapPromptBlock(journalEntries).trim()
+
   // EOD Process/Execution verdicts (#2b) — cite these, don't re-derive.
   const analyzedDays = compliantDays + breachDays
   const verdictBlock = analyzedDays === 0
@@ -532,7 +542,7 @@ ${sortByCount(mistakeCounts).map(([m, b]) => `  ${m}: ${b.count} occurrences · 
 
 BEHAVIORAL PATTERNS ACROSS SESSIONS (derived from the fill sequence — tilt/stacking/pressing/shrinking-hold; a pattern on ONE day is noise, recurrence is a leak):
 ${proxyBlock}
-
+${journalBlock ? '\n' + journalBlock + '\n' : ''}
 ORDER FLOW SIGNAL PERFORMANCE (by total PnL, top 10):
 ${sortByPnl(ofBuckets).map(([o, b]) => `  ${o}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / b.count) * 100)}%`).join('\n') || '  (no orderflow tags logged in window)'}
 

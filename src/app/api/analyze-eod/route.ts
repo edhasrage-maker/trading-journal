@@ -9,6 +9,7 @@ import { buildEodPrompt, parseEodResponse, applyDeterministicOverrides } from '@
 import { resolveRails, type ScoringProfile } from '@/lib/scoring-profile'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { behavioralProxiesPromptBlock } from '@/lib/behavioral-proxies'
+import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from '@/lib/journal-language-heatmap'
 import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
@@ -74,8 +75,28 @@ async function handle(req: Request) {
   // Coaching preferences (trader profile) are prepended so the AI respects
   // the trader's standing context — see /settings/coaching.
   const traderProfile = await getTraderProfile()
+
+  // Journal language heatmap (Pt 3) — recurring words/phrases + emotional
+  // language mined from the trader's OWN free text. A heatmap is about
+  // RECURRENCE, so mine a trailing ~90-day window (not just today) and let the
+  // EOD read react to language patterns (uplift on self-criticism landing on
+  // good days; flag hedged reads that lose). Best-effort: any failure — or no
+  // date anchor (no trades) — yields an empty block that adds no prompt weight.
+  let journalBlock = ''
+  try {
+    const anchor = latestTradeDate(trades)
+    if (anchor) {
+      const sb = await createClient()
+      const entries = await fetchJournalEntries(sb, { startDate: minusDays(anchor, 90), endDate: anchor })
+      journalBlock = journalLanguageHeatmapPromptBlock(entries)
+    }
+  } catch (e) {
+    console.warn('[analyze-eod] journal heatmap skipped:', e)
+  }
+
   const prompt = profileContextBlock(traderProfile)
     + behavioralProxiesPromptBlock(trades)
+    + journalBlock
     + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage, scoringProfile })
 
   const userContent: Anthropic.MessageParam['content'] = hasImage
@@ -111,4 +132,25 @@ async function handle(req: Request) {
   applyDeterministicOverrides(parsed, trades, msg => console.log(`[analyze-eod] ${msg}`), rc)
 
   return NextResponse.json(parsed)
+}
+
+/** PT (America/Los_Angeles) YYYY-MM-DD of the most recent fill — the window
+ *  anchor for the trailing journal heatmap. null when no trade has an entry_time. */
+function latestTradeDate(trades: Trade[]): string | null {
+  let max: number | null = null
+  for (const t of trades) {
+    const et = t.entry_time ? Date.parse(t.entry_time) : NaN
+    if (Number.isFinite(et)) max = max == null ? et : Math.max(max, et)
+  }
+  if (max == null) return null
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(max))
+}
+
+/** Subtract n days from a YYYY-MM-DD string (UTC-noon anchored to dodge DST). */
+function minusDays(dateStr: string, n: number): string {
+  const d = new Date(dateStr + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() - n)
+  return d.toISOString().slice(0, 10)
 }
