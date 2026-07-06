@@ -569,29 +569,35 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Top-of-page performance charts: cumulative equity curve + per-day
-          net P&L bars. Replaces the old "Today" quick-action tiles. */}
-      <DashboardCharts days={statsDays} />
-
       {/* Beginner (default) = plain summary + one focus + simple session list.
-          Pro = the full instrument (period stats grid + Recent Days table). */}
+          Pro = the full instrument (period stats grid + Recent Days table).
+
+          Charts (cumulative equity curve + per-day net P&L bars) stay at the
+          top in Beginner, but sit BELOW the period stat cards in Pro — the
+          stat cards are the at-a-glance headline the user wants first. */}
       <DashboardModeSwitch
         beginner={
-          <BeginnerDashboard
-            pnl={beginnerPnl}
-            winRate={beginnerWinRate}
-            capturePct={beginnerCapturePct}
-            greenDays={beginnerGreenDays}
-            tradedDays={beginnerTradedDays}
-            bestDay={beginnerBestDay}
-            focus={beginnerFocus}
-            sessions={beginnerSessions}
-          />
+          <>
+            <DashboardCharts days={statsDays} />
+            <BeginnerDashboard
+              pnl={beginnerPnl}
+              winRate={beginnerWinRate}
+              capturePct={beginnerCapturePct}
+              greenDays={beginnerGreenDays}
+              tradedDays={beginnerTradedDays}
+              bestDay={beginnerBestDay}
+              focus={beginnerFocus}
+              sessions={beginnerSessions}
+            />
+          </>
         }
       >
         {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,
             Median Process. Filters by Week / Month / 30d / YTD / Last Year. */}
         <DashboardStats days={statsDays} />
+
+        {/* Performance charts, now below the stat cards. */}
+        <DashboardCharts days={statsDays} />
 
         {/* Recent days */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mt-6">
