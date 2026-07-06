@@ -54,11 +54,17 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     route: '/dashboard',
-    selector: '#coach-fab-root',
+    // Target the actual FAB button, not the #coach-fab-root wrapper: the wrapper's
+    // only child is position:fixed, so the wrapper itself collapses to a 0-height
+    // strip in normal flow — driver.js would spotlight that (invisible) and drop
+    // the popover over the real brain icon. The button carries the fixed
+    // bottom-right box we want highlighted. 'top' keeps the popover clear of the
+    // corner FAB on both desktop and mobile.
+    selector: '#coach-fab-root > button',
     title: 'Your Trade Coach',
     description:
       'Ask anything about your trading in plain English — “What are my patterns when I trade poorly?” It answers from YOUR logged trades, not generic advice.',
-    side: 'left',
+    side: 'top',
     align: 'end',
   },
   {
