@@ -289,7 +289,7 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
           positive={overall.win_rate >= 0.5}
         />
         <StatCard
-          label="Total PnL"
+          label="Total P&L"
           value={`${overall.total_pnl >= 0 ? '+' : ''}$${overall.total_pnl.toFixed(0)}`}
           positive={overall.total_pnl >= 0}
         />
@@ -321,7 +321,7 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
           <StatCard
             label={mode === 'beginner' ? 'Move captured' : 'MFE Realized %'}
             value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
-            hint={`${overall.capture_count} of ${overall.count}`}
+            hint={mode === 'beginner' ? 'of the move offered' : `${overall.capture_count} of ${overall.count}`}
             positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
           />
         )}

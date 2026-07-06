@@ -44,6 +44,7 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500 mb-1">Last 30 days</div>
           <div className={`text-2xl font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(pnl)}</div>
+          <div className="text-[10px] text-gray-600 mt-0.5">net P&amp;L</div>
         </div>
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500 mb-1">Win rate</div>
