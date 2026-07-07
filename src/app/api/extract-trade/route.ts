@@ -82,18 +82,27 @@ async function handle(req: Request) {
 
 PART 1 — TRADE LEVELS
 
-Step 1 — DIRECTION FIRST, before assigning any level:
-- A long is a BUY (entry fill often green / ▲). A short is a SELL (entry fill often red / ▼).
-- The stop-loss always sits on the LOSING side of entry: BELOW entry for a long, ABOVE entry for a short. The target sits on the WINNING side: above entry for a long, below entry for a short.
+The #1 error is reading the BUY/SELL side of the working orders as the position
+DIRECTION. That is WRONG on Sierra Chart. Work in this order.
 
-Step 2 — Entry price: read the ACTUAL fill — the "Trade: Qty@PRICE" text, the order-fill marker, or the highlighted axis price at the fill. This is the anchor. Do NOT infer entry from the stop/target lines.
+Step 1 — DIRECTION from the POSITION, never from order side or color:
+- Find the open-position indicator: a "+N" / "-N" size or a P/L tile ("+5 P/L: 40.00C, 4.00p", "+$40.00 USD"). POSITIVE size = LONG, NEGATIVE = SHORT.
+- Working/bracket orders are the EXITS, and their side is the OPPOSITE of the position: a LONG is bracketed by SELL orders (Sell-Limit target ABOVE, Sell-Stop BELOW); a SHORT by BUY orders. So visible "S|Lmt"/"S|Stop" almost always means you are LONG, and "B|Lmt"/"B|Stop" means SHORT. NEVER equate "Sell" with "short".
+- Color is P/L (green = profit, red = loss), NOT direction. Never infer long/short from a green or red fill.
+- ONLY if the chart shows NO open position (flat) is a lone working order a PENDING ENTRY — then, and only then, a Sell order = a short entry setup.
 
-Step 3 — Stop price: stop-loss line (red/orange) or "Stop" label. TP1 price: take-profit line (green/teal) or "Target"/"TP" label.
+Step 2 — ENTRY = the position's fill / average price, not an order line:
+- Use the "Trade: Qty@PRICE" text, the position average-price line, or the fill marker. If only current price + open P/L are shown, back entry out (long: entry = current − open points; short: current + open points).
+- IGNORE any P/L tile ("+$40.00 USD", "+5 P/L: 40.00C, 4.00p") as a price LEVEL — it sits at the CURRENT price, and is never the entry, target, or stop.
 
-Step 4 — VALIDATE geometry against direction. The three prices ALWAYS order as:
+Step 3 — STOP vs TP1 by the order's own P&L SIGN and by GEOMETRY, not the Buy/Sell letter:
+- A working-order label showing a POSITIVE projected P&L "(+320.00C, 32.00p)" is the TARGET (books a profit if it fills). A NEGATIVE label "(-160.00C, 16.00p)" is the STOP (books a loss). This sign is the most reliable signal — use it.
+- Cross-check with geometry: LONG → line ABOVE entry = TP1, line BELOW = stop. SHORT → line ABOVE = stop, line BELOW = TP1.
+
+Step 4 — VALIDATE. The three prices ALWAYS order as:
 - LONG:   stop  <  entry  <  TP1   (stop below, target above)
 - SHORT:  TP1   <  entry  <  stop   (target below, stop above)
-If a value lands on the WRONG side of entry for the direction (e.g. a "stop" below entry on a SHORT), you have misread that line — re-examine it. If you still cannot place it confidently on the correct side, return null for that field rather than emitting a wrong-sided value. NEVER output a short with its stop below entry, or a long with its stop above entry.
+If a value lands on the WRONG side of entry for the direction, you have misread it — re-examine. If you still cannot place it confidently, return null rather than emitting a wrong-sided value. NEVER output a long with stop above entry, or a short with stop below entry.
 
 - Entry time: time at bottom axis at entry point (HH:MM, 24h)
 - Quantity: contracts shown in order marker or stats overlay
@@ -174,6 +183,19 @@ Return ONLY valid JSON with no other text:
           const wrong = dir === 'long' ? data.tp1_price <= e : data.tp1_price >= e
           if (wrong) data.tp1_price = null
         }
+      }
+    }
+
+    // Equality guard — a TP or stop that EQUALS the entry is never a real level.
+    // It's the vision model latching onto the entry/current-price marker (e.g. the
+    // green "+$40 USD" P/L box) for a target/stop, which makes RR nonsensical
+    // (0-width reward/risk). Null it. Runs even when direction is unknown, so it
+    // backstops the wrong-sided guard above (which needs a known direction).
+    {
+      const e = typeof data.entry_price === 'number' ? data.entry_price : null
+      if (e != null) {
+        if (typeof data.tp1_price === 'number' && Math.abs(data.tp1_price - e) < 1e-6) data.tp1_price = null
+        if (typeof data.stop_price === 'number' && Math.abs(data.stop_price - e) < 1e-6) data.stop_price = null
       }
     }
 
