@@ -5,7 +5,7 @@ import { parseSierraChartLog } from '@/lib/sc-importer'
 import { isNinjaTraderGrid, parseNinjaTraderGrid } from '@/lib/ninjatrader-import'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
-import { liveAtr } from '@/lib/atr'
+import { liveAtr, postExitExtension } from '@/lib/atr'
 import { clientError } from '@/lib/api-error'
 
 /**
@@ -90,9 +90,11 @@ async function applyGrossCommissions(
  * provides but cloud imports lack, from the central bar feed:
  *   - high/low-during-position (MFE/MAE source) — clipped from bars over the hold
  *   - entry_atr_1m (1-min Wilder ATR-10 at entry) — powers the ×ATR MFE/MAE unit
+ *   - post_exit_favorable/against_pts (30-min continuation after exit)
  * The bars — not the trade log — are the source of truth. Runs once per symbol
- * root over the union window (extended back so ATR-10 can seed). Best-effort:
- * trades outside the bar coverage keep their nulls.
+ * root over the union window (extended back 60m so ATR-10 can seed, and forward
+ * 30m so post-exit has its window). Best-effort: trades outside the bar coverage
+ * keep their nulls.
  */
 async function backfillExcursionsFromBars(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -103,14 +105,15 @@ async function backfillExcursionsFromBars(
     const r = pending[i].row
     const needsExcursion = r.high_during_position == null || r.low_during_position == null
     const needsAtr = r.entry_atr_1m == null
-    if (!needsExcursion && !needsAtr) continue
-    if (!r.entry_time || !r.symbol) continue // ATR needs entry; excursion also needs exit (checked below)
+    const needsPostExit = r.post_exit_favorable_pts == null
+    if (!needsExcursion && !needsAtr && !needsPostExit) continue
+    if (!r.entry_time || !r.symbol) continue // ATR needs entry; excursion/post-exit also need exit (checked below)
     const root = chartSeriesRoot(String(r.symbol))
     if (!bySymbol.has(root)) bySymbol.set(root, [])
     bySymbol.get(root)!.push(i)
   }
 
-  let filled = 0, atrFilled = 0
+  let filled = 0, atrFilled = 0, peFilled = 0
   for (const [root, idxs] of bySymbol) {
     let min = Infinity, max = -Infinity
     for (const i of idxs) {
@@ -121,8 +124,9 @@ async function backfillExcursionsFromBars(
     }
     if (!Number.isFinite(min) || !Number.isFinite(max)) continue
     // Extend the window 60 min before the earliest entry so ATR-10 has enough
-    // preceding 1-min bars to seed (Wilder needs period+1 bars strictly before entry).
-    const bars = await fetchBars(db, root, new Date(min - 60 * 60_000).toISOString(), new Date(max).toISOString())
+    // preceding 1-min bars to seed (Wilder needs period+1 bars strictly before
+    // entry), and 30 min past the latest exit so post-exit has its full window.
+    const bars = await fetchBars(db, root, new Date(min - 60 * 60_000).toISOString(), new Date(max + 30 * 60_000).toISOString())
     if (bars.length === 0) continue
     const parsed = bars.map(b => ({ t: Date.parse(b.ts), high: b.high, low: b.low }))
     for (const i of idxs) {
@@ -147,10 +151,21 @@ async function backfillExcursionsFromBars(
         const atr = liveAtr(bars, new Date(s), 10)
         if (atr != null) { r.entry_atr_1m = Math.round(atr * 100) / 100; atrFilled++ }
       }
+      // Post-exit continuation over the 30 min after exit (same source as the
+      // local Sierra import + backfill-post-exit script). Needs exit data.
+      if (r.post_exit_favorable_pts == null && r.exit_time && r.exit_price != null && r.direction) {
+        const pe = postExitExtension(bars, { direction: r.direction, exit_price: r.exit_price, exit_time: r.exit_time }, 30)
+        if (pe) {
+          r.post_exit_favorable_pts = Math.round(pe.continued_favorable_pts * 100) / 100
+          r.post_exit_against_pts = Math.round(pe.continued_against_pts * 100) / 100
+          peFilled++
+        }
+      }
     }
   }
   if (filled > 0) warnings.push(`Filled MFE/MAE for ${filled} trade(s) from market data.`)
   if (atrFilled > 0) warnings.push(`Filled entry ATR for ${atrFilled} trade(s) from market data.`)
+  if (peFilled > 0) warnings.push(`Filled post-exit continuation for ${peFilled} trade(s) from market data.`)
 }
 
 /**
