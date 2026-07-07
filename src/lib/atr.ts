@@ -12,7 +12,7 @@
  *   ATR_n = ((period − 1) × ATR_{n−1} + TR_n) / period   (Wilder smoothing)
  */
 
-import { miniContractSymbol } from '@/lib/futures-symbols'
+import { chartSeriesRoot, miniContractSymbol } from '@/lib/futures-symbols'
 
 export interface AtrBar {
   ts: string             // ISO timestamp
@@ -63,6 +63,16 @@ export async function fetchAllBars(supabase: any, symbol: string, dateYmd: strin
   if (bars.length === 0) {
     const mini = miniContractSymbol(symbol)
     if (mini && mini !== symbol) bars = await fetchBarsForSymbol(supabase, mini, start, end)
+  }
+  // Cloud stores the continuous mini feed under the BARE root (ES, NQ), not a
+  // dated contract. So a recent trade whose dated-contract bars have lapsed
+  // (e.g. MNQU6.CME ends before the trade date) — or a MES trade with no
+  // dedicated feed — still resolves to the shared continuous series. This is
+  // the same resolution /api/bars applies on the cloud build (chartSeriesRoot).
+  // Local finds bars at the dated symbol first and never reaches here.
+  if (bars.length === 0) {
+    const root = chartSeriesRoot(symbol)
+    if (root !== symbol) bars = await fetchBarsForSymbol(supabase, root, start, end)
   }
   return bars
 }
