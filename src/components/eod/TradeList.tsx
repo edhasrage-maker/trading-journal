@@ -47,8 +47,16 @@ function loadColPrefs(): Record<ColKey, boolean> {
  *  out trade isn't graded against an impossible-to-hold full-qty peak. */
 function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
   const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
-  if (r == null) return null
-  return `${Math.max(-999, Math.min(999, r * 100)).toFixed(0)}%`
+  if (r != null) return `${Math.max(-999, Math.min(999, r * 100)).toFixed(0)}%`
+  // Capture came back null. When we have the inputs to know the trade simply
+  // didn't run favorably — a loss/scratch, MFE ≤ 0, or a tiny sub-noise-floor
+  // green tag it gave right back — that's a real 0% captured, not unknown. Show
+  // "0%" instead of a bare "—"; reserve "—" for genuinely missing data (no
+  // pnl / qty / entry / excursion). Mirrors captureRatio's floor-at-0.
+  if (t.pnl != null && t.quantity != null && t.entry_price != null && mfeMaePoints(t) != null) {
+    return '0%'
+  }
+  return null
 }
 
 interface Props {
@@ -467,15 +475,9 @@ export default function TradeList({
                 )}
               </th>}
               {cols.mae && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
-                <span className="inline-flex items-center gap-1 justify-end">
-                  <button
-                    type="button"
-                    onClick={() => onSort('mae')}
-                    className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
-                    title="Sort by MAE (heat taken)"
-                  >
-                    MAE <SortIcon col="mae" current={sortKey} dir={sortDir} />
-                  </button>
+                {/* Unit dropdown stacked ABOVE the MAE label so the column stays
+                    narrow (was a single wide inline row: MAE · ×ATR · ?). */}
+                <span className="inline-flex flex-col items-end gap-0.5">
                   <select
                     value={mfeUnit}
                     onChange={e => setMfeUnit(e.target.value as MfeUnit)}
@@ -487,14 +489,24 @@ export default function TradeList({
                     <option value="pts">pts</option>
                     <option value="dollars">$</option>
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => { setMaeOpen(o => !o); setMfeOpen(false) }}
-                    className={`transition-colors ${maeOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                    title="What is MAE?"
-                  >
-                    <HelpCircle className="w-3 h-3" />
-                  </button>
+                  <span className="inline-flex items-center gap-1 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => onSort('mae')}
+                      className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
+                      title="Sort by MAE (heat taken)"
+                    >
+                      MAE <SortIcon col="mae" current={sortKey} dir={sortDir} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setMaeOpen(o => !o); setMfeOpen(false) }}
+                      className={`transition-colors ${maeOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                      title="What is MAE?"
+                    >
+                      <HelpCircle className="w-3 h-3" />
+                    </button>
+                  </span>
                 </span>
                 {maeOpen && (
                   <div
