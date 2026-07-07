@@ -164,11 +164,23 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
 }
 
 /**
+ * How far (in ATR units) entry_price may sit OUTSIDE the position's own traded
+ * range [low, high] before the excursion is treated as corrupt. The 1-minute
+ * bar window can miss the exact entry tick, so a sub-ATR overshoot is normal;
+ * beyond this the row is bad data — a mis-read entry_price (e.g. an AI
+ * screenshot extraction reading 7582.5 as 7182.5) or an excursion backfilled
+ * from the wrong bars. Such a row yields MFE = |extreme − entry| of hundreds of
+ * ×ATR, and a single one nukes the day's efficiency average, so we exclude it.
+ */
+const EXCURSION_ENTRY_TOL_ATR = 2
+
+/**
  * MFE and MAE in ATR units — excursion points ÷ ATR-at-entry. The stop-free unit
  * for the efficiency read ("took 0.4×ATR of heat", "captured 2.1×ATR"). Pass a
  * live ATR via `atrAtEntry`; otherwise falls back to the stored entry_atr_1m.
  * Non-negative (mfeMaePoints floors at 0). Null when excursion or a usable ATR
- * is missing.
+ * is missing, or when entry_price sits implausibly far outside [low, high]
+ * (corrupt row — see EXCURSION_ENTRY_TOL_ATR).
  */
 export function mfeMaeAtr(
   t: TradeWithExcursion & { entry_atr_1m?: number | null },
@@ -178,6 +190,13 @@ export function mfeMaeAtr(
   if (!pts) return null
   const atr = atrAtEntry ?? t.entry_atr_1m
   if (atr == null || atr <= 0) return null
+  // Data-integrity guard: entry_price must sit within the range the position
+  // actually traded through. When it doesn't, the excursion is fabricated and
+  // can be hundreds of ×ATR — discard rather than let one bad row dominate.
+  const { high_during_position: hi, low_during_position: lo, entry_price: e } = t
+  if (hi != null && lo != null && e != null && Math.max(e - hi, lo - e) > EXCURSION_ENTRY_TOL_ATR * atr) {
+    return null
+  }
   return { mfe: pts.mfe / atr, mae: pts.mae / atr }
 }
 
