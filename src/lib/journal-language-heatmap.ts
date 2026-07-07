@@ -186,9 +186,55 @@ const EMOTION_LEXICON: Record<EmotionCategory, { label: string; phrases: string[
   },
 }
 
+/**
+ * Negation words. A lexicon phrase preceded (within 2 tokens) by one of these is
+ * the OPPOSITE of what the category means and must NOT count as a hit — "didn't
+ * force", "wasn't frustrated", "no revenge trades", "not greedy" are discipline,
+ * not tilt. Without this guard the emotion lexicon over-fires on negated forms
+ * (the Pt 3 known tail). Apostrophes are already stripped by normalize(), so the
+ * contracted forms are listed apostrophe-less ("didnt", "wasnt", …).
+ */
+const NEGATORS = new Set([
+  'not', 'no', 'never', 'none', 'nothing', 'without',
+  'didnt', 'dont', 'doesnt', 'wasnt', 'werent', 'isnt', 'arent',
+  'wont', 'cant', 'couldnt', 'wouldnt', 'shouldnt', 'havent', 'hadnt',
+  'avoid', 'avoided', 'avoiding', 'resisted', 'refused', 'hardly', 'barely',
+])
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function outcomeOf(pnl: number | null): 'win' | 'loss' | null {
   return pnl == null ? null : pnl > 0 ? 'win' : pnl < 0 ? 'loss' : null
+}
+
+/** Normalize text to a token stream (reuses normalize(): lowercased, apostrophes
+ *  stripped, punctuation → spaces). */
+function normTokens(text: string): string[] {
+  return normalize(text).split(' ').filter(Boolean)
+}
+
+/** Normalize a lexicon phrase to its token sequence, so "second-guess" and
+ *  "second guess" both reduce to ['second','guess'] and match either spelling. */
+function phraseTokens(phrase: string): string[] {
+  return normalize(phrase).split(' ').filter(Boolean)
+}
+
+/**
+ * True if `pTokens` (a phrase) occurs as a consecutive run in `toks` in at least
+ * one position that is NOT negated. An occurrence is negated when either of the
+ * two immediately-preceding tokens is a NEGATOR ("didn't force", "didn't really
+ * force"). Keeps scanning past negated occurrences so a later clean mention still
+ * counts.
+ */
+function unnegatedHit(toks: string[], pTokens: string[]): boolean {
+  const n = pTokens.length
+  if (n === 0) return false
+  outer:
+  for (let i = 0; i + n <= toks.length; i++) {
+    for (let j = 0; j < n; j++) if (toks[i + j] !== pTokens[j]) continue outer
+    if ((i >= 1 && NEGATORS.has(toks[i - 1])) || (i >= 2 && NEGATORS.has(toks[i - 2]))) continue
+    return true   // un-negated occurrence found
+  }
+  return false
 }
 
 function mean(xs: number[]): number | null {
@@ -286,17 +332,23 @@ export function computeJournalHeatmap(entries: JournalEntry[]): JournalHeatmap {
     .slice(0, MAX_PHRASES)
 
   // ── Emotion lexicon ─────────────────────────────────────────────────────────
+  // Pre-tokenize each entry once (negation-aware matching needs token positions
+  // and the token stream is reused across every category).
+  const toksByEntry = kept.map(e => normTokens(e.text))
   const emotions: EmotionHit[] = []
   for (const cat of Object.keys(EMOTION_LEXICON) as EmotionCategory[]) {
     const { label, phrases: lex } = EMOTION_LEXICON[cat]
-    const regexes = lex.map(p => new RegExp(`\\b${p.replace(/[+]/g, '\\+').replace(/\s+/g, '\\s+')}\\b`, 'i'))
+    const lexToks = lex.map(phraseTokens).filter(t => t.length > 0)
     let count = 0
     const sources = new Set<JournalSource>()
     let wins = 0, losses = 0, compliant = 0, compliantDenom = 0
     const pnls: number[] = []
     const examples: Array<{ date: string; text: string }> = []
-    for (const e of kept) {
-      if (!regexes.some(r => r.test(e.text))) continue
+    for (let ei = 0; ei < kept.length; ei++) {
+      const e = kept[ei]
+      // A category hits only on an UN-NEGATED lexicon match (drops "didn't
+      // force", "wasn't scared", etc.).
+      if (!lexToks.some(pt => unnegatedHit(toksByEntry[ei], pt))) continue
       count++
       sources.add(e.source)
       const o = outcomeOf(e.pnl)
