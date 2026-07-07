@@ -1,8 +1,22 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { Upload, ArrowLeft, CheckCircle2, AlertTriangle, Loader2, Download } from 'lucide-react'
+import { getHandle, setHandle } from '@/lib/file-handle-store'
+
+// Key for the last-imported file handle in the IndexedDB handle store — passed
+// back as showOpenFilePicker({ startIn }) so re-imports reopen at the same folder.
+const LAST_IMPORT_HANDLE = 'import:last-file'
+
+// Minimal typing for the File System Access API (not in the TS DOM lib on all
+// targets). Only the bits we use.
+type ShowOpenFilePicker = (opts?: {
+  startIn?: FileSystemHandle | string
+  multiple?: boolean
+  excludeAcceptAllOption?: boolean
+  types?: { description?: string; accept: Record<string, string[]> }[]
+}) => Promise<FileSystemFileHandle[]>
 
 interface ImportResult {
   imported: number
@@ -29,7 +43,41 @@ export default function ImportPage() {
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [dragOver, setDragOver] = useState(false)
+  const [remembersFolder, setRemembersFolder] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // The File System Access API is Chromium-only; only then can we reopen the
+  // picker at the last-used folder. Detect client-side so the hint is honest.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot client-only capability detect
+    setRemembersFolder(typeof window !== 'undefined' && 'showOpenFilePicker' in window)
+  }, [])
+
+  // Open the file picker. On Chromium, start it in the folder of the last file
+  // you imported (persisted handle) so re-uploading new logs lands you right
+  // back there. Elsewhere, fall back to the classic hidden <input> (the browser
+  // often reopens at the last folder on its own).
+  async function pickFile() {
+    const picker = (window as unknown as { showOpenFilePicker?: ShowOpenFilePicker }).showOpenFilePicker
+    if (picker) {
+      try {
+        const last = await getHandle(LAST_IMPORT_HANDLE)
+        const [handle] = await picker({
+          startIn: last ?? 'downloads',
+          multiple: false,
+          types: [{ description: 'Trade log (CSV or Sierra .txt)', accept: { 'text/csv': ['.csv'], 'text/plain': ['.txt'] } }],
+        })
+        if (!handle) return
+        void setHandle(LAST_IMPORT_HANDLE, handle) // remember this folder for next time
+        upload(await handle.getFile())
+        return
+      } catch (e) {
+        // AbortError = the user closed the picker; anything else → fall through.
+        if ((e as DOMException)?.name === 'AbortError') return
+      }
+    }
+    inputRef.current?.click()
+  }
 
   async function upload(file: File) {
     setBusy(true); setError(null); setResult(null); setWarnings([])
@@ -85,7 +133,7 @@ export default function ImportPage() {
         onDragOver={e => { e.preventDefault(); setDragOver(true) }}
         onDragLeave={() => setDragOver(false)}
         onDrop={e => { e.preventDefault(); setDragOver(false); onPick(e.dataTransfer.files) }}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => void pickFile()}
         className={`mt-6 cursor-pointer rounded-xl border-2 border-dashed p-10 text-center transition-colors ${
           dragOver ? 'border-blue-500 bg-blue-950/30' : 'border-gray-700 bg-gray-900 hover:border-gray-600'
         }`}
@@ -97,6 +145,9 @@ export default function ImportPage() {
         <p className="text-xs text-gray-500 mt-1">
           .csv from NinjaTrader / Tradovate / Tradezella · .txt from Sierra Chart · or a filled-in template
         </p>
+        {remembersFolder && (
+          <p className="text-[11px] text-gray-600 mt-2">Reopens at the folder you last imported from.</p>
+        )}
         <input
           ref={inputRef}
           type="file"
