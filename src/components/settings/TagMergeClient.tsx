@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertCircle, ArrowRight, Loader2, GitMerge, X } from 'lucide-react'
+import { AlertCircle, ArrowRight, Loader2, GitMerge, Trash2, X } from 'lucide-react'
 import type { TagCategory, TradeTag } from '@/lib/supabase/types'
 
 interface Props {
@@ -130,6 +130,9 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
   const [moveDstCategory, setMoveDstCategory] = useState<TagCategory>('confluences')
   const [moveBusy, setMoveBusy] = useState(false)
   const [moveResult, setMoveResult] = useState<string | null>(null)
+  // Delete-tag state: which chip is mid-delete, plus a result banner.
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null)
+  const [deleteResult, setDeleteResult] = useState<string | null>(null)
 
   const suggestions = useMemo(() => suggestPairs(tags, 2), [tags])
 
@@ -200,8 +203,57 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
     }
   }
 
+  const handleDelete = async (t: TradeTag) => {
+    if (deleteBusyId) return
+    const n = usageFor(t)
+    const ok = window.confirm(
+      `Remove "${t.label}" from ${CATEGORY_LABELS[t.category]}?\n\n` +
+      (n > 0
+        ? `This deletes it from your library and removes it from ${n} tagged trade${n === 1 ? '' : 's'}. `
+        : 'This deletes it from your library. ') +
+      'This cannot be undone.',
+    )
+    if (!ok) return
+    setDeleteBusyId(t.id)
+    setError(null)
+    setDeleteResult(null)
+    try {
+      const res = await fetch('/api/trade-tags/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: t.id }),
+      })
+      const json = (await res.json()) as { ok?: boolean; trades_updated?: number; historical_updated?: number; label?: string; error?: string }
+      if (!res.ok || !json.ok) {
+        setError(json.error ?? `Delete failed (${res.status})`)
+        return
+      }
+      // Local mirror: drop the tag + its usage key so the UI updates instantly.
+      setTags(prev => prev.filter(x => x.id !== t.id))
+      const next = { ...usage }
+      delete next[`${t.category}|${t.label}`]
+      setUsage(next)
+      setDeleteResult(
+        `Removed "${json.label}" — stripped from ${json.trades_updated ?? 0} trades and ${json.historical_updated ?? 0} historical rows.`,
+      )
+      router.refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setDeleteBusyId(null)
+    }
+  }
+
   return (
     <div className="space-y-8">
+      {/* Delete result banner */}
+      {deleteResult && (
+        <div className="bg-green-900/30 border border-green-800 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
+          <Trash2 className="w-4 h-4 mt-0.5 shrink-0" />
+          <div>{deleteResult}</div>
+        </div>
+      )}
+
       {/* Last result banner */}
       {lastResult?.ok && (
         <div className="bg-green-900/30 border border-green-800 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
@@ -254,11 +306,20 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
               {catTags.map(t => (
                 <span
                   key={t.id}
-                  className="text-xs bg-gray-900 border border-gray-800 rounded-full px-3 py-1 text-gray-300"
+                  className="inline-flex items-center gap-1.5 text-xs bg-gray-900 border border-gray-800 rounded-full pl-3 pr-1.5 py-1 text-gray-300"
                   title={`Used by ${usageFor(t)} trade${usageFor(t) === 1 ? '' : 's'}`}
                 >
-                  {t.label}{' '}
-                  <span className="text-gray-500">({usageFor(t)})</span>
+                  <span>{t.label} <span className="text-gray-500">({usageFor(t)})</span></span>
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(t)}
+                    disabled={deleteBusyId === t.id}
+                    aria-label={`Remove ${t.label}`}
+                    title={`Remove "${t.label}"`}
+                    className="text-gray-600 hover:text-red-400 disabled:opacity-50 transition-colors"
+                  >
+                    {deleteBusyId === t.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                  </button>
                 </span>
               ))}
             </div>
