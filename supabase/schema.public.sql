@@ -293,6 +293,13 @@ security definer
 set search_path = public
 as $$
 begin
+  -- Idempotent at the ACCOUNT level: never seed defaults for a user who already
+  -- has a tag library (a migrated founder account, or a re-run of the section-10
+  -- backfill). Without this, deleting curated-away defaults just brings them back
+  -- on the next backfill, since `on conflict do nothing` only blocks exact dupes.
+  if exists (select 1 from public.trade_tags where user_id = p_user_id) then
+    return;
+  end if;
   insert into public.trade_tags (user_id, category, label, sort_order) values
     -- Setups
     (p_user_id, 'setups', 'IB Fade', 1),
