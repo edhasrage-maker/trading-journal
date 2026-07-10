@@ -29,6 +29,19 @@ export const ATR_METHOD_LABELS: Record<AtrMethod, string> = {
 }
 export const DEFAULT_ATR_CONFIG: AtrConfig = { timeframe: 1, method: 'wilder', period: 10 }
 
+/** Default "was up" multiple for the round-trip / give-back metric: 1×ATR.
+ *  Each trader can override it (Settings → ATR measurement). */
+export const DEFAULT_GIVE_BACK_ATR = 1
+const GIVE_BACK_ATR_MIN = 0.25
+const GIVE_BACK_ATR_MAX = 10
+
+/** Coerce a stored/user give-back multiple into a sane ×ATR value (default on junk). */
+export function normalizeGiveBackAtr(raw: unknown): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < GIVE_BACK_ATR_MIN || n > GIVE_BACK_ATR_MAX) return DEFAULT_GIVE_BACK_ATR
+  return n
+}
+
 /** Coerce arbitrary stored/user values into a valid AtrConfig (defaults on junk). */
 export function normalizeAtrConfig(raw: Partial<AtrConfig> | null | undefined): AtrConfig {
   const tf = Number(raw?.timeframe)

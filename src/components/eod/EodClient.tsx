@@ -27,6 +27,7 @@ import { dayAchievements } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, type BarLike } from '@/lib/analytics'
+import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import type {
   TradingDay,
   Trade,
@@ -50,6 +51,9 @@ interface Props {
    *  (Career Day percentile + Heat Check streak). Server-fetched; omit to skip
    *  those two badges. */
   pnlHistory?: { date: string; pnl: number }[]
+  /** The trader's round-trip "was up" multiple (×ATR) from Settings → ATR
+   *  measurement. Defaults to 1× when unset / pre-migration. */
+  giveBackAtr?: number
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -73,6 +77,7 @@ export default function EodClient({
   liveAtrByTradeId,
   postExitByTradeId,
   pnlHistory,
+  giveBackAtr = 1,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -565,6 +570,10 @@ export default function EodClient({
   // the per-trade live ATR, falls back to stored entry_atr_1m; bar-derived, so it
   // works on a fills-only import with no planned stops.
   const mfeMaeAtrStats = useMemo(() => avgMfeMaeAtr(trades, liveAtrByTradeId), [trades, liveAtrByTradeId])
+  // Round-trip / "gave it back" rollup for the day — trades that were up ≥1×ATR
+  // then closed ≤ BE. Same shared excursion layer + live ATR the coach uses, so
+  // the panel line and the coach's read can't drift. Hidden by the panel when 0.
+  const roundTripStats = useMemo(() => aggregateRoundTrips(trades, liveAtrByTradeId, giveBackAtr), [trades, liveAtrByTradeId, giveBackAtr])
 
   // Achievement badges earned this day — pure derivation (src/lib/achievements.ts).
   const achievements = useMemo(() => {
@@ -1078,7 +1087,7 @@ export default function EodClient({
         </div>
       )}
 
-      <MfeMaeEfficiency mfe={mfeMaeAtrStats.mfe} mae={mfeMaeAtrStats.mae} count={mfeMaeAtrStats.count} />
+      <MfeMaeEfficiency mfe={mfeMaeAtrStats.mfe} mae={mfeMaeAtrStats.mae} count={mfeMaeAtrStats.count} roundTrip={roundTripStats} />
 
       <BehavioralProxiesPanel trades={trades} />
 

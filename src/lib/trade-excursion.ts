@@ -18,6 +18,26 @@
 
 const SYM_MULT: Record<string, number> = { NQ: 20, MNQ: 2, ES: 50, MES: 5 }
 
+/**
+ * Favorable-excursion bar a trade must clear to count as "was up" for the
+ * round-trip / gave-it-back check: it must have run at least this many ×ATR
+ * (1m Wilder-10, at entry) in its favor before reversing.
+ *
+ * ATR-ONLY by design — R is deliberately NOT used. For a 2R trader "up 1R then
+ * reversed" is just a trade that never reached target (didn't work out), not a
+ * winner handed back; whereas 1×ATR of favorable movement is a real, size- and
+ * target-independent move that was given back. (User decision, Pt 5.)
+ *
+ * This is only the DEFAULT — each trader sets their own multiple in Settings →
+ * ATR measurement (`trader_profile.give_back_atr`); callers thread it in via the
+ * `roundTripAtr` arg below.
+ *
+ * DISTINCT from `isGiveBackTrade()` in analytics.ts, which is a per-trade UI
+ * bold (loss-only, 1R, stop-required). This layer is the day/window AGGREGATE
+ * signal — ≤ breakeven (includes scratches), ATR-based, stop-independent.
+ */
+const ROUND_TRIP_MFE_ATR = 1
+
 /** Dollar-per-point multiplier for a contract symbol (front-month/root aware). */
 export function symbolMultiplier(s: string | null): number {
   if (!s) return 1
@@ -36,7 +56,10 @@ export interface TradeExcursionInput {
   symbol: string | null
   high_during_position: number | null
   low_during_position: number | null
-  mfe_dollars_per_leg: number | null
+  /** Scaling-aware best-case $ (peak per leg). Optional — callers without the
+   *  backfill column (e.g. the EOD trades select) omit it, and the tick-precise
+   *  full-position ceiling is used instead. */
+  mfe_dollars_per_leg?: number | null
   /** ATR-10 (1m) at entry. Optional — enables volatility-normalized (×ATR)
    *  excursion. Null/absent → the ×ATR fields come back null. */
   entry_atr_1m?: number | null
@@ -71,13 +94,22 @@ export interface TradeExcursion {
   mfeAtr: number | null
   /** Heat taken in ATR units (maePts ÷ entry ATR). Null without ATR. */
   maeAtr: number | null
+  /** Whether "was the trade up ≥ threshold" is even measurable (had ATR or a
+   *  stop). Lets the aggregate report an honest denominator ("N of M evaluable"). */
+  roundTripMeasurable: boolean
+  /** True when the trade was up ≥1×ATR (or ≥1R without ATR) AND closed ≤ BE —
+   *  a real winner round-tripped to break-even or worse. */
+  roundTripped: boolean
+  /** $ handed back from the favorable peak to the exit on a round-trip
+   *  (mfeUsd − pnl, floored at 0). Null unless `roundTripped`. */
+  roundTripGiveBackUsd: number | null
 }
 
 /**
  * Compute the interpreted excursion metrics for one trade. Pure — no I/O.
  * Mirrors the per-trade block that used to live inline in buildCoachContext.
  */
-export function interpretExcursion(t: TradeExcursionInput): TradeExcursion {
+export function interpretExcursion(t: TradeExcursionInput, roundTripAtr: number = ROUND_TRIP_MFE_ATR): TradeExcursion {
   const pnl = t.pnl ?? 0
   const isWin = pnl > 0
   const mult = symbolMultiplier(t.symbol)
@@ -97,7 +129,7 @@ export function interpretExcursion(t: TradeExcursionInput): TradeExcursion {
 
   // Dollar-basis best case (primary; no stop needed). Clamp the per-leg MFE-$ at
   // the tick-precise full-position ceiling (favorable extreme × qty × mult).
-  let mfeUsd = t.mfe_dollars_per_leg
+  let mfeUsd: number | null = t.mfe_dollars_per_leg ?? null
   if (mfePts != null && t.quantity != null) {
     const ceiling = mfePts * t.quantity * mult
     if (mfeUsd == null) mfeUsd = ceiling
@@ -128,5 +160,50 @@ export function interpretExcursion(t: TradeExcursionInput): TradeExcursion {
   const mfeAtr = (atr != null && atr > 0 && mfePts != null) ? mfePts / atr : null
   const maeAtr = (atr != null && atr > 0 && maePts != null) ? maePts / atr : null
 
-  return { isWin, stopDist, r, mfeUsd, capPct, leftUsd, mfeR, maePts, maePct, mfePts, mfeAtr, maeAtr }
+  // Round-trip / "gave it back": did the trade run ≥ `roundTripAtr`×ATR in its
+  // favor then close ≤ breakeven? ATR-only — R is intentionally not used (see
+  // ROUND_TRIP_MFE_ATR). rtMet === null means no usable ATR → can't tell.
+  const rtMet = mfeAtr != null ? mfeAtr >= roundTripAtr : null
+  const roundTripMeasurable = rtMet != null
+  const roundTripped = rtMet === true && t.pnl != null && pnl <= 0
+  const roundTripGiveBackUsd = (roundTripped && mfeUsd != null) ? Math.max(0, mfeUsd - pnl) : null
+
+  return { isWin, stopDist, r, mfeUsd, capPct, leftUsd, mfeR, maePts, maePct, mfePts, mfeAtr, maeAtr, roundTripMeasurable, roundTripped, roundTripGiveBackUsd }
+}
+
+/** Window/day-level round-trip ("gave it back") rollup. */
+export interface RoundTripStats {
+  /** N — trades that were up ≥ threshold then closed ≤ BE. */
+  count: number
+  /** M — total trades passed in (the day/window's trade count). */
+  total: number
+  /** Trades where "was up" was evaluable (had ATR or a stop) — honest denominator. */
+  measurable: number
+  /** Σ peak-to-exit give-back ($) across the round-trips. */
+  giveBackUsd: number
+  /** The ×ATR multiple used to classify "was up" — echoed so callers can render
+   *  "≥N×ATR" without re-plumbing the trader's setting. */
+  thresholdAtr: number
+}
+
+/**
+ * Aggregate the round-trip signal across a set of trades. Pure — no I/O. Runs
+ * `interpretExcursion` per trade, optionally overriding each trade's entry ATR
+ * with a live ATR from `atrByTradeId` (mirrors `avgMfeMaeAtr` in analytics.ts so
+ * the EOD ×ATR panel and this line agree on which ATR they used). `roundTripAtr`
+ * is the trader's own "was up" multiple (Settings → ATR measurement; default 1×).
+ */
+export function aggregateRoundTrips(
+  trades: (TradeExcursionInput & { id?: string | null })[],
+  atrByTradeId?: Record<string, number>,
+  roundTripAtr: number = ROUND_TRIP_MFE_ATR,
+): RoundTripStats {
+  let count = 0, measurable = 0, giveBackUsd = 0
+  for (const t of trades) {
+    const live = t.id != null ? atrByTradeId?.[t.id] : undefined
+    const x = interpretExcursion(live != null ? { ...t, entry_atr_1m: live } : t, roundTripAtr)
+    if (x.roundTripMeasurable) measurable++
+    if (x.roundTripped) { count++; giveBackUsd += x.roundTripGiveBackUsd ?? 0 }
+  }
+  return { count, total: trades.length, measurable, giveBackUsd, thresholdAtr: roundTripAtr }
 }

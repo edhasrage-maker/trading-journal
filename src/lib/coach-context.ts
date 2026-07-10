@@ -15,6 +15,7 @@ import { interpretExcursion } from './trade-excursion'
 import { computeBehavioralProxies } from './behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from './journal-language-heatmap'
 import { fetchOpenThread, coachingThreadPromptBlock } from './coaching-thread'
+import { getGiveBackAtr } from './atr-config-server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -63,6 +64,11 @@ interface TradeContextRow {
 
 export async function buildCoachContext(supabase: AnyClient, opts: CoachContextOptions): Promise<string> {
   const { startDate, endDate, windowLabel, includeWeekOverWeek = false, recentTradesLimit = 50 } = opts
+
+  // The trader's round-trip "was up" multiple (×ATR). Applied to entry_atr_1m
+  // (the fixed 1m Wilder-10 baseline the coach reads — the EOD panel uses the
+  // configured ATR, but the multiple is shared). Best-effort, defaults to 1×.
+  const giveBackAtr = await getGiveBackAtr(supabase)
 
   // Pull trading_days first so we have the day-type map for cross-tabulation.
   const { data: days } = await supabase
@@ -232,12 +238,20 @@ NO TRADE DATA — the trader logged no trades in this window.
     mfeWin: { n: 0, sum: 0 }, mfeAll: { n: 0, sum: 0 },
     maeWin: { n: 0, sum: 0 }, maeLoss: { n: 0, sum: 0 },
   }
+  // Round-trip / "gave it back" — trades that were up ≥1×ATR (or ≥1R) then
+  // closed ≤ breakeven. `measurable` is the honest denominator (trades where
+  // "was up" could be evaluated); `giveBackUsd` = peak-to-exit $ handed back.
+  const rt = { n: 0, measurable: 0, giveBackUsd: 0 }
 
   for (const t of trades) {
     const pnl = t.pnl ?? 0
     // All per-trade MFE/MAE interpretation lives in the shared helper so the
     // coach, the weekly recap, and the video-recap commentary can't drift.
-    const { isWin, r, mfeUsd, capPct, leftUsd, mfeR, maePts, maePct, mfeAtr, maeAtr } = interpretExcursion(t)
+    const { isWin, r, mfeUsd, capPct, leftUsd, mfeR, maePts, maePct, mfeAtr, maeAtr, roundTripMeasurable, roundTripped, roundTripGiveBackUsd } = interpretExcursion(t, giveBackAtr)
+
+    // Round-trip accumulation (window-level — invisible in the UI, coach-only).
+    if (roundTripMeasurable) rt.measurable++
+    if (roundTripped) { rt.n++; rt.giveBackUsd += roundTripGiveBackUsd ?? 0 }
 
     // ×ATR accumulation (volatility-normalized excursion).
     if (mfeAtr != null) { atrAgg.mfeAll.n++; atrAgg.mfeAll.sum += mfeAtr; if (isWin) { atrAgg.mfeWin.n++; atrAgg.mfeWin.sum += mfeAtr } }
@@ -451,6 +465,13 @@ ${MAE_BUCKETS.map(([label]) => {
     return `    ${label}: ${b.count} trades · WR ${wr}% · avgR ${avgR} · ${fmt(b.pnl)}`
   }).join('\n')}`
 
+  // Round-trip / gave-it-back summary — a real winner (up ≥1×ATR / ≥1R) handed
+  // back to breakeven-or-worse. NOT the same as a disciplined early scratch:
+  // here the trade WAS up meaningfully and then round-tripped past BE.
+  const roundTripBlock = rt.n === 0
+    ? '  (no round-trips in this window — no winner was handed back to BE-or-worse)'
+    : `  ${rt.n} of ${rt.measurable} evaluable trades round-tripped (ran ≥${giveBackAtr}×ATR in favor, then closed ≤ breakeven) · gave back ${usd(rt.giveBackUsd)} from peak to exit.`
+
   // Day-conditions regime performance (#2c) — are they selective on the regimes they win in?
   const regimeLine = (m: Map<string, { count: number; wins: number; pnl: number }>, order: string[]) =>
     order.filter(k => m.has(k)).map(k => {
@@ -526,6 +547,9 @@ ${exitEffBlock}
 
 MAE — HEAT TAKEN (adverse excursion before the trade resolved; "planned" heat = your stop distance, "taken" = the actual move against you. Speaks to entry timing, stop sizing, and risk management — low heat on winners = clean entries; high heat that still won = nearly stopped out):
 ${maeBlock}
+
+ROUND-TRIP — GAVE-IT-BACK (a real winner — ran ≥${giveBackAtr}×ATR (1m Wilder-10) in favor — round-tripped to breakeven-or-worse; this is a management/exit-discipline signal, NOT a disciplined early scratch and NOT a trade that was simply never green):
+${roundTripBlock}
 
 POST-EXIT — MARKET SENSE / DIRECTIONAL READ (where price went in the 30 min AFTER you exited; a read on directional bias, NOT an exit-timing grade):
 ${postExitBlock}

@@ -651,6 +651,12 @@ create table if not exists trader_profile (
   -- profile (the Coach Score grades against this). Migration: 20260703_onboarding_profile.sql.
   onboarding_json jsonb not null default '{}'::jsonb,
   scoring_profile_json jsonb not null default '{}'::jsonb,
+  -- Round-trip / "gave it back" threshold: how far (in ×ATR) a trade must run in
+  -- the trader's favor before a close ≤ breakeven counts as a give-back. Read by
+  -- the EOD Entry-efficiency panel + the coach. Lives alongside the migration-
+  -- added ATR-measurement columns (atr_timeframe/atr_method/atr_period).
+  -- Migration: 20260707_give_back_atr.sql.
+  give_back_atr numeric not null default 1,
   updated_at timestamptz not null default now()
 );
 

@@ -1,19 +1,28 @@
 'use client'
 
+import type { RoundTripStats } from '@/lib/trade-excursion'
+
 /**
  * Entry-efficiency readout: average MFE vs average MAE in ATR units, with a
  * plain-English verdict. Answers "do I take more heat than I capture?" (→ late
  * entries) from bars alone — no planned stop needed, so it lights up on a
  * fills-only import. Renders nothing until there's excursion+ATR data.
+ *
+ * Optionally appends a single round-trip / "gave it back" line — trades that
+ * ran ≥1×ATR (1m Wilder-10) in favor then closed ≤ BE. It hides when there are
+ * 0 round-trips so it never clutters a clean day. Both this line and the ×ATR
+ * verdict need the same excursion+ATR data, so they surface together.
  */
 export default function MfeMaeEfficiency({
   mfe,
   mae,
   count,
+  roundTrip,
 }: {
   mfe: number | null
   mae: number | null
   count: number
+  roundTrip?: RoundTripStats | null
 }) {
   if (mfe == null || mae == null || count === 0) return null
 
@@ -61,6 +70,16 @@ export default function MfeMaeEfficiency({
       <div className="mt-3 rounded-lg px-3 py-2.5 border" style={{ background: tone.bg, borderColor: tone.border }}>
         <p className={`text-[13px] leading-relaxed ${tone.text}`}>{verdict}</p>
       </div>
+
+      {roundTrip && roundTrip.count > 0 && (
+        <div className="mt-2 flex items-center gap-1.5 text-[12px] text-amber-300/90">
+          <span aria-hidden>↺</span>
+          <span>
+            <span className="font-medium">Gave it back</span> · {roundTrip.count} of {roundTrip.total} trade{roundTrip.total === 1 ? '' : 's'} were up ≥{roundTrip.thresholdAtr}×ATR then closed ≤ BE ·{' '}
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>−${Math.round(roundTrip.giveBackUsd).toLocaleString()}</span>
+          </span>
+        </div>
+      )}
     </div>
   )
 }

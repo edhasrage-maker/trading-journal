@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import EodClient from '@/components/eod/EodClient'
 import { fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from '@/lib/atr'
 import { configuredAtr } from '@/lib/atr-config'
-import { getAtrConfig } from '@/lib/atr-config-server'
+import { getAtrConfig, getGiveBackAtr } from '@/lib/atr-config-server'
 import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
@@ -15,6 +15,9 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   // The user's chosen ATR measurement (timeframe / method / period) — drives the
   // ATR@ column and the ATR-unit R fallback. Defaults to 1m Wilder-10.
   const atrCfg = await getAtrConfig(supabase)
+  // The trader's "was up" multiple for the round-trip / give-back metric (×ATR).
+  // Defaults to 1× until they change it in Settings → ATR measurement.
+  const giveBackAtr = await getGiveBackAtr(supabase)
 
   const { data: day } = await supabase
     .from('trading_days')
@@ -117,6 +120,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       liveAtrByTradeId={liveAtrByTradeId}
       postExitByTradeId={postExitByTradeId}
       pnlHistory={pnlHistory}
+      giveBackAtr={giveBackAtr}
     />
   )
 }
