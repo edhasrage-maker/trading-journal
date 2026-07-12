@@ -8,6 +8,7 @@ import {
   CheckCircle2, AlertTriangle, Target, TrendingUp, TrendingDown, History,
 } from 'lucide-react'
 import { previousWeekStart, nextWeekStart } from '@/lib/week-dates'
+import { displayDayTypes } from '@/lib/day-type-display'
 import { useUiMode } from '@/lib/ui-mode'
 
 export interface DayCard {
@@ -255,7 +256,7 @@ function DayCardView({ card }: { card: DayCard }) {
       <div className="text-[10px] uppercase tracking-wider text-gray-500">{format(date, 'EEE')}</div>
       <div className="text-sm font-medium text-white">{format(date, 'MMM d')}</div>
       {card.day_types.length > 0 && (
-        <div className="mt-1 text-[10px] text-gray-400 truncate" title={card.day_types.join(', ')}>{card.day_types.join(', ')}</div>
+        <div className="mt-1 text-[10px] text-gray-400 truncate" title={displayDayTypes(card.day_types)}>{displayDayTypes(card.day_types)}</div>
       )}
       <div className={`mt-2 text-base font-bold font-mono ${pnlColor}`}>
         {card.eod_pnl == null ? '—' : `${card.eod_pnl >= 0 ? '+' : ''}$${Math.round(card.eod_pnl).toLocaleString()}`}

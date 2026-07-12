@@ -234,7 +234,7 @@ export function consolidate(
       pick: 'tertile',
       verdict: bestTertile.row.verdict,
       condition_id: bestTertile.row.condition_id,
-      explanation: 'Only tertile view returned a match',
+      explanation: 'Based on the closest match to today\'s conditions.',
       conflict: false,
       conflict_reason: null,
     }
@@ -262,7 +262,7 @@ export function consolidate(
     pick: pickMedian ? 'median' : 'tertile',
     verdict: chosen.verdict,
     condition_id: chosen.condition_id,
-    explanation: `${pickMedian ? 'Median' : 'Tertile'} view selected — larger sample (${chosen.n_trades ?? 0} trades vs ${pickMedian ? tN : mN}). Use the dropdown above to switch views.`,
+    explanation: `Based on ${chosen.n_trades ?? 0} of your trades in similar conditions.`,
     conflict,
     conflict_reason: conflictReason,
   }

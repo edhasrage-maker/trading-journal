@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3 } from 'lucide-react'
 import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
-import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
@@ -176,6 +176,14 @@ export default function TradeList({
   // saved per-device choice from localStorage after mount.
   const [cols, setCols] = useState<Record<ColKey, boolean>>(defaultColPrefs)
   const [colsOpen, setColsOpen] = useState(false)
+  // Per-trade "more/less" state for long AI-overview sub-rows (2-line clamp).
+  const [expandedOverviews, setExpandedOverviews] = useState<Set<string>>(new Set())
+  // Mixed-instrument day → highlight the per-row symbol chip so an ES entry at
+  // 7,5xx isn't sitting unexplained among NQ 29,7xx rows.
+  const mixedSymbols = useMemo(
+    () => new Set(trades.map(t => (t.symbol ?? '').trim()).filter(Boolean)).size > 1,
+    [trades],
+  )
   const colsRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate saved column prefs from localStorage once on mount (can't read localStorage during SSR)
   useEffect(() => { setCols(loadColPrefs()) }, [])
@@ -535,7 +543,6 @@ export default function TradeList({
                 )}
               </th>}
               {cols.postExit && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>}
-              <th className="text-left font-normal pb-2 whitespace-nowrap">Overview</th>
               <th className="w-8" />
             </tr>
           </thead>
@@ -547,16 +554,29 @@ export default function TradeList({
               const isSelected = selectedIds.has(t.id)
               const isNearDup = nearDuplicateIds.has(t.id)
               const summary = summaries[t.id]
+              // AI overview (or the trader's own notes as fallback) renders as a
+              // full-width sub-row under the data row — the old Overview COLUMN
+              // collapsed to ~90px at normal window widths and wrapped one word
+              // per line, making the flagship AI commentary unreadable.
+              const overviewText = summary ?? (t.notes?.trim() || null)
+              const overviewIsNotes = !summary && !!t.notes?.trim()
+              const hasOverviewRow = overviewText != null || !!summariesLoading
+              const isExpanded = expandedOverviews.has(t.id)
+              const rowBg = isFlashing ? 'bg-blue-700/40'
+                : isSelected ? 'bg-blue-900/30'
+                : isHovered ? 'bg-blue-950/30'
+                : isNearDup ? 'bg-yellow-950/20'
+                : ''
               return (
+                <Fragment key={t.id}>
                 <tr
-                  key={t.id}
                   id={`eod-trade-${t.id}`}
                   onMouseEnter={e => onHoverEnter(t.id, e)}
                   onMouseLeave={onHoverLeave}
                   onClick={() => onRowOpen?.(t.id)}
                   title="Open this trade's log in the intraday page"
                   style={{ scrollMarginTop: 80 }}
-                  className={`group border-b transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${
+                  className={`group ${hasOverviewRow ? '' : 'border-b'} transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${
                     // Flash spotlight takes precedence: a bright ring + fill so
                     // the jumped-to row is unmistakable, holding until it fades.
                     isFlashing
@@ -595,7 +615,7 @@ export default function TradeList({
                       ~12ch with hover-tooltip for the full text. Single
                       line, max-w-[120px] to keep the column tight so the
                       Overview column has room to breathe. */}
-                  <td className="py-1.5 pr-3 max-w-[120px]">
+                  <td className="py-1.5 pr-3 max-w-[150px] whitespace-nowrap">
                     {(() => {
                       const setup = t.tags_json?.setups?.[0]
                       const isLong = t.direction === 'long'
@@ -607,13 +627,27 @@ export default function TradeList({
                         t.tags_json?.setups?.join(', ') || '(no setup tagged)',
                       ]
                       return (
-                        <span
-                          className="inline-flex items-center gap-1 text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case max-w-full"
-                          title={tooltipParts.join(' · ')}
-                        >
-                          <span className={`${arrowColor} font-bold`}>{arrow}</span>
-                          <span className="truncate">{setup ?? '—'}</span>
-                        </span>
+                        <>
+                          {t.symbol && (
+                            <span
+                              className={`inline-block align-middle mr-1 text-[9px] font-mono px-1 py-0.5 rounded border ${
+                                mixedSymbols
+                                  ? 'border-amber-600/70 text-amber-300 bg-amber-950/30'
+                                  : 'border-gray-700 text-gray-500 bg-gray-800/60'
+                              }`}
+                              title={mixedSymbols ? `${t.symbol} — multiple instruments were traded this day` : t.symbol}
+                            >
+                              {symbolRoot(t.symbol)}
+                            </span>
+                          )}
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case max-w-[104px] align-middle"
+                            title={tooltipParts.join(' · ')}
+                          >
+                            <span className={`${arrowColor} font-bold`}>{arrow}</span>
+                            <span className="truncate">{setup ?? '—'}</span>
+                          </span>
+                        </>
                       )
                     })()}
                   </td>
@@ -757,36 +791,6 @@ export default function TradeList({
                       </td>
                     )
                   })()}
-                  <td className="py-1.5 pr-2 max-w-md">
-                    {/* Overview column priority:
-                          1. AI-generated summary if /api/trades/summary
-                             produced one for this trade.
-                          2. Trader's own typed notes (t.notes) — fallback so
-                             the cell isn't blank when the AI summary is
-                             missing. Notes are the most authoritative source
-                             anyway; better to show them than render "—"
-                             while the trader's actual context sits unused.
-                          3. "summarizing…" indicator while AI is still
-                             running on the rest of the trades.
-                          4. "—" only when there's neither AI summary nor
-                             typed notes. */}
-                    {summary ? (
-                      <span className="text-gray-300 font-sans whitespace-normal leading-snug">{summary}</span>
-                    ) : t.notes?.trim() ? (
-                      <span
-                        className="text-gray-300 font-sans whitespace-normal leading-snug italic"
-                        title="From the trader's own notes on this trade — AI summary not yet generated."
-                      >
-                        {t.notes.trim()}
-                      </span>
-                    ) : summariesLoading ? (
-                      <span className="text-gray-600 inline-flex items-center gap-1">
-                        <Loader2 className="w-3 h-3 animate-spin" /> summarizing…
-                      </span>
-                    ) : (
-                      <span className="text-gray-700">—</span>
-                    )}
-                  </td>
                   <td className="py-1.5 pl-2 text-right">
                     <button
                       type="button"
@@ -801,6 +805,53 @@ export default function TradeList({
                     </button>
                   </td>
                 </tr>
+                {/* Full-width AI-overview sub-row. Mirrors the data row's hover/
+                    click behavior so it reads as one unit; carries the bottom
+                    border the data row gave up. */}
+                {hasOverviewRow && (
+                  <tr
+                    onMouseEnter={e => onHoverEnter(t.id, e)}
+                    onMouseLeave={onHoverLeave}
+                    onClick={() => onRowOpen?.(t.id)}
+                    className={`border-b border-gray-800 transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${rowBg}`}
+                  >
+                    <td className="pr-2" />
+                    <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pb-2 pt-0 pr-2">
+                      {overviewText ? (
+                        <div className="flex items-start gap-2 max-w-3xl">
+                          <p
+                            className={`text-xs font-sans leading-snug whitespace-normal text-gray-400 ${overviewIsNotes ? 'italic' : ''} ${isExpanded ? '' : 'line-clamp-2'}`}
+                            title={overviewIsNotes ? "From your own notes on this trade — AI summary not yet generated." : undefined}
+                          >
+                            {overviewText}
+                          </p>
+                          {overviewText.length > 180 && (
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation()
+                                setExpandedOverviews(prev => {
+                                  const next = new Set(prev)
+                                  if (next.has(t.id)) next.delete(t.id)
+                                  else next.add(t.id)
+                                  return next
+                                })
+                              }}
+                              className="text-[10px] text-gray-600 hover:text-gray-300 shrink-0 mt-0.5"
+                            >
+                              {isExpanded ? 'less' : 'more'}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-gray-600 text-[11px] inline-flex items-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" /> summarizing…
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               )
             })}
           </tbody>

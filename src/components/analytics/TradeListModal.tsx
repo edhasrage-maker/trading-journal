@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { X, ExternalLink } from 'lucide-react'
 import type { TradeWithContext } from '@/lib/analytics'
 import { mfeMaePoints, captureRatio, maeHeatRatio, rMultiple } from '@/lib/analytics'
+import { displayDayType, displayDayTypes } from '@/lib/day-type-display'
 
 /**
  * Drilldown drawer surfaced from the Analytics tag tables. Click a tag
@@ -192,8 +193,8 @@ function TradeRow({ t }: { t: TradeWithContext }) {
   // shape the user already reads on the intraday log.
   const xc = mfeMaePoints(t)
   const dayTypeDisplay = (t.day_types && t.day_types.length > 0)
-    ? t.day_types.join(', ')
-    : (t.day_type ?? '')
+    ? displayDayTypes(t.day_types)
+    : displayDayType(t.day_type ?? '')
 
   return (
     <tr className="border-b border-gray-800/50 hover:bg-gray-900/60 transition-colors">

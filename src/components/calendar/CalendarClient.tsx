@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { format, subMonths } from 'date-fns'
 import CalendarHeatmap from './CalendarHeatmap'
 import type { DaySummary } from '@/lib/analytics'
+import { displayDayType } from '@/lib/day-type-display'
 
 interface Props {
   summaries: DaySummary[]
@@ -80,7 +81,7 @@ export default function CalendarClient({ summaries, defaultStartDate, defaultEnd
               className="bg-gray-900 border border-gray-800 text-gray-300 text-xs font-medium rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500"
             >
               <option value="all">All day types</option>
-              {dayTypes.map(d => <option key={d} value={d}>{d}</option>)}
+              {dayTypes.map(d => <option key={d} value={d}>{displayDayType(d)}</option>)}
             </select>
           )}
         </div>

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown, HelpCircle, X } from 'lucide-react'
+import { displayDayTypes } from '@/lib/day-type-display'
 
 export interface DayRowData {
   id: string
@@ -734,9 +735,9 @@ function DayRowItem({
               // from pushing the Date column wide enough to clip PnL on the
               // right edge of the table. Full text still on hover.
               className="hidden sm:inline-block text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap truncate max-w-[200px]"
-              title={day.day_types.join(', ')}
+              title={displayDayTypes(day.day_types)}
             >
-              {day.day_types.join(', ')}
+              {displayDayTypes(day.day_types)}
             </span>
           )}
         </div>

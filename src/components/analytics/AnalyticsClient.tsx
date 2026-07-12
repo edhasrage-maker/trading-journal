@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { format, subMonths } from 'date-fns'
+import { useMemo, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import { format } from 'date-fns'
 import TagPerformanceTable from './TagPerformanceTable'
 import TagImpactTable from './TagImpactTable'
 import ConditionBuckets from './ConditionBuckets'
@@ -21,45 +22,55 @@ import {
   type TradeWithContext,
 } from '@/lib/analytics'
 
+/** Active window preset. Resolved server-side from searchParams — the page
+ *  only ships trades inside the window (alpha-readiness P0: stop sending the
+ *  entire history to the browser). */
+export type AnalyticsRange = '1m' | '3m' | '6m' | '1y' | 'all' | 'custom'
+
 interface Props {
   trades: TradeWithContext[]
   /** Per-day stats fed to PeriodComparison: date, eod_pnl override, and the
    *  prep AI's process score. Separate from `trades` so the comparison can
    *  pull day-level metrics without re-aggregating per-trade. */
   dayStats: Array<{ date: string; eod_pnl: number | null; process_score: number | null }>
-  defaultStartDate: string
-  defaultEndDate: string
+  activeRange: AnalyticsRange
+  /** Resolved window bounds (YYYY-MM-DD, both inclusive). */
+  windowStart: string
+  windowEnd: string
 }
 
-const RANGE_OPTIONS: { label: string; months: number }[] = [
-  { label: '1M', months: 1 },
-  { label: '3M', months: 3 },
-  { label: '6M', months: 6 },
-  { label: '1Y', months: 12 },
-  { label: 'All', months: 0 },
+const RANGE_OPTIONS: { label: string; param: Exclude<AnalyticsRange, 'custom'> }[] = [
+  { label: '1M', param: '1m' },
+  { label: '3M', param: '3m' },
+  { label: '6M', param: '6m' },
+  { label: '1Y', param: '1y' },
+  { label: 'All', param: 'all' },
 ]
 
-export default function AnalyticsClient({ trades, dayStats, defaultStartDate, defaultEndDate }: Props) {
+export default function AnalyticsClient({ trades, dayStats, activeRange, windowStart, windowEnd }: Props) {
   const today = format(new Date(), 'yyyy-MM-dd')
-  // Range mode: either one of the preset windows (1M/3M/6M/1Y/All) OR a
-  // user-entered From/To range. Two pieces of state so the user can flip
-  // between modes without losing their custom selection.
-  const [rangeMonths, setRangeMonths] = useState<number | 'custom'>(3)
-  const [customFrom, setCustomFrom] = useState<string>(
-    format(subMonths(new Date(), 3), 'yyyy-MM-dd'),
-  )
-  const [customTo, setCustomTo] = useState<string>(today)
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  // Custom From/To inputs — local state seeded from the active window; each
+  // valid change navigates, and the server re-windows the payload.
+  const [customOpen, setCustomOpen] = useState(activeRange === 'custom')
+  const [customFrom, setCustomFrom] = useState<string>(windowStart)
+  const [customTo, setCustomTo] = useState<string>(windowEnd)
 
-  const startDate = useMemo(() => {
-    if (rangeMonths === 'custom') return customFrom
-    if (rangeMonths === 0) return defaultStartDate
-    return format(subMonths(new Date(), rangeMonths), 'yyyy-MM-dd')
-  }, [rangeMonths, defaultStartDate, customFrom])
-  const endDate = useMemo(() => {
-    if (rangeMonths === 'custom') return customTo
-    return today > defaultEndDate ? today : defaultEndDate
-  }, [rangeMonths, customTo, today, defaultEndDate])
+  const startDate = windowStart
+  const endDate = windowEnd
 
+  const applyRange = (param: Exclude<AnalyticsRange, 'custom'>) => {
+    setCustomOpen(false)
+    startTransition(() => router.replace(`/analytics?range=${param}`, { scroll: false }))
+  }
+  const applyCustom = (from: string, to: string) => {
+    if (!from || !to || from > to) return
+    startTransition(() => router.replace(`/analytics?from=${from}&to=${to}`, { scroll: false }))
+  }
+
+  // Server already windows the payload; this is a cheap exact guard for the
+  // few slack rows around the window edges during a pending transition.
   const dateFiltered = useMemo(() => {
     return trades.filter(t => t.date >= startDate && t.date <= endDate)
   }, [trades, startDate, endDate])
@@ -183,13 +194,13 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
             {/* Range selector — preset windows plus a "Custom" button that
                 reveals From/To date inputs below. Custom is a sibling of the
                 presets (not a separate mode toggle) so it's discoverable. */}
-            <div className="flex bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            <div className={`flex bg-gray-900 border border-gray-800 rounded-lg overflow-hidden ${isPending ? 'opacity-60' : ''}`}>
               {RANGE_OPTIONS.map(o => (
                 <button
                   key={o.label}
-                  onClick={() => setRangeMonths(o.months)}
+                  onClick={() => applyRange(o.param)}
                   className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                    rangeMonths === o.months
+                    activeRange === o.param && !customOpen
                       ? 'bg-blue-600 text-white'
                       : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
                   }`}
@@ -198,9 +209,9 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
                 </button>
               ))}
               <button
-                onClick={() => setRangeMonths('custom')}
+                onClick={() => setCustomOpen(true)}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-gray-800 ${
-                  rangeMonths === 'custom'
+                  customOpen || activeRange === 'custom'
                     ? 'bg-blue-600 text-white'
                     : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
                 }`}
@@ -210,14 +221,14 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
             </div>
           </div>
 
-          {rangeMonths === 'custom' && (
+          {(customOpen || activeRange === 'custom') && (
             <div className="flex items-center gap-2 text-xs font-mono">
               <label className="text-gray-500">From</label>
               <input
                 type="date"
                 value={customFrom}
                 max={customTo}
-                onChange={e => setCustomFrom(e.target.value)}
+                onChange={e => { setCustomFrom(e.target.value); applyCustom(e.target.value, customTo) }}
                 className="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-gray-200 [color-scheme:dark] focus:outline-none focus:border-blue-600"
               />
               <label className="text-gray-500">To</label>
@@ -226,7 +237,7 @@ export default function AnalyticsClient({ trades, dayStats, defaultStartDate, de
                 value={customTo}
                 min={customFrom}
                 max={today}
-                onChange={e => setCustomTo(e.target.value)}
+                onChange={e => { setCustomTo(e.target.value); applyCustom(customFrom, e.target.value) }}
                 className="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-gray-200 [color-scheme:dark] focus:outline-none focus:border-blue-600"
               />
             </div>

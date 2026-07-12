@@ -1,6 +1,8 @@
+import { format, parseISO, subDays, subMonths } from 'date-fns'
 import { createClient } from '@/lib/supabase/server'
-import AnalyticsClient from '@/components/analytics/AnalyticsClient'
+import AnalyticsClient, { type AnalyticsRange } from '@/components/analytics/AnalyticsClient'
 import { joinTradesWithContext, type TradeWithContext } from '@/lib/analytics'
+import { todayPT } from '@/lib/pt-time'
 import type { TradingDay, Trade, MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -113,7 +115,40 @@ function histToContext(h: HistRow, ctxByDate: ContextByDate, dayTypesByDate: Day
   }
 }
 
-export default async function AnalyticsPage() {
+const RANGE_MONTHS: Record<string, number> = { '1m': 1, '3m': 3, '6m': 6, '1y': 12 }
+
+/**
+ * Resolve the requested window from searchParams. Server-side windowing keeps
+ * the props payload proportional to the selected range instead of shipping the
+ * user's entire trade history (6k+ trades / multiple MB) on every visit —
+ * the alpha-readiness P0 analytics fix. Default: 3 months.
+ */
+function resolveWindow(params: Record<string, string | string[] | undefined>): {
+  range: AnalyticsRange
+  windowStart: string | null // null = unbounded (All)
+  windowEnd: string
+} {
+  const today = todayPT()
+  const rawFrom = typeof params.from === 'string' ? params.from : undefined
+  const rawTo = typeof params.to === 'string' ? params.to : undefined
+  const isDate = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s)
+  if (isDate(rawFrom)) {
+    const to = isDate(rawTo) && rawTo >= rawFrom ? rawTo : today
+    return { range: 'custom', windowStart: rawFrom, windowEnd: to }
+  }
+  const raw = typeof params.range === 'string' ? params.range.toLowerCase() : '3m'
+  if (raw === 'all') return { range: 'all', windowStart: null, windowEnd: today }
+  const months = RANGE_MONTHS[raw] ?? 3
+  const range = (raw in RANGE_MONTHS ? raw : '3m') as AnalyticsRange
+  return { range, windowStart: format(subMonths(parseISO(today), months), 'yyyy-MM-dd'), windowEnd: today }
+}
+
+export default async function AnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const { range, windowStart, windowEnd } = resolveWindow(await searchParams)
   const supabase: AnyClient = await createClient()
 
   const [{ data: daysRaw }, { data: contextsRaw }] = await Promise.all([
@@ -134,11 +169,18 @@ export default async function AnalyticsPage() {
   // generated types haven't been regenerated yet, so we widen the row type
   // locally. When the types are next regenerated, drop the intersection.
   type TradeRowWithEntryMetrics = Trade & { entry_atr_1m: number | null; entry_rvol: number | null; mfe_dollars_per_leg: number | null; structure_5m_alignment: 'following' | 'fading' | 'neutral' | null; structure_5m_regime: 'bull' | 'bear' | 'neutral' | 'insufficient' | null }
+  // Query-level window with ±2 days of slack: `date` is the PT-anchored
+  // trading-day date (from the trading_days join) while entry_time is UTC, so
+  // rows near midnight can differ — the slack keeps them in the fetch and the
+  // exact post-filter on the joined date (below) trims precisely.
+  const slackStart = windowStart ? `${format(subDays(parseISO(windowStart), 2), 'yyyy-MM-dd')}T00:00:00Z` : null
   const trades: TradeRowWithEntryMetrics[] = []
   for (let p = 0; p < 50; p++) {
-    const { data, error } = await supabase
+    let q = supabase
       .from('trades')
       .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment, structure_5m_regime')
+    if (slackStart) q = q.gte('entry_time', slackStart)
+    const { data, error } = await q
       .order('entry_time', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -154,9 +196,11 @@ export default async function AnalyticsPage() {
   // merged in for long-term tag analysis. Paginated the same way.
   const hist: HistRow[] = []
   for (let p = 0; p < 50; p++) {
-    const { data, error } = await supabase
+    let q = supabase
       .from('historical_trades')
       .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_regime, tags_json')
+    if (windowStart) q = q.gte('trade_date', windowStart).lte('trade_date', windowEnd)
+    const { data, error } = await q
       .order('trade_date', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -190,11 +234,17 @@ export default async function AnalyticsPage() {
   }
   const joined = joinTradesWithContext(trades, days, contexts)
   const merged = [...joined, ...hist.map(h => histToContext(h, ctxByDate, dayTypesByDate))]
+  // Exact window on the PT-anchored trading-day date (the query slack above
+  // may have pulled a few extra rows at the edges).
+  const windowed = windowStart
+    ? merged.filter(t => t.date >= windowStart && t.date <= windowEnd)
+    : merged
 
-  // Earliest date across native days + historical trades, so "All" covers both.
+  // Resolved window bounds for the header display. For "All", derive from the
+  // data actually loaded (earliest native day or historical trade).
   const allDates = [...days.map(d => d.date), ...hist.map(h => h.trade_date).filter((d): d is string => !!d)].sort()
-  const defaultStartDate = allDates[0] ?? new Date().toISOString().slice(0, 10)
-  const defaultEndDate = allDates[allDates.length - 1] ?? new Date().toISOString().slice(0, 10)
+  const resolvedStart = windowStart ?? allDates[0] ?? windowEnd
+  const resolvedEnd = windowEnd
 
   // Per-day stats for the period-comparison view: date, eod_pnl override,
   // process score from the prep AI analysis. Per-trade win rate / count is
@@ -209,10 +259,11 @@ export default async function AnalyticsPage() {
   return (
     <div className="max-w-7xl mx-auto">
       <AnalyticsClient
-        trades={merged}
+        trades={windowed}
         dayStats={dayStats}
-        defaultStartDate={defaultStartDate}
-        defaultEndDate={defaultEndDate}
+        activeRange={range}
+        windowStart={resolvedStart}
+        windowEnd={resolvedEnd}
       />
     </div>
   )

@@ -497,7 +497,7 @@ function ConsolidatedVerdict({
   // Show a per-view explanation when overridden so the user understands why
   // the verdict changed when they toggled.
   const explanation = isOverridden
-    ? `${effectivePick === 'tertile' ? 'Tertile' : 'Median'} view (manual override)`
+    ? `${effectivePick === 'tertile' ? 'Specific' : 'Broad'} match (manual override)`
     : outcome.consolidated.explanation
   return (
     <div className={`border rounded-xl px-5 py-4 ${bg}`}>
@@ -522,9 +522,9 @@ function ConsolidatedVerdict({
                 className="bg-gray-900 border border-gray-700 text-gray-300 text-[11px] rounded px-1.5 py-0.5 font-mono focus:outline-none focus:border-blue-500"
                 title="Pick which historical-bucket view drives the verdict. Auto = tertile (more specific match), falling back to median when tertile has insufficient data."
               >
-                <option value="auto">Auto (tertile)</option>
-                <option value="tertile">Tertile</option>
-                <option value="median">Median</option>
+                <option value="auto">Auto (best match)</option>
+                <option value="tertile">Specific match</option>
+                <option value="median">Broad match</option>
               </select>
             </div>
           )}
@@ -578,8 +578,9 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
                 className={`text-[10px] mt-1 ${cls} ${weight}`}
                 title={`Your overall baseline EV is ${baselineEv >= 0 ? '+' : ''}$${baselineEv.toFixed(2)}/trade. ${sigAbove ? 'This environment is statistically ABOVE it — a favorable regime for you.' : sigBelow ? 'Statistically BELOW it — you underperform your average here.' : 'Within range of your average — no clear edge either way.'}`}
               >
-                {delta >= 0 ? '↑' : '↓'} {delta >= 0 ? '+' : '−'}${Math.abs(delta).toFixed(0)} vs your avg
-                {!sigAbove && !sigBelow && ' (within range)'}
+                {Math.round(Math.abs(delta)) === 0
+                  ? '≈ your average day'
+                  : <>{delta >= 0 ? '↑' : '↓'} {delta >= 0 ? '+' : '−'}${Math.abs(delta).toFixed(0)} vs your avg{!sigAbove && !sigBelow && ' (within range)'}</>}
               </div>
             )
           })()}

@@ -111,7 +111,7 @@ export default function DiscordDashboard({ date, marketContext: ctx, prepNotes, 
         {/* GBX context row */}
         {(ctx.onh != null && ctx.onl != null) && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '12px' }}>
-            <StatBox label="GBX RANGE" value={((ctx.onh as number) - (ctx.onl as number)).toFixed(2)} />
+            <StatBox label="O/N RANGE" value={((ctx.onh as number) - (ctx.onl as number)).toFixed(2)} />
             {ctx.gbx_pct_adr != null && <StatBox label="GBX % ADR" value={`${ctx.gbx_pct_adr}%`} />}
           </div>
         )}
@@ -178,7 +178,7 @@ export default function DiscordDashboard({ date, marketContext: ctx, prepNotes, 
           </div>
         )}
 
-        <div style={{ color: '#374151', fontSize: '10px', textAlign: 'right', marginTop: '10px' }}>Trade Journal • NQ</div>
+        <div style={{ color: '#374151', fontSize: '10px', textAlign: 'right', marginTop: '10px' }}>TapeScore • {symbol}</div>
       </div>
     </div>
   )
