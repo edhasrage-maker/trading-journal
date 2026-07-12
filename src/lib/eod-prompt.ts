@@ -674,6 +674,7 @@ ${eodNotes?.trim() || '(none provided)'}
 ${useStructuredSchema ? `Respond with ONLY valid JSON in this exact structure (no markdown, no code fences):
 {
   "summary": "<2-3 sentences on the session — call out the process verdict AND a one-line execution read>",
+  "headline": "<1 sentence ≤14 words — the DAY'S verdict in plain language: decision quality, never P&L. This sits under the day's single TapeScore number. NEVER use the word 'Compliance'; say 'rules held' / 'a rule slipped' / 'rules broke down'.>",
   "what_worked": ["<concrete behavior/decision that was a win>", "<up to 4 total>"],
   "mistakes": ["<recurring or specific bad decision — cite trades by number/time>", "<up to 5 total>"],
   "patterns": ["<setup/timing/management pattern across trades>", "<up to 4 total>"],
@@ -719,6 +720,7 @@ Be direct. If the day was a Breach, say so plainly — don't soften it with "but
 LENGTH DISCIPLINE — the response must be valid JSON, so keep prose tight:
   • Per-rule reasons: 1 short sentence max (under 25 words). Cite specifics, don't argue.
   • process.headline + execution.headline: 1 sentence, ≤15 words. The "why this score" in plain English. Always visible — make every word count.
+  • Top-level headline: 1 sentence, ≤14 words, the day in plain language. Never the word "Compliance", never a P&L number.
   • process.notes + execution.notes: 2-3 sentences MAX, behind a "Show details" toggle. Diagnostic narrative, NOT a calculation trace. Forbidden in notes: per-trade arithmetic ("T1 MAE = 19.25"), criterion lists ("setup_in_playbook=1.0..."), composite formulas ("0.35*0.41+..."), "Reporting X = Y" lines. The numbers are already in the chips and breakdown object — re-narrating them wastes user attention.
   • what_worked / mistakes / patterns / next_session_focus bullets: 1 sentence each.
   • Do NOT wrap the JSON in markdown fences (no \`\`\`json). The whole response should start with { and end with }.` : `Respond with ONLY valid JSON in this exact structure (no markdown, no code fences):

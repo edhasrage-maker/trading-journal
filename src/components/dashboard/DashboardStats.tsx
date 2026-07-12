@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { aggregateTapeScore, tapeScorePeriodSentence, type TapeScoreResult } from '@/lib/tapescore'
 
 /**
- * Period-selectable stat cards for the dashboard header.
+ * Period-selectable dashboard header: the TapeScore hero (one 0-100 score,
+ * verdict sentence, component chips — Ruleset amendment 5) followed by the
+ * stat cards, P&L demoted to the card row.
  *
  * Receives the full server-fetched day stats (start-of-last-year → today) and
  * filters client-side on the chosen period. Period is persisted to
@@ -16,7 +19,6 @@ import { ChevronDown } from 'lucide-react'
  *                            traded; zero-trade days are excluded)
  *   3. Trade Win Rate     — sum(trade_wins) / sum(trades_with_pnl_count)
  *   4. Avg MFE/MAE        — averaged across days that have those stats
- *   5. Median Process     — median of ai_analysis_json.score (process_score)
  */
 
 /** Minimal day-stat shape needed for the cards. Avoids depending on the full
@@ -46,9 +48,11 @@ export interface DayStat {
   /** Execution composite scaled to 0-10. Same value rendered in the
    *  Recent Days table's "Execution" column. */
   overall_grade: number | null
-  /** Process verdict — used to compute the dashboard's compliance rate
-   *  (Compliant days / scored days × 100). */
+  /** Process verdict — kept for the charts' trend series. */
   process_verdict: 'Compliant' | 'Breach' | null
+  /** One TapeScore — derived server-side (src/lib/tapescore.ts). Null when
+   *  the day has no EOD analysis (any rubric). */
+  tapescore: TapeScoreResult | null
 }
 
 type MfeUnit = 'pts' | 'dollars' | 'atr'
@@ -209,16 +213,10 @@ export default function DashboardStats({ days }: Props) {
     const v13Scores = inPeriod.map(d => d.process_v13_score).filter((v): v is number => v != null)
     const medianProcessV13 = median(v13Scores)
 
-    // Median Execution + Process compliance rate. Replaces the older
-    // medianProcessV13-only card per the 2026-06-09 design: traders care
-    // less about "what's the median process number" (binary-ish) and more
-    // about "of the days where I had a process score, how often was I
-    // compliant" + "how strong was my execution on average".
-    const execScores = inPeriod.map(d => d.overall_grade).filter((v): v is number => v != null)
-    const medianExecution = median(execScores)
-    const verdictDays = inPeriod.map(d => d.process_verdict).filter((v): v is 'Compliant' | 'Breach' => v != null)
-    const compliantDays = verdictDays.filter(v => v === 'Compliant').length
-    const complianceRate = verdictDays.length > 0 ? compliantDays / verdictDays.length : null
+    // One TapeScore hero aggregate (amendment 5): mean day score over scored
+    // days + component means + rules-kept ratio. Replaces the old Execution /
+    // Compliance stat card — those two dimensions now read as hero chips.
+    const tapePeriod = aggregateTapeScore(inPeriod.map(d => d.tapescore))
 
     return {
       pnl,
@@ -228,15 +226,11 @@ export default function DashboardStats({ days }: Props) {
       avgMae,
       medianProcess: medianPrep,    // legacy field name preserved for callers
       medianProcessV13,
-      medianExecution,
-      complianceRate,
-      compliantDays,
-      verdictDaysCount: verdictDays.length,
+      tapePeriod,
       tradedDaysCount: tradedDays.length,
       totalTradesWithPnl,
       procCount: prepScores.length,
       v13Count: v13Scores.length,
-      execCount: execScores.length,
     }
   }, [days, period, mfeUnit])
 
@@ -259,10 +253,14 @@ export default function DashboardStats({ days }: Props) {
         </div>
       </div>
 
-      {/* Stat cards. Order: P&L → Day Win % → Trade Win % → Avg MFE/MAE →
-          Median Process. 5 columns fit fine on the standard >1100px dashboard
-          width. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5">
+      {/* One TapeScore hero (Ruleset amendment 5): the report card before the
+          ledger. Score ring + verdict sentence + component chips; P&L lives in
+          the card row below. */}
+      <TapeScoreHero period={stats.tapePeriod} periodLabel={PERIOD_LABELS[period]} />
+
+      {/* Stat cards. Order: P&L → Day Win % → Trade Win % → Avg MFE/MAE.
+          The old Execution / Compliance card folded into the hero chips. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard
           label={`${PERIOD_LABELS[period]} P&L`}
           value={(() => {
@@ -324,19 +322,104 @@ export default function DashboardStats({ days }: Props) {
           }
           valueClass="text-base"
         />
-        {/* Execution / Compliance card: Median Execution score (0-10)
-            paired with Process Compliance rate (% of scored days that were
-            Compliant). Replaces the older Median Process card — surfaces
-            BOTH dimensions instead of just the verdict-derived score. */}
-        <ExecutionComplianceCard
-          medianExecution={stats.medianExecution}
-          execCount={stats.execCount}
-          complianceRate={stats.complianceRate}
-          compliantDays={stats.compliantDays}
-          verdictDaysCount={stats.verdictDaysCount}
-        />
       </div>
     </div>
+  )
+}
+
+/** Band → color classes shared by the hero ring and score text. */
+function bandColors(band: 'high' | 'mid' | 'low' | null): { stroke: string; text: string } {
+  switch (band) {
+    case 'high': return { stroke: '#4ade80', text: 'text-green-400' }
+    case 'mid': return { stroke: '#fbbf24', text: 'text-amber-300' }
+    case 'low': return { stroke: '#f87171', text: 'text-red-400' }
+    default: return { stroke: '#374151', text: 'text-gray-500' }
+  }
+}
+
+/** The One-TapeScore dashboard hero: 0-100 ring, plain-language verdict, and
+ *  the three component chips (Rules kept / Execution / Prep). */
+function TapeScoreHero({ period, periodLabel }: {
+  period: ReturnType<typeof aggregateTapeScore>
+  periodLabel: string
+}) {
+  const { score, band, scoredDays, verdictDays, compliantDays, execution, prep } = period
+  const colors = bandColors(band)
+  const sentence = tapeScorePeriodSentence(period)
+  const R = 40
+  const CIRC = 2 * Math.PI * R
+  const dash = score != null ? (score / 100) * CIRC : 0
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-3 sm:mb-4 flex items-center gap-5 flex-wrap">
+      <div className="relative w-[92px] h-[92px] shrink-0" title="TapeScore — one 0-100 score per day: rules kept (50%), execution quality (35%), prep (15%). Days that broke 2+ rules cap at 49.">
+        <svg width="92" height="92" viewBox="0 0 92 92" className="-rotate-90">
+          <circle cx="46" cy="46" r={R} fill="none" stroke="#1f2937" strokeWidth="7" />
+          {score != null && (
+            <circle
+              cx="46" cy="46" r={R} fill="none"
+              stroke={colors.stroke} strokeWidth="7" strokeLinecap="round"
+              strokeDasharray={`${dash} ${CIRC}`}
+            />
+          )}
+        </svg>
+        <div className="absolute inset-0 grid place-items-center">
+          <div className="text-center leading-none">
+            <div className={`font-mono text-[26px] font-extrabold ${colors.text}`}>{score ?? '—'}</div>
+            <div className="text-[8px] tracking-[0.14em] text-gray-500 mt-0.5">TAPESCORE</div>
+          </div>
+        </div>
+      </div>
+      <div className="flex-1 min-w-[240px]">
+        {score != null ? (
+          <>
+            <p className="text-white font-semibold text-[15px]">{sentence}</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {periodLabel} · {scoredDays} scored session{scoredDays === 1 ? '' : 's'}
+            </p>
+            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+              {verdictDays > 0 && (
+                <HeroChip
+                  label={`Rules kept ${compliantDays}/${verdictDays}`}
+                  tone={compliantDays / verdictDays >= 0.85 ? 'good' : compliantDays / verdictDays >= 0.6 ? 'mid' : 'bad'}
+                  title="Sessions that kept at least 4 of the 5 safety rails, out of sessions with a rules audit"
+                />
+              )}
+              {execution != null && (
+                <HeroChip
+                  label={`Execution ${execution}`}
+                  tone={execution >= 70 ? 'good' : execution >= 50 ? 'mid' : 'bad'}
+                  title="Average execution quality (0-100): entry/stop/target parameters, move captured, prep adherence, profit factor"
+                />
+              )}
+              {prep != null && (
+                <HeroChip
+                  label={`Prep ${prep}`}
+                  tone={prep >= 70 ? 'good' : prep >= 50 ? 'mid' : 'bad'}
+                  title="Average prep quality score (0-100) from the morning prep analysis"
+                />
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-gray-400 font-medium text-[15px]">No scored sessions in this period.</p>
+            <p className="text-xs text-gray-600 mt-0.5">Run &ldquo;Analyze Session&rdquo; on a day&apos;s EOD recap to grade it.</p>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function HeroChip({ label, tone, title }: { label: string; tone: 'good' | 'mid' | 'bad'; title: string }) {
+  const cls =
+    tone === 'good' ? 'border-green-800/60 text-green-300 bg-green-950/40'
+    : tone === 'mid' ? 'border-amber-800/60 text-amber-300 bg-amber-950/40'
+    : 'border-red-800/60 text-red-300 bg-red-950/40'
+  return (
+    <span className={`inline-flex items-center text-[11px] px-2.5 py-0.5 rounded-full border whitespace-nowrap ${cls}`} title={title}>
+      {label}
+    </span>
   )
 }
 
@@ -364,60 +447,4 @@ function StatCard({
   )
 }
 
-/** Stat card showing Median Execution score (0-10) + Process Compliance
- *  rate (% of scored days that were Compliant). Format: "7.0 / 70%" —
- *  median execution was 7, you were compliant on 70% of scored days.
- *
- *  Replaces the older Median-Process-only card. Captures both dimensions
- *  of the v1.4 spec: Execution is the continuous diagnostic (how well
- *  you traded), Compliance is the binary safety-rail check (how often
- *  you stayed within the rules). They tell different stories — a day
- *  can have great execution but still breach a hard rule, or be
- *  compliant but with poor execution.
- */
-function ExecutionComplianceCard({
-  medianExecution, execCount, complianceRate, compliantDays, verdictDaysCount,
-}: {
-  medianExecution: number | null
-  execCount: number
-  complianceRate: number | null
-  compliantDays: number
-  verdictDaysCount: number
-}) {
-  // Tone driven by execution score (the larger, continuous signal). Color
-  // bands match the v1.4 thresholds — ≥7 is solid, 5-7 is concerning,
-  // <5 is bad.
-  const execTone =
-    medianExecution == null ? 'text-gray-500'
-    : medianExecution >= 7 ? 'text-green-400'
-    : medianExecution >= 5 ? 'text-yellow-300'
-    : 'text-red-400'
-  // Compliance gets its own color signal: ≥80% green (rule-following),
-  // 50-80% yellow (slipping), <50% red (chronic breaches).
-  const compTone =
-    complianceRate == null ? 'text-gray-500'
-    : complianceRate >= 0.8 ? 'text-green-400'
-    : complianceRate >= 0.5 ? 'text-yellow-300'
-    : 'text-red-400'
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">Execution / Compliance</p>
-      <p className="font-bold text-xl whitespace-nowrap">
-        <span className={execTone}>
-          {medianExecution == null ? '—' : medianExecution.toFixed(1)}
-        </span>
-        <span className="text-gray-600 mx-1">/</span>
-        <span className={compTone}>
-          {complianceRate == null ? '—' : `${Math.round(complianceRate * 100)}%`}
-        </span>
-      </p>
-      <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">
-        {execCount} executed
-        {verdictDaysCount > 0 && (
-          <> · {compliantDays}/{verdictDaysCount} compliant</>
-        )}
-      </p>
-    </div>
-  )
-}
 

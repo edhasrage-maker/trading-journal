@@ -14,6 +14,7 @@ import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib
 // reading the pre-backfilled `trades.entry_atr_1m` column. Imports kept off
 // the file so the bundle doesn't carry unused code.
 import type { TradingDay } from '@/lib/supabase/types'
+import { tapeScoreFromAnalyses } from '@/lib/tapescore'
 
 const PAGE_SIZE = 1000
 
@@ -402,6 +403,10 @@ export default async function DashboardPage() {
         }
         return Math.round((passCount / 5) * 10)
       })(),
+      // One TapeScore (Ruleset amendment 5): single 0-100 headline derived
+      // from the process rails + execution composite + prep quality score.
+      // Pure derivation (src/lib/tapescore.ts) — legacy rows included.
+      tapescore: tapeScoreFromAnalyses(d.eod_ai_analysis_json, d.ai_analysis_json?.score ?? null),
       process_breach_rules: (() => {
         const p = d.eod_ai_analysis_json?.process
         if (!p?.per_rule) return null
@@ -469,10 +474,11 @@ export default async function DashboardPage() {
     avg_live_atr_1m: d.avg_live_atr_1m,
     process_score: d.process_score,
     process_v13_score: d.process_v13_score,
-    // Execution composite (0-10) + Process verdict piped through so the
-    // dashboard card can show median Execution / Compliance rate.
+    // Execution composite (0-10) + Process verdict piped through for the
+    // charts; the hero itself reads the derived TapeScore.
     overall_grade: d.overall_grade,
     process_verdict: d.process_verdict,
+    tapescore: d.tapescore,
   }))
 
   // Recent Days table still scopes to the 180d window — keeps the table fast

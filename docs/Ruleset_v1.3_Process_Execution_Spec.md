@@ -8,6 +8,9 @@
 **Amended 2026-06-20 (amendment 4):**
   4. **MAE / heat control removed from the Execution composite.** Getting stopped — especially when price runs past the stop — is correct execution validating an invalidated idea; scoring it as "heat → 0" penalizes a good decision. The four remaining Execution sub-metrics renormalize: Execution Parameters 41%, MFE capture 24%, Prep adherence 24%, Realized-vs-planned RR (Profit Factor) 11%. MAE/heat survives elsewhere only as a descriptive, **non-graded** entry-timing stat in analytics. See §EXECUTION QUALITY.
 
+**Amended 2026-07-12 (amendment 5 — "One TapeScore"):**
+  5. **A single 0–100 headline score per session, derived (never AI-scored) from the three existing layers.** Process and Execution remain separately computed exactly as specified below — nothing in how they are graded changes. The TapeScore is a presentation-layer blend computed deterministically in application code (`src/lib/tapescore.ts`), so it applies retroactively to every historical row without re-analysis. See §ONE TAPESCORE. The "never combined" clause is amended to: never combined *for grading*; the headline blend always exposes its components ("Rules kept n/5", "Execution", "Prep") one click away. The word "Compliance" is retired from all user-facing copy; the session verdict surfaces as "Rules kept n/5".
+
 ## INSTRUCTION TO THE JOURNAL ASSISTANT
 Replace in full any prior ruleset, sizing model, or scoring logic. Adopt the below verbatim. Do not infer, soften, merge, or average rules. Evaluate each rule only against the data field named.
 
@@ -93,6 +96,24 @@ Each criterion is binary per trade (pass = 1, fail = 0, N/A = skipped). Per-trad
    • FAIL: "Exited early because I was scared to give back profits before my target" — PnL-anchored emotional decision, not structural.
 8. **No mistakes tagged.** `tags_json.mistakes` is empty on the trade. Any mistake tag = fail.
 9. **Emotion: Stable.** `tags_json.emotions` includes Stable (pass). Compromised = fail (not ideal, but trade-execution counts). MAXRAGE = fail AND a meta-signal that the trader shouldn't have been trading at all.
+
+## ONE TAPESCORE (amendment 5 — derived headline, 0–100)
+Computed in application code, never by the AI. The AI's only new responsibility is the day `headline` sentence (see below).
+
+**Components (each scaled 0–100):**
+- **Rules** = `pass_count / 5 × 100` over the five safety rails (P1–P5).
+- **Execution** = `execution.composite × 100`. If the analysis ran but zero trades were scoreable, Execution = 0 (existing convention).
+- **Prep** = prep quality score (`ai_analysis_json.score`, 1–10) × 10.
+
+**Formula:** `TapeScore = round(0.50 × Rules + 0.35 × Execution + 0.15 × Prep)`
+- A missing component (e.g. prep never analyzed) renormalizes the remaining weights; no components → no TapeScore.
+- **Breach cap:** session verdict Breach (≤3/5 rails) ⇒ `min(TapeScore, 49)`. A session that broke two or more safety rails can never render green or amber.
+
+**Banding:** 70–100 = high (green), 50–69 = mid (amber), 0–49 = low (red). All Breach sessions land in the red band via the cap.
+
+**Legacy rows:** pre-amendment-3 rows (P1–P7 keys, detected by the presence of P6/P7) remap old→new rails (P1–P3 unchanged, old P5 cooldown → P4, old P6 trade cap → P5; old P4/P7 are ignored — they moved into Execution Parameters). Pre-v1.3 rows with only the single 0–10 `score` field use `score × 10`, flagged as legacy-rubric.
+
+**Day headline:** new analyses emit a top-level `headline` — one sentence, ≤14 words, stating the day's verdict in plain language (decision quality, not P&L). It must never contain the word "Compliance". Legacy rows fall back to a deterministic template.
 
 ## TREND METRICS
 - Compliant-session rate, rolling 10 and 20 sessions.

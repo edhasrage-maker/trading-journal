@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown, HelpCircle, X } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown } from 'lucide-react'
 import { displayDayTypes } from '@/lib/day-type-display'
+import type { TapeScoreResult } from '@/lib/tapescore'
 
 export interface DayRowData {
   id: string
@@ -35,6 +36,9 @@ export interface DayRowData {
   process_v13_score: number | null
   /** Rule IDs that failed (P1..P7). Powers the hover tooltip on Breach days. */
   process_breach_rules: string[] | null
+  /** One TapeScore (Ruleset amendment 5) — the single 0-100 headline derived
+   *  server-side from rules + execution + prep. Null = day never analyzed. */
+  tapescore: TapeScoreResult | null
   win_rate: number | null
   avg_mfe_pts: number | null
   avg_mae_pts: number | null
@@ -62,16 +66,20 @@ interface Props {
   initialDays: DayRowData[]
 }
 
-type SortColumn = 'date' | 'grade' | 'process_v13' | 'trades' | 'mfe_mae' | 'capture' | 'win_rate' | 'pnl'
+type SortColumn = 'date' | 'tapescore' | 'trades' | 'pnl'
 type SortDirection = 'asc' | 'desc'
-type MfeUnit = 'pts' | 'dollars' | 'atr'
 
 /** Columns the user can drag-reorder. Date is pinned left (row identifier),
  *  the checkbox cell is pinned left (selection), the delete cell is pinned
- *  right (row action) — those three never move. */
-type ReorderableColumnId = 'grade' | 'process_v13' | 'trades' | 'mfe_mae' | 'capture' | 'win_rate' | 'pnl'
-const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['grade', 'process_v13', 'trades', 'mfe_mae', 'capture', 'win_rate', 'pnl']
-const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v1'
+ *  right (row action) — those three never move.
+ *
+ *  One-TapeScore redesign (2026-07-12): the table drops from 8 data columns
+ *  to 4 — Day type / TapeScore / Trades / P&L. The scan question here is
+ *  only "which day should I review?"; MFE/MAE, capture, and win-rate detail
+ *  live one click deeper on the day's EOD recap. */
+type ReorderableColumnId = 'day_type' | 'tapescore' | 'trades' | 'pnl'
+const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['day_type', 'tapescore', 'trades', 'pnl']
+const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v2'
 
 export default function RecentDaysList({ initialDays }: Props) {
   const router = useRouter()
@@ -82,15 +90,6 @@ export default function RecentDaysList({ initialDays }: Props) {
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   const [sortColumn, setSortColumn] = useState<SortColumn>('date')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
-  const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
-  const [mfeUnit, setMfeUnit] = useState<MfeUnit>('atr')
-  const mfeInfoRef = useRef<HTMLDivElement>(null)
-  const [realizedInfoOpen, setRealizedInfoOpen] = useState(false)
-  const realizedInfoRef = useRef<HTMLDivElement>(null)
-  // MFE Realized %/MAE Heat % column unit. Default '%' preserves the
-  // existing ratio display; user can switch to pts/$/×ATR to see the
-  // realized excursion values themselves.
-  const [realizedUnit, setRealizedUnit] = useState<MfeUnit | '%'>('%')
   // Drag-reorder state for the data columns. Restored from localStorage on
   // mount; persisted on every change. Invalid stored values fall back to the
   // canonical default order.
@@ -143,44 +142,6 @@ export default function RecentDaysList({ initialDays }: Props) {
   }
   const onColDragEnd = () => { setDragColId(null); setDragOverColId(null) }
 
-  // Click-outside + Escape dismiss for the MFE/MAE info popover.
-  useEffect(() => {
-    if (!mfeInfoOpen) return
-    const handleMouse = (e: MouseEvent) => {
-      if (mfeInfoRef.current && !mfeInfoRef.current.contains(e.target as Node)) {
-        setMfeInfoOpen(false)
-      }
-    }
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMfeInfoOpen(false)
-    }
-    document.addEventListener('mousedown', handleMouse)
-    document.addEventListener('keydown', handleKey)
-    return () => {
-      document.removeEventListener('mousedown', handleMouse)
-      document.removeEventListener('keydown', handleKey)
-    }
-  }, [mfeInfoOpen])
-
-  // Click-outside + Escape dismiss for the MFE Realized % / MAE Heat % popover.
-  useEffect(() => {
-    if (!realizedInfoOpen) return
-    const handleMouse = (e: MouseEvent) => {
-      if (realizedInfoRef.current && !realizedInfoRef.current.contains(e.target as Node)) {
-        setRealizedInfoOpen(false)
-      }
-    }
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setRealizedInfoOpen(false)
-    }
-    document.addEventListener('mousedown', handleMouse)
-    document.addEventListener('keydown', handleKey)
-    return () => {
-      document.removeEventListener('mousedown', handleMouse)
-      document.removeEventListener('keydown', handleKey)
-    }
-  }, [realizedInfoOpen])
-
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 3500)
@@ -214,12 +175,8 @@ export default function RecentDaysList({ initialDays }: Props) {
     const get = (d: DayRowData): number | string | null => {
       switch (sortColumn) {
         case 'date': return d.date
-        case 'grade': return d.overall_grade
-        case 'process_v13': return d.process_v13_score
+        case 'tapescore': return d.tapescore?.score ?? null
         case 'trades': return d.trade_count
-        case 'mfe_mae': return d.avg_mfe_pts // unit-agnostic; ordering identical across pts/dollars
-        case 'capture': return d.avg_capture
-        case 'win_rate': return d.win_rate
         case 'pnl': return d.eod_pnl
       }
     }
@@ -337,34 +294,30 @@ export default function RecentDaysList({ initialDays }: Props) {
     }
   }
 
-  // Header node per reorderable column id. Same JSX as before, with the
-  // draggable / drop-hint props spread onto each <th>.
+  // Header node per reorderable column id, with the draggable / drop-hint
+  // props spread onto each <th>.
   const headerNodes: Record<ReorderableColumnId, React.ReactNode> = {
-    grade: (
+    day_type: (
+      <th
+        key="day_type"
+        {...dragProps('day_type')}
+        className={`font-normal py-2 pr-3 text-left ${dragProps('day_type').className ?? ''}`}
+      >
+        <span className="text-gray-500">Day type</span>
+      </th>
+    ),
+    tapescore: (
       <SortableTh
-        key="grade"
-        label="Execution"
-        column="grade"
+        key="tapescore"
+        label="TapeScore"
+        column="tapescore"
         current={sortColumn}
         direction={sortDirection}
         onSort={setSort}
         align="center"
         className="pr-3 w-24"
-        titleAttr="Execution composite score (0–10) — drag to reorder."
-        thProps={dragProps('grade')}
-      />
-    ),
-    process_v13: (
-      <SortableTh
-        key="process_v13"
-        label="Process"
-        column="process_v13"
-        current={sortColumn}
-        direction={sortDirection}
-        onSort={setSort}
-        align="center"
-        className="pr-3 w-20"
-        thProps={dragProps('process_v13')}
+        titleAttr="One 0-100 score per day — rules kept, execution quality, and prep blended. Hover a score for its components."
+        thProps={dragProps('tapescore')}
       />
     ),
     trades: (
@@ -378,154 +331,6 @@ export default function RecentDaysList({ initialDays }: Props) {
         align="center"
         className="pr-3 w-16"
         thProps={dragProps('trades')}
-      />
-    ),
-    mfe_mae: (
-      <th key="mfe_mae" {...dragProps('mfe_mae')} className={`font-normal py-2 pr-3 text-center w-28 relative ${dragProps('mfe_mae').className ?? ''}`}>
-        <div className="flex flex-col items-center gap-0.5">
-          <button
-            type="button"
-            onClick={() => setMfeInfoOpen(o => !o)}
-            className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-            title="What is MFE/MAE?"
-          >
-            <HelpCircle className="w-3 h-3" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setSort('mfe_mae')}
-            className={`inline-flex items-center gap-1 hover:text-white transition-colors ${sortColumn === 'mfe_mae' ? 'text-blue-300' : 'text-gray-500'}`}
-          >
-            Avg MFE/MAE
-            {sortColumn === 'mfe_mae' ? (
-              sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
-            ) : (
-              <span className="w-3 h-3 opacity-30">▾</span>
-            )}
-          </button>
-          <select
-            value={mfeUnit}
-            onChange={e => setMfeUnit(e.target.value as MfeUnit)}
-            onClick={e => e.stopPropagation()}
-            className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight"
-            title="Display unit for MFE/MAE"
-          >
-            <option value="pts">pts</option>
-            <option value="dollars">$</option>
-            <option value="atr">ATR</option>
-          </select>
-        </div>
-        {mfeInfoOpen && (
-          <div
-            ref={mfeInfoRef}
-            className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
-          >
-            <div className="flex items-start justify-between mb-2">
-              <p className="font-semibold text-white">Avg MFE / MAE</p>
-              <button type="button" onClick={() => setMfeInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <p className="mb-2">
-              Average per-trade <strong className="text-green-300">M</strong>aximum <strong className="text-green-300">F</strong>avorable / <strong className="text-red-300">M</strong>aximum <strong className="text-red-300">A</strong>dverse <strong>E</strong>xcursion across the day&apos;s trades. Sourced tick-precise from Sierra Chart&apos;s <span className="font-mono">HighDuringPosition</span> / <span className="font-mono">LowDuringPosition</span> on closing fills.
-            </p>
-            <p className="mb-2">Per-trade calc, depending on direction:</p>
-            <ul className="list-disc pl-4 space-y-1 mb-2">
-              <li><strong>Long</strong>: MFE = high âˆ’ entry, MAE = entry âˆ’ low</li>
-              <li><strong>Short</strong>: MFE = entry âˆ’ low, MAE = high âˆ’ entry</li>
-            </ul>
-            <p className="mb-2">Unit options:</p>
-            <ul className="list-disc pl-4 space-y-1">
-              <li><strong>pts</strong>: raw price points</li>
-              <li><strong>$</strong>: points × per-symbol contract multiplier × trade quantity</li>
-              <li><strong>ATR</strong>: 1× ATR-10 (Wilder) units. Uses the day&apos;s prep ATR (market_context.atr_1m); shows — if not entered.</li>
-            </ul>
-            <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
-          </div>
-        )}
-      </th>
-    ),
-    capture: (
-      <th key="capture" {...dragProps('capture')} className={`font-normal py-2 pr-3 text-center w-36 relative whitespace-nowrap ${dragProps('capture').className ?? ''}`}>
-        <div className="flex flex-col items-center gap-0.5">
-          <button
-            type="button"
-            onClick={() => setRealizedInfoOpen(o => !o)}
-            className={`transition-colors ${realizedInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-            title="What is MFE Realized %?"
-          >
-            <HelpCircle className="w-3 h-3" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setSort('capture')}
-            className={`inline-flex flex-col items-center leading-tight hover:text-white transition-colors ${sortColumn === 'capture' ? 'text-blue-300' : 'text-gray-500'}`}
-          >
-            <span className="inline-flex items-center gap-1">
-              {realizedUnit === '%' ? 'MFE Realized %' : 'MFE Realized'}
-              {sortColumn === 'capture' && (sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-            </span>
-          </button>
-        </div>
-        <select
-          value={realizedUnit}
-          onChange={e => setRealizedUnit(e.target.value as MfeUnit | '%')}
-          onClick={e => e.stopPropagation()}
-          className="bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 mt-0.5 focus:outline-none focus:border-blue-500 leading-tight normal-case"
-          title="Unit for the MFE Realized column"
-        >
-          <option value="%">%</option>
-          <option value="pts">pts</option>
-          <option value="dollars">$</option>
-          <option value="atr">×ATR</option>
-        </select>
-        {realizedInfoOpen && (
-          <div
-            ref={realizedInfoRef}
-            className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
-          >
-            <div className="flex items-start justify-between mb-2">
-              <p className="font-semibold text-white">MFE Realized %</p>
-              <button type="button" onClick={() => setRealizedInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <p className="mb-2">
-              An execution-quality metric averaged across the day&apos;s trades, bounded by <strong>entry â†’ exit</strong> — it measures what happened <em>while you held the position</em>, not after.
-            </p>
-            <p className="mb-1"><strong className="text-green-300">MFE Realized %</strong></p>
-            <p className="mb-2 text-gray-400">
-              = realized PnL Ã· peak favorable excursion in $ — &ldquo;of the move I was offered, how much did I take?&rdquo;
-            </p>
-            <ul className="list-disc pl-4 space-y-1 mb-3 text-gray-400">
-              <li><strong>100%</strong>: exited at the high — perfect timing</li>
-              <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
-              <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — trade went green then closed at a loss</li>
-            </ul>
-            <p className="mb-2 text-gray-500">
-              <strong>Color rule:</strong> gray by default; red bold only on give-back days (capture &lt; 0). Other days stay gray on purpose so the eye lands on what needs review.
-            </p>
-            <p className="mb-1 text-gray-500">Trades excluded from the average:</p>
-            <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-500">
-              <li>No stop_price recorded (no risk baseline)</li>
-              <li>MFE &lt; 20% of planned risk (denominator too small — capture ratio is noise)</li>
-            </ul>
-            <p className="mt-2 text-gray-500">Click outside or press <kbd className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px]">Esc</kbd> to close.</p>
-          </div>
-        )}
-      </th>
-    ),
-    win_rate: (
-      <SortableTh
-        key="win_rate"
-        label="Win %"
-        column="win_rate"
-        current={sortColumn}
-        direction={sortDirection}
-        onSort={setSort}
-        align="center"
-        className="pr-3 w-16 whitespace-nowrap"
-        thProps={dragProps('win_rate')}
       />
     ),
     pnl: (
@@ -589,10 +394,10 @@ export default function RecentDaysList({ initialDays }: Props) {
             <tr className="text-xs text-gray-500 border-b border-gray-800">
               <th className="font-normal py-2 pl-2 pr-1 w-8" />
               <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3" />
-              {/* All seven data columns below are now draggable — held order
-                  lives in columnOrder state, persisted to localStorage. The
-                  Date and checkbox columns above stay pinned (row identity);
-                  the delete column at the right stays pinned (row action). */}
+              {/* The four data columns below are draggable — held order lives
+                  in columnOrder state, persisted to localStorage. The Date and
+                  checkbox columns above stay pinned (row identity); the delete
+                  column at the right stays pinned (row action). */}
               {columnOrder.map(id => headerNodes[id])}
               <th className="w-10" />
             </tr>
@@ -604,8 +409,6 @@ export default function RecentDaysList({ initialDays }: Props) {
                 day={day}
                 selected={selectedIds.has(day.id)}
                 deleting={deletingDate === day.date || (bulkDeleting && selectedIds.has(day.id))}
-                mfeUnit={mfeUnit}
-                realizedUnit={realizedUnit}
                 columnOrder={columnOrder}
                 onToggleSelect={() => toggleSelect(day.id)}
                 onDelete={() => handleSingleDelete(day.date, day.eod_pnl != null)}
@@ -673,8 +476,6 @@ function DayRowItem({
   day,
   selected,
   deleting,
-  mfeUnit,
-  realizedUnit,
   columnOrder,
   onToggleSelect,
   onDelete,
@@ -682,9 +483,7 @@ function DayRowItem({
   day: DayRowData
   selected: boolean
   deleting: boolean
-  mfeUnit: MfeUnit
-  realizedUnit: MfeUnit | '%'
-  /** Order of the 7 reorderable data columns. Must match what the parent's
+  /** Order of the 4 reorderable data columns. Must match what the parent's
    *  <thead> iterates so headers and cells stay in lockstep. */
   columnOrder: ReorderableColumnId[]
   onToggleSelect: () => void
@@ -724,60 +523,37 @@ function DayRowItem({
           <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium whitespace-nowrap">
             {format(new Date(day.date + 'T12:00:00'), 'EEE, MMM d')}
           </Link>
-          {/* Combo-day chip (Option C): join multiple day_types into a single
-              comma-separated chip so a 2-tag day doesn't stretch the column or
-              push to a second row. Full list also available on hover via the
-              title attribute. */}
-          {day.day_types.length > 0 && (
-            <span
-              // max-w + truncate keep long combo chips (e.g. "GBX Reversal,
-              // Double Inside (PD + ON), Medium Mush Market (Indecisive)")
-              // from pushing the Date column wide enough to clip PnL on the
-              // right edge of the table. Full text still on hover.
-              className="hidden sm:inline-block text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap truncate max-w-[200px]"
-              title={displayDayTypes(day.day_types)}
-            >
-              {displayDayTypes(day.day_types)}
-            </span>
-          )}
         </div>
       </td>
       {/* Reorderable data cells. Keyed by ReorderableColumnId so the iteration
           below stays in lockstep with the parent's header iteration. */}
       {(() => {
         const cellNodes: Record<ReorderableColumnId, React.ReactNode> = {
-          grade: (
-            <td key="grade" className={`py-2 pr-3 text-center ${cellBg}`}><ScorePill value={day.overall_grade} /></td>
+          day_type: (
+            <td key="day_type" className={`py-2 pr-3 text-left ${cellBg}`}>
+              {/* Combo-day chip (Option C): multiple day_types join into one
+                  comma-separated chip; max-w + truncate keep long combos from
+                  stretching the column. Full text on hover. */}
+              {day.day_types.length > 0 ? (
+                <span
+                  className="inline-block text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap truncate max-w-[200px] align-middle"
+                  title={displayDayTypes(day.day_types)}
+                >
+                  {displayDayTypes(day.day_types)}
+                </span>
+              ) : (
+                <span className="text-gray-700">—</span>
+              )}
+            </td>
           ),
-          process_v13: (
-            <td key="process_v13" className={`py-2 pr-3 text-center ${cellBg}`}>
-              <VerdictPill
-                value={day.process_v13_score}
-                verdict={day.process_verdict}
-                breachRules={day.process_breach_rules}
-              />
+          tapescore: (
+            <td key="tapescore" className={`py-2 pr-3 text-center ${cellBg}`}>
+              <TapeScorePill result={day.tapescore} />
             </td>
           ),
           trades: (
             <td key="trades" className={`py-2 pr-3 text-center text-gray-300 font-mono ${cellBg}`}>
               {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
-            </td>
-          ),
-          mfe_mae: (
-            <td key="mfe_mae" className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-              <MfeMaeCell day={day} unit={mfeUnit} />
-            </td>
-          ),
-          capture: (
-            <td key="capture" className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-              <MfeRealizedCell day={day} realizedUnit={realizedUnit} />
-            </td>
-          ),
-          win_rate: (
-            <td key="win_rate" className={`py-2 pr-3 text-center font-mono text-xs ${cellBg}`}>
-              {day.win_rate === null
-                ? <span className="text-gray-700">—</span>
-                : <span className={day.win_rate >= 50 ? 'text-green-400' : 'text-gray-400'}>{day.win_rate.toFixed(0)}%</span>}
             </td>
           ),
           pnl: (
@@ -804,185 +580,35 @@ function DayRowItem({
   )
 }
 
-function MfeMaeCell({ day, unit }: { day: DayRowData; unit: MfeUnit }) {
-  // ATR unit divides the points-based MFE/MAE by the day's prep ATR-10 to
-  // express the excursion in "how many ATRs of typical 1m range." Falls back
-  // to em-dash when the day's market_context.atr_1m wasn't filled in.
-  if (unit === 'atr') {
-    // Preferred path — per-trade average-of-ratios, identical to the EOD recap
-    // AvgMfeMaeCard (mean of each trade's excursion / its OWN entry ATR). Using
-    // the same method here keeps the dashboard row and the EOD header in lock-
-    // step instead of the old ratio-of-averages, which drifted apart whenever
-    // ATR varied across the day's trades or a no-ATR trade was in the mix.
-    if (day.avg_mfe_atr != null && day.avg_mae_atr != null) {
-      const fmtA = (v: number) => `${v.toFixed(2)}×`
-      return (
-        <span title={`Per-trade ×ATR (each trade's excursion ÷ its own entry ATR-10), averaged across ${day.live_atr_count} trade${day.live_atr_count === 1 ? '' : 's'} — matches the EOD recap.`}>
-          <span className="text-green-400">+{fmtA(day.avg_mfe_atr)}</span>
-          <span className="text-gray-600"> / </span>
-          <span className="text-red-400">-{fmtA(day.avg_mae_atr)}</span>
-        </span>
-      )
-    }
-    // Legacy fallback (no per-trade entry ATR on this day): ratio-of-averages
-    // on the prep ATR so older pre-SCID days still render something instead of
-    // an em-dash. These days have no EOD card ×ATR to disagree with anyway.
-    const atrRef = day.avg_live_atr_1m ?? day.atr_1m
-    const isLive = day.avg_live_atr_1m != null
-    if (day.avg_mfe_pts == null || day.avg_mae_pts == null || !atrRef) {
-      return <span className="text-gray-700">—</span>
-    }
-    const fmt = (v: number) => `${v.toFixed(2)}×`
-    const title = isLive
-      ? `Per-trade live ATR-10 averaged across ${day.live_atr_count} trade${day.live_atr_count === 1 ? '' : 's'} on this day (${atrRef.toFixed(2)} pts).`
-      : `Prep-time ATR-10 (${atrRef.toFixed(2)} pts) — live computation unavailable because bars are missing for this day.`
-    return (
-      <span title={title}>
-        <span className="text-green-400">+{fmt(day.avg_mfe_pts / atrRef)}</span>
-        <span className="text-gray-600"> / </span>
-        <span className="text-red-400">-{fmt(day.avg_mae_pts / atrRef)}</span>
-        {!isLive && <span className="text-gray-600 text-[9px] ml-1">prep</span>}
-      </span>
-    )
-  }
-  const mfe = unit === 'dollars' ? day.avg_mfe_dollars : day.avg_mfe_pts
-  const mae = unit === 'dollars' ? day.avg_mae_dollars : day.avg_mae_pts
-  if (mfe == null || mae == null) {
-    return <span className="text-gray-700">—</span>
-  }
-  // Display: MFE in green (favorable), MAE as a negative magnitude in red.
-  // Dollars get whole-number rounding; points get one decimal for tick-level
-  // precision.
-  const fmt = (v: number) => unit === 'dollars'
-    ? `$${Math.round(v).toLocaleString()}`
-    : v.toFixed(1)
-  return (
-    <span>
-      <span className="text-green-400">+{fmt(mfe)}</span>
-      <span className="text-gray-600"> / </span>
-      <span className="text-red-400">-{fmt(mae)}</span>
-    </span>
-  )
-}
-
 /**
- * MFE Realized % per day (capture efficiency). Gray-by-default; only weak-
- * capture days (< 25% of the favorable move banked) get a color so the eye
- * lands on days that need review. = realized PnL ÷ peak favorable in $ during
- * the position, floored at 0 per trade (a give-back reads as 0%, never
- * negative). (MAE Heat was removed 2026-06 — it penalized correct stop-outs;
- * the descriptive MAE aggregate still lives in analytics.)
+ * One-TapeScore pill (Ruleset amendment 5). Single 0-100 number colored by
+ * band — green >= 70, amber 50-69, red < 50; every Breach day (2+ rails
+ * failed) lands red via the <= 49 cap. The tooltip carries the component
+ * breakdown so the old Execution / Process / prep detail is one hover away.
  */
-function MfeRealizedCell({ day, realizedUnit }: { day: DayRowData; realizedUnit: MfeUnit | '%' }) {
-  if (day.avg_capture == null) {
-    return <span className="text-gray-700">—</span>
+function TapeScorePill({ result }: { result: TapeScoreResult | null }) {
+  if (result == null) {
+    return <span className="text-gray-700 font-mono" title="Not scored yet — run Analyze Session on the day's EOD recap.">—</span>
   }
-  // Weak-capture days get a color regardless of display unit. Capture is now
-  // floored at 0 (a give-back reads 0%, never negative), so flag low capture
-  // (< 25% of the favorable move banked) rather than the old <0 crossing.
-  const capStandout = day.avg_capture != null && day.avg_capture < 0.25
-  const capCls = capStandout ? 'text-red-400 font-bold' : 'text-gray-400'
-
-  // Non-% units: show "realized / max" for MFE and "adverse / stop" for MAE.
-  // Per-leg precision (e.g., trader exits 3 lots @ +20 then 2 lots @ +20
-  // after price peaked at +25) requires server-side aggregation we don't
-  // do yet — current math is the simpler "avg peak × avg capture" approx.
-  if (realizedUnit !== '%') {
-    const atrRef = day.avg_live_atr_1m ?? day.atr_1m
-    const isAtr = realizedUnit === 'atr'
-    const isDollars = realizedUnit === 'dollars'
-    const peakMfe = isDollars ? day.avg_mfe_dollars
-      : isAtr ? (day.avg_mfe_pts != null && atrRef ? day.avg_mfe_pts / atrRef : null)
-      : day.avg_mfe_pts
-    const realizedMfe = peakMfe != null && day.avg_capture != null ? peakMfe * day.avg_capture : null
-    const fmt = (v: number | null, signed: boolean): string => {
-      if (v == null) return '—'
-      const abs = Math.abs(v)
-      if (isDollars) return (signed ? (v >= 0 ? '+$' : '-$') : '$') + Math.round(abs).toLocaleString()
-      if (isAtr) return (signed && v >= 0 ? '+' : signed ? '-' : '') + abs.toFixed(2) + '×'
-      return (signed && v >= 0 ? '+' : signed ? '-' : '') + abs.toFixed(1)
-    }
-    return (
-      <span
-        className="flex flex-col items-center leading-tight whitespace-nowrap text-[10px]"
-        title={`Realized MFE in ${realizedUnit === 'dollars' ? '$' : realizedUnit === 'atr' ? '×ATR' : 'pts'}. Per-leg scaling approximated using avg peak × avg capture; switch to % for the exact ratio.`}
-      >
-        <span className={capCls}>
-          {fmt(realizedMfe, true)}{peakMfe != null && (
-            <span className="text-gray-600">{` / ${fmt(peakMfe, false)}`}</span>
-          )}
-        </span>
-      </span>
-    )
-  }
-
-  return (
-    <span
-      className="flex flex-col items-center leading-tight whitespace-nowrap"
-      title="MFE Realized % = avg realized PnL Ã· peak favorable $ per trade (during position, not after exit), floored at 0 per trade. Red bold means weak capture (<25% of the favorable move banked)."
-    >
-      <span className={capCls}>{day.avg_capture == null ? '—' : `${(day.avg_capture * 100).toFixed(0)}%`}</span>
-    </span>
-  )
-}
-
-function ScorePill({ value }: { value: number | null }) {
-  if (value === null) {
-    return <span className="text-gray-700 font-mono">—</span>
-  }
-  // 1-10 scale per the AI analyze prompts (analyze-eod, analyze-prep routes).
   const color =
-    value >= 9 ? 'text-green-400 border-green-800/50 bg-green-950/40'
-    : value >= 7 ? 'text-blue-300 border-blue-800/50 bg-blue-950/40'
-    : value >= 5 ? 'text-yellow-300 border-yellow-800/50 bg-yellow-950/40'
-    : 'text-red-300 border-red-800/50 bg-red-950/40'
-  return (
-    <span className={`font-mono border rounded px-1.5 py-0.5 inline-block w-8 text-center text-xs ${color}`}>
-      {value}
-    </span>
-  )
-}
-
-/**
- * v1.4 Process pill — renders as a check/X icon with a color gradient
- * driven by the score. Compliant (â‰¥4/5 pass) is green and gets brighter
- * with higher pass counts; Breach (<4/5) is red and gets darker with
- * more failed rules. Score values are {0,2,4,6,8,10} (passCount × 2),
- * giving a 6-step gradient: 10 (5/5 pass) â†’ 8 (4/5) â†’ 6 (3/5) â†’ 4 (2/5)
- * â†’ 2 (1/5) â†’ 0 (0/5).
- *
- * Same w-8 visual footprint as ScorePill so the column lines up. Hover
- * tooltip carries the underlying score + breach detail so the precise
- * verdict is one mouse-over away.
- */
-function VerdictPill({
-  value, verdict, breachRules,
-}: {
-  value: number | null
-  verdict: 'Compliant' | 'Breach' | null
-  breachRules: string[] | null
-}) {
-  if (value === null || verdict === null) {
-    return <span className="text-gray-700 font-mono">—</span>
-  }
-  const isCompliant = verdict === 'Compliant'
-  const color = isCompliant
-    ? (value >= 10 ? 'text-emerald-300 border-emerald-600/60 bg-emerald-500/30'    // 5/5 — brightest
-      :              'text-emerald-400 border-emerald-700/50 bg-emerald-600/30')   // 4/5 — at threshold
-    : (value >= 6  ? 'text-red-400 border-red-700/50 bg-red-600/25'                // 3/5 — just-under breach
-      : value >= 4  ? 'text-red-400 border-red-800/60 bg-red-700/30'                // 2/5
-      : value >= 2  ? 'text-red-300 border-red-900/70 bg-red-800/35'                // 1/5
-      :              'text-red-200 border-red-950/80 bg-red-900/45')                // 0/5 — total failure
-  const tooltip = isCompliant
-    ? `Compliant — ${value / 2}/5 rules pass (â‰¥4/5 threshold)`
-    : `Breach — ${value / 2}/5 rules pass Â· ${(breachRules ?? []).join(', ') || 'rule(s) failed'}`
-  const Icon = isCompliant ? Check : X
+    result.band === 'high' ? 'text-green-300 border-green-800/60 bg-green-950/40'
+    : result.band === 'mid' ? 'text-amber-300 border-amber-800/60 bg-amber-950/40'
+    : 'text-red-300 border-red-800/60 bg-red-950/40'
+  const { passCount, execution, prep } = result.components
+  const tooltip = result.basis === 'legacy'
+    ? 'Scored under an earlier rubric (pre-v1.3 single score).'
+    : [
+        passCount != null ? `Rules kept ${passCount}/5` : null,
+        execution != null ? `Execution ${execution}` : null,
+        prep != null ? `Prep ${prep}` : null,
+        result.capped ? 'capped at 49 — 2+ rules broke' : null,
+      ].filter(Boolean).join(' · ')
   return (
     <span
-      className={`border rounded px-1.5 py-0.5 inline-flex items-center justify-center w-8 h-6 ${color}`}
+      className={`font-mono font-bold border rounded px-1.5 py-0.5 inline-block w-9 text-center text-xs ${color}`}
       title={tooltip}
     >
-      <Icon className="w-3.5 h-3.5" strokeWidth={3} />
+      {result.score}
     </span>
   )
 }

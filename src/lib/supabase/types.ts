@@ -352,6 +352,10 @@ export interface ChartCalibration {
  */
 export interface EodAiAnalysis {
   summary?: string
+  /** One TapeScore (amendment 5): day verdict sentence, ≤14 words, plain
+   *  language, decision quality not P&L. Emitted by new analyses; legacy
+   *  rows fall back to the deterministic tapeScoreDaySentence(). */
+  headline?: string
   what_worked?: string[]
   mistakes?: string[]
   patterns?: string[]

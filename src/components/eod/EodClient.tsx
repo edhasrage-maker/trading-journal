@@ -17,6 +17,7 @@ import TradeList from './TradeList'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
+import TapeScoreHeader from './TapeScoreHeader'
 import RecordingCommentary from './RecordingCommentary'
 import BrowserRecap from './BrowserRecap'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
@@ -941,6 +942,17 @@ export default function EodClient({
           </div>
         </div>
       </div>
+
+      {/* One TapeScore hero (Ruleset amendment 5): 0-100 ring + day verdict
+          sentence + component chips. Hidden until the day has an analysis. */}
+      <TapeScoreHeader
+        analysis={aiAnalysis}
+        prepScore={day?.ai_analysis_json?.score ?? null}
+        tradeCount={trades.length}
+        winCount={winCount}
+        lossCount={lossCount}
+        pnl={computedPnl}
+      />
 
       {/* Chart area — toggle between legacy screenshot+calibration and the
           new live-bars rendering. Screenshot path will be removed in Phase 5
