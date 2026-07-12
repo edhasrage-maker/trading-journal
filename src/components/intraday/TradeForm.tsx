@@ -11,6 +11,7 @@ import ScreenshotLightbox from './ScreenshotLightbox'
 import TagSelector from './TagSelector'
 import { deleteBlob } from '@/lib/storage'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { normalizeTradeLevels } from '@/lib/trade-geometry'
 import type { Trade, TradeTag, TradeTags, TagCategory } from '@/lib/supabase/types'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { suggestTagsFromText, mergeTradeTags } from '@/lib/suggest-tags'
@@ -290,17 +291,37 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       const sym = data.symbol as string | null | undefined
       const suggested = data.suggested_tags as TradeTags | null | undefined
 
-      setForm(f => ({
-        ...f,
-        ...(dirVal && { direction: dirVal }),
-        ...(sym && { symbol: sym }),
-        ...(entryPrice != null && { entry_price: String(entryPrice) }),
-        ...(stopPrice != null && { stop_price: String(stopPrice) }),
-        ...(tp1Price != null && { tp1_price: String(tp1Price) }),
-        ...(entryTime && { entry_time: entryTime }),
-        ...(qty != null && { quantity: String(qty) }),
-        ...(suggested && { suggestedTags: suggested }),
-      }))
+      setForm(f => {
+        const next = {
+          ...f,
+          ...(dirVal && { direction: dirVal }),
+          ...(sym && { symbol: sym }),
+          ...(entryPrice != null && { entry_price: String(entryPrice) }),
+          ...(entryTime && { entry_time: entryTime }),
+          ...(qty != null && { quantity: String(qty) }),
+          ...(suggested && { suggestedTags: suggested }),
+        }
+        // Place stop/TP1 on the correct side of entry for the EFFECTIVE direction.
+        // The server guard only validates against the model's OWN direction, so a
+        // reversed long (stop above / target below) slips through whenever the model
+        // returns direction:null and the form is already 'long' (default / SC import).
+        // When both extracted levels land, normalize (may swap) against next.direction.
+        if (stopPrice != null && tp1Price != null) {
+          const rawEntry = entryPrice != null ? entryPrice : parseFloat(next.entry_price)
+          const { stop, tp1 } = normalizeTradeLevels({
+            direction: next.direction,
+            entry: Number.isFinite(rawEntry) ? rawEntry : null,
+            stop: stopPrice,
+            tp1: tp1Price,
+          })
+          if (stop != null) next.stop_price = String(stop)
+          if (tp1 != null) next.tp1_price = String(tp1)
+        } else {
+          if (stopPrice != null) next.stop_price = String(stopPrice)
+          if (tp1Price != null) next.tp1_price = String(tp1Price)
+        }
+        return next
+      })
     } catch (e) {
       setError(`Read failed: ${e instanceof Error ? e.message : 'network or unknown error'}`)
     } finally {

@@ -5,6 +5,7 @@ import { consumeAiUsage } from '@/lib/ai-usage'
 import { createClient } from '@/lib/supabase/server'
 import type { TradeTag } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
+import { normalizeTradeLevels } from '@/lib/trade-geometry'
 import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
@@ -168,13 +169,22 @@ Return ONLY valid JSON with no other text:
 
     // Geometry guard — stop/TP1 must sit on the correct side of entry for the
     // direction (long: stop<entry<TP1; short: TP1<entry<stop). The vision model
-    // sometimes lays a short's levels out long-style (stop below entry). Null
-    // any clearly wrong-sided value rather than handing the user a backwards
-    // stop/target to clean up — a stop below entry on a short is never right.
+    // sometimes lays a short's levels out long-style (stop below entry).
+    // First recover the pure-swap case (BOTH levels reversed → swap them back)
+    // rather than nulling both; then null any single value still wrong-sided
+    // (genuinely ambiguous) so the user never gets a backwards stop/target.
     {
       const dir = data.direction
       const e = typeof data.entry_price === 'number' ? data.entry_price : null
       if (e != null && (dir === 'long' || dir === 'short')) {
+        const swapped = normalizeTradeLevels({
+          direction: dir,
+          entry: e,
+          stop: typeof data.stop_price === 'number' ? data.stop_price : null,
+          tp1: typeof data.tp1_price === 'number' ? data.tp1_price : null,
+        })
+        data.stop_price = swapped.stop
+        data.tp1_price = swapped.tp1
         if (typeof data.stop_price === 'number') {
           const wrong = dir === 'long' ? data.stop_price >= e : data.stop_price <= e
           if (wrong) data.stop_price = null
