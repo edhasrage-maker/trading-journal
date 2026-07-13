@@ -129,17 +129,27 @@ LEAD any broad question ("how am I doing", "where do I improve") with the FOUNDA
     ? `\n\nThe trader attached ${imageBlocks.length} chart image(s) with this message. Read visible price structure, levels, and gross orderflow (obvious absorption/exhaustion/imbalance zones) confidently — but do NOT invent precise delta or footprint numbers; vision is unreliable on dense footprint text. If a specific delta read matters, describe what you can see and ask them to confirm from the chart. Tie what you see back to their logged data and profile.`
     : ''
 
-  const systemPrompt = `${profileContextBlock(traderProfile)}You are the trader's personal coach, embedded in their trading journal app. You have access to their trading history (summarized below). Your job: answer their questions directly using their actual data. Be SPECIFIC — cite trade counts, dates, PnL figures, win rates, tag names. Don't give generic trading advice; reference what THIS trader has actually done.
+  // Prompt-caching split: everything byte-stable within a conversation (profile,
+  // role text, methodology, the big trade-history context block, focus) goes in
+  // one block with a cache_control breakpoint; per-turn pieces (styleInstruction
+  // toggles with body.mode, visionNote only exists when images are attached) go
+  // in a second block AFTER the breakpoint so they can't invalidate the prefix.
+  // Turn 1 writes the cache (~1.25x); turns 2+ within the 5-min TTL read it at
+  // ~0.1x — the context block is ~90% of input tokens, so this is the whole win.
+  const stableSystemPrompt = `${profileContextBlock(traderProfile)}You are the trader's personal coach, embedded in their trading journal app. You have access to their trading history (summarized below). Your job: answer their questions directly using their actual data. Be SPECIFIC — cite trade counts, dates, PnL figures, win rates, tag names. Don't give generic trading advice; reference what THIS trader has actually done.
 
 When the data doesn't support a confident answer, say so explicitly ("I don't have enough trades in this bucket to call it") rather than guessing. When the trader's coaching preferences (above) conflict with what generic advice would suggest, ALWAYS defer to the preferences — the trader knows their system better than you do.
-
-${styleInstruction}${visionNote}
 
 ${analysisApproach}
 
 ${probeDirective}
 
 ${contextBlock}${focusContextBlock(traderProfile)}`
+
+  const systemBlocks: Anthropic.TextBlockParam[] = [
+    { type: 'text', text: stableSystemPrompt, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: `${styleInstruction}${visionNote}` },
+  ]
 
   // Build the messages array — trader's prior history + new message. History is
   // text-only; images ride on the current turn's content array (images first).
@@ -161,14 +171,30 @@ ${contextBlock}${focusContextBlock(traderProfile)}`
         const response = await client.messages.stream({
           model: 'claude-sonnet-4-6',
           max_tokens: 2000,
-          system: systemPrompt,
+          system: systemBlocks,
           messages,
         })
+        let usage: { input: number; cache_write: number; cache_read: number } | null = null
         for await (const event of response) {
+          if (event.type === 'message_start') {
+            // Cache validation: turn 1 should show cache_write > 0, turns 2+
+            // (within the 5-min TTL) cache_read > 0. If read stays 0 across
+            // turns, a silent invalidator crept into the stable prefix.
+            const u = event.message.usage
+            usage = {
+              input: u.input_tokens,
+              cache_write: u.cache_creation_input_tokens ?? 0,
+              cache_read: u.cache_read_input_tokens ?? 0,
+            }
+            console.log(`[coach] tokens: input=${usage.input} cache_write=${usage.cache_write} cache_read=${usage.cache_read}`)
+          }
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`))
           }
         }
+        // Trailing diagnostic event — the chat client ignores chunks without
+        // text/error, so this only surfaces in the network tab / curl output.
+        if (usage) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ usage })}\n\n`))
         controller.enqueue(encoder.encode(`data: [DONE]\n\n`))
         controller.close()
       } catch (e) {
