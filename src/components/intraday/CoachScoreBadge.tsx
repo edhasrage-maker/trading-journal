@@ -37,8 +37,9 @@ export default function CoachScoreBadge({
 
   const lines = cs.criteria.map(c => `${SYM[c.status]} ${c.label}${c.reason ? ` (${c.reason})` : ''}`)
   const tip =
-    `Coach Score ${cs.score ?? '—'}/10 — ${cs.passes}✓ ${cs.fails}✗ of ${cs.total} rated` +
-    (cs.unknownCount ? `, ${cs.unknownCount} need Coach Score AI` : '') +
+    `Coach Score ${cs.score ?? '—'}/10 — execution axis only (${cs.passes}✓ ${cs.fails}✗ of ${cs.total} rules)` +
+    `\nOpen the trade to grade Market read + Setup quality with AI for the full blend.` +
+    (cs.unknownCount ? `\n${cs.unknownCount} criteria need the AI pass.` : '') +
     `\n\n${lines.join('\n')}`
 
   return (

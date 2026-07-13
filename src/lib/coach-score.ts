@@ -27,6 +27,16 @@ export interface GradableTrade {
   entry_atr_1m?: number | null
   exit_price?: number | null
   exits_json?: Array<{ price?: number | null }> | null
+  // ── Optional market-read evidence (Pt 11 reweight) ──────────────────────
+  // Used only by the coach-score route's market-read axis; safe to omit. The
+  // EOD / intraday callers pass the full trade row, so these ride along.
+  structure_5m_regime?: string | null
+  high_during_position?: number | null
+  low_during_position?: number | null
+  post_exit_favorable_pts?: number | null
+  post_exit_against_pts?: number | null
+  pnl?: number | null
+  symbol?: string | null
   tags_json?: {
     setups?: string[]
     confluences?: string[]
@@ -49,27 +59,95 @@ export interface Criterion {
   source: 'auto' | 'ai'
 }
 
+/**
+ * Axis weights (Pt 11 reweight). The grade blends THREE dimensions so it scores
+ * "how you traded vs what the market showed", not just rule-following:
+ *   - execution   — the 9-criterion rule/compliance score (deterministic, free)
+ *   - marketRead  — did the trade fit what price actually did (AI, evidence-light)
+ *   - setupQuality— how clean an instance of the trader's OWN playbook it was (AI)
+ * With a playbook: 60 / 20 / 20. Without one there's nothing to grade
+ * setup-quality against, so it's 75 / 25 (execution / marketRead). Missing axes
+ * renormalize — e.g. before the AI pass only `execution` is present, so the
+ * score reads as the execution axis alone (a "partial" grade).
+ */
+export const COACH_AXIS_WEIGHTS = {
+  playbook:   { execution: 0.60, marketRead: 0.20, setupQuality: 0.20 },
+  noPlaybook: { execution: 0.75, marketRead: 0.25, setupQuality: 0 },
+} as const
+
+export interface CoachAxes {
+  hasPlaybook: boolean
+  /** 0–1 execution / rule-compliance (deterministic passes/total). */
+  execution: number | null
+  /** 0–1 market-read alignment (AI). Null until graded, or no evidence. */
+  marketRead: number | null
+  /** 0–1 setup-quality vs playbook (AI). Always null when !hasPlaybook. */
+  setupQuality: number | null
+  marketReadReason?: string
+  setupQualityReason?: string
+}
+
 export interface CoachScore {
-  score: number | null   // 0–10, null when no criterion resolved to pass/fail
+  /** 0–10 COMPOSED across the axes present (exec-only until the AI axes land). */
+  score: number | null
+  /** 0–10 execution axis alone — today's deterministic number, kept for display. */
+  executionScore: number | null
   passes: number
   fails: number
   total: number          // passes + fails (na + unknown excluded)
   unknownCount: number   // criteria the AI could resolve
   criteria: Criterion[]
+  axes: CoachAxes
+  /** true while market-read (and, with a playbook, setup-quality) are ungraded. */
+  partial: boolean
 }
 
 const arr = (v?: string[]): string[] => (Array.isArray(v) ? v : [])
 const lc = (s: string) => s.toLowerCase()
 
-export function summarizeCoachScore(criteria: Criterion[]): CoachScore {
+/** Weighted 0–10 blend of the axes, renormalized over whichever axes are
+ *  present. Null when nothing is scorable. */
+export function composeCoachScore(a: CoachAxes): number | null {
+  const w = a.hasPlaybook ? COACH_AXIS_WEIGHTS.playbook : COACH_AXIS_WEIGHTS.noPlaybook
+  const parts: Array<[number, number]> = []   // [weight, value 0–1]
+  if (a.execution != null) parts.push([w.execution, a.execution])
+  if (a.marketRead != null) parts.push([w.marketRead, a.marketRead])
+  if (a.hasPlaybook && a.setupQuality != null) parts.push([w.setupQuality, a.setupQuality])
+  const totW = parts.reduce((s, [pw]) => s + pw, 0)
+  if (totW === 0) return null
+  const v = parts.reduce((s, [pw, pv]) => s + pw * pv, 0) / totW
+  return Math.round(v * 10)
+}
+
+export interface AxesMeta {
+  hasPlaybook?: boolean
+  marketRead?: number | null      // 0–1
+  setupQuality?: number | null    // 0–1
+  marketReadReason?: string
+  setupQualityReason?: string
+}
+
+export function summarizeCoachScore(criteria: Criterion[], meta?: AxesMeta): CoachScore {
   const passes = criteria.filter(c => c.status === 'pass').length
   const fails = criteria.filter(c => c.status === 'fail').length
   const total = passes + fails
+  const execution = total > 0 ? passes / total : null
+  const hasPlaybook = meta?.hasPlaybook ?? true
+  const axes: CoachAxes = {
+    hasPlaybook,
+    execution,
+    marketRead: meta?.marketRead ?? null,
+    setupQuality: hasPlaybook ? (meta?.setupQuality ?? null) : null,
+    marketReadReason: meta?.marketReadReason,
+    setupQualityReason: meta?.setupQualityReason,
+  }
+  const partial = axes.marketRead == null || (hasPlaybook && axes.setupQuality == null)
   return {
-    score: total > 0 ? Math.round((passes / total) * 10) : null,
+    score: composeCoachScore(axes),
+    executionScore: execution != null ? Math.round(execution * 10) : null,
     passes, fails, total,
     unknownCount: criteria.filter(c => c.status === 'unknown').length,
-    criteria,
+    criteria, axes, partial,
   }
 }
 
@@ -80,8 +158,12 @@ export function summarizeCoachScore(criteria: Criterion[]): CoachScore {
  */
 export function computeCoachScore(
   t: GradableTrade,
-  opts?: { setupLibrary?: Set<string>; instrumentHasBars?: boolean; scoringProfile?: ScoringProfile | null },
+  opts?: { setupLibrary?: Set<string>; instrumentHasBars?: boolean; scoringProfile?: ScoringProfile | null; hasPlaybook?: boolean },
 ): CoachScore {
+  // "Has a playbook" drives the axis weighting (60/20/20 vs 75/25). Explicit
+  // opt wins; else infer from the setup library (empty → no playbook). When no
+  // library is passed at all (owner local path) assume a playbook exists.
+  const hasPlaybook = opts?.hasPlaybook ?? (opts?.setupLibrary ? opts.setupLibrary.size > 0 : true)
   const tj = t.tags_json ?? {}
   const setups = arr(tj.setups)
   const confluences = arr(tj.confluences)
@@ -203,15 +285,16 @@ export function computeCoachScore(
     c.push({ key: 'stable_emotion', label: 'Stable emotion', status: stable ? 'pass' : 'fail', source: 'auto', reason: stable ? undefined : emotions.join(', ') })
   }
 
-  return summarizeCoachScore(c)
+  return summarizeCoachScore(c, { hasPlaybook })
 }
 
-/** Fold AI-resolved criteria (from the Coach Score button) back into a base
- *  score. `resolutions` maps criterion key → {status, reason}; only `unknown`
- *  criteria are overwritten, and they're marked source:'ai'. */
+/** Fold the Coach Score AI pass back into a base score: (1) resolved `unknown`
+ *  criteria (marked source:'ai'), and (2) the market-read + setup-quality axis
+ *  grades. `axes` scores are 0–1; omit a field to keep the base's value. */
 export function applyAiResolutions(
   base: CoachScore,
   resolutions: Record<string, { status: 'pass' | 'fail' | 'na'; reason?: string }>,
+  axes?: { marketRead?: number | null; marketReadReason?: string; setupQuality?: number | null; setupQualityReason?: string },
 ): CoachScore {
   const merged = base.criteria.map(cr => {
     if (cr.status !== 'unknown') return cr
@@ -219,5 +302,11 @@ export function applyAiResolutions(
     if (!r) return cr
     return { ...cr, status: r.status, reason: r.reason ?? cr.reason, source: 'ai' as const }
   })
-  return summarizeCoachScore(merged)
+  return summarizeCoachScore(merged, {
+    hasPlaybook: base.axes.hasPlaybook,
+    marketRead: axes && 'marketRead' in axes ? axes.marketRead : base.axes.marketRead,
+    marketReadReason: axes?.marketReadReason ?? base.axes.marketReadReason,
+    setupQuality: axes && 'setupQuality' in axes ? axes.setupQuality : base.axes.setupQuality,
+    setupQualityReason: axes?.setupQualityReason ?? base.axes.setupQualityReason,
+  })
 }
