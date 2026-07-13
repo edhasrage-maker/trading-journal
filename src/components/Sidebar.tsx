@@ -152,23 +152,15 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const prepDate = urlDate ?? today
   const reviewDate = urlDate ?? anchor ?? today
 
-  // Monday of the review week → /weekly/<thatMonday>. Noon UTC so the weekday is
-  // TZ-safe (dodges DST edges).
-  const weekMonday = (() => {
-    const noon = new Date(`${reviewDate}T12:00:00Z`)
-    const day = noon.getUTCDay()  // 0=Sun, 1=Mon, ..., 6=Sat
-    const diff = day === 0 ? -6 : 1 - day
-    const monday = new Date(noon.getTime() + diff * 24 * 3600 * 1000)
-    return monday.toISOString().slice(0, 10)
-  })()
-
   const navItems = [
     ...(showWelcome ? [welcomeItem] : []),
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: `/prep/${prepDate}`, label: 'Daily Prep', icon: ClipboardList },
     { href: `/intraday/${reviewDate}`, label: 'Intraday', icon: Activity },
     { href: `/eod/${reviewDate}`, label: 'EOD Recap', icon: BarChart2 },
-    { href: `/weekly/${weekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
+    // Weekly Recap intentionally removed from top-level nav (Pt 17 / cut list) —
+    // the /weekly routes stay live (deep-links work); fold into Dashboard once
+    // coach themes have data.
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/analytics', label: 'Analytics', icon: TrendingUp },
     { href: '/import', label: 'Import', icon: Upload },
@@ -185,7 +177,7 @@ export default function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const moreNav = [
     ...(showWelcome ? [welcomeItem] : []),
     { href: `/intraday/${reviewDate}`, label: 'Intraday', icon: Activity },
-    { href: `/weekly/${weekMonday}`, label: 'Weekly Recap', icon: CalendarDays },
+    // Weekly Recap removed from nav (Pt 17 / cut list); routes remain live.
     { href: '/calendar', label: 'Calendar', icon: CalendarDays },
     { href: '/import', label: 'Import', icon: Upload },
   ]

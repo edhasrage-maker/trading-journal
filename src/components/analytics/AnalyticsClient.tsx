@@ -39,6 +39,10 @@ interface Props {
   /** Resolved window bounds (YYYY-MM-DD, both inclusive). */
   windowStart: string
   windowEnd: string
+  /** From the trader's scoring profile (resolveRubric). When false, order-flow
+   *  breakdowns are hidden — mirrors the AI lens rule in the UI (Pt 17). The
+   *  owner's empty profile resolves to true, so the local app is unchanged. */
+  usesOrderFlow: boolean
 }
 
 const RANGE_OPTIONS: { label: string; param: Exclude<AnalyticsRange, 'custom'> }[] = [
@@ -49,7 +53,7 @@ const RANGE_OPTIONS: { label: string; param: Exclude<AnalyticsRange, 'custom'> }
   { label: 'All', param: 'all' },
 ]
 
-export default function AnalyticsClient({ trades, dayStats, activeRange, windowStart, windowEnd }: Props) {
+export default function AnalyticsClient({ trades, dayStats, activeRange, windowStart, windowEnd, usesOrderFlow }: Props) {
   const today = format(new Date(), 'yyyy-MM-dd')
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -265,9 +269,13 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
           className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-600"
         >
           <option value="">Category…</option>
-          {(Object.keys(FILTER_CATEGORY_LABELS) as FilterCategory[]).map(c => (
-            <option key={c} value={c}>{FILTER_CATEGORY_LABELS[c]}</option>
-          ))}
+          {(Object.keys(FILTER_CATEGORY_LABELS) as FilterCategory[])
+            // Hide Orderflow as a filter category when the trader's profile
+            // doesn't use order flow (Pt 17 profile-driven UI).
+            .filter(c => usesOrderFlow || c !== 'order_flow')
+            .map(c => (
+              <option key={c} value={c}>{FILTER_CATEGORY_LABELS[c]}</option>
+            ))}
         </select>
         <select
           value={filterLabel}
@@ -375,12 +383,23 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
             data={confluencePerf}
             onTagClick={openCategory('confluences')}
           />
-          <TagPerformanceTable
-            title="Order Flow"
-            description="Performance broken down by order-flow signal tags"
-            data={orderFlowPerf}
-            onTagClick={openCategory('order_flow')}
-          />
+          {/* Order-flow breakdown renders only for traders whose profile uses
+              order flow (Pt 17, doc item 16) — mirrors the AI lens rule in the
+              UI. A one-line note tells power users where it went. Data/tags are
+              untouched; this is a conditional render only. */}
+          {usesOrderFlow ? (
+            <TagPerformanceTable
+              title="Order Flow"
+              description="Performance broken down by order-flow signal tags"
+              data={orderFlowPerf}
+              onTagClick={openCategory('order_flow')}
+            />
+          ) : (
+            <p className="text-xs text-gray-600 px-1">
+              Order-flow breakdown hidden — not in your trader profile.{' '}
+              <a href="/settings/coaching" className="text-blue-500 hover:text-blue-400">Turn it on in your Player Profile</a> to track it.
+            </p>
+          )}
           <TagPerformanceTable
             title="Day Type"
             description="Performance by the day type set during prep"

@@ -2,6 +2,7 @@ import { format, parseISO, subDays, subMonths } from 'date-fns'
 import { createClient } from '@/lib/supabase/server'
 import AnalyticsClient, { type AnalyticsRange } from '@/components/analytics/AnalyticsClient'
 import { joinTradesWithContext, type TradeWithContext } from '@/lib/analytics'
+import { resolveRubric, type ScoringProfile } from '@/lib/scoring-profile'
 import { todayPT } from '@/lib/pt-time'
 import type { TradingDay, Trade, MarketContext } from '@/lib/supabase/types'
 
@@ -256,6 +257,18 @@ export default async function AnalyticsPage({
     process_score: (d.ai_analysis_json?.score as number | undefined) ?? null,
   }))
 
+  // Per-user profile drives which analytical surfaces show (Pt 17, doc item 16):
+  // order-flow breakdowns render only when the trader's profile opts in — the
+  // same rule the Coach Score / AI lens already follows (resolveRubric). An
+  // empty/absent profile (the owner's local app) resolves to usesOrderFlow=true,
+  // so nothing changes there.
+  const { data: profRow } = await supabase
+    .from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle()
+  const scoringProfile =
+    (profRow?.scoring_profile_json && typeof profRow.scoring_profile_json === 'object'
+      ? profRow.scoring_profile_json : null) as ScoringProfile | null
+  const usesOrderFlow = resolveRubric(scoringProfile).usesOrderFlow
+
   return (
     <div className="max-w-7xl mx-auto">
       <AnalyticsClient
@@ -264,6 +277,7 @@ export default async function AnalyticsPage({
         activeRange={range}
         windowStart={resolvedStart}
         windowEnd={resolvedEnd}
+        usesOrderFlow={usesOrderFlow}
       />
     </div>
   )
