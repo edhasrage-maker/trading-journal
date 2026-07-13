@@ -1,20 +1,20 @@
 'use client'
 
 import {
-  Upload, LineChart, Brain, CandlestickChart, Gauge, Layers,
-  Check, ArrowRight,
+  LineChart, Brain, CandlestickChart, Target, Layers, Activity,
+  ClipboardPaste, Check, ArrowRight,
 } from 'lucide-react'
 import AuthCard from './AuthCard'
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const
 
 const FEATURES = [
-  { icon: Gauge, title: 'Day-one analytics', body: 'Full dashboard, equity curve, and edge breakdowns from your very first import — no waiting months for data to add up.' },
-  { icon: LineChart, title: 'MFE / MAE & capture', body: 'See how much of each move you actually caught — in points, dollars, and ATR — so you know where you leave money on the table.' },
-  { icon: Layers, title: 'Market-condition intelligence', body: 'Performance broken out by day type and regime (trend, range, volatility) so you see exactly where your edge lives.' },
+  { icon: Target, title: 'One TapeScore per day', body: 'Every session gets a 0–100 score for decision quality — separate from P&L. A green day can score low; a disciplined red day can score high.' },
+  { icon: LineChart, title: 'Entry efficiency & post-exit reads', body: 'Heat vs capture in ATR, plus a plain-language verdict on every exit — did you nail it, or give it back after you left? Reads no other journal has.' },
+  { icon: Activity, title: 'Behavioral flags from your fills', body: 'Tilt, revenge re-entries, pressing size into a drawdown, shrinking hold time — surfaced automatically from your fill sequence, no tagging required.' },
   { icon: CandlestickChart, title: 'Live charts, your trades', body: 'NQ / ES candles with your entries and exits marked, session levels, VWAP and EMAs — replay your day like game film.' },
-  { icon: Brain, title: 'AI insight & coaching', body: 'Per-trade narratives, EOD execution scoring, and a coach that learns your system instead of giving generic advice.' },
-  { icon: Upload, title: 'Near-zero friction', body: 'Drag-drop a CSV or Sierra Chart log and your trades are tagged and analyzed in seconds. Or log by hand.' },
+  { icon: Layers, title: 'Market-condition intelligence', body: 'Performance broken out by day type and regime (trend, range, volatility) so you see exactly where your edge lives.' },
+  { icon: Brain, title: 'A coach that learns your system', body: 'Per-trade notes and end-of-day review that adapt to how YOU trade, reading your own profile — not generic, one-size-fits-all tips.' },
 ]
 
 const STEPS = [
@@ -38,15 +38,15 @@ export default function Landing() {
         <div>
           <p className="text-xs font-mono uppercase tracking-widest text-blue-500">Game film for traders</p>
           <h1 className="mt-4 text-4xl sm:text-5xl font-bold text-white leading-tight" style={DISPLAY}>
-            The trading journal that pays off on day one.
+            We grade your decisions, not your P&amp;L.
           </h1>
           <p className="mt-5 text-gray-400 text-base sm:text-lg max-w-lg">
-            TapeScore turns the most-avoided habit in trading into instant, actionable insight.
-            Import your trades and get analytics, an equity curve, and edge breakdowns
-            immediately — then replay your sessions like game film.
+            Every session gets a TapeScore — a 0–100 read on <em>how well you traded</em>, separate
+            from whether you made money. Paste a screenshot or import a log and see your entry timing,
+            your exits, and your behavior graded like game film.
           </p>
           <ul className="mt-6 space-y-2">
-            {['Analytics from your first import — no minimum history', 'MFE/MAE, capture efficiency, and day-type edge', 'AI per-trade insight + a coach that learns your system'].map(t => (
+            {['One TapeScore per day — decision quality, not just P&L', 'Entry efficiency + post-exit verdicts: did you exit right, or give it back?', 'Behavioral flags — tilt, revenge, pressing size — straight from your fills'].map(t => (
               <li key={t} className="flex items-start gap-2.5 text-sm text-gray-300">
                 <Check className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" /> <span>{t}</span>
               </li>
@@ -54,6 +54,41 @@ export default function Landing() {
           </ul>
         </div>
         <div id="get-started" className="flex lg:justify-end scroll-mt-24"><AuthCard /></div>
+      </section>
+
+      {/* Magic moment — paste a screenshot, we read the trade */}
+      <section className="border-t border-gray-900 bg-gray-950">
+        <div className="max-w-6xl mx-auto px-6 py-16 grid lg:grid-cols-2 gap-10 items-center">
+          <div>
+            <p className="text-xs font-mono uppercase tracking-widest text-amber-500">The magic moment</p>
+            <h2 className="mt-4 text-2xl sm:text-3xl font-semibold text-white" style={DISPLAY}>Paste your chart. We read the trade.</h2>
+            <p className="mt-4 text-gray-400 text-sm sm:text-base max-w-lg">
+              Copy a screenshot of your position and press <kbd className="font-mono text-xs bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5">Ctrl</kbd>&nbsp;+&nbsp;<kbd className="font-mono text-xs bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5">V</kbd>.
+              TapeScore extracts the instrument, side, entry, stop, and target from your bracket
+              orders — then tags the setup from your notes. No forms, no manual entry. Prefer a file?
+              Drop a CSV or Sierra Chart log instead.
+            </p>
+          </div>
+          {/* Dropzone + extracted-trade mock */}
+          <div className="rounded-2xl border border-dashed border-amber-500/40 bg-gray-900 p-8 text-center">
+            <div className="w-11 h-11 rounded-lg bg-amber-500/15 flex items-center justify-center mx-auto">
+              <ClipboardPaste className="w-5 h-5 text-amber-400" />
+            </div>
+            <h3 className="mt-3 text-sm font-semibold text-white">Paste your chart — TapeScore reads the trade</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              <kbd className="font-mono bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5">Ctrl</kbd> + <kbd className="font-mono bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5">V</kbd> a screenshot, or drop an image.
+            </p>
+            <div className="mt-5 rounded-lg border border-gray-800 bg-gray-950 p-3 text-left">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-full border border-red-500/40 bg-red-500/10 text-red-300 font-semibold px-2.5 py-0.5">NQ · SHORT</span>
+                <span className="font-mono text-gray-300">3 @ 29,754</span>
+                <span className="font-mono text-gray-500">stop 29,772</span>
+                <span className="font-mono text-gray-500">target 29,700</span>
+              </div>
+              <p className="mt-2 text-[11px] text-gray-600">Read from your bracket orders — target and stop identified by P&amp;L sign, not color.</p>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Features */}
@@ -85,10 +120,10 @@ export default function Landing() {
             {/* Mock stat cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {[
+                { label: 'TapeScore', value: '82', tone: 'text-amber-400' },
+                { label: 'Move captured', value: '1.1×ATR', tone: 'text-white' },
+                { label: 'Heat taken', value: '0.4×ATR', tone: 'text-white' },
                 { label: 'Net P&L', value: '+$4,182', tone: 'text-green-400' },
-                { label: 'Day Win %', value: '61%', tone: 'text-white' },
-                { label: 'Avg MFE / MAE', value: '+1.6× / -0.7×', tone: 'text-white' },
-                { label: 'Execution', value: '7.4 / 10', tone: 'text-blue-400' },
               ].map(s => (
                 <div key={s.label} className="rounded-xl border border-gray-800 bg-gray-950 p-4">
                   <div className="text-[11px] text-gray-500 uppercase tracking-wide">{s.label}</div>

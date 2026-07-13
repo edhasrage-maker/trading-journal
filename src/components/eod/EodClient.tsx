@@ -954,6 +954,17 @@ export default function EodClient({
         pnl={computedPnl}
       />
 
+      {/* Differentiator, promoted above the fold (alpha-readiness item 23):
+          lead the recap with the plain-language entry-efficiency read + the
+          behavioral flags — the sharpest, most-unique panels in the product —
+          right under the score, before the chart and trade table. Both panels
+          self-suppress (return null) on days with too little data, so an empty
+          day shows nothing here. The per-trade post-exit column stays in
+          TradeList below. Reorder, not rebuild — same components as before. */}
+      <MfeMaeEfficiency mfe={mfeMaeAtrStats.mfe} mae={mfeMaeAtrStats.mae} count={mfeMaeAtrStats.count} roundTrip={roundTripStats} />
+
+      <BehavioralProxiesPanel trades={trades} />
+
       {/* Chart area — toggle between legacy screenshot+calibration and the
           new live-bars rendering. Screenshot path will be removed in Phase 5
           of the chart migration once Live has proven itself across the
@@ -1098,10 +1109,6 @@ export default function EodClient({
           </div>
         </div>
       )}
-
-      <MfeMaeEfficiency mfe={mfeMaeAtrStats.mfe} mae={mfeMaeAtrStats.mae} count={mfeMaeAtrStats.count} roundTrip={roundTripStats} />
-
-      <BehavioralProxiesPanel trades={trades} />
 
       <TradeList
         trades={trades}
