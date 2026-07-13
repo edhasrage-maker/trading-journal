@@ -15,6 +15,7 @@
  */
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
+import { dayAchievementIds, type AchievementTrade } from '../src/lib/achievements'
 
 for (const l of readFileSync('.env.public-feed', 'utf8').split(/\r?\n/)) {
   const m = l.match(/^([A-Z_]+)=(.*)$/); if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
@@ -63,18 +64,24 @@ const TAG_LIBRARY: Array<[string, string[]]> = [
 // clobber the shared (symbol,ts) feed every real user reads).
 type DayPlan = { outcomes: boolean[]; breach: boolean; bias: Bias }
 type Bias = 'bullish' | 'bearish' | 'neutral'
+// Keep the last date within a few sessions of "now" — a demo whose newest day
+// is weeks old reads as abandoned. All dates need full RTH bar coverage on the
+// public NQ feed (skip half-days like Juneteenth / July 3rd). The 06-22→07-01
+// run is deliberately all-winners: five consecutive green SESSIONS light the
+// Heat Check badge, giving the demo's achievement surfaces something to show.
 const DAY_PLAN: Record<string, DayPlan> = {
-  '2026-06-01': { outcomes: [true, true], breach: false, bias: 'bullish' },
-  '2026-06-03': { outcomes: [true, false, true], breach: false, bias: 'bullish' },
-  '2026-06-05': { outcomes: [true], breach: false, bias: 'neutral' },
-  '2026-06-10': { outcomes: [false, false], breach: false, bias: 'bearish' },   // controlled down day, still Compliant
-  '2026-06-12': { outcomes: [false, true, false], breach: false, bias: 'neutral' },
-  '2026-06-17': { outcomes: [true, true], breach: false, bias: 'bullish' },
-  '2026-06-19': { outcomes: [true], breach: false, bias: 'bullish' },
-  '2026-06-24': { outcomes: [true, false], breach: false, bias: 'neutral' },
-  '2026-06-26': { outcomes: [false, false, false], breach: true, bias: 'bearish' }, // Breach showcase (post-loss size-up)
-  '2026-07-01': { outcomes: [true, true], breach: false, bias: 'bullish' },
-  '2026-07-02': { outcomes: [true, false], breach: false, bias: 'neutral' },
+  '2026-06-09': { outcomes: [true, true], breach: false, bias: 'bullish' },
+  '2026-06-11': { outcomes: [true, false, true], breach: false, bias: 'bullish' },
+  '2026-06-15': { outcomes: [false, false], breach: false, bias: 'bearish' },   // controlled down day, rules held
+  '2026-06-17': { outcomes: [false, true, false], breach: false, bias: 'neutral' },
+  '2026-06-22': { outcomes: [true], breach: false, bias: 'neutral' },           // green streak 1/5
+  '2026-06-24': { outcomes: [true, true], breach: false, bias: 'bullish' },     // 2/5
+  '2026-06-25': { outcomes: [true, true], breach: false, bias: 'bullish' },     // 3/5
+  '2026-06-29': { outcomes: [true, true], breach: false, bias: 'bullish' },     // 4/5
+  '2026-07-01': { outcomes: [true], breach: false, bias: 'bullish' },           // 5/5 → Heat Check
+  '2026-07-02': { outcomes: [false, false, false], breach: true, bias: 'bearish' }, // Breach showcase (post-loss size-up)
+  '2026-07-06': { outcomes: [true, false], breach: false, bias: 'neutral' },
+  '2026-07-09': { outcomes: [true, true], breach: false, bias: 'bullish' },
 }
 const DAYS = Object.keys(DAY_PLAN)
 
@@ -192,8 +199,15 @@ function anchorTrade(bars: Bar[], i: number, n: number, wantWin: boolean, qty: n
   const stop = entry + (isLong ? -stopPts : stopPts)
   const tp1 = entry + (isLong ? tp1Pts : -tp1Pts)
 
+  // 1-min ATR snapshot at entry (mean bar range over the prior 14 bars) — feeds
+  // the ×ATR efficiency panels, Coach Score evidence, and the Sniper badge.
+  const atrWin = bars.slice(Math.max(0, entryIdx - 14), entryIdx)
+  const atr1m = atrWin.length
+    ? Math.max(1, Math.round(atrWin.reduce((s, b) => s + (b.high - b.low), 0) / atrWin.length * 100) / 100)
+    : null
+
   return {
-    dir, entry, exit, stop, tp1, pnl,
+    dir, entry, exit, stop, tp1, pnl, atr1m,
     // Extend the recorded extremes to cover the exit fill — a curated loss can
     // overshoot the bar segment's adverse extreme, and an exit outside
     // [low, high] is exactly the corrupt shape the excursion guards reject.
@@ -289,7 +303,16 @@ function genEodAI(date: string, dayType: string, ts: SeedTrade[], dayPnl: number
   const bigWin = [...ts].filter(t => t.win).sort((a, b) => b.pnl - a.pnl)[0]
   const bigLoss = [...ts].filter(t => !t.win).sort((a, b) => a.pnl - b.pnl)[0]
 
+  // One TapeScore day-verdict sentence (≤14 words, decision quality not P&L)
+  // — feeds the EOD hero directly; without it legacy fallback text shows.
+  const headline = breach
+    ? 'Sizing up after losses turned a manageable red day destructive.'
+    : green
+      ? 'Disciplined, level-anchored trading — the wins were earned, not lucky.'
+      : 'Controlled red day — the rules held even when the reads did not.'
+
   return {
+    headline,
     summary: breach
       ? `Session is a Breach: P2 and P3 failed — the last two entries sized to 10 MNQ after losses with no qualifying orderflow — and the ${money(dayPnl)} net blew the daily loss limit (P1). Execution was compromised: revenge cycling the same ${dayType.toLowerCase()} thesis without a structural reset.`
       : `Compliant ${dayType.toLowerCase()} day, net ${money(dayPnl)} on ${wins}W / ${losses}L. All five safety rails held; execution was ${composite && composite >= 0.6 ? 'clean' : 'workable'} — ${bigWin ? `T${bigWin.n} (${money(bigWin.pnl)}) carried the day` : 'gains came from disciplined base setups'}.`,
@@ -332,7 +355,7 @@ function genEodAI(date: string, dayType: string, ts: SeedTrade[], dayPnl: number
       headline: breach ? 'Breach — post-loss 10 MNQ size-ups blew the daily loss limit.' : 'Compliant — all five safety rails held this session.',
       notes: breach
         ? 'The 10 MNQ sizing on the final two trades is the core mechanical failure — both follow losses, neither has documented Qualifying S&D, and the resulting drawdown pushed the session past the daily loss limit.'
-        : 'All five safety rails pass. Clean compliance; magnitude of the day does not change the verdict.',
+        : 'All five safety rails pass — a clean rule sheet; the size of the day does not change the verdict.',
     },
     execution: {
       execution_parameters: execParams,
@@ -373,8 +396,8 @@ function genWeekly(weekStart: string, days: Array<{ date: string; pnl: number; d
     themes: [
       `Net ${money(pnl)} across ${days.length} trading days (${greens} green); the edge came from named playbook setups at pre-marked levels.`,
       breaches > 0
-        ? `One compliance Breach this week — a post-loss 10 MNQ size-up with no qualifying orderflow; the post-loss sizing rule is the week's sharpest leak.`
-        : 'No compliance breaches — sizing stayed at 5 MNQ and post-loss cooldowns were respected every session.',
+        ? `One rule Breach this week — a post-loss 10 MNQ size-up with no qualifying orderflow; the post-loss sizing rule is the week's sharpest leak.`
+        : 'No rule breaks — sizing stayed at 5 MNQ and post-loss cooldowns were respected every session.',
       'MFE capture is the main variance: winners are being closed a touch early relative to their peak favorable excursion.',
     ],
     what_worked: [
@@ -405,6 +428,32 @@ function genWeekly(weekStart: string, days: Array<{ date: string; pnl: number; d
   }
 }
 
+/**
+ * Per-trade journal note. Doubles as the EOD "AI Overview" fallback row (the
+ * demo can't call the summary route), so vary the voice — identical one-liners
+ * on every row read as canned.
+ */
+function tradeNote(win: boolean, sizedUp: boolean, setup: string): string {
+  if (sizedUp) return pick([
+    "Sized up chasing it back — couldn't give up on the idea.",
+    'Doubled size to make it back fast. Knew the rule and broke it anyway.',
+  ])
+  const s = setup.toLowerCase()
+  return win
+    ? pick([
+        `${setup} at the pre-marked level — entered on the retest, scaled at TP1 and let the rest work.`,
+        `Waited for the ${s} trigger to actually print. Clean fill, barely any heat into target.`,
+        `Second test of the zone held, so I took the ${s} with structure behind it. Paid quickly.`,
+        `Patient with this one — level from prep, ${s} confirmed, managed off the chart not the P&L.`,
+      ])
+    : pick([
+        `${setup} looked right but the level gave way — stopped at plan, no chase.`,
+        `Early on the ${s}; the trigger hadn't fully printed. Stop did its job.`,
+        `Thesis died when the reclaim failed. Took the stop and left the level alone.`,
+        `Good location, wrong read — momentum never confirmed. Small loss, moved on.`,
+      ])
+}
+
 /** Friday-ish ISO date for the week's generated_at stamp. */
 function weekEndIso(weekStart: string): string {
   const d = new Date(weekStart + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 4)
@@ -421,6 +470,9 @@ async function seed(uid: string) {
   let totalTrades = 0
   // Accumulate per-week facts so we can seed one weekly_recap per week after.
   const weekAgg: Record<string, Array<{ date: string; pnl: number; dayType: string; breach: boolean }>> = {}
+  // Per-day inputs for the achievements pass (persisted after all days exist,
+  // since Career Day / Heat Check need the full P&L history).
+  const achDays: Array<{ date: string; dayId: string; pnl: number; trades: AchievementTrade[]; dayRangePts: number | null }> = []
 
   for (const date of DAYS) {
     const plan = DAY_PLAN[date]
@@ -441,6 +493,7 @@ async function seed(uid: string) {
     let dayPnl = 0
     let winSum = 0, lossSum = 0
     const seedTrades: SeedTrade[] = []
+    const achTrades: AchievementTrade[] = []
 
     for (let i = 0; i < n; i++) {
       const wantWin = plan.outcomes[i]
@@ -458,7 +511,7 @@ async function seed(uid: string) {
             // Favorable extreme: long win runs 45 pts up, short loss only saw 25
             // pts favorable before reversing. mfeLeg = pts × qty × mult (full
             // position $), matching what captureComponents grades against.
-            return { dir: (isLong ? 'long' : 'short') as 'long' | 'short', entry, exit: entry + (isLong ? mv : -mv), stop: entry + (isLong ? -30 : 30), tp1: entry + (isLong ? 70 : -70), pnl: mv * qty * MNQ_MULT, high: entry + 45, low: entry - 25, mfeLeg: (isLong ? 45 : 25) * qty * MNQ_MULT, entryTime: `${date}T${String(14 + i).padStart(2, '0')}:10:00Z`, exitTime: `${date}T${String(14 + i).padStart(2, '0')}:40:00Z` }
+            return { dir: (isLong ? 'long' : 'short') as 'long' | 'short', entry, exit: entry + (isLong ? mv : -mv), stop: entry + (isLong ? -30 : 30), tp1: entry + (isLong ? 70 : -70), pnl: mv * qty * MNQ_MULT, atr1m: 9, high: entry + 45, low: entry - 25, mfeLeg: (isLong ? 45 : 25) * qty * MNQ_MULT, entryTime: `${date}T${String(14 + i).padStart(2, '0')}:10:00Z`, exitTime: `${date}T${String(14 + i).padStart(2, '0')}:40:00Z` }
           })()
 
       dayPnl += a.pnl
@@ -481,11 +534,18 @@ async function seed(uid: string) {
         entry_time: a.entryTime, exit_time: a.exitTime,
         high_during_position: a.high, low_during_position: a.low,
         mfe_dollars_per_leg: a.mfeLeg,
+        entry_atr_1m: a.atr1m,
         tags_json: tags,
-        notes: wantWin ? 'Clean read at the level, let the runner work.' : (sizedUp ? "Sized up chasing it back — couldn't give up on the idea." : 'Thesis invalidated, stop did its job.'),
+        notes: tradeNote(wantWin, sizedUp, setups[0] ?? 'Trend Pullback'),
       })
       if (tre) throw new Error(`trade ${date}#${i}: ${tre.message}`)
       seedTrades.push({ n: i + 1, dir: a.dir, qty, pnl: a.pnl, win: wantWin, setup: setups[0] ?? 'Trend Pullback', entry: a.entry })
+      achTrades.push({
+        id: `${date}#${i + 1}`, trading_day_id: dayId, symbol: 'MNQ', direction: a.dir,
+        quantity: qty, entry_price: a.entry, exit_price: a.exit, stop_price: a.stop,
+        pnl: a.pnl, entry_time: a.entryTime, tags_json: tags,
+        high_during_position: a.high, low_during_position: a.low, entry_atr_1m: a.atr1m,
+      } as unknown as AchievementTrade)
       totalTrades++
     }
 
@@ -523,9 +583,26 @@ async function seed(uid: string) {
     })
     if (mce) console.warn(`  market_context ${date} skipped:`, mce.message)
 
+    achDays.push({ date, dayId, pnl: dayPnl, trades: achTrades, dayRangePts: Math.round(dHigh - dLow) })
+
     const wk = mondayOf(date)
     ;(weekAgg[wk] ??= []).push({ date, pnl: dayPnl, dayType, breach: plan.breach })
   }
+
+  // Achievements pass — run the SAME pure engine the app uses over the seeded
+  // days and persist the earned ids, so the dashboard markers, collection strip
+  // and EOD ×N counts light up. (The demo can't run the backfill route: it's
+  // POST-blocked and owner-gated.) Full history is passed to every day, matching
+  // recomputeAndPersistDay's semantics for Career Day / Heat Check.
+  const pnlHistory = achDays.map(d => ({ date: d.date, pnl: d.pnl }))
+  let earnedTotal = 0
+  for (const d of achDays) {
+    const ids = dayAchievementIds({ date: d.date, dayPnl: d.pnl, trades: d.trades, pnlHistory, dayRangePts: d.dayRangePts })
+    if (ids.length) { earnedTotal += ids.length; console.log(`  ${d.date} achievements: ${ids.join(', ')}`) }
+    const { error: ae } = await sb.from('trading_days').update({ achievements_json: ids }).eq('id', d.dayId)
+    if (ae) { console.warn('  achievements skipped:', ae.message); break }
+  }
+  console.log(`  achievements earned across the seed: ${earnedTotal}`)
 
   // Weekly recaps — one per week that has demo days.
   let weeks = 0
