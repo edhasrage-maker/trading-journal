@@ -164,22 +164,28 @@ function anchorTrade(bars: Bar[], i: number, n: number, wantWin: boolean, qty: n
   const isLong = wantWin ? realUp : !realUp
   const dir: 'long' | 'short' = isLong ? 'long' : 'short'
 
+  const seg = bars.slice(entryIdx, exitIdx + 1)
+  const segHigh = Math.max(...seg.map(b => b.high))
+  const segLow = Math.min(...seg.map(b => b.low))
+  const favPts = Math.max(1, Math.round(isLong ? segHigh - entry : entry - segLow))
+  const favMaxDollars = favPts * qty * MNQ_MULT     // full-qty MFE ceiling in $
+
   // Dollar-FIRST P&L, sized for a small-account trader on a -$500 daily loss
   // limit (standard risk ~$90–230; a size-up loss runs bigger). Points are
-  // backed out from the dollars for chart placement, so the realized move stays
-  // realistic even though the 1-min tape may have drifted much further.
+  // backed out from the dollars for chart placement. Winners are CAPPED at
+  // 60–85% of the segment's real MFE ceiling — realized can never exceed the
+  // peak favorable move, or capture/Conversion reads >100% (the app leaves
+  // that unclamped on purpose, as a corrupt-data flag).
   const pnl = wantWin
-    ? 120 + Math.round(rnd() * 300)                 // +$120..420
+    ? Math.max(2, Math.min(
+        120 + Math.round(rnd() * 300),              // +$120..420 curated…
+        Math.round(favMaxDollars * (0.6 + rnd() * 0.25)),  // …but ≤60-85% of real MFE
+      ))
     : sizedUp
       ? -(300 + Math.round(rnd() * 230))            // -$300..530 (10-lot size-up loss)
       : -(90 + Math.round(rnd() * 140))             // -$90..230 (standard stop-out)
   const favPtsSigned = pnl / (qty * MNQ_MULT)       // >0 on a win
   const exit = Math.round(entry + (isLong ? favPtsSigned : -favPtsSigned))
-
-  const seg = bars.slice(entryIdx, exitIdx + 1)
-  const segHigh = Math.max(...seg.map(b => b.high))
-  const segLow = Math.min(...seg.map(b => b.low))
-  const favPts = Math.max(1, Math.round(isLong ? segHigh - entry : entry - segLow))
 
   const stopPts = 18 + Math.round(rnd() * 22)                 // 18..40
   const tp1Pts = Math.round(stopPts * (2.0 + rnd() * 0.6))    // ~2.0–2.6R
@@ -188,8 +194,14 @@ function anchorTrade(bars: Bar[], i: number, n: number, wantWin: boolean, qty: n
 
   return {
     dir, entry, exit, stop, tp1, pnl,
-    high: Math.round(segHigh), low: Math.round(segLow),
-    mfeLeg: Math.max(1, Math.round(favPts * MNQ_MULT)),
+    // Extend the recorded extremes to cover the exit fill — a curated loss can
+    // overshoot the bar segment's adverse extreme, and an exit outside
+    // [low, high] is exactly the corrupt shape the excursion guards reject.
+    high: Math.max(Math.round(segHigh), exit), low: Math.min(Math.round(segLow), exit),
+    // Full-position peak-favorable $ (pts × qty × multiplier) — the same unit
+    // captureComponents grades against. The old pts × $2 value forgot qty and
+    // shrank the denominator 5-10×, which is what printed 218% Conversion.
+    mfeLeg: favMaxDollars,
     entryTime: bars[entryIdx].ts, exitTime: bars[exitIdx].ts,
   }
 }
@@ -443,7 +455,10 @@ async function seed(uid: string) {
             const base = 29500, entry = base + Math.round((rnd() - 0.5) * 60)
             const isLong = wantWin
             const mv = wantWin ? 40 : -30
-            return { dir: (isLong ? 'long' : 'short') as 'long' | 'short', entry, exit: entry + (isLong ? mv : -mv), stop: entry + (isLong ? -30 : 30), tp1: entry + (isLong ? 70 : -70), pnl: mv * qty * MNQ_MULT, high: entry + 45, low: entry - 25, mfeLeg: 90, entryTime: `${date}T${String(14 + i).padStart(2, '0')}:10:00Z`, exitTime: `${date}T${String(14 + i).padStart(2, '0')}:40:00Z` }
+            // Favorable extreme: long win runs 45 pts up, short loss only saw 25
+            // pts favorable before reversing. mfeLeg = pts × qty × mult (full
+            // position $), matching what captureComponents grades against.
+            return { dir: (isLong ? 'long' : 'short') as 'long' | 'short', entry, exit: entry + (isLong ? mv : -mv), stop: entry + (isLong ? -30 : 30), tp1: entry + (isLong ? 70 : -70), pnl: mv * qty * MNQ_MULT, high: entry + 45, low: entry - 25, mfeLeg: (isLong ? 45 : 25) * qty * MNQ_MULT, entryTime: `${date}T${String(14 + i).padStart(2, '0')}:10:00Z`, exitTime: `${date}T${String(14 + i).padStart(2, '0')}:40:00Z` }
           })()
 
       dayPnl += a.pnl
