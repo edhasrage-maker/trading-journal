@@ -373,7 +373,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         className={`font-normal py-2 pr-3 text-center w-16 ${dragProps('capture').className ?? ''}`}
         title="Of the best point the trades reached in your favor, how much you kept at exit, on average."
       >
-        <span className="text-gray-500">Capture</span>
+        <span className="text-gray-500">Profit Captured</span>
       </th>
     ),
     pnl: (

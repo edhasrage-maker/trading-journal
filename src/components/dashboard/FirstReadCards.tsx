@@ -125,7 +125,7 @@ function TeaserCard({ teaser, kind }: { teaser: FirstReadTeaser; kind: 'best' | 
           <span>Win <span className="text-gray-200 font-mono">{teaser.winRate.toFixed(0)}%</span></span>
         )}
         {teaser.capturePct != null && (
-          <span>Capture <span className="text-gray-200 font-mono">{teaser.capturePct}%</span></span>
+          <span>Profit Captured <span className="text-gray-200 font-mono">{teaser.capturePct}%</span></span>
         )}
         {teaser.mfeMaeRatio != null && (
           <span>MFE:MAE <span className="text-gray-200 font-mono">{teaser.mfeMaeRatio.toFixed(1)}×</span></span>

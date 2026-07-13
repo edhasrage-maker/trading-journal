@@ -119,8 +119,8 @@ function CapHeatInline({ trade, rDisplay, bars, instrumentHasBars = true }: { tr
         <span
           className={capCls}
           title={isGiveBack
-            ? `MFE Realized %: ${captureDisplay(trade, bars)} — give-back (trade went favorable then closed negative).`
-            : `MFE Realized %: ${captureDisplay(trade, bars)} of peak favorable excursion realized as PnL.${bars && bars.length > 0 ? ' Per-leg scaling-aware.' : ''}`}
+            ? `Profit Captured: ${captureDisplay(trade, bars)} — give-back (trade went favorable then closed negative).`
+            : `Profit Captured: ${captureDisplay(trade, bars)} of peak favorable excursion realized as PnL.${bars && bars.length > 0 ? ' Per-leg scaling-aware.' : ''}`}
         >
           {captureDisplay(trade, bars)}
         </span>
@@ -678,8 +678,8 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                       <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="MFE Realized %: realized PnL / peak favorable excursion DURING the position. 100% = you took the high.">
-                          MFE Realized %
+                        <div className="text-xs text-gray-500 mb-0.5" title="Profit Captured: realized PnL / peak favorable excursion DURING the position. 100% = you took the high.">
+                          Profit Captured
                         </div>
                         <div className={`font-medium ${capCls}`}>{cap ?? '—'}</div>
                       </div>

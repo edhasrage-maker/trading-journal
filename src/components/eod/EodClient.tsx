@@ -853,12 +853,12 @@ export default function EodClient({
           <AvgMfeMaeCard trades={trades} variant="inline" />
           <div className="relative">
             <div className="text-[10px] text-gray-500 whitespace-nowrap flex items-center gap-1">
-              MFE Realized %
+              Profit Captured
               <button
                 type="button"
                 onClick={() => { setMfeInfoOpen(o => !o); setRatioInfoOpen(false) }}
                 className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                title="What is MFE Realized %?"
+                title="What is Profit Captured?"
               >
                 <HelpCircle className="w-3 h-3" />
               </button>
@@ -874,7 +874,7 @@ export default function EodClient({
                 className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
               >
                 <div className="flex items-start justify-between mb-2">
-                  <p className="font-semibold text-white">MFE Realized %</p>
+                  <p className="font-semibold text-white">Profit Captured</p>
                   <button type="button" onClick={() => setMfeInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -933,7 +933,7 @@ export default function EodClient({
                   <li><strong>~1×</strong>: balanced — room given ≈ room taken</li>
                   <li><strong>&lt; 1×</strong>: <strong className="text-red-300">heat dominated</strong> — trades ran against you more than for you</li>
                 </ul>
-                <p className="text-gray-500">Opportunity vs. heat only — whether you actually <em>banked</em> the move is MFE Realized %.</p>
+                <p className="text-gray-500">Opportunity vs. heat only — whether you actually <em>banked</em> the move is Profit Captured.</p>
               </div>
             )}
           </div>

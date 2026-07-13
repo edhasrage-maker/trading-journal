@@ -76,7 +76,7 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
     { label: 'Day win rate', value: tradedDays > 0 ? `${Math.round((greenDays / tradedDays) * 100)}%` : '—' },
     { label: 'Win rate', value: winRate == null ? '—' : `${Math.round(winRate)}%` },
     ...(capturePct != null
-      ? [{ label: 'Conversion', value: `${capturePct}%`, title: 'Of the best point your trade reached in your favor, how much you kept at exit, on average.' }]
+      ? [{ label: 'Profit Captured', value: `${capturePct}%`, title: 'Of the best point your trade reached in your favor, how much you kept at exit, on average.' }]
       : []),
     {
       label: 'Best day',
