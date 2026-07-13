@@ -10,6 +10,7 @@ import ConditionFilterPanel from '@/components/condition/ConditionFilterPanel'
 import ConditionVerdicts from './ConditionVerdicts'
 import MarketContextForm from './MarketContextForm'
 import PrepNotesForm from './PrepNotesForm'
+import SessionPicker from './SessionPicker'
 import AiAnalysisCard from './AiAnalysisCard'
 import DiscordDashboard from './DiscordDashboard'
 import TradePlansSection from './TradePlansSection'
@@ -25,7 +26,7 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
-import type { SessionLevels } from '@/lib/session-levels'
+import type { SessionLevels, SessionKind } from '@/lib/session-levels'
 import type { DayContextStats } from '@/lib/market-context-from-bars'
 import type { SpellCheckCorrection } from '@/app/api/spell-check/route'
 
@@ -141,6 +142,24 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       price_in_gbx_range: initialContext.price_in_gbx_range ?? undefined,
     } : { symbol: 'NQ' }
   )
+  const [prepNotes, setPrepNotes] = useState<PrepNotes>(initialDay?.prep_notes_json ?? {})
+  // Which trading session this prep targets. Drives the session-aware chart
+  // levels/IB + the market-context fetch. Persisted inside prep_notes_json (no
+  // schema change); default RTH. Asia/London are the GBX/overnight sessions.
+  const session: SessionKind = (prepNotes.session as SessionKind | undefined) ?? 'rth'
+  // Latest session levels from the chart's onLevels callback — powers the
+  // read-only GBX levels readout in the SessionPicker.
+  const [liveLevels, setLiveLevels] = useState<SessionLevels | null>(null)
+  const changeSession = (s: SessionKind) => {
+    setPrepNotes(prev => (prev.session === s ? prev : { ...prev, session: s }))
+    // Planning a GBX/overnight session → set the day-level GBX chip so prep,
+    // day-type, and analytics agree before trades print (mirrors the intraday
+    // GBX auto-tagging). Add-only: switching back to RTH doesn't strip a chip
+    // the user may have set deliberately.
+    if (s !== 'rth' && dayTypeOptions.includes('GBX')) {
+      setDayTypes(prev => (prev.includes('GBX') ? prev : [...prev, 'GBX']))
+    }
+  }
   // Auto-fill the Market Context form from the Live chart's computed session
   // levels — the chart already draws PDH/PDL/IBH/IBL/ONH/ONL deterministically
   // from the .scid, so on "Live chart" view the form no longer stays empty.
@@ -149,9 +168,15 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // every 3 min won't re-fill a field the user later cleared.
   const levelsAutoFilledRef = useRef<Set<string>>(new Set())
   const handleLevels = useCallback((lvls: SessionLevels | null) => {
+    setLiveLevels(lvls)
     if (!lvls) return
+    // PDH/PDL/ONH/ONL are session-invariant (prior RTH high/low + overnight) —
+    // always auto-fill. IBH/IBL are the ACTIVE session's IB; only write them into
+    // the RTH-semantic market_context on RTH days, so a GBX session's IB never
+    // overwrites the RTH IB that analytics condition-buckets read.
     const map: Record<string, number | null> = {
-      pdh: lvls.pdh, pdl: lvls.pdl, ibh: lvls.ibh, ibl: lvls.ibl, onh: lvls.onh, onl: lvls.onl,
+      pdh: lvls.pdh, pdl: lvls.pdl, onh: lvls.onh, onl: lvls.onl,
+      ...(session === 'rth' ? { ibh: lvls.ibh, ibl: lvls.ibl } : {}),
     }
     setContext(prev => {
       const next = { ...prev }
@@ -165,7 +190,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       }
       return changed ? next : prev
     })
-  }, [])
+  }, [session])
 
   // Auto-fill the volatility/volume stats (RVOL/ADR/ATR/IB size/day range) from
   // bars — the bar-native equivalent of reading them off a Sierra screenshot.
@@ -186,12 +211,17 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch(`/api/bars/market-context?symbol=${encodeURIComponent(chartSymbol)}&date=${date}`)
+        const res = await fetch(`/api/bars/market-context?symbol=${encodeURIComponent(chartSymbol)}&date=${date}${session !== 'rth' ? `&session=${session}` : ''}`)
         if (!res.ok) return
         const { stats } = await res.json() as { stats: DayContextStats | null }
         if (cancelled || !stats) return
         setBarCurrentPrice(stats.current_price ?? null)
         if (stats.atr_10d_avg != null) setAtrBaseline(stats.atr_10d_avg)
+        // Only auto-fill the persisted RTH market_context on RTH days. On
+        // Asia/London the stats are either session-anchored (IB size/range) or
+        // muted (RVOL/ADR/ATR are RTH-baselined) — surfaced read-only in the
+        // SessionPicker readout, never written into the RTH-semantic table.
+        if (session !== 'rth') return
         const map: Record<string, number | null> = {
           rvol: stats.rvol, ib_size: stats.ib_size, adr: stats.adr, atr_1m: stats.atr_1m, day_range: stats.day_range,
         }
@@ -210,7 +240,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       } catch { /* best-effort — screenshot/manual entry still available */ }
     })()
     return () => { cancelled = true }
-  }, [chartSymbol, date, barsVersion])
+  }, [chartSymbol, date, barsVersion, session])
 
   // Derive the "Price between PDH/PDL?" and "Price in GBX range?" flags from the
   // bar-native current price + the levels in the form — overwriting the fragile
@@ -242,7 +272,6 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     })
   }, [barCurrentPrice, context.pdl, context.pdh, context.onl, context.onh])
 
-  const [prepNotes, setPrepNotes] = useState<PrepNotes>(initialDay?.prep_notes_json ?? {})
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(
     initialDay?.ai_analysis_json && Object.keys(initialDay.ai_analysis_json).length > 0
       ? initialDay.ai_analysis_json as AiAnalysis
@@ -833,6 +862,14 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         onClose={() => setSpellCheckOpen(false)}
       />
 
+      {/* Session picker — RTH / Asia / London. Detailed Tape (pro) only, like
+          Market Context: GBX/overnight session planning is an advanced flow.
+          Re-anchors the chart's IB + reference levels and sets the planned GBX
+          chip; session choice persists in prep_notes_json.session. */}
+      {mode === 'pro' && (
+        <SessionPicker value={session} onChange={changeSession} levels={session !== 'rth' ? liveLevels : null} />
+      )}
+
       {/* Chart — toggle between the morning Sierra Chart screenshot (with
           MGI levels marked, used for AI auto-fill) and the in-app LiveChart
           (live bars from .scid + session levels). Same pattern as EodClient. */}
@@ -898,6 +935,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             trades={chartTrades}
             refreshKey={barsVersion}
             onLevels={handleLevels}
+            session={session}
           />
         )}
       </div>

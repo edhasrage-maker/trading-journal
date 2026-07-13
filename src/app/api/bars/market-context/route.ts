@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { readScidBars, type OneMinBar } from '@/lib/scid-reader'
 import { contextStatsForDate } from '@/lib/market-context-from-bars'
+import type { SessionKind } from '@/lib/session-levels'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { clientError } from '@/lib/api-error'
@@ -64,6 +65,8 @@ export async function GET(req: Request) {
   const date = searchParams.get('date')
   const explicitFile = searchParams.get('scidFile')
   const priceDivisor = Number(searchParams.get('priceDivisor') ?? '100') || 100
+  const sessionParam = searchParams.get('session')
+  const session: SessionKind = sessionParam === 'asia' || sessionParam === 'london' ? sessionParam : 'rth'
 
   if (!symbol) return NextResponse.json({ error: 'symbol required' }, { status: 400 })
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -86,7 +89,7 @@ export async function GET(req: Request) {
         { status: 200 },
       )
     }
-    const stats = contextStatsForDate(bars, date)
+    const stats = contextStatsForDate(bars, date, session)
     return NextResponse.json({ stats })
   }
 
@@ -133,6 +136,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: `No bars in lookback for ${safeName}`, stats: null }, { status: 200 })
   }
 
-  const stats = contextStatsForDate(bars, date)
+  const stats = contextStatsForDate(bars, date, session)
   return NextResponse.json({ stats, scidFile: safeName })
 }

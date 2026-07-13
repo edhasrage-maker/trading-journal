@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { readScidBars } from '@/lib/scid-reader'
-import { computeSessionLevels, DEFAULT_LEVELS_CONFIG, type RawBar } from '@/lib/session-levels'
+import { computeSessionLevels, DEFAULT_LEVELS_CONFIG, type RawBar, type SessionKind } from '@/lib/session-levels'
 import { chartSeriesRoot, miniContractSymbol } from '@/lib/futures-symbols'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { clientError } from '@/lib/api-error'
@@ -61,6 +61,8 @@ export async function GET(req: Request) {
   const date = searchParams.get('date')
   const explicitFile = searchParams.get('scidFile')
   const priceDivisor = Number(searchParams.get('priceDivisor') ?? '100') || 100
+  const sessionParam = searchParams.get('session')
+  const session: SessionKind = sessionParam === 'asia' || sessionParam === 'london' ? sessionParam : 'rth'
 
   if (!symbol) return NextResponse.json({ error: 'symbol required' }, { status: 400 })
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -87,7 +89,7 @@ export async function GET(req: Request) {
     const { levels, series } = computeSessionLevels(bars, date, {
       ...DEFAULT_LEVELS_CONFIG,
       emaTimeframeMins: emaTf,
-    })
+    }, session)
     return NextResponse.json({ levels, series })
   }
 
@@ -142,6 +144,6 @@ export async function GET(req: Request) {
   const { levels, series } = computeSessionLevels(bars, date, {
     ...DEFAULT_LEVELS_CONFIG,
     emaTimeframeMins: emaTf,
-  })
+  }, session)
   return NextResponse.json({ levels, series, scidFile: safeName })
 }

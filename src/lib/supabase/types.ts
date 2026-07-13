@@ -214,6 +214,10 @@ export interface PrepNotes {
   ema_slope?: 'flat' | 'sloped'
   mood?: string
   market_clarity?: string
+  /** Which trading session this prep targets — drives session-aware levels/IB
+   *  on the Prep page. RTH (default) is the day session; Asia/London are the
+   *  GBX/overnight sessions. Persisted here so no schema change is needed. */
+  session?: 'rth' | 'asia' | 'london'
 }
 
 export interface AiAnalysis {

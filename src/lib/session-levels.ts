@@ -26,6 +26,15 @@ export interface LevelsConfig {
   weeklyAnchorSec: number
   extPercents: [number, number, number]
   emaTimeframeMins: number // EMA computed on this bar timeframe (study default 1; common 5)
+  // Overnight session windows (PT seconds-since-midnight). Asia opens the
+  // evening before the RTH day and closes at 02:00; London runs 00:00 → RTH
+  // open. Each session's IB is the first hour after its open.
+  asiaStartSec: number
+  asiaEndSec: number
+  asiaIbEndSec: number
+  londonStartSec: number
+  londonEndSec: number
+  londonIbEndSec: number
 }
 
 export const DEFAULT_LEVELS_CONFIG: LevelsConfig = {
@@ -38,6 +47,12 @@ export const DEFAULT_LEVELS_CONFIG: LevelsConfig = {
   weeklyAnchorSec: 15 * 3600,    // Sunday 15:00
   extPercents: [25, 50, 100],
   emaTimeframeMins: 5,           // 9/20 EMA on the 5-minute by default
+  asiaStartSec: 17 * 3600,          // Asia (Tokyo cash) open 17:00 PT
+  asiaEndSec: 2 * 3600,             // Asia close 02:00 PT (next PT date)
+  asiaIbEndSec: 18 * 3600,          // Asia IB end 18:00 PT
+  londonStartSec: 0,                // London open 00:00 PT
+  londonEndSec: 6 * 3600 + 30 * 60, // London close 06:30 PT (RTH open)
+  londonIbEndSec: 1 * 3600,         // London IB end 01:00 PT
 }
 
 export interface SessionLevels {
@@ -53,6 +68,16 @@ export interface SessionLevels {
   weeklyOpen: number | null
   ibhExt: (number | null)[]
   iblExt: (number | null)[]
+  // Session-aware additions. ibh/ibl/ibhExt/iblExt above reflect the ACTIVE
+  // session's IB (per the sessionKind arg); these are the static prior-cycle
+  // overnight references drawn regardless of the active session, computed off
+  // the same prior trading day as PDH/PDL. sessionOpen = the active session's
+  // opening print (equals rthOpen when sessionKind is 'rth').
+  priorAsiaH: number | null
+  priorAsiaL: number | null
+  priorLondonH: number | null
+  priorLondonL: number | null
+  sessionOpen: number | null
 }
 
 export interface LevelSeriesPoint {
@@ -163,6 +188,72 @@ function hl(bars: AnnotatedBar[]): { high: number | null; low: number | null } {
   return { high, low }
 }
 
+/** Which session's IB + high/low the levels are anchored to. Default 'rth'
+ *  reproduces the original RTH-only behaviour. */
+export type SessionKind = 'rth' | 'asia' | 'london'
+
+export interface SessionWindowSpec {
+  ibStartOffset: number; ibStartSec: number
+  ibEndOffset: number; ibEndSec: number
+  hlStartOffset: number; hlStartSec: number
+  hlEndOffset: number; hlEndSec: number
+}
+
+/** IB and full high/low windows for each session, as PT-date offsets from the
+ *  cycle date C plus seconds-since-PT-midnight. Asia opens the evening BEFORE
+ *  the cycle's RTH day (offset -1) and closes 02:00 on C; London and RTH sit
+ *  entirely on C. Exported so bar-derived market-context stats reuse the SAME
+ *  window definitions instead of duplicating them. */
+export function sessionWindow(kind: SessionKind, cfg: LevelsConfig = DEFAULT_LEVELS_CONFIG): SessionWindowSpec {
+  switch (kind) {
+    case 'asia':
+      return {
+        ibStartOffset: -1, ibStartSec: cfg.asiaStartSec, ibEndOffset: -1, ibEndSec: cfg.asiaIbEndSec,
+        hlStartOffset: -1, hlStartSec: cfg.asiaStartSec, hlEndOffset: 0, hlEndSec: cfg.asiaEndSec,
+      }
+    case 'london':
+      return {
+        ibStartOffset: 0, ibStartSec: cfg.londonStartSec, ibEndOffset: 0, ibEndSec: cfg.londonIbEndSec,
+        hlStartOffset: 0, hlStartSec: cfg.londonStartSec, hlEndOffset: 0, hlEndSec: cfg.londonEndSec,
+      }
+    case 'rth':
+    default:
+      return {
+        ibStartOffset: 0, ibStartSec: cfg.rthStartSec, ibEndOffset: 0, ibEndSec: cfg.ibEndSec,
+        hlStartOffset: 0, hlStartSec: cfg.rthStartSec, hlEndOffset: 0, hlEndSec: cfg.rthEndSec,
+      }
+  }
+}
+
+/** Add `days` to a YYYY-MM-DD PT date string (noon-UTC anchor dodges DST). */
+function shiftDate(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+/** True when a bar falls in [startDate startSec, endDate endSec) (PT). Handles
+ *  windows that cross midnight into the next PT date (startDate !== endDate). */
+function inRange(b: AnnotatedBar, startDate: string, startSec: number, endDate: string, endSec: number): boolean {
+  if (startDate === endDate) return b.ptDate === startDate && b.sod >= startSec && b.sod < endSec
+  if (b.ptDate === startDate) return b.sod >= startSec
+  if (b.ptDate === endDate) return b.sod < endSec
+  return b.ptDate > startDate && b.ptDate < endDate
+}
+
+/** High/low over a session window anchored at cycle date C with the given
+ *  offsets/seconds (from sessionWindow). */
+function rangeHL(
+  annotated: AnnotatedBar[],
+  cycleDate: string,
+  startOffset: number, startSec: number,
+  endOffset: number, endSec: number,
+): { high: number | null; low: number | null } {
+  const startDate = shiftDate(cycleDate, startOffset)
+  const endDate = shiftDate(cycleDate, endOffset)
+  return hl(annotated.filter(b => inRange(b, startDate, startSec, endDate, endSec)))
+}
+
 /** Most recent Sunday-15:00-PT anchor at or before the target day's RTH. */
 function weeklyAnchorMs(annotated: AnnotatedBar[], targetDate: string, cfg: LevelsConfig): number | null {
   // Find the first bar that is at/after the most-recent weekly anchor preceding
@@ -183,6 +274,7 @@ export function computeSessionLevels(
   bars: RawBar[],
   targetDatePT: string,
   config: LevelsConfig = DEFAULT_LEVELS_CONFIG,
+  sessionKind: SessionKind = 'rth',
 ): LevelsResult {
   const cfg = config
   const annotated: AnnotatedBar[] = bars
@@ -195,7 +287,6 @@ export function computeSessionLevels(
 
   const onPtDate = (d: string) => annotated.filter(b => b.ptDate === d)
   const inRTH = (b: AnnotatedBar) => b.sod >= cfg.rthStartSec && b.sod < cfg.rthEndSec
-  const inIB = (b: AnnotatedBar) => b.sod >= cfg.rthStartSec && b.sod < cfg.ibEndSec
   const inFull = (b: AnnotatedBar) => b.sod >= cfg.rthStartSec && b.sod < cfg.fullEndSec
 
   // Distinct PT dates that have any RTH activity, ascending.
@@ -204,13 +295,20 @@ export function computeSessionLevels(
   // --- Target-day windows ---
   const targetBars = onPtDate(targetDatePT)
   const targetRTH = targetBars.filter(inRTH)
-  const targetIB = targetBars.filter(inIB)
+  const rthOpen = targetRTH.length > 0 ? targetRTH[0].open : null
 
-  const ibHL = hl(targetIB)
+  // --- Active-session IB (re-anchored per sessionKind) ---
+  // RTH IB = 06:30-07:30 on D; Asia IB = 17:00-18:00 on D-1 (Asia opens the
+  // evening before D's RTH close); London IB = 00:00-01:00 on D. The full
+  // active-session window also yields the session's opening print.
+  const sess = sessionWindow(sessionKind, cfg)
+  const ibHL = rangeHL(annotated, targetDatePT, sess.ibStartOffset, sess.ibStartSec, sess.ibEndOffset, sess.ibEndSec)
   const ibh = ibHL.high
   const ibl = ibHL.low
-
-  const rthOpen = targetRTH.length > 0 ? targetRTH[0].open : null
+  const activeStartDate = shiftDate(targetDatePT, sess.hlStartOffset)
+  const activeEndDate = shiftDate(targetDatePT, sess.hlEndOffset)
+  const activeBars = annotated.filter(b => inRange(b, activeStartDate, sess.hlStartSec, activeEndDate, sess.hlEndSec))
+  const sessionOpen = activeBars.length > 0 ? activeBars[0].open : null
 
   // IB extensions
   const ibhExt: (number | null)[] = [null, null, null]
@@ -242,6 +340,8 @@ export function computeSessionLevels(
   const priorDate = priorIdx >= 0 ? rthDates[priorIdx] : null
   let pdh: number | null = null, pdl: number | null = null
   let pdhFull: number | null = null, pdlFull: number | null = null
+  let priorAsiaH: number | null = null, priorAsiaL: number | null = null
+  let priorLondonH: number | null = null, priorLondonL: number | null = null
   if (priorDate) {
     const pd = onPtDate(priorDate)
     const pdRTH = hl(pd.filter(inRTH))
@@ -250,6 +350,14 @@ export function computeSessionLevels(
     const pdFull = hl(pd.filter(inFull))
     pdhFull = pdFull.high
     pdlFull = pdFull.low
+    // Prior-cycle Asia + London ranges — the static overnight references you
+    // trade against, anchored to the same prior trading day as PDH/PDL.
+    const aw = sessionWindow('asia', cfg)
+    const pa = rangeHL(annotated, priorDate, aw.hlStartOffset, aw.hlStartSec, aw.hlEndOffset, aw.hlEndSec)
+    priorAsiaH = pa.high; priorAsiaL = pa.low
+    const lw = sessionWindow('london', cfg)
+    const pl = rangeHL(annotated, priorDate, lw.hlStartOffset, lw.hlStartSec, lw.hlEndOffset, lw.hlEndSec)
+    priorLondonH = pl.high; priorLondonL = pl.low
   }
 
   // Weekly open
@@ -295,7 +403,10 @@ export function computeSessionLevels(
   const series = Array.from(seriesByMs.values()).sort((a, b) => (a.ts < b.ts ? -1 : 1))
 
   return {
-    levels: { pdh, pdl, pdhFull, pdlFull, onh: onHL.high, onl: onHL.low, ibh, ibl, rthOpen, weeklyOpen, ibhExt, iblExt },
+    levels: {
+      pdh, pdl, pdhFull, pdlFull, onh: onHL.high, onl: onHL.low, ibh, ibl, rthOpen, weeklyOpen, ibhExt, iblExt,
+      priorAsiaH, priorAsiaL, priorLondonH, priorLondonL, sessionOpen,
+    },
     series,
   }
 }

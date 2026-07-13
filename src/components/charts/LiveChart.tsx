@@ -18,7 +18,7 @@ import { TradeArrowsPrimitive, type TradeArrow } from './TradeArrowsPrimitive'
 import { AnnotationsPrimitive, type ChartAnnotation, type AnnGeom } from './AnnotationsPrimitive'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { Trade } from '@/lib/supabase/types'
-import type { SessionLevels, LevelSeriesPoint } from '@/lib/session-levels'
+import type { SessionLevels, LevelSeriesPoint, SessionKind } from '@/lib/session-levels'
 import { todayPT } from '@/lib/pt-time'
 import { migrateChartPrefs, schedulePushChartPref, pullChartPref } from '@/lib/chart-prefs'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
@@ -48,6 +48,10 @@ interface Props {
    *  uses this to auto-fill the Market Context form (PDH/PDL/IBH/IBL/ONH/ONL)
    *  from the same values the chart draws, for fields the user hasn't edited. */
   onLevels?: (levels: SessionLevels | null) => void
+  /** Which session's levels/IB to compute + draw (RTH default). Asia/London
+   *  re-anchor the IB to that overnight session and add the prior-cycle Asia/
+   *  London reference ranges. */
+  session?: SessionKind
   /** Read-only mode (shared coach-review view): hides Drawing Mode and skips
    *  all chart-pref/view persistence, since the viewer isn't the owner. */
   readOnly?: boolean
@@ -289,7 +293,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onDismissHover, onLevels, readOnly = false, prefsOverride = null },
+  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onDismissHover, onLevels, session = 'rth', readOnly = false, prefsOverride = null },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -704,7 +708,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   useEffect(() => {
     if (!symbol) { setLevels(null); onLevelsRef.current?.(null); return }
     let cancelled = false
-    fetch(`/api/bars/levels?symbol=${encodeURIComponent(symbol)}&date=${date}&emaTf=${prefs.emaTimeframeMins}`)
+    fetch(`/api/bars/levels?symbol=${encodeURIComponent(symbol)}&date=${date}&emaTf=${prefs.emaTimeframeMins}${session !== 'rth' ? `&session=${session}` : ''}`)
       .then(r => r.json())
       .then(d => {
         if (cancelled) return
@@ -713,7 +717,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       })
       .catch(() => { if (!cancelled) setLevels(null) })
     return () => { cancelled = true }
-  }, [symbol, date, prefs.emaTimeframeMins, refreshKey, pollTick])
+  }, [symbol, date, prefs.emaTimeframeMins, refreshKey, pollTick, session])
 
   // Fetch bars. `silent` skips the loading spinner — used for the background
   // bar-watcher refresh so the chart doesn't flash a loader every few minutes.
@@ -1151,13 +1155,24 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       addLine(L.pdlFull, 'PDL·F', dim, true)
       addLine(L.onh, 'ONH', grey)
       addLine(L.onl, 'ONL', grey)
-      addLine(L.ibh, 'IBH', grey)
-      addLine(L.ibl, 'IBL', grey)
+      // IBH/IBL reflect the ACTIVE session's IB (per the session prop); label
+      // them with the session so an Asia/London IB reads unambiguously.
+      const ibTag = session === 'asia' ? 'Asia IB' : session === 'london' ? 'Lon IB' : 'IB'
+      addLine(L.ibh, `${ibTag}H`, grey)
+      addLine(L.ibl, `${ibTag}L`, grey)
       addLine(L.rthOpen, 'RTH Open', dim, true)
       addLine(L.weeklyOpen, 'Wk Open', dim, true)
       const pcts = [25, 50, 100]
-      L.ibhExt.forEach((v, i) => addLine(v, `IBH+${pcts[i]}%`, dim, true))
-      L.iblExt.forEach((v, i) => addLine(v, `IBL-${pcts[i]}%`, dim, true))
+      L.ibhExt.forEach((v, i) => addLine(v, `${ibTag}H+${pcts[i]}%`, dim, true))
+      L.iblExt.forEach((v, i) => addLine(v, `${ibTag}L-${pcts[i]}%`, dim, true))
+      // Prior-cycle Asia/London reference ranges — only relevant when planning a
+      // GBX/overnight session, so drawn only in Asia/London mode.
+      if (session !== 'rth') {
+        addLine(L.priorAsiaH, 'pAsiaH', dim, true)
+        addLine(L.priorAsiaL, 'pAsiaL', dim, true)
+        addLine(L.priorLondonH, 'pLonH', dim, true)
+        addLine(L.priorLondonL, 'pLonL', dim, true)
+      }
     }
 
     // Trade arrows (custom primitive — see TradeArrowsPrimitive). Two
@@ -1442,7 +1457,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // hover.trade?.id and hoverTradeId are in the dep list: when the user
     // hovers near a trade (crosshair) or the EOD row, the arrows re-render with
     // that trade's labels revealed + size bump, and its connector line bolds.
-  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId])
+  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId, session])
 
   // Row-hover ↔ chart link: when a trade is hovered in the EOD list, drop the
   // crosshair on its entry (highlight where it was) and show the same

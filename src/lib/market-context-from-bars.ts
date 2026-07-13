@@ -14,6 +14,7 @@
  * (the caller reads ~3 weeks of `.scid`), then call contextStatsForDate().
  */
 import type { OneMinBar } from './scid-reader'
+import { sessionWindow, type SessionKind } from './session-levels'
 
 // RTH in PT (06:30 → 13:00). IB is the first 60 mins (06:30 → 07:29).
 const RTH_OPEN_SEC = 6 * 3600 + 30 * 60   // 23400
@@ -238,18 +239,61 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
 }
 
 /**
+ * Active-session IB size + full-session range for `date`, computed directly
+ * from the bars using the SHARED session-window definitions in session-levels.ts
+ * (single source of truth for the RTH/Asia/London windows). Asia's IB sits on
+ * D-1 (17:00–18:00) and its range crosses midnight (17:00 D-1 → 02:00 D); the
+ * `addDays`/inWin logic handles the two-date span.
+ */
+function sessionIbAndRange(
+  bars: OneMinBar[], date: string, session: SessionKind,
+): { ibSize: number | null; range: number | null; realized: boolean } {
+  const w = sessionWindow(session)
+  const ibStart = addDays(date, w.ibStartOffset), ibEnd = addDays(date, w.ibEndOffset)
+  const hlStart = addDays(date, w.hlStartOffset), hlEnd = addDays(date, w.hlEndOffset)
+  const inWin = (d: string, s: number, sd: string, ss: number, ed: string, es: number) =>
+    sd === ed ? d === sd && s >= ss && s < es
+      : d === sd ? s >= ss
+      : d === ed ? s < es
+      : d > sd && d < ed
+  let ibHi = -Infinity, ibLo = Infinity, ibN = 0
+  let rHi = -Infinity, rLo = Infinity, rN = 0
+  for (const bar of bars) {
+    const ms = new Date(bar.ts).getTime()
+    if (!Number.isFinite(ms)) continue
+    const { date: bd, sec } = utcMsToPtParts(ms)
+    if (inWin(bd, sec, ibStart, w.ibStartSec, ibEnd, w.ibEndSec)) {
+      if (bar.high > ibHi) ibHi = bar.high; if (bar.low < ibLo) ibLo = bar.low; ibN++
+    }
+    if (inWin(bd, sec, hlStart, w.hlStartSec, hlEnd, w.hlEndSec)) {
+      if (bar.high > rHi) rHi = bar.high; if (bar.low < rLo) rLo = bar.low; rN++
+    }
+  }
+  return { ibSize: ibN ? ibHi - ibLo : null, range: rN ? rHi - rLo : null, realized: ibN > 0 }
+}
+
+/**
  * Compute Market Context stats for `date` from a window of 1m bars.
  * Returns realized stats when the target day's session is present; otherwise a
  * pre-session estimate (adr/atr from the most recent completed day). Null when
  * there isn't enough history.
+ *
+ * `session` re-anchors the IB size + day range to Asia/London (default 'rth' =
+ * unchanged). The RTH-baselined comparison metrics (rvol, ib_vs_10d, rvol_at_ib)
+ * are nulled for non-RTH sessions — they can't be validly compared to an RTH
+ * trailing average overnight (session-aware baselining is deliberately deferred).
+ * ADR/ATR carry through as descriptive stats; the UI surfaces them muted.
  */
-export function contextStatsForDate(bars: OneMinBar[], date: string): DayContextStats | null {
+export function contextStatsForDate(
+  bars: OneMinBar[], date: string, session: SessionKind = 'rth',
+): DayContextStats | null {
   const metrics = computeMetrics(aggregateBars(bars))
   if (metrics.length === 0) return null
 
   const target = metrics.find(m => m.date === date)
+  let base: DayContextStats
   if (target) {
-    return {
+    base = {
       date,
       realized: true,
       rvol: target.rvol,
@@ -265,21 +309,34 @@ export function contextStatsForDate(bars: OneMinBar[], date: string): DayContext
       day_range: target.day_range,
       current_price: target.current_price,
     }
+  } else {
+    // Pre-session (e.g. morning prep before the open): today's session hasn't
+    // printed, so carry ADR/ATR forward from the latest completed day. Realized
+    // fields stay null — they can't exist yet.
+    const prior = metrics.filter(m => m.date < date)
+    const last = prior.length ? prior[prior.length - 1] : null
+    if (!last) return null
+    base = {
+      date,
+      realized: false,
+      rvol: null, ib_size: null, ib_vs_10d_avg: null,
+      adr: last.adr, atr_1m: last.atr_1m,
+      rvol_at_ib_close: null, atr_at_ib_close: null, atr_10d_avg: last.atr_10d_avg,
+      rth_open: null, ib_close_price: null,
+      day_range: null, current_price: null,
+    }
   }
 
-  // Pre-session (e.g. morning prep before the open): today's session hasn't
-  // printed, so carry ADR/ATR forward from the latest completed day. Realized
-  // fields stay null — they can't exist yet.
-  const prior = metrics.filter(m => m.date < date)
-  const last = prior.length ? prior[prior.length - 1] : null
-  if (!last) return null
+  if (session === 'rth') return base
+
+  const s = sessionIbAndRange(bars, date, session)
   return {
-    date,
-    realized: false,
-    rvol: null, ib_size: null, ib_vs_10d_avg: null,
-    adr: last.adr, atr_1m: last.atr_1m,
-    rvol_at_ib_close: null, atr_at_ib_close: null, atr_10d_avg: last.atr_10d_avg,
-    rth_open: null, ib_close_price: null,
-    day_range: null, current_price: null,
+    ...base,
+    realized: s.realized,
+    ib_size: s.ibSize,
+    day_range: s.range,
+    rvol: null,
+    ib_vs_10d_avg: null,
+    rvol_at_ib_close: null,
   }
 }
