@@ -8,7 +8,6 @@ import MonthlyCalendarView from './MonthlyCalendarView'
 interface Props {
   initialDays: DayRowData[]
   allSetups: string[]
-  allDayTypes: string[]
   windowStart: string // YYYY-MM-DD — earliest fetched day (outer bound, ~180d ago)
   windowEnd: string   // YYYY-MM-DD — today
   defaultFilterStart: string // YYYY-MM-DD — list-view date filter default start (~30d ago)
@@ -19,19 +18,19 @@ type ViewMode = 'list' | 'calendar'
 /**
  * Recent Days section wrapper.
  *
- * Holds view-mode (list vs calendar) and filter state (date range, setup,
- * day type). Filters cascade to BOTH views so the list and calendar always
- * agree on what's being shown. Filter state is local — not persisted across
- * page reloads. The 30-day server-fetched window is the outer bound; the
- * date range filter narrows within it.
+ * Holds view-mode (list vs calendar) and filter state (date range, setup).
+ * Filters cascade to BOTH views so the list and calendar always agree on
+ * what's being shown. Filter state is local — not persisted across page
+ * reloads. The 30-day server-fetched window is the outer bound; the date
+ * range filter narrows within it.
  *
- * For wider history views, the Calendar tab in the sidebar is the home (it
- * has 1M / 3M / 6M / 1Y / All range options).
+ * Day-type filtering moved out of the dashboard entirely (Pt 13) — analytics
+ * is the home for day-type views. For wider history, the Calendar tab in the
+ * sidebar has 1M / 3M / 6M / 1Y / All range options.
  */
 export default function RecentDaysSection({
   initialDays,
   allSetups,
-  allDayTypes,
   windowStart,
   windowEnd,
   defaultFilterStart,
@@ -40,21 +39,17 @@ export default function RecentDaysSection({
   const [startDate, setStartDate] = useState(defaultFilterStart)
   const [endDate, setEndDate] = useState(windowEnd)
   const [setupFilter, setSetupFilter] = useState<string>('')
-  const [dayTypeFilter, setDayTypeFilter] = useState<string>('')
 
-  // Apply setup/day-type filters universally, plus the date range for list
-  // view. Calendar view ignores the date-range slider (it navigates month by
-  // month within the full window) so the same setup/day-type filters cascade
-  // there but the date-range narrowing doesn't.
+  // Apply the setup filter universally, plus the date range for list view.
+  // Calendar view ignores the date-range slider (it navigates month by month
+  // within the full window) so the setup filter cascades there but the
+  // date-range narrowing doesn't.
   const filteredByTags = useMemo(() => {
     return initialDays.filter(d => {
-      // Match against the full day_types array so combo days (e.g. "High
-      // Action + Trend Day") show up under either filter, not just the primary.
-      if (dayTypeFilter && !d.day_types.some(t => t.trim() === dayTypeFilter)) return false
       if (setupFilter && !d.setups.includes(setupFilter)) return false
       return true
     })
-  }, [initialDays, setupFilter, dayTypeFilter])
+  }, [initialDays, setupFilter])
 
   const filteredDays = useMemo(() => {
     return filteredByTags.filter(d => {
@@ -66,14 +61,12 @@ export default function RecentDaysSection({
   const filtersActive =
     startDate !== defaultFilterStart ||
     endDate !== windowEnd ||
-    setupFilter !== '' ||
-    dayTypeFilter !== ''
+    setupFilter !== ''
 
   const clearFilters = () => {
     setStartDate(defaultFilterStart)
     setEndDate(windowEnd)
     setSetupFilter('')
-    setDayTypeFilter('')
   }
 
   return (
@@ -139,18 +132,6 @@ export default function RecentDaysSection({
           <option value="">All setups</option>
           {allSetups.map(s => (
             <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-
-        <select
-          value={dayTypeFilter}
-          onChange={e => setDayTypeFilter(e.target.value)}
-          className="bg-gray-800 border border-gray-700 text-gray-200 rounded-md px-2 py-1 focus:outline-none focus:border-blue-500"
-          title="Filter by day type"
-        >
-          <option value="">All day types</option>
-          {allDayTypes.map(t => (
-            <option key={t} value={t}>{t}</option>
           ))}
         </select>
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { aggregateTapeScore, tapeScorePeriodSentence, type TapeScoreResult } from '@/lib/tapescore'
+import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
 
 /**
  * Period-selectable dashboard header: the TapeScore hero (one 0-100 score,
@@ -327,16 +328,6 @@ export default function DashboardStats({ days }: Props) {
   )
 }
 
-/** Band → color classes shared by the hero ring and score text. */
-function bandColors(band: 'high' | 'mid' | 'low' | null): { stroke: string; text: string } {
-  switch (band) {
-    case 'high': return { stroke: '#4ade80', text: 'text-green-400' }
-    case 'mid': return { stroke: '#fbbf24', text: 'text-amber-300' }
-    case 'low': return { stroke: '#f87171', text: 'text-red-400' }
-    default: return { stroke: '#374151', text: 'text-gray-500' }
-  }
-}
-
 /** The One-TapeScore dashboard hero: 0-100 ring, plain-language verdict, and
  *  the three component chips (Rules kept / Execution / Prep). */
 function TapeScoreHero({ period, periodLabel }: {
@@ -344,31 +335,14 @@ function TapeScoreHero({ period, periodLabel }: {
   periodLabel: string
 }) {
   const { score, band, scoredDays, verdictDays, compliantDays, execution, prep } = period
-  const colors = bandColors(band)
   const sentence = tapeScorePeriodSentence(period)
-  const R = 40
-  const CIRC = 2 * Math.PI * R
-  const dash = score != null ? (score / 100) * CIRC : 0
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-3 sm:mb-4 flex items-center gap-5 flex-wrap">
-      <div className="relative w-[92px] h-[92px] shrink-0" title="TapeScore — one 0-100 score per day: rules kept (50%), execution quality (35%), prep (15%). Days that broke 2+ rules cap at 49.">
-        <svg width="92" height="92" viewBox="0 0 92 92" className="-rotate-90">
-          <circle cx="46" cy="46" r={R} fill="none" stroke="#1f2937" strokeWidth="7" />
-          {score != null && (
-            <circle
-              cx="46" cy="46" r={R} fill="none"
-              stroke={colors.stroke} strokeWidth="7" strokeLinecap="round"
-              strokeDasharray={`${dash} ${CIRC}`}
-            />
-          )}
-        </svg>
-        <div className="absolute inset-0 grid place-items-center">
-          <div className="text-center leading-none">
-            <div className={`font-mono text-[26px] font-extrabold ${colors.text}`}>{score ?? '—'}</div>
-            <div className="text-[8px] tracking-[0.14em] text-gray-500 mt-0.5">TAPESCORE</div>
-          </div>
-        </div>
-      </div>
+      <TapeScoreRing
+        score={score}
+        band={band}
+        title="TapeScore — one 0-100 score per day: rules kept (50%), execution quality (35%), prep (15%). Days that broke 2+ rules cap at 49."
+      />
       <div className="flex-1 min-w-[240px]">
         {score != null ? (
           <>
@@ -408,18 +382,6 @@ function TapeScoreHero({ period, periodLabel }: {
         )}
       </div>
     </div>
-  )
-}
-
-function HeroChip({ label, tone, title }: { label: string; tone: 'good' | 'mid' | 'bad'; title: string }) {
-  const cls =
-    tone === 'good' ? 'border-green-800/60 text-green-300 bg-green-950/40'
-    : tone === 'mid' ? 'border-amber-800/60 text-amber-300 bg-amber-950/40'
-    : 'border-red-800/60 text-red-300 bg-red-950/40'
-  return (
-    <span className={`inline-flex items-center text-[11px] px-2.5 py-0.5 rounded-full border whitespace-nowrap ${cls}`} title={title}>
-      {label}
-    </span>
   )
 }
 

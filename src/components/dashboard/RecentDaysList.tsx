@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown } from 'lucide-react'
-import { displayDayTypes } from '@/lib/day-type-display'
 import type { TapeScoreResult } from '@/lib/tapescore'
 
 export interface DayRowData {
@@ -64,24 +63,40 @@ export interface DayRowData {
 
 interface Props {
   initialDays: DayRowData[]
+  /** 'pro' (default) = Detailed Tape: full column set + selection/delete/drag.
+   *  'beginner' = Highlights: a lean read-only set (Tape / Trades / Win % /
+   *  P&L), no selection, no delete, fixed order. Same table, one product. */
+  mode?: 'beginner' | 'pro'
 }
 
-type SortColumn = 'date' | 'tapescore' | 'trades' | 'pnl'
+type SortColumn = 'date' | 'tapescore' | 'trades' | 'win_rate' | 'pnl'
 type SortDirection = 'asc' | 'desc'
 
-/** Columns the user can drag-reorder. Date is pinned left (row identifier),
- *  the checkbox cell is pinned left (selection), the delete cell is pinned
- *  right (row action) — those three never move.
+/** Columns the user can drag-reorder (Detailed only). Date is pinned left (row
+ *  identifier), the checkbox cell is pinned left (selection), the delete cell
+ *  is pinned right (row action) — those never move.
  *
- *  One-TapeScore redesign (2026-07-12): the table drops from 8 data columns
- *  to 4 — Day type / TapeScore / Trades / P&L. The scan question here is
- *  only "which day should I review?"; MFE/MAE, capture, and win-rate detail
- *  live one click deeper on the day's EOD recap. */
-type ReorderableColumnId = 'day_type' | 'tapescore' | 'trades' | 'pnl'
-const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['day_type', 'tapescore', 'trades', 'pnl']
-const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v2'
+ *  Pt 13 rework (2026-07-12): Day type leaves the dashboard entirely (analytics
+ *  is its home). Win % joins both modes; Detailed additionally shows the MFE
+ *  factors at a glance — MFE:MAE ratio and capture % — the read people found
+ *  most interesting, so it's no longer a click deep. */
+type ReorderableColumnId = 'tapescore' | 'trades' | 'win_rate' | 'mfe_mae' | 'capture' | 'pnl'
+const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'trades', 'win_rate', 'mfe_mae', 'capture', 'pnl']
+/** Highlights: lean, fixed, non-reorderable. */
+const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'trades', 'win_rate', 'pnl']
+// v3: v2 carried the now-removed `day_type` id; bump so stale saved orders reset.
+const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v3'
 
-export default function RecentDaysList({ initialDays }: Props) {
+/** MFE:MAE ratio for the cell — "2.4:1", "∞" when a day never went adverse,
+ *  "—" when either leg is missing. */
+function mfeMaeRatio(mfe: number | null, mae: number | null): string {
+  if (mfe == null || mae == null) return '—'
+  if (mae <= 0) return mfe > 0 ? '∞' : '—'
+  return `${(mfe / mae).toFixed(1)}:1`
+}
+
+export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
+  const isPro = mode === 'pro'
   const router = useRouter()
   const [days, setDays] = useState<DayRowData[]>(initialDays)
   const [deletingDate, setDeletingDate] = useState<string | null>(null)
@@ -177,6 +192,7 @@ export default function RecentDaysList({ initialDays }: Props) {
         case 'date': return d.date
         case 'tapescore': return d.tapescore?.score ?? null
         case 'trades': return d.trade_count
+        case 'win_rate': return d.win_rate
         case 'pnl': return d.eod_pnl
       }
     }
@@ -277,6 +293,8 @@ export default function RecentDaysList({ initialDays }: Props) {
   // current drop target (column slides into the slot where the target
   // currently sits).
   const dragProps = (id: ReorderableColumnId): React.ThHTMLAttributes<HTMLTableCellElement> => {
+    // Highlights columns are fixed — no drag affordance.
+    if (!isPro) return {}
     const isDragging = dragColId === id
     const isHover = dragOverColId === id && dragColId !== null && dragColId !== id
     return {
@@ -297,15 +315,6 @@ export default function RecentDaysList({ initialDays }: Props) {
   // Header node per reorderable column id, with the draggable / drop-hint
   // props spread onto each <th>.
   const headerNodes: Record<ReorderableColumnId, React.ReactNode> = {
-    day_type: (
-      <th
-        key="day_type"
-        {...dragProps('day_type')}
-        className={`font-normal py-2 pr-3 text-left ${dragProps('day_type').className ?? ''}`}
-      >
-        <span className="text-gray-500">Day type</span>
-      </th>
-    ),
     tapescore: (
       <SortableTh
         key="tapescore"
@@ -333,6 +342,40 @@ export default function RecentDaysList({ initialDays }: Props) {
         thProps={dragProps('trades')}
       />
     ),
+    win_rate: (
+      <SortableTh
+        key="win_rate"
+        label="Win %"
+        column="win_rate"
+        current={sortColumn}
+        direction={sortDirection}
+        onSort={setSort}
+        align="center"
+        className="pr-3 w-16"
+        titleAttr="Share of the day's trades that closed green."
+        thProps={dragProps('win_rate')}
+      />
+    ),
+    mfe_mae: (
+      <th
+        key="mfe_mae"
+        {...dragProps('mfe_mae')}
+        className={`font-normal py-2 pr-3 text-center w-20 ${dragProps('mfe_mae').className ?? ''}`}
+        title="Average favorable excursion vs. average adverse excursion — how much room the trades gave you relative to the heat you took."
+      >
+        <span className="text-gray-500">MFE:MAE</span>
+      </th>
+    ),
+    capture: (
+      <th
+        key="capture"
+        {...dragProps('capture')}
+        className={`font-normal py-2 pr-3 text-center w-16 ${dragProps('capture').className ?? ''}`}
+        title="Of the best point the trades reached in your favor, how much you kept at exit, on average."
+      >
+        <span className="text-gray-500">Capture</span>
+      </th>
+    ),
     pnl: (
       <SortableTh
         key="pnl"
@@ -347,6 +390,7 @@ export default function RecentDaysList({ initialDays }: Props) {
       />
     ),
   }
+  const effectiveOrder = isPro ? columnOrder : BEGINNER_COLUMN_ORDER
 
   return (
     <>
@@ -357,7 +401,7 @@ export default function RecentDaysList({ initialDays }: Props) {
         </div>
       )}
 
-      {selectedIds.size > 0 && (
+      {isPro && selectedIds.size > 0 && (
         <div className="mb-3 bg-red-950/60 border border-red-800 rounded-xl px-4 py-2.5 flex items-center justify-between text-sm">
           <span className="text-red-200">
             {selectedIds.size} day{selectedIds.size === 1 ? '' : 's'} selected
@@ -392,14 +436,15 @@ export default function RecentDaysList({ initialDays }: Props) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-500 border-b border-gray-800">
-              <th className="font-normal py-2 pl-2 pr-1 w-8" />
+              {/* Selection checkbox column — Detailed only. */}
+              {isPro && <th className="font-normal py-2 pl-2 pr-1 w-8" />}
               <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3" />
-              {/* The four data columns below are draggable — held order lives
-                  in columnOrder state, persisted to localStorage. The Date and
-                  checkbox columns above stay pinned (row identity); the delete
-                  column at the right stays pinned (row action). */}
-              {columnOrder.map(id => headerNodes[id])}
-              <th className="w-10" />
+              {/* Data columns. In Detailed these are draggable (held order lives
+                  in columnOrder state, persisted to localStorage); Highlights
+                  uses a fixed lean set. Date stays pinned (row identity); the
+                  delete column (Detailed only) stays pinned right. */}
+              {effectiveOrder.map(id => headerNodes[id])}
+              {isPro && <th className="w-10" />}
             </tr>
           </thead>
           <tbody>
@@ -407,9 +452,10 @@ export default function RecentDaysList({ initialDays }: Props) {
               <DayRowItem
                 key={day.id}
                 day={day}
+                mode={mode}
                 selected={selectedIds.has(day.id)}
                 deleting={deletingDate === day.date || (bulkDeleting && selectedIds.has(day.id))}
-                columnOrder={columnOrder}
+                columnOrder={effectiveOrder}
                 onToggleSelect={() => toggleSelect(day.id)}
                 onDelete={() => handleSingleDelete(day.date, day.eod_pnl != null)}
               />
@@ -474,6 +520,7 @@ function SortableTh({
 
 function DayRowItem({
   day,
+  mode,
   selected,
   deleting,
   columnOrder,
@@ -481,14 +528,17 @@ function DayRowItem({
   onDelete,
 }: {
   day: DayRowData
+  /** 'beginner' hides the selection + delete cells (read-only Highlights). */
+  mode: 'beginner' | 'pro'
   selected: boolean
   deleting: boolean
-  /** Order of the 4 reorderable data columns. Must match what the parent's
+  /** Order of the reorderable data columns. Must match what the parent's
    *  <thead> iterates so headers and cells stay in lockstep. */
   columnOrder: ReorderableColumnId[]
   onToggleSelect: () => void
   onDelete: () => void
 }) {
+  const isPro = mode === 'pro'
   const pnl = day.eod_pnl
   const pnlColor = pnl === null ? 'text-gray-500' : pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'
   const Icon = pnl === null ? Minus : pnl > 0 ? TrendingUp : pnl < 0 ? TrendingDown : Minus
@@ -501,20 +551,22 @@ function DayRowItem({
 
   return (
     <tr className={`group border-b border-gray-800/60 transition-colors ${selected ? 'bg-blue-950/40' : ''}`}>
-      <td className={`py-2 pl-2 pr-1 ${cellBg}`}>
-        <button
-          type="button"
-          onClick={e => { e.stopPropagation(); onToggleSelect() }}
-          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-            selected
-              ? 'bg-blue-600 border-blue-500 text-white'
-              : 'border-gray-600 hover:border-gray-400 bg-gray-900'
-          }`}
-          title={selected ? 'Deselect' : 'Select for bulk action'}
-        >
-          {selected ? <Check className="w-3 h-3" /> : null}
-        </button>
-      </td>
+      {isPro && (
+        <td className={`py-2 pl-2 pr-1 ${cellBg}`}>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onToggleSelect() }}
+            className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+              selected
+                ? 'bg-blue-600 border-blue-500 text-white'
+                : 'border-gray-600 hover:border-gray-400 bg-gray-900'
+            }`}
+            title={selected ? 'Deselect' : 'Select for bulk action'}
+          >
+            {selected ? <Check className="w-3 h-3" /> : null}
+          </button>
+        </td>
+      )}
       <td className={`py-2 pr-3 cursor-pointer ${cellBg}`} onClick={navigate}>
         <div className="flex items-center gap-2">
           <Icon className={`w-4 h-4 shrink-0 ${pnlColor}`} />
@@ -529,23 +581,6 @@ function DayRowItem({
           below stays in lockstep with the parent's header iteration. */}
       {(() => {
         const cellNodes: Record<ReorderableColumnId, React.ReactNode> = {
-          day_type: (
-            <td key="day_type" className={`py-2 pr-3 text-left ${cellBg}`}>
-              {/* Combo-day chip (Option C): multiple day_types join into one
-                  comma-separated chip; max-w + truncate keep long combos from
-                  stretching the column. Full text on hover. */}
-              {day.day_types.length > 0 ? (
-                <span
-                  className="inline-block text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full whitespace-nowrap truncate max-w-[200px] align-middle"
-                  title={displayDayTypes(day.day_types)}
-                >
-                  {displayDayTypes(day.day_types)}
-                </span>
-              ) : (
-                <span className="text-gray-700">—</span>
-              )}
-            </td>
-          ),
           tapescore: (
             <td key="tapescore" className={`py-2 pr-3 text-center ${cellBg}`}>
               <TapeScorePill result={day.tapescore} />
@@ -556,6 +591,24 @@ function DayRowItem({
               {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
             </td>
           ),
+          win_rate: (
+            <td key="win_rate" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
+              {day.win_rate == null ? <span className="text-gray-700">—</span> : `${Math.round(day.win_rate)}%`}
+            </td>
+          ),
+          mfe_mae: (
+            <td key="mfe_mae" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
+              {(() => {
+                const v = mfeMaeRatio(day.avg_mfe_pts, day.avg_mae_pts)
+                return v === '—' ? <span className="text-gray-700">—</span> : v
+              })()}
+            </td>
+          ),
+          capture: (
+            <td key="capture" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
+              {day.avg_capture == null ? <span className="text-gray-700">—</span> : `${Math.round(day.avg_capture * 100)}%`}
+            </td>
+          ),
           pnl: (
             <td key="pnl" className={`py-2 pr-3 text-right font-mono font-medium text-xs ${pnlColor} ${cellBg}`}>
               {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}`}
@@ -564,18 +617,20 @@ function DayRowItem({
         }
         return columnOrder.map(id => cellNodes[id])
       })()}
-      <td className={`py-2 pr-2 text-right ${cellBg}`}>
-        <button
-          onClick={onDelete}
-          disabled={deleting}
-          className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30 disabled:cursor-wait"
-          title={`Delete ${day.date}`}
-        >
-          {deleting
-            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            : <Trash2 className="w-3.5 h-3.5" />}
-        </button>
-      </td>
+      {isPro && (
+        <td className={`py-2 pr-2 text-right ${cellBg}`}>
+          <button
+            onClick={onDelete}
+            disabled={deleting}
+            className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30 disabled:cursor-wait"
+            title={`Delete ${day.date}`}
+          >
+            {deleting
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Trash2 className="w-3.5 h-3.5" />}
+          </button>
+        </td>
+      )}
     </tr>
   )
 }

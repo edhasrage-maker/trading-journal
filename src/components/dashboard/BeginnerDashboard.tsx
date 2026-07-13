@@ -1,19 +1,21 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import Link from 'next/link'
 import { Target, ChevronRight } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
+import type { TapeScorePeriod } from '@/lib/tapescore'
+import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
+import RecentDaysList, { type DayRowData } from './RecentDaysList'
 
 /**
  * Beginner ("Highlights") dashboard — a coach REPORT, not a lighter journal.
- * Leads with a one-line verdict (the diagnosis) + net P&L, then the single
- * focus (the prescription), a calm row of clean stat chips, the equity curve,
- * recent sessions, and a seam into Detailed Tape. Same engine as Pro, translated
- * to plain English (docs/BEGINNER_PRO_MODES.md, docs highlights-redesign).
+ * Leads with the One TapeScore (the same 0-100 ring + component chips Detailed
+ * shows) beside a plain-English verdict sentence, with net P&L demoted to the
+ * sub-line. Then the single focus (the prescription), a calm row of clean stat
+ * chips, the equity curve, a lean Recent Days table, and a seam into Detailed
+ * Tape. Same engine as Pro, translated to plain English — one score everywhere
+ * (docs/BEGINNER_PRO_MODES.md, docs highlights-redesign).
  */
-type Session = { date: string; pnl: number | null; note: string }
-
 type Props = {
   pnl: number
   winRate: number | null
@@ -22,7 +24,10 @@ type Props = {
   tradedDays: number
   bestDay: number | null
   focus: string
-  sessions: Session[]
+  /** 30-day One TapeScore aggregate — same object the Detailed hero renders. */
+  tape: TapeScorePeriod
+  /** Recent day rows for the lean Highlights table (Tape / Trades / Win % / P&L). */
+  days: DayRowData[]
   // Performance charts (equity curve), rendered below the stat chips.
   charts?: ReactNode
 }
@@ -30,10 +35,6 @@ type Props = {
 function money(n: number | null): string {
   if (n == null) return '—'
   return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString()}`
-}
-
-function fmtDate(d: string): string {
-  return new Date(`${d}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 // Deterministic period verdict — the one-line "how am I doing + the pattern"
@@ -63,10 +64,11 @@ const TONE: Record<'good' | 'watch' | 'down', { dot: string; text: string }> = {
   down: { dot: 'bg-red-400', text: 'text-red-400' },
 }
 
-export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, focus, sessions, charts }: Props) {
+export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, focus, tape, days, charts }: Props) {
   const { setMode } = useUiMode()
   const v = periodVerdict({ pnl, capturePct, winRate, tradedDays })
   const tone = TONE[v.tone]
+  const { score, band, verdictDays, compliantDays, execution, prep } = tape
 
   // Calm reference row. Conversion only appears when there's capture data (a
   // bare "—" reads as broken). Best day is signed-colored.
@@ -86,17 +88,50 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
 
   return (
     <div className="space-y-4">
-      {/* Hero report card — the period verdict + net P&L. The sentence carries
-          the meaning; the number is the evidence beneath it. */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <div className="flex items-center gap-2 mb-2">
-          <span className={`w-2 h-2 rounded-full ${tone.dot}`} />
-          <span className={`text-xs font-medium ${tone.text}`}>{v.label}</span>
-        </div>
-        <p className="text-lg font-semibold text-white leading-snug">{v.text}</p>
-        <div className="flex items-baseline gap-2 mt-3 flex-wrap">
-          <span className={`text-3xl font-bold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(pnl)}</span>
-          <span className="text-xs text-gray-500">net P&amp;L · last 30 days · {tradedDays} session{tradedDays === 1 ? '' : 's'}</span>
+      {/* Hero report card — One TapeScore ring + the period verdict, P&L demoted.
+          The ring is the grade, the sentence is the coach's comment, the chips
+          are the subscores. Identical ring + chips to Detailed. */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex items-center gap-5 flex-wrap">
+        <TapeScoreRing
+          score={score}
+          band={band}
+          title="TapeScore — one 0-100 score per day: rules kept (50%), execution quality (35%), prep (15%). Days that broke 2+ rules cap at 49."
+        />
+        <div className="flex-1 min-w-[240px]">
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`w-2 h-2 rounded-full ${tone.dot}`} />
+            <span className={`text-xs font-medium ${tone.text}`}>{v.label}</span>
+          </div>
+          <p className="text-lg font-semibold text-white leading-snug">{v.text}</p>
+          {score != null && (
+            <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+              {verdictDays > 0 && (
+                <HeroChip
+                  label={`Rules kept ${compliantDays}/${verdictDays}`}
+                  tone={compliantDays / verdictDays >= 0.85 ? 'good' : compliantDays / verdictDays >= 0.6 ? 'mid' : 'bad'}
+                  title="Sessions that kept at least 4 of the 5 safety rules, out of sessions with a rules check"
+                />
+              )}
+              {execution != null && (
+                <HeroChip
+                  label={`Execution ${execution}`}
+                  tone={execution >= 70 ? 'good' : execution >= 50 ? 'mid' : 'bad'}
+                  title="Average execution quality (0-100): entry/stop/target parameters, move captured, prep adherence, profit factor"
+                />
+              )}
+              {prep != null && (
+                <HeroChip
+                  label={`Prep ${prep}`}
+                  tone={prep >= 70 ? 'good' : prep >= 50 ? 'mid' : 'bad'}
+                  title="Average prep quality score (0-100) from the morning prep analysis"
+                />
+              )}
+            </div>
+          )}
+          <div className="mt-3 text-xs text-gray-500">
+            <span className={`font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(pnl)}</span>
+            {' '}net P&amp;L · last 30 days · {tradedDays} session{tradedDays === 1 ? '' : 's'}
+          </div>
         </div>
       </div>
 
@@ -122,28 +157,18 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
       {/* Equity curve (kept in Highlights — intuitive). */}
       {charts}
 
-      {/* Recent sessions — each day gets a plain-English note vs your own baseline. */}
+      {/* Recent sessions — the same TapeScore table as Detailed, lean column set
+          (Tape / Trades / Win % / P&L), read-only. Each row links to its EOD. */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-800">
           <h2 className="text-sm font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Recent sessions</h2>
         </div>
-        {sessions.length === 0 ? (
+        {days.length === 0 ? (
           <div className="px-4 py-6 text-sm text-gray-500 text-center">No sessions yet.</div>
         ) : (
-          sessions.map(s => (
-            <Link
-              key={s.date}
-              href={`/eod/${s.date}`}
-              className="flex items-start gap-3 px-4 py-3 border-b border-gray-800 last:border-0 hover:bg-gray-800 transition-colors"
-            >
-              <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${(s.pnl ?? 0) >= 0 ? 'bg-green-400' : 'bg-red-400'}`} />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm text-gray-300">{fmtDate(s.date)}</div>
-                {s.note && <div className="text-xs text-gray-500 mt-0.5 leading-snug">{s.note}</div>}
-              </div>
-              <span className={`text-sm font-semibold flex-shrink-0 ${(s.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(s.pnl)}</span>
-            </Link>
-          ))
+          <div className="px-3 sm:px-4 pb-2">
+            <RecentDaysList initialDays={days} mode="beginner" />
+          </div>
         )}
       </div>
 

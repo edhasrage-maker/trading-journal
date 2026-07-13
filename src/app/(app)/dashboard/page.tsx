@@ -14,7 +14,7 @@ import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib
 // reading the pre-backfilled `trades.entry_atr_1m` column. Imports kept off
 // the file so the bundle doesn't carry unused code.
 import type { TradingDay } from '@/lib/supabase/types'
-import { tapeScoreFromAnalyses } from '@/lib/tapescore'
+import { tapeScoreFromAnalyses, aggregateTapeScore } from '@/lib/tapescore'
 
 const PAGE_SIZE = 1000
 
@@ -22,56 +22,6 @@ const PAGE_SIZE = 1000
 // (otherwise this page caches and shows stale "today" across midnight).
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
-
-// Plain-English per-day note for the Beginner recent-sessions list: interprets
-// the day's win rate + move capture AGAINST the trader's own baseline, so a
-// beginner gets meaning ("lower win rate than usual, but kept more of the move")
-// instead of raw percentages they can't yet judge. (docs/BEGINNER_PRO_MODES.md)
-function beginnerDayNote(opts: {
-  winRate: number | null      // that day, 0..100
-  capture: number | null      // that day, 0..1
-  pnl: number | null
-  breach: boolean
-  avgWin: number | null       // baseline win rate, 0..100
-  avgCap: number | null       // baseline capture, 0..1
-  bestDay: number | null      // best day $ in the window (for magnitude context)
-  worstDay: number | null     // worst day $ in the window
-}): string {
-  const { winRate, capture, pnl, breach, avgWin, avgCap, bestDay, worstDay } = opts
-  if (breach) return 'Broke one of your rules — the one to review first.'
-  const wr = winRate == null ? null : Math.round(winRate)
-  const cap = capture == null ? null : Math.round(capture * 100)
-  const winLow = avgWin != null && winRate != null && winRate <= avgWin - 8
-  const winHigh = avgWin != null && winRate != null && winRate >= avgWin + 8
-  const capLow = avgCap != null && capture != null && capture <= avgCap - 0.1
-  const capHigh = avgCap != null && capture != null && capture >= avgCap + 0.1
-
-  // Richest read: win rate AND capture together, with the concrete numbers.
-  if (wr != null && cap != null) {
-    if (winLow && capHigh) return `${wr}% wins, but you kept ${cap}% of the move — you cashed the ones you got right.`
-    if (winHigh && capLow) return `${wr}% wins, but only kept ${cap}% of the move — winners cut early.`
-    if (winHigh && capHigh) return `${wr}% wins and kept ${cap}% of the move — clean on both.`
-    if (winLow && capLow) return `${wr}% wins and kept ${cap}% of the move — off day on both.`
-    return `${wr}% wins · kept ${cap}% of the move.`
-  }
-
-  // No capture data — lead with the win-rate number + how the day's result sized up.
-  if (wr != null) {
-    if (pnl != null && pnl > 0) {
-      if (bestDay != null && bestDay > 0 && pnl >= bestDay) return `${wr}% wins — your best day this stretch.`
-      return `${wr}% wins — a green day.`
-    }
-    if (pnl != null && pnl < 0) {
-      if (worstDay != null && pnl <= worstDay) return `${wr}% wins — your roughest day this stretch.`
-      return `${wr}% wins — small red day, kept it contained.`
-    }
-    return `${wr}% wins.`
-  }
-
-  if (pnl != null && pnl > 0) return 'A green day.'
-  if (pnl != null && pnl < 0) return 'A red day.'
-  return ''
-}
 
 export default async function DashboardPage() {
   // PT-anchored, not machine-local — see todayPT(). Prevents a mis-set OS
@@ -446,13 +396,9 @@ export default async function DashboardPage() {
   // whose displayed eod_pnl is 0, not null).
   const recentDays = recentDaysMapped.filter(d => d.trade_count > 0 || d.eod_pnl != null)
 
-  // Global filter dropdown values — distinct setups and day types across the
-  // 180-day window. Empty strings filtered out. day_types is the array
-  // column so combo-tag days contribute every label to the filter list.
+  // Global filter dropdown values — distinct setups across the 180-day window.
+  // Empty strings filtered out. (Day-type filtering moved to analytics, Pt 13.)
   const allSetups = Array.from(new Set(recentDays.flatMap(d => d.setups))).sort()
-  const allDayTypes = Array.from(
-    new Set(recentDays.flatMap(d => d.day_types).map(s => s.trim()).filter(Boolean)),
-  ).sort()
   const windowStart = past180Start
   const windowEnd = today
   const defaultFilterStart = past30Start // list view defaults to "last 30 days"; calendar view defaults to current month
@@ -493,7 +439,6 @@ export default async function DashboardPage() {
   const beginnerGreenDays = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).length
   const beginnerTradedDays = beginner30.length
   const beginnerBestDay = beginner30.length ? Math.max(...beginner30.map(d => d.eod_pnl ?? 0)) : null
-  const beginnerWorstDay = beginner30.length ? Math.min(...beginner30.map(d => d.eod_pnl ?? 0)) : null
   const greenPnls = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).map(d => d.eod_pnl as number)
   const redPnls = beginner30.filter(d => (d.eod_pnl ?? 0) < 0).map(d => d.eod_pnl as number)
   const avgGreenDay = greenPnls.length ? greenPnls.reduce((a, b) => a + b, 0) / greenPnls.length : null
@@ -529,20 +474,13 @@ export default async function DashboardPage() {
     }
     return 'Green over the last 30 days. Keep logging every session — the more you tag, the sharper this gets.'
   })()
-  const beginnerSessions = recentDaysForTable.slice(0, 6).map(d => ({
-    date: d.date,
-    pnl: d.eod_pnl,
-    note: beginnerDayNote({
-      winRate: d.win_rate,
-      capture: d.avg_capture,
-      pnl: d.eod_pnl,
-      breach: (d.process_breach_rules?.length ?? 0) > 0,
-      avgWin: beginnerWinRate,
-      avgCap,
-      bestDay: beginnerBestDay,
-      worstDay: beginnerWorstDay,
-    }),
-  }))
+  // Highlights hero: the 30-day One TapeScore aggregate — the SAME object the
+  // Detailed hero renders, so the score reads identically in both modes.
+  const beginnerTape = aggregateTapeScore(
+    recentDays.filter(d => d.date >= past30Start).map(d => d.tapescore),
+  )
+  // Lean Recent Days table for Highlights (Tape / Trades / Win % / P&L).
+  const beginnerDays = recentDaysForTable.slice(0, 8)
 
   tick('per-day computation loop')
   console.log('[dashboard perf]', perf.phases.map(p => `${p.name}=${p.ms}ms${p.rows != null ? ` (${p.rows})` : ''}`).join(' | '))
@@ -592,7 +530,8 @@ export default async function DashboardPage() {
             tradedDays={beginnerTradedDays}
             bestDay={beginnerBestDay}
             focus={beginnerFocus}
-            sessions={beginnerSessions}
+            tape={beginnerTape}
+            days={beginnerDays}
             charts={<DashboardCharts days={statsDays} />}
           />
         }
@@ -609,7 +548,6 @@ export default async function DashboardPage() {
           <RecentDaysSection
             initialDays={recentDaysForTable}
             allSetups={allSetups}
-            allDayTypes={allDayTypes}
             windowStart={windowStart}
             windowEnd={windowEnd}
             defaultFilterStart={defaultFilterStart}
