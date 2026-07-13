@@ -17,6 +17,10 @@ export interface Database {
           eod_chart_screenshot_url: string | null
           chart_calibration_json: ChartCalibration | null
           eod_ai_analysis_json: EodAiAnalysis
+          // Gamification Phase 2: earned achievement ids for the day (values are
+          // AchievementId from '@/lib/achievements' — typed loosely here to avoid
+          // a types→achievements→analytics→types import cycle).
+          achievements_json: string[] | null
           last_sc_import_at: string | null
           last_sc_import_filename: string | null
           prep_started_at: string | null

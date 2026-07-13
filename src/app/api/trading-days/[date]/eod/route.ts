@@ -6,6 +6,7 @@ import type { TradingDay, EodAiAnalysis } from '@/lib/supabase/types'
 import { signDayScreenshots, normalizeStoredScreenshot } from '@/lib/storage-url'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { clientError } from '@/lib/api-error'
+import { recomputeAndPersistDay } from '@/lib/achievements-server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -44,6 +45,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
   )
 
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
+
+  // Gamification (Phase 2): when the day's analysis or realized P&L is saved,
+  // recompute its earned achievements server-side and persist them to
+  // trading_days.achievements_json (drives the EOD showcase counts + dashboard
+  // markers). Idempotent — re-saving just refreshes the ids. Best-effort:
+  // recomputeAndPersistDay swallows its own errors so it can't fail the save.
+  if ((body.eod_ai_analysis_json !== undefined || body.eod_pnl !== undefined) && day) {
+    const ids = await recomputeAndPersistDay(supabase, day)
+    ;(day as TradingDay & { achievements_json?: string[] }).achievements_json = ids
+  }
+
   await signDayScreenshots(supabase, day)
   return NextResponse.json({ day, droppedColumns: droppedColumns.length > 0 ? droppedColumns : undefined })
 }

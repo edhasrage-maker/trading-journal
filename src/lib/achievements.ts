@@ -3,11 +3,11 @@
 // trader earned that day. Callers (EOD page, dashboard) assemble the input and
 // render the result; rules whose inputs are absent simply don't fire.
 //
-// Single-user badges only (Sniper, Grand Slam, Game Winner, Career Day, Clean
-// Tape, Heat Check). Cross-user badges (top-3 PnL, TapeCenter) are gated on the
+// Single-user badges only (Sniper, Grand Slam, Game Winner, Career Day, Heat
+// Check). Cross-user badges (top-3 PnL, TapeCenter) are gated on the
 // benchmarking work and are NOT here — see the gamification plan.
 
-import { avgCaptureRatio, mfeMaeAtr, type TradeWithExcursion } from '@/lib/analytics'
+import { mfeMaeAtr, type TradeWithExcursion } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 
 export type AchievementId =
@@ -15,7 +15,6 @@ export type AchievementId =
   | 'grand_slam'
   | 'game_winner'
   | 'career_day'
-  | 'clean_tape'
   | 'heat_check'
 
 export interface Achievement {
@@ -26,8 +25,31 @@ export interface Achievement {
   blurb: string
 }
 
-/** Trade shape the rules read: excursion fields + the entry-time ATR snapshot. */
-export type AchievementTrade = TradeWithExcursion & { entry_atr_1m?: number | null }
+/** Static catalog — the single source of truth for each badge's display label,
+ *  fallback emoji, and a GENERIC "what it means" blurb. `dayAchievements` pulls
+ *  its label/emoji from here (then overrides the blurb with the day's live
+ *  numbers); surfaces that render from PERSISTED ids (dashboard markers, the
+ *  collection strip, lifetime counts) use these generic entries directly since
+ *  they don't recompute the day. */
+export const ACHIEVEMENT_CATALOG: Record<AchievementId, { label: string; emoji: string; blurb: string }> = {
+  sniper:      { label: 'Sniper',      emoji: '🎯', blurb: 'A winning trade with under 0.25×ATR of heat — a surgical entry.' },
+  grand_slam:  { label: 'Grand Slam',  emoji: '⚾', blurb: 'A trade of 8R or more — swung big and connected.' },
+  game_winner: { label: 'Game Winner', emoji: '🏀', blurb: "Your best trade captured 80%+ of the day's range." },
+  career_day:  { label: 'Career Day',  emoji: '📅', blurb: 'A top-10% P&L day across your logged sessions.' },
+  heat_check:  { label: 'Heat Check',  emoji: '🔥', blurb: '5 green sessions in a row — you’re heating up.' },
+}
+
+/** Canonical display order (used by the collection strip + counts UI). */
+export const ACHIEVEMENT_ORDER: AchievementId[] = [
+  'sniper', 'grand_slam', 'game_winner', 'career_day', 'heat_check',
+]
+
+/** Trade shape the rules read: excursion fields + the entry-time ATR snapshot +
+ *  the average exit price (for Game Winner's realized point capture). */
+export type AchievementTrade = TradeWithExcursion & {
+  entry_atr_1m?: number | null
+  exit_price?: number | null
+}
 
 export interface AchievementInput {
   /** This day's date, YYYY-MM-DD — used to locate it within pnlHistory. */
@@ -41,10 +63,9 @@ export interface AchievementInput {
    *  traded, so consecutive entries mean consecutive sessions. Omit to skip
    *  those two badges. */
   pnlHistory?: { date: string; pnl: number }[]
-  /** EOD process score from eod_ai_analysis_json.process — pass count out of
-   *  ruleCount. Clean Tape needs all rules to pass. Omit if not analyzed. */
-  processPassCount?: number | null
-  processRuleCount?: number | null
+  /** The session's high-low range in POINTS (market_context.day_range) — for
+   *  Game Winner (best trade captured ≥80% of it). Omit to skip that badge. */
+  dayRangePts?: number | null
 }
 
 // Thresholds — single source of truth so the UI copy and the rules never drift.
@@ -71,7 +92,7 @@ function tradeR(t: AchievementTrade): number | null {
 
 /** The badges earned on a single day. Order = display order. */
 export function dayAchievements(input: AchievementInput): Achievement[] {
-  const { date, dayPnl, trades, pnlHistory, processPassCount, processRuleCount } = input
+  const { date, dayPnl, trades, pnlHistory, dayRangePts } = input
   const T = ACHIEVEMENT_THRESHOLDS
   const earned: Achievement[] = []
   const green = (dayPnl ?? 0) > 0
@@ -84,7 +105,7 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
   })
   if (sniper) {
     earned.push({
-      id: 'sniper', emoji: '🎯', label: 'Sniper',
+      id: 'sniper', ...ACHIEVEMENT_CATALOG.sniper,
       blurb: `A winning trade with under ${T.sniperMaeAtr}×ATR of heat — surgical entry.`,
     })
   }
@@ -96,18 +117,26 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
   }, null)
   if (bestR != null && bestR >= T.grandSlamR) {
     earned.push({
-      id: 'grand_slam', emoji: '🚀', label: 'Grand Slam',
+      id: 'grand_slam', ...ACHIEVEMENT_CATALOG.grand_slam,
       blurb: `A ${bestR.toFixed(1)}R trade — swung big and connected.`,
     })
   }
 
-  // 🏆 Game Winner — banked ≥80% of the day's available move (green days only).
-  if (green) {
-    const cap = avgCaptureRatio(trades).avg
-    if (cap != null && cap >= T.gameWinnerCapture) {
+  // 🏀 Game Winner — your single best trade captured ≥80% of the day's high-low
+  // range (points). Size-independent: "one shot that caught the whole move."
+  // Realized capture = direction-signed (exit − entry) for each trade; we take
+  // the biggest, so a red day with one monster winner can still qualify.
+  if (dayRangePts != null && dayRangePts > 0) {
+    const bestCapturePts = trades.reduce((m, t) => {
+      if (t.entry_price == null || t.exit_price == null) return m
+      const pts = t.direction === 'short' ? t.entry_price - t.exit_price : t.exit_price - t.entry_price
+      return pts > m ? pts : m
+    }, 0)
+    const ratio = bestCapturePts / dayRangePts
+    if (ratio >= T.gameWinnerCapture) {
       earned.push({
-        id: 'game_winner', emoji: '🏆', label: 'Game Winner',
-        blurb: `Kept ${Math.round(cap * 100)}% of the day's available move.`,
+        id: 'game_winner', ...ACHIEVEMENT_CATALOG.game_winner,
+        blurb: `Your best trade caught ${Math.round(ratio * 100)}% of the day's ${Math.round(dayRangePts)}-pt range.`,
       })
     }
   }
@@ -118,22 +147,10 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
     const idx = Math.max(0, Math.min(pnls.length - 1, Math.ceil(T.careerDayPercentile * pnls.length) - 1))
     if (dayPnl >= pnls[idx]) {
       earned.push({
-        id: 'career_day', emoji: '📅', label: 'Career Day',
+        id: 'career_day', ...ACHIEVEMENT_CATALOG.career_day,
         blurb: `Top 10% P&L day across your ${pnls.length} logged sessions.`,
       })
     }
-  }
-
-  // 🎞️ Clean Tape — a process-compliant day, zero breaches (all rules pass).
-  if (
-    trades.length > 0 &&
-    processPassCount != null && processRuleCount != null &&
-    processRuleCount > 0 && processPassCount >= processRuleCount
-  ) {
-    earned.push({
-      id: 'clean_tape', emoji: '🎞️', label: 'Clean Tape',
-      blurb: 'Every process rule respected — zero breaches.',
-    })
   }
 
   // 🔥 Heat Check — 5 green sessions in a row, ending on this day.
@@ -147,7 +164,7 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
       }
       if (streak) {
         earned.push({
-          id: 'heat_check', emoji: '🔥', label: 'Heat Check',
+          id: 'heat_check', ...ACHIEVEMENT_CATALOG.heat_check,
           blurb: `${T.heatCheckStreak} green sessions in a row — you're heating up.`,
         })
       }
@@ -155,4 +172,27 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
   }
 
   return earned
+}
+
+/** Just the earned ids for a day — what we persist to trading_days.achievements_json. */
+export function dayAchievementIds(input: AchievementInput): AchievementId[] {
+  return dayAchievements(input).map(a => a.id)
+}
+
+/** Tally lifetime earns across many days' persisted id arrays. Unknown ids
+ *  (e.g. a retired badge left in old rows) are ignored, so the catalog can
+ *  evolve without corrupting counts. */
+export function achievementCounts(
+  days: (readonly string[] | null | undefined)[],
+): Record<AchievementId, number> {
+  const counts: Record<AchievementId, number> = {
+    sniper: 0, grand_slam: 0, game_winner: 0, career_day: 0, heat_check: 0,
+  }
+  for (const arr of days) {
+    if (!arr) continue
+    for (const id of arr) {
+      if (id in counts) counts[id as AchievementId]++
+    }
+  }
+  return counts
 }

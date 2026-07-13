@@ -333,6 +333,14 @@ alter table trading_days
   add column if not exists prep_completed_at timestamptz;
 
 -- ============================================================
+-- Gamification Phase 2: persisted per-day earned achievement ids
+-- (e.g. ["sniper","clean_tape"]). Recomputed on EOD-analysis save;
+-- backfilled by POST /api/achievements/backfill.
+-- ============================================================
+alter table trading_days
+  add column if not exists achievements_json jsonb default '[]'::jsonb;
+
+-- ============================================================
 -- Condition Lookup feature (morning prep condition filter)
 -- ============================================================
 -- Lives alongside the existing journal but is independent — sourced from

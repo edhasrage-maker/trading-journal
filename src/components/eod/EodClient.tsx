@@ -24,7 +24,8 @@ import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import MfeMaeEfficiency from './MfeMaeEfficiency'
 import BehavioralProxiesPanel from './BehavioralProxiesPanel'
 import AchievementBadges from '@/components/AchievementBadges'
-import { dayAchievements } from '@/lib/achievements'
+import AchievementShowcase from '@/components/eod/AchievementShowcase'
+import { dayAchievements, type AchievementId } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, type BarLike } from '@/lib/analytics'
@@ -52,6 +53,10 @@ interface Props {
    *  (Career Day percentile + Heat Check streak). Server-fetched; omit to skip
    *  those two badges. */
   pnlHistory?: { date: string; pnl: number }[]
+  /** Lifetime earned-achievement counts across the user's history (server-
+   *  computed from trading_days.achievements_json). Powers the showcase ×N
+   *  badges + collection strip. Omit / zeros before the backfill runs. */
+  achievementCounts?: Record<AchievementId, number>
   /** The trader's round-trip "was up" multiple (×ATR) from Settings → ATR
    *  measurement. Defaults to 1× when unset / pre-migration. */
   giveBackAtr?: number
@@ -78,6 +83,7 @@ export default function EodClient({
   liveAtrByTradeId,
   postExitByTradeId,
   pnlHistory,
+  achievementCounts,
   giveBackAtr = 1,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
@@ -579,12 +585,11 @@ export default function EodClient({
   // Achievement badges earned this day — pure derivation (src/lib/achievements.ts).
   const achievements = useMemo(() => {
     const dayPnl = day?.eod_pnl ?? (trades.length > 0 ? trades.reduce((s, t) => s + (t.pnl ?? 0), 0) : null)
-    // Clean Tape needs the EOD process score: all rules pass = zero breaches.
-    const perRule = (aiAnalysis?.process as { per_rule?: Record<string, { status?: string }> } | undefined)?.per_rule
-    const processRuleCount = perRule ? Object.keys(perRule).length : null
-    const processPassCount = perRule ? Object.values(perRule).filter(r => r?.status === 'pass').length : null
-    return dayAchievements({ date, dayPnl, trades, pnlHistory, processPassCount, processRuleCount })
-  }, [date, day?.eod_pnl, trades, aiAnalysis, pnlHistory])
+    // Game Winner measures the best trade's capture against the day's high-low
+    // range (market_context.day_range, in points).
+    const dayRangePts = initialMarketContext?.day_range ?? null
+    return dayAchievements({ date, dayPnl, trades, pnlHistory, dayRangePts })
+  }, [date, day?.eod_pnl, trades, pnlHistory, initialMarketContext?.day_range])
 
   // --- Trade-selection state (shared by merge + bulk-delete actions) ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -1169,6 +1174,11 @@ export default function EodClient({
           }, null)}
         />
       </div>
+
+      {/* Bigger achievement treatment (gamification Phase 2): the small pills
+          stay pinned by the recap title; this is the large earned-today coins
+          + the lifetime collection strip, at the foot of the recap. */}
+      <AchievementShowcase earned={achievements} counts={achievementCounts} className="mt-2" />
 
       {/* Danger Zone delete moved exclusively to the dashboard's per-row
           trash button + bulk-delete — duplicate entry point on the EOD page

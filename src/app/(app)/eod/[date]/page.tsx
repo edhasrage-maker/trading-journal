@@ -4,6 +4,7 @@ import { fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from 
 import { configuredAtr } from '@/lib/atr-config'
 import { getAtrConfig, getGiveBackAtr } from '@/lib/atr-config-server'
 import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
+import { achievementCounts } from '@/lib/achievements'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -57,6 +58,17 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
     .not('eod_pnl', 'is', null)
     .order('date', { ascending: true }) as { data: { date: string; eod_pnl: number }[] | null }
   const pnlHistory = (dayPnlRows ?? []).map(d => ({ date: d.date, pnl: d.eod_pnl }))
+
+  // Lifetime earned-achievement counts (gamification Phase 2) — for the EOD
+  // showcase ×N badges + collection strip. Guarded: before the achievements_json
+  // migration/backfill exists the select errors, and counts stay undefined
+  // (showcase then just reads "First time!" on today's coins). RLS-scoped.
+  const { data: achRows, error: achErr } = await supabase
+    .from('trading_days')
+    .select('achievements_json') as { data: { achievements_json: string[] | null }[] | null; error: unknown }
+  const counts = (!achErr && achRows)
+    ? achievementCounts(achRows.map(r => r.achievements_json))
+    : undefined
 
   // Per-trade LIVE ATR: compute ATR-10 Wilder from 1-min bars at each trade's
   // entry_time and pass to EodClient as a map { tradeId → atrPts }. The trade
@@ -120,6 +132,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       liveAtrByTradeId={liveAtrByTradeId}
       postExitByTradeId={postExitByTradeId}
       pnlHistory={pnlHistory}
+      achievementCounts={counts}
       giveBackAtr={giveBackAtr}
     />
   )
