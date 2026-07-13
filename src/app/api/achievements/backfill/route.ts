@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { computeDayIds, type AchievementDayRow } from '@/lib/achievements-server'
 import { achievementCounts, type AchievementId, type AchievementTrade } from '@/lib/achievements'
+import { isAdminUser } from '@/lib/ai-model'
 import { clientError } from '@/lib/api-error'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -35,10 +36,24 @@ async function fetchAll<T>(supabase: AnyClient, table: string, columns: string):
  * Runs entirely under the caller's RLS — it only ever reads and writes that
  * user's own rows. Idempotent: safe to re-run (it just overwrites with the
  * freshly computed ids). POST with no body.
+ *
+ * OWNER-ONLY: this is a one-time migration for the founder's pre-existing
+ * history. New/tester accounts must NOT be retroactively awarded coins — they
+ * earn achievements going forward only (via the persist-on-EOD-save hook). So
+ * we gate to isAdminUser; everyone else is 403.
  */
 export async function POST() {
   try {
     const supabase: AnyClient = await createClient()
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+    if (!isAdminUser(user)) {
+      return NextResponse.json(
+        { error: 'Backfill is owner-only. New accounts earn achievements going forward only.' },
+        { status: 403 },
+      )
+    }
 
     // Pull everything once, compute in memory — far fewer round-trips than a
     // per-day fetch (three page-sets vs ~3× the day count in queries).
