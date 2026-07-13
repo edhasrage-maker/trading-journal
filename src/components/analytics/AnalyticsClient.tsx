@@ -13,6 +13,7 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import CsvExportButton from './CsvExportButton'
 import TradeListModal, { type ModalCategory } from './TradeListModal'
 import { useUiMode } from '@/lib/ui-mode'
+import { useLongTaskBeacon } from '@/lib/longtask-beacon'
 import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
 import {
   aggregateByTag,
@@ -103,6 +104,11 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
   // Beginner shows a plain KPI subset + Setup Performance + Journal Themes; Pro
   // shows all metrics and every breakdown table. (docs/BEGINNER_PRO_MODES.md)
   const { mode } = useUiMode()
+
+  // Alpha-readiness item 6 tail: watch for main-thread hangs on this page (two
+  // ~10-min renderer stalls were reported but never reproduced). Beacons a
+  // summary to the Vercel logs only when blocking is actually noticeable.
+  useLongTaskBeacon({ route: '/analytics', meta: { range: activeRange, trades: trades.length, mode } })
 
   // Available labels for the current filter category — computed from the
   // date-filtered set so the dropdown only offers labels actually present
@@ -330,10 +336,10 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
           />
         )}
         {/* Beginner hides this when there's no capture data (a bare "—" reads
-            as broken); Pro always shows MFE Realized %. */}
+            as broken); Pro always shows it. Same plain-English label in both. */}
         {(mode === 'pro' || overall.avg_capture != null) && (
           <StatCard
-            label={mode === 'beginner' ? 'Profit Conversion' : 'MFE Realized %'}
+            label="Profit Captured"
             value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
             hint={mode === 'beginner' ? "of your trade's best point" : `${overall.capture_count} of ${overall.count}`}
             positive={overall.avg_capture != null && overall.avg_capture >= 0.5}

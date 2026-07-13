@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3 } from 'lucide-react'
 import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
 import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
+import { postExitVerdict, type VerdictTrade, type VerdictTone } from '@/lib/post-exit-verdict'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
@@ -29,6 +30,15 @@ const TOGGLEABLE_COLS = [
 ] as const
 type ColKey = (typeof TOGGLEABLE_COLS)[number]['key']
 const COLS_STORAGE_KEY = 'eod-trade-cols-v1'
+
+// Post-exit verdict chip → text color. See src/lib/post-exit-verdict.ts.
+const VERDICT_TONE_CLASS: Record<VerdictTone, string> = {
+  good: 'text-green-400',
+  welltimed: 'text-green-500/70',
+  left: 'text-amber-400',
+  giveback: 'text-red-400',
+  flat: 'text-gray-600',
+}
 const defaultColPrefs = (): Record<ColKey, boolean> =>
   Object.fromEntries(TOGGLEABLE_COLS.map(c => [c.key, true])) as Record<ColKey, boolean>
 function loadColPrefs(): Record<ColKey, boolean> {
@@ -352,23 +362,9 @@ export default function TradeList({
             : maePts.toFixed(1)
           const winnerHeat = (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
           const stopHeat = t.stop_price != null ? maeHeatRatio(t) : null
-          const ext = postExitByTradeId?.[t.id]
-          let postLabel = '—'
-          let postCls = 'text-gray-600'
-          if (ext) {
-            const capturedPts = (t.entry_price != null && t.exit_price != null)
-              ? (isLong ? t.exit_price - t.entry_price : t.entry_price - t.exit_price) : null
-            const cont = ext.continued_favorable_pts
-            const against = ext.continued_against_pts
-            if (cont > against) {
-              const pct = (capturedPts != null && capturedPts > 0) ? Math.round((cont / capturedPts) * 100) : null
-              postLabel = `+${cont.toFixed(1)} pts${pct != null ? ` (${pct}%)` : ''}`
-              postCls = cont >= 3 ? 'text-green-400' : 'text-yellow-400'
-            } else if (against > 0.1) {
-              postLabel = `−${against.toFixed(1)} pts`
-              postCls = 'text-red-400'
-            }
-          }
+          const postVerdict = postExitVerdict(t as VerdictTrade, postExitByTradeId?.[t.id])
+          const postLabel = postVerdict ? `${postVerdict.glyph} ${postVerdict.label}` : '—'
+          const postCls = postVerdict ? VERDICT_TONE_CLASS[postVerdict.tone] : 'text-gray-600'
           return (
             <div
               key={t.id}
@@ -406,7 +402,11 @@ export default function TradeList({
                   <MobileMetric label="R" value={r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R${rAtrBased ? '*' : ''}`} valueClass={rCls} />
                   <MobileMetric label="MFE" value={captureDisplay(t, bars ?? undefined) ?? '—'} />
                   <MobileMetric label="MAE" value={maeMag + (stopHeat != null ? ` · ${Math.round(Math.max(0, stopHeat) * 100)}%` : '')} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} />
-                  <MobileMetric label="Post-Exit" value={postLabel} valueClass={postCls} />
+                  {/* Post-exit verdict spans both columns — the plain-language label
+                      is too long for a half-width cell. */}
+                  <div className="col-span-2">
+                    <MobileMetric label="Post-Exit" value={postLabel} valueClass={postCls} />
+                  </div>
                 </div>
                 {(summary || t.notes?.trim()) && (
                   <p className="mt-2.5 text-xs text-gray-400 leading-snug">{summary ?? t.notes?.trim()}</p>
@@ -542,7 +542,7 @@ export default function TradeList({
                   </div>
                 )}
               </th>}
-              {cols.postExit && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Post-Exit Continuation @30m: how much further the market moved in your trade direction in the 30 minutes after your exit. Format: '+8 pts (18%)' = 8 pts of further favorable move, which is 18% of what you captured. Positive numbers mean you could have ridden it longer; em-dash means the move reversed against you after exit.">Post-Exit</th>}
+              {cols.postExit && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Was your exit well-timed? A plain-language verdict from what the market did in the 30 min after you were out — 'exit right' (it reversed once you left), 'early' (it kept running your way — money left on the table), 'stop right' (a loss that kept going against you), or 'gave it back' (you had a real winner before it turned red).">Post-Exit</th>}
               <th className="w-8" />
             </tr>
           </thead>
@@ -754,40 +754,11 @@ export default function TradeList({
                     )
                   })()}
                   {cols.postExit && (() => {
-                    const ext = postExitByTradeId?.[t.id]
-                    if (!ext) return <td className="py-1.5 pr-3 text-right text-gray-700">—</td>
-                    const isLong = t.direction === 'long'
-                    const capturedPts = (t.entry_price != null && t.exit_price != null)
-                      ? (isLong ? t.exit_price - t.entry_price : t.entry_price - t.exit_price)
-                      : null
-                    const cont = ext.continued_favorable_pts
-                    const against = ext.continued_against_pts
-                    // Color: green if continuation was significant relative to capture,
-                    // yellow if mild, gray if essentially nothing; red signal lives in
-                    // the reversal/against side when it dominated.
-                    const fmt = (n: number) => `${n.toFixed(1)} pts`
-                    let label: string
-                    let cls: string
-                    let title: string
-                    if (cont > against) {
-                      const pct = (capturedPts != null && capturedPts > 0)
-                        ? Math.round((cont / capturedPts) * 100)
-                        : null
-                      label = `+${fmt(cont)}${pct != null ? ` (${pct}%)` : ''}`
-                      cls = cont >= 3 ? 'text-green-400' : 'text-yellow-400'
-                      title = `In the 30 min after exit, market continued +${cont.toFixed(2)} pts in your direction.${pct != null ? ` That's ${pct}% of what you captured.` : ''}${!ext.full_window ? ' (Partial window — bars ran out.)' : ''}`
-                    } else if (against > 0.1) {
-                      label = `−${fmt(against)}`
-                      cls = 'text-red-400'
-                      title = `Market reversed −${against.toFixed(2)} pts against your direction in the 30 min after exit.${!ext.full_window ? ' (Partial window.)' : ''}`
-                    } else {
-                      label = '—'
-                      cls = 'text-gray-600'
-                      title = 'Essentially flat in the 30 min after exit.'
-                    }
+                    const v = postExitVerdict(t as VerdictTrade, postExitByTradeId?.[t.id])
+                    if (!v) return <td className="py-1.5 pr-3 text-right text-gray-700">—</td>
                     return (
-                      <td className={`py-1.5 pr-3 text-right ${cls}`} title={title}>
-                        {label}
+                      <td className={`py-1.5 pr-3 text-right whitespace-nowrap ${VERDICT_TONE_CLASS[v.tone]}`} title={v.title}>
+                        <span className="mr-0.5">{v.glyph}</span>{v.label}
                       </td>
                     )
                   })()}

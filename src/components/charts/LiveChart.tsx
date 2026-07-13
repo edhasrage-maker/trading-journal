@@ -1351,7 +1351,18 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
 
       // Per-TF saved view, falling back to the compact default when none exists.
       const savedThisTf = symbol ? loadView(symbol, date, chartTfMins) : null
-      const savedFits = !!(savedThisTf && savedThisTf.to <= total && savedThisTf.from >= 0)
+      const savedInBounds = !!(savedThisTf && savedThisTf.to <= total && savedThisTf.from >= 0)
+      // Auto-frame target: the bar-index window bracketing the day's trades.
+      const tradeFrame = tradesLogicalRange(displayBars, trades)
+      // A saved view only wins if it still frames the day's trades. A view saved
+      // before auto-framing existed — or one panned onto the overnight tail —
+      // would otherwise reopen the day away from the fills (the "wrong session"
+      // bug). When trades exist and the saved view doesn't overlap them, prefer
+      // the auto-frame; a saved view that DOES show the trades is still honored,
+      // so a deliberate saved zoom is never clobbered.
+      const savedFits = savedInBounds && (
+        !tradeFrame || (savedThisTf!.from <= tradeFrame.to && savedThisTf!.to >= tradeFrame.from)
+      )
 
       if (LIVECHART_DEBUG) {
         console.log('[livechart] data effect', {
@@ -1375,8 +1386,8 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         // day opens centered on your fills instead of the session tail.
         const range = savedFits
           ? { from: savedThisTf!.from, to: savedThisTf!.to }
-          : (tradesLogicalRange(displayBars, trades) ?? defaultRange)
-        if (LIVECHART_DEBUG) console.log('[livechart] FIRST-OPEN apply', range, 'usingSaved=', savedFits, 'framedTrades=', !savedFits && !!tradesLogicalRange(displayBars, trades))
+          : (tradeFrame ?? defaultRange)
+        if (LIVECHART_DEBUG) console.log('[livechart] FIRST-OPEN apply', range, 'usingSaved=', savedFits, 'framedTrades=', !savedFits && !!tradeFrame)
         const apply = () => chartRef.current?.timeScale().setVisibleLogicalRange(range)
         apply()
         requestAnimationFrame(apply)

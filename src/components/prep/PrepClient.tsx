@@ -79,6 +79,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // (resets on navigation between days).
   const [chartView, setChartView] = useState<'screenshot' | 'live'>('live')
   const isFirstRender = useRef(true)
+  // Set true by the auto-fill paths (session levels, bar-native stats, derived
+  // PD/GBX flags) whenever they actually change `context`, so the dirty effect
+  // can tell a programmatic fill from a genuine user edit and skip marking the
+  // form "Unsaved" on first load. Consumed (and reset) once per context change.
+  const autoFilledContextRef = useRef(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
@@ -188,6 +193,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         const cur = (prev as Record<string, unknown>)[k]
         if (cur == null || cur === '') { (next as Record<string, unknown>)[k] = v; changed = true }
       }
+      if (changed) autoFilledContextRef.current = true // programmatic fill — must not mark the form dirty
       return changed ? next : prev
     })
   }, [session])
@@ -235,6 +241,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             const cur = (prev as Record<string, unknown>)[k]
             if (cur == null || cur === '') { (next as Record<string, unknown>)[k] = v; changed = true }
           }
+          if (changed) autoFilledContextRef.current = true // programmatic fill — must not mark the form dirty
           return changed ? next : prev
         })
       } catch { /* best-effort — screenshot/manual entry still available */ }
@@ -268,6 +275,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         const v = cp >= Math.min(onl, onh) && cp <= Math.max(onl, onh)
         if (prev.price_in_gbx_range !== v) { next.price_in_gbx_range = v; changed = true }
       }
+      if (changed) autoFilledContextRef.current = true // derived flags — must not mark the form dirty
       return changed ? next : prev
     })
   }, [barCurrentPrice, context.pdl, context.pdh, context.onl, context.onh])
@@ -292,6 +300,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // Also captures prep_started_at on the FIRST edit of today's prep.
   useEffect(() => {
     if (isFirstRender.current) { isFirstRender.current = false; return }
+    // Auto-fill (session levels / bar stats / derived flags) mutated context —
+    // that's the system populating the form, not a user edit. Skip marking dirty
+    // (and skip capturing prep_started_at) so the form doesn't show "Unsaved" on
+    // first load. Reset so the next genuine edit is caught.
+    if (autoFilledContextRef.current) { autoFilledContextRef.current = false; return }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsDirty(true)
     if (isToday && !prepStartedAt) {
