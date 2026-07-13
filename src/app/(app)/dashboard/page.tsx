@@ -60,6 +60,30 @@ export default async function DashboardPage() {
     .limit(PAGE_SIZE)
   tick('recentDays')
 
+  // Persisted achievement coin ids per day (gamification Phase 2) — feeds the
+  // Recent Days coin markers. Fetched SEPARATELY from the main select above and
+  // guarded: until the achievements_json migration has run, this select errors
+  // and the map stays empty (rows simply show no coins). Folding the column
+  // into the main select instead would null the entire dashboard dataset on a
+  // pre-migration DB.
+  const achievementsByDayId = new Map<string, string[]>()
+  {
+    const { data: achRows, error: achErr } = await supabase
+      .from('trading_days')
+      .select('id, achievements_json')
+      .gte('date', statsWindowStartParallel)
+      .order('date', { ascending: false })
+      .limit(PAGE_SIZE) as { data: { id: string; achievements_json: string[] | null }[] | null; error: unknown }
+    if (!achErr && achRows) {
+      for (const r of achRows) {
+        if (Array.isArray(r.achievements_json) && r.achievements_json.length > 0) {
+          achievementsByDayId.set(r.id, r.achievements_json)
+        }
+      }
+    }
+    tick('achievements', achievementsByDayId.size)
+  }
+
   // Reuse the window constants computed for the parallel fetch above so we
   // don't recompute Date math (and so the labels in the perf log stay correct).
   const past30Start = past30StartParallel
@@ -304,6 +328,9 @@ export default async function DashboardPage() {
       day_types: (d.day_types && d.day_types.length > 0)
         ? d.day_types
         : (d.day_type ? [d.day_type] : []),
+      // Earned achievement coin ids (persisted trading_days.achievements_json).
+      // Empty until the migration + backfill have run — rows just show no coins.
+      achievements: achievementsByDayId.get(d.id) ?? [],
       trade_count: trades.length,
       // Trade-level win counts — feeds the per-trade win rate stat card
       // (distinct from `win_rate` which is the same value but per-day, used

@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown } from 'lucide-react'
 import type { TapeScoreResult } from '@/lib/tapescore'
+import AchievementCoin from '@/components/AchievementCoin'
+import { ACHIEVEMENT_CATALOG, type AchievementId } from '@/lib/achievements'
 
 export interface DayRowData {
   id: string
@@ -17,6 +19,10 @@ export interface DayRowData {
   /** Multi-select array. Render this in the UI; falls back to [day_type] for
    *  legacy days (filled server-side in dashboard/page.tsx). */
   day_types: string[]
+  /** Earned achievement coin ids for the day (persisted
+   *  trading_days.achievements_json; empty pre-migration/backfill). Rendered
+   *  as small coins next to the date — the successor to the old day-type chip. */
+  achievements: string[]
   trade_count: number
   /** Wins among the day's trades (pnl > 0). Powers the per-trade win rate
    *  aggregate in DashboardStats. */
@@ -575,6 +581,28 @@ function DayRowItem({
           <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium whitespace-nowrap">
             {format(new Date(day.date + 'T12:00:00'), 'EEE, MMM d')}
           </Link>
+          {/* Achievement coins earned that day (persisted ids). Unknown ids
+              (e.g. a retired badge in old rows) are filtered so the catalog can
+              evolve without breaking the render. */}
+          {(() => {
+            const coins = day.achievements.filter(
+              (id): id is AchievementId => id in ACHIEVEMENT_CATALOG,
+            )
+            if (coins.length === 0) return null
+            return (
+              <span className="flex items-center gap-1 shrink-0">
+                {coins.map(id => (
+                  <AchievementCoin
+                    key={id}
+                    id={id}
+                    size={16}
+                    ring="flat"
+                    title={`${ACHIEVEMENT_CATALOG[id].label} — ${ACHIEVEMENT_CATALOG[id].blurb}`}
+                  />
+                ))}
+              </span>
+            )
+          })()}
         </div>
       </td>
       {/* Reorderable data cells. Keyed by ReorderableColumnId so the iteration
