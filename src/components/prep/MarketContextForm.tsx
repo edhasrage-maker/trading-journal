@@ -163,7 +163,7 @@ export default function MarketContextForm({ value, onChange }: Props) {
       {/* Overnight (GBX) */}
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-          Overnight (GBX)
+          Overnight
           {gbxRange != null && (
             <span className="ml-2 text-blue-400 font-normal normal-case">Range: {gbxRange.toFixed(2)}</span>
           )}
@@ -171,10 +171,10 @@ export default function MarketContextForm({ value, onChange }: Props) {
         <div className="grid grid-cols-2 gap-3">
           <NumInput label="ONH" hint="Overnight High" value={value.onh} onChange={r => set('onh', r)} />
           <NumInput label="ONL" hint="Overnight Low" value={value.onl} onChange={r => set('onl', r)} />
-          <YesNoToggle label="Price in GBX range?" value={value.price_in_gbx_range} onChange={v => setBool('price_in_gbx_range', v)} />
+          <YesNoToggle label="Price in overnight range?" value={value.price_in_gbx_range} onChange={v => setBool('price_in_gbx_range', v)} />
           <div>
-            <label className="block text-xs text-gray-400 mb-1" title="Globex range / ADR. <60% = room to run, 60–90% = significant range used, >90% = exhaustion risk (mean-reversion more likely).">
-              GBX % of ADR
+            <label className="block text-xs text-gray-400 mb-1" title="Overnight range / ADR. <60% = room to run, 60–90% = significant range used, >90% = exhaustion risk (mean-reversion more likely).">
+              Overnight % of ADR
             </label>
             <div
               className={`border rounded-lg px-3 py-2 text-sm transition-colors ${

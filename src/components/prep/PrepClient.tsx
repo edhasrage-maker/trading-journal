@@ -7,6 +7,7 @@ import { todayPT } from '@/lib/pt-time'
 import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle, Layers, Image as ImageIcon, CandlestickChart } from 'lucide-react'
 import ScreenshotUpload from './ScreenshotUpload'
 import ConditionFilterPanel from '@/components/condition/ConditionFilterPanel'
+import ConditionVerdicts from './ConditionVerdicts'
 import MarketContextForm from './MarketContextForm'
 import PrepNotesForm from './PrepNotesForm'
 import AiAnalysisCard from './AiAnalysisCard'
@@ -175,6 +176,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // Bar-native current price → drives the PD/GBX "in range?" flags (effect
   // below), replacing the fragile screenshot read of "current price".
   const [barCurrentPrice, setBarCurrentPrice] = useState<number | null>(null)
+  // 10-day average of the 1-min ATR — the "typical" baseline behind the
+  // Today's Tape bar-volatility verdict ("2.7× normal"). Display-only; never
+  // written into market_context. Kept once non-null so a session-switch fetch
+  // returning null doesn't blank the verdict.
+  const [atrBaseline, setAtrBaseline] = useState<number | null>(null)
   useEffect(() => {
     if (!chartSymbol || !date) return
     let cancelled = false
@@ -185,6 +191,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         const { stats } = await res.json() as { stats: DayContextStats | null }
         if (cancelled || !stats) return
         setBarCurrentPrice(stats.current_price ?? null)
+        if (stats.atr_10d_avg != null) setAtrBaseline(stats.atr_10d_avg)
         const map: Record<string, number | null> = {
           rvol: stats.rvol, ib_size: stats.ib_size, adr: stats.adr, atr_1m: stats.atr_1m, day_range: stats.day_range,
         }
@@ -951,6 +958,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           })}
         />
       </CollapsibleCard>
+
+      {/* Today's Tape — verdict-first conditions read (all users). Plain-
+          language headline + chips from market_context; no history tables
+          needed, so it renders even where Morning Conditions is admin-only. */}
+      <ConditionVerdicts context={context as Partial<MarketContext>} atrBaseline={atrBaseline} />
 
       {/* Condition Filter (Morning Conditions) */}
       {/* dr_adr is reactive: compute from live context.day_range / context.adr

@@ -13,6 +13,7 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import CsvExportButton from './CsvExportButton'
 import TradeListModal, { type ModalCategory } from './TradeListModal'
 import { useUiMode } from '@/lib/ui-mode'
+import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
 import {
   aggregateByTag,
   aggregateByDayType,
@@ -297,7 +298,8 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
         <StatCard
           label="Win Rate"
           value={`${(overall.win_rate * 100).toFixed(0)}%`}
-          positive={overall.win_rate >= 0.5}
+          hint={overall.count < MIN_SAMPLE ? tooFewToJudge(overall.count) : `n=${overall.count}`}
+          positive={overall.count < MIN_SAMPLE ? null : overall.win_rate >= 0.5}
         />
         <StatCard
           label="Total P&L"
@@ -315,7 +317,8 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
           <StatCard
             label="Profit Factor"
             value={Number.isFinite(overall.profit_factor) ? overall.profit_factor.toFixed(2) : '∞'}
-            positive={overall.profit_factor >= 1}
+            hint={overall.count < MIN_SAMPLE ? tooFewToJudge(overall.count) : `n=${overall.count}`}
+            positive={overall.count < MIN_SAMPLE ? null : overall.profit_factor >= 1}
           />
         )}
         {mode === 'pro' && (

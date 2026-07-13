@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { TagImpact } from '@/lib/analytics'
+import { MIN_SAMPLE } from '@/lib/sample-size'
 
 interface Props {
   title: string
@@ -21,7 +22,9 @@ export default function TagImpactTable({
   description,
   data,
   variant = 'mistakes',
-  minCount = 3,
+  // Shared sample floor (item 15): a with/without comparison from 3 tagged
+  // trades is false precision, so the row doesn't render below MIN_SAMPLE.
+  minCount = MIN_SAMPLE,
 }: Props) {
   const filtered = data.filter(d => d.withStats.count >= minCount)
   const [open, setOpen] = useState(false)
@@ -50,7 +53,7 @@ export default function TagImpactTable({
               <tr>
                 <th className="text-left font-normal py-2 pr-3">Tag</th>
                 <th className="text-right font-normal py-2 pr-3" colSpan={3}>With Tag</th>
-                <th className="text-right font-normal py-2 pr-3" colSpan={2}>Without Tag</th>
+                <th className="text-right font-normal py-2 pr-3" colSpan={3}>Without Tag</th>
                 <th className="text-right font-normal py-2">Δ Avg PnL</th>
               </tr>
               <tr className="text-[10px] text-gray-600 border-b border-gray-800">
@@ -58,6 +61,7 @@ export default function TagImpactTable({
                 <th className="text-right font-normal py-1 pr-3">N</th>
                 <th className="text-right font-normal py-1 pr-3">Win %</th>
                 <th className="text-right font-normal py-1 pr-3">Avg PnL</th>
+                <th className="text-right font-normal py-1 pr-3">N</th>
                 <th className="text-right font-normal py-1 pr-3">Win %</th>
                 <th className="text-right font-normal py-1 pr-3">Avg PnL</th>
                 <th></th>
@@ -78,6 +82,7 @@ export default function TagImpactTable({
                   <td className={`py-1.5 pr-3 text-right ${withStats.avg_pnl > 0 ? 'text-green-400' : withStats.avg_pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
                     {withStats.avg_pnl >= 0 ? '+' : ''}{withStats.avg_pnl.toFixed(2)}
                   </td>
+                  <td className="py-1.5 pr-3 text-right text-gray-500">{withoutStats.count}</td>
                   <td className="py-1.5 pr-3 text-right text-gray-500">
                     {(withoutStats.win_rate * 100).toFixed(0)}%
                   </td>

@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import { ArrowUpDown, ArrowUp, ArrowDown, ChevronDown } from 'lucide-react'
 import type { TagPerf } from '@/lib/analytics'
+import { MIN_SAMPLE } from '@/lib/sample-size'
 
 interface Props {
   title: string
@@ -67,7 +68,10 @@ export default function TagPerformanceTable({
       if (av > bv) return 1 * dir
       return 0
     })
-    return arr
+    // Thin samples (< MIN_SAMPLE trades) sink to the bottom regardless of the
+    // sort column — their stats are suppressed, so they shouldn't interleave
+    // with rows the trader can actually judge.
+    return [...arr.filter(d => d.stats.count >= MIN_SAMPLE), ...arr.filter(d => d.stats.count < MIN_SAMPLE)]
   }, [filtered, sortKey, sortDir])
 
   const toggleSort = (k: SortKey) => {
@@ -137,8 +141,10 @@ export default function TagPerformanceTable({
               </tr>
             </thead>
             <tbody>
-              {sorted.map(({ label, stats }) => (
-                <tr key={label} className="border-b border-gray-800/50 hover:bg-gray-800/40 transition-colors">
+              {sorted.map(({ label, stats }) => {
+                const thin = stats.count < MIN_SAMPLE
+                return (
+                <tr key={label} className={`border-b border-gray-800/50 hover:bg-gray-800/40 transition-colors ${thin ? 'opacity-50' : ''}`}>
                   <td className="py-1.5 pr-3">
                     {onTagClick ? (
                       // Clickable label opens the drilldown modal — shows every
@@ -159,6 +165,18 @@ export default function TagPerformanceTable({
                     )}
                   </td>
                   <td className="py-1.5 pr-3 text-right text-gray-300">{stats.count}</td>
+                  {thin ? (
+                    /* Below the sample floor the aggregate stats are false
+                       precision — suppress them with the reason instead of
+                       rendering a confident-looking WR/PF from 4 trades. */
+                    <td
+                      colSpan={visibleHeaders.length - 2}
+                      className="py-1.5 text-right font-sans italic text-gray-500"
+                    >
+                      too few trades to judge — needs {MIN_SAMPLE}+
+                    </td>
+                  ) : (
+                  <>
                   <td className={`py-1.5 pr-3 text-right ${stats.win_rate >= 0.5 ? 'text-green-400' : 'text-gray-300'}`}>
                     {(stats.win_rate * 100).toFixed(0)}%
                   </td>
@@ -229,8 +247,11 @@ export default function TagPerformanceTable({
                   <td className={`py-1.5 text-right font-bold ${stats.total_pnl > 0 ? 'text-green-400' : stats.total_pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
                     {stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(0)}
                   </td>
+                  </>
+                  )}
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

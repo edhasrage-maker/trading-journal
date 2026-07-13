@@ -224,7 +224,8 @@ export function consolidate(
       pick: 'median',
       verdict: bestMedian.row.verdict,
       condition_id: bestMedian.row.condition_id,
-      explanation: 'Tertile had insufficient data — using median view as fallback',
+      // User-facing string — keep "tertile"/"median" out of it (item 18).
+      explanation: 'Showing your broader history — the closest match has too few trades.',
       conflict: false,
       conflict_reason: null,
     }
@@ -250,8 +251,9 @@ export function consolidate(
   const mf = VERDICT_FAMILY[m.verdict]
   const tf = VERDICT_FAMILY[t.verdict]
   const conflict = (mf === 'GREEN' && tf === 'RED') || (mf === 'RED' && tf === 'GREEN')
+  // User-facing string — keep "tertile"/"median" out of it (item 18).
   const conflictReason = conflict
-    ? `Median says ${VERDICT_DISPLAY[m.verdict]}, tertile says ${VERDICT_DISPLAY[t.verdict]} — they disagree on direction.`
+    ? `Your broad sample says ${VERDICT_DISPLAY[m.verdict]}, but the closest match to today says ${VERDICT_DISPLAY[t.verdict]} — they disagree on direction.`
     : null
 
   const mN = m.n_trades ?? 0

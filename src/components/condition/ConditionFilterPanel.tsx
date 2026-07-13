@@ -10,8 +10,8 @@ import {
   VERDICT_TONE,
   type LookupOutcome,
   type MatchResult,
-  type BucketAssignment,
 } from '@/lib/condition-lookup'
+import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
 import type { ConditionMetric, ConditionVerdict, DailyPrep } from '@/lib/supabase/types'
 
 /**
@@ -323,10 +323,10 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
             new input writes back), and ConditionFilterPanel reads it via
             marketContext.dr_adr same as before. */}
 
-        {/* Bucket readout */}
-        {outcome && (
-          <BucketReadout buckets={outcome.buckets} />
-        )}
+        {/* The raw 4-metric readout grid (RVOL/DR_ADR/IB/ATR cards) moved to
+            the Today's Tape card above this panel (2026-07-12, item 14) —
+            verdict chips lead, raw numbers sit behind its "show raw numbers"
+            disclosure. This panel now starts at the verdict. */}
 
         {/* Errors */}
         {error && (
@@ -423,46 +423,9 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** DR_ADR and IB are stored/computed as ratios (0.82, 0.99). They read
- *  naturally as percentages, so format them that way for display. RVOL is
- *  already in percent (100 = average). ATR_730 is raw points. */
-function formatMetricValue(metric: string, value: number | null | undefined): string {
-  if (value == null) return '—'
-  switch (metric) {
-    case 'DR_ADR':
-    case 'IB':
-      return `${Math.round(value * 100)}%`
-    case 'RVOL':
-      return `${Math.round(value)}%`
-    case 'ATR_730':
-      return value.toFixed(2)
-    default:
-      return String(value)
-  }
-}
-
-function BucketReadout({ buckets }: { buckets: BucketAssignment[] }) {
-  // ATR_entry bucket is no longer surfaced — the live per-trade ATR-10 (a9f6161)
-  // replaced the manual-entry input it depended on. Filter it out here rather
-  // than at the API so historical persistence isn't disturbed.
-  const visible = buckets.filter(b => b.metric !== 'ATR_entry')
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-      {visible.map(b => (
-        <div key={b.metric} className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
-          <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">{b.metric}</div>
-          <div className="font-mono text-lg text-white">
-            {formatMetricValue(b.metric, b.value)}
-          </div>
-          {/* med: / ter: bucket chips removed — they were internal-shorthand
-              that didn't add value to the trader's read. The card just shows
-              the metric + formatted value now. The classification still drives
-              the verdict above and the picked-view card below. */}
-        </div>
-      ))}
-    </div>
-  )
-}
+// formatMetricValue + BucketReadout (the raw metric card grid) were removed
+// 2026-07-12 — the Today's Tape card (ConditionVerdicts) now owns that surface
+// with verdict-first chips and a collapsed raw-numbers grid.
 
 function ConsolidatedVerdict({
   verdict,
@@ -520,7 +483,7 @@ function ConsolidatedVerdict({
                 value={viewOverride}
                 onChange={e => onChangeOverride(e.target.value as 'auto' | 'median' | 'tertile')}
                 className="bg-gray-900 border border-gray-700 text-gray-300 text-[11px] rounded px-1.5 py-0.5 font-mono focus:outline-none focus:border-blue-500"
-                title="Pick which historical-bucket view drives the verdict. Auto = tertile (more specific match), falling back to median when tertile has insufficient data."
+                title="Pick which historical view drives the verdict. Auto uses the better-sampled match; Specific matches today's conditions more tightly, Broad trades precision for a larger sample."
               >
                 <option value="auto">Auto (best match)</option>
                 <option value="tertile">Specific match</option>
@@ -538,9 +501,23 @@ function ConsolidatedVerdict({
  *  always; EV/trade (expectancy, avg $/trade) is added when `showEv` is set.
  *  Highlights (beginner) uses the 2-stat form; Detailed Tape uses the same card
  *  WITH EV/trade so the pro view reads like Highlights plus expectancy.
- *  `baselineEv` (Detailed Tape only) draws the "vs your avg" delta under EV. */
+ *  `baselineEv` (Detailed Tape only) draws the "vs your avg" delta under EV.
+ *  Every read carries its sample size; below MIN_SAMPLE the stats are
+ *  suppressed entirely — a confident WR from 6 trades is false precision. */
 function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: MatchResult; showEv?: boolean; baselineEv?: number | null }) {
   const r = match.row
+  const n = r.n_trades ?? 0
+  if (n < MIN_SAMPLE) {
+    return (
+      <div>
+        <SampleHeader n={n} thin />
+        <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-xs text-gray-500">
+          <span className="font-mono text-gray-400">{tooFewToJudge(n)}</span>
+          {' — '}not enough trades in similar conditions yet. Stats appear at {MIN_SAMPLE}+.
+        </div>
+      </div>
+    )
+  }
   const wr = r.trade_wr != null ? `${(r.trade_wr * 100).toFixed(0)}%` : '—'
   const pf = r.profit_factor != null ? r.profit_factor.toFixed(2) : '—'
   const pfTone = r.profit_factor == null
@@ -553,7 +530,9 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
     ? 'text-gray-300'
     : r.ev_per_trade > 0 ? 'text-green-400' : r.ev_per_trade < 0 ? 'text-red-400' : 'text-gray-400'
   return (
-    <div className={`grid gap-3 ${showEv ? 'grid-cols-3' : 'grid-cols-2'}`}>
+    <div>
+      <SampleHeader n={n} />
+      <div className={`grid gap-3 ${showEv ? 'grid-cols-3' : 'grid-cols-2'}`}>
       <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
         <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Win rate</div>
         <div className="font-mono text-2xl font-bold text-white">{wr}</div>
@@ -591,6 +570,21 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
         <div className={`font-mono text-2xl font-bold ${pfTone}`}>{pf}</div>
         <div className="text-[11px] text-gray-500 mt-0.5">in conditions like today</div>
       </div>
+      </div>
+    </div>
+  )
+}
+
+/** "You, on days like this" header + the n= badge every aggregate must carry. */
+function SampleHeader({ n, thin = false }: { n: number; thin?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 mb-2">
+      <div className="text-[10px] text-gray-500 uppercase tracking-wider">You, on days like this</div>
+      {!thin && (
+        <span className="font-mono text-[10px] text-gray-500 border border-gray-800 rounded px-1.5 py-px">
+          Based on {n} trades on days like this
+        </span>
+      )}
     </div>
   )
 }
