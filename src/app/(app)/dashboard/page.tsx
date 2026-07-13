@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { format, subDays } from 'date-fns'
 import { todayPT } from '@/lib/pt-time'
 import EmptyStateImport from '@/components/dashboard/EmptyStateImport'
+import FirstReadCards from '@/components/dashboard/FirstReadCards'
 import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
 import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
 import DashboardCharts from '@/components/dashboard/DashboardCharts'
@@ -512,6 +513,11 @@ export default async function DashboardPage() {
           <p className="text-gray-400 text-sm mt-1">{format(new Date(`${today}T12:00:00`), 'EEEE, MMMM d, yyyy')}</p>
         </div>
       </div>
+
+      {/* Post-import retroactive recap (item 22): self-gates on the write-once
+          first_read flag, so it only shows for a tester right after their first
+          import and stays until dismissed. */}
+      <FirstReadCards variant="dashboard" />
 
       {/* Beginner (default) = plain summary + one focus + simple session list.
           Pro = the full instrument (period stats grid + Recent Days table).

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { Upload, ArrowLeft, CheckCircle2, AlertTriangle, Loader2, Download } from 'lucide-react'
 import { getHandle, setHandle } from '@/lib/file-handle-store'
+import FirstReadCards from '@/components/dashboard/FirstReadCards'
 
 // Key for the last-imported file handle in the IndexedDB handle store — passed
 // back as showOpenFilePicker({ startIn }) so re-imports reopen at the same folder.
@@ -44,6 +45,9 @@ export default function ImportPage() {
   const [warnings, setWarnings] = useState<string[]>([])
   const [dragOver, setDragOver] = useState(false)
   const [remembersFolder, setRemembersFolder] = useState(false)
+  // True after a successful import that populated a previously-empty journal —
+  // gates the post-import "first read" recap teaser (item 22).
+  const [firstImport, setFirstImport] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // The File System Access API is Chromium-only; only then can we reopen the
@@ -80,8 +84,17 @@ export default function ImportPage() {
   }
 
   async function upload(file: File) {
-    setBusy(true); setError(null); setResult(null); setWarnings([])
+    setBusy(true); setError(null); setResult(null); setWarnings([]); setFirstImport(false)
     try {
+      // Was the journal empty BEFORE this import? Decides whether this is the
+      // tester's first import (→ arm the "first read" recap). Checked before the
+      // upload so newly-inserted trades don't make every import look like a first.
+      let wasEmpty = false
+      try {
+        const nav = await fetch('/api/nav-anchor').then(r => r.json())
+        wasEmpty = nav?.lastTradeDate == null
+      } catch { /* best-effort: treat as not-first so we never mis-arm */ }
+
       const fd = new FormData()
       fd.append('file', file)
       // Read Sierra's naive timestamps in the uploader's timezone, not the server's.
@@ -89,8 +102,18 @@ export default function ImportPage() {
       const res = await fetch('/api/import-trades-csv', { method: 'POST', body: fd })
       const json = await res.json()
       if (Array.isArray(json.warnings)) setWarnings(json.warnings)
-      if (!res.ok) setError(json.error || 'Import failed.')
-      else setResult(json as ImportResult)
+      if (!res.ok) { setError(json.error || 'Import failed.'); return }
+      setResult(json as ImportResult)
+      // First import that actually landed trades → arm the recap card (write-once
+      // server-side) and reveal the inline teaser.
+      if (wasEmpty && (json.imported ?? 0) > 0) {
+        await fetch('/api/first-read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'arm' }),
+        }).catch(() => {})
+        setFirstImport(true)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -194,6 +217,15 @@ export default function ImportPage() {
           <Link href="/dashboard" className="inline-block mt-3 text-sm text-blue-400 hover:text-blue-300">
             View your dashboard →
           </Link>
+        </div>
+      )}
+
+      {/* Post-import retroactive recap (item 22): on the tester's first import,
+          tease the best/worst-day read right here so the product pays off before
+          they even leave the import screen. */}
+      {firstImport && (
+        <div className="mt-6">
+          <FirstReadCards variant="import" />
         </div>
       )}
 

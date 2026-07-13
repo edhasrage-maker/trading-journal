@@ -33,6 +33,14 @@ export default function EmptyStateImport({ today }: { today: string }) {
         setError('No new trades were imported (they may already be in your journal).')
         return
       }
+      // This card only renders on an empty account, so a successful import here
+      // is always the tester's first — arm the post-import "first read" recap
+      // card (write-once server-side) before refreshing into the dashboard.
+      await fetch('/api/first-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'arm' }),
+      }).catch(() => {})
       router.refresh() // account now has data → dashboard renders past the empty state
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
