@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { GitMerge, Plus, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2 } from 'lucide-react'
+import { GitMerge, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2, ImagePlus } from 'lucide-react'
 import TradeForm from './TradeForm'
 import ScreenshotLightbox from './ScreenshotLightbox'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
@@ -181,6 +181,9 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const [deleting, setDeleting] = useState<string | null>(null)
   const [pastedFile, setPastedFile] = useState<File | null>(null)
   const [showChart, setShowChart] = useState(true)
+  // Session journal is demoted to a collapsed drawer (Pt 17, cut list) so it
+  // stops competing with the paste-first hero. Closed by default.
+  const [showJournal, setShowJournal] = useState(false)
 
   // 1-minute bars for the day, used by the scaling-aware MFE Capture
   // calculation. The trades share the symbol of the first trade with one
@@ -314,16 +317,26 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     }
   }
 
+  // Open the Add form pre-seeded with an image (paste / drop / file-pick). The
+  // TradeForm auto-extracts on mount when it receives this file (Pt 17 paste-first
+  // magic moment). Shared by the document paste listener and the hero dropzone.
+  const startFromFile = (file: File) => {
+    setPastedFile(file)
+    setMode({ type: 'add' })
+  }
+  // Open the Add form with no image — the demoted "Add manually" path.
+  const startManual = () => {
+    setPastedFile(null)
+    setMode({ type: 'add' })
+  }
+
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       if (mode.type !== 'list') return
       const item = Array.from(e.clipboardData?.items ?? []).find(i => i.type.startsWith('image/'))
       if (!item) return
       const file = item.getAsFile()
-      if (file) {
-        setPastedFile(file)
-        setMode({ type: 'add' })
-      }
+      if (file) startFromFile(file)
     }
     document.addEventListener('paste', handlePaste)
     return () => document.removeEventListener('paste', handlePaste)
@@ -483,6 +496,18 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           <span className="text-gray-400 text-sm">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</span>
         </div>
       </div>
+
+      {/* Paste-first hero (Pt 17, mockup 03) — the screenshot dropzone IS the
+          page. Ctrl+V / drop / tap → auto-extract → prefilled form. Hidden while
+          a form is open. Compact once the day already has trades so the list the
+          trader came to see isn't pushed down. Manual entry is the demoted link. */}
+      {mode.type === 'list' && (
+        <PasteDropZone
+          compact={trades.length > 0}
+          onFile={startFromFile}
+          onManual={startManual}
+        />
+      )}
 
       {/* Summary bar — Trades / Day P&L / Wins-Losses / Avg MFE-MAE. The
           MFE/MAE column drops in inline (variant='inline') so it fits in the
@@ -799,40 +824,47 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           onSave={handleSave} onCancel={() => { setMode({ type: 'list' }); setPastedFile(null) }} />
       )}
 
-      {/* Session journal — shared with the EOD recap. This is the same
-          trading_days.eod_notes field both pages read/write, so anything the
-          trader jots down here is waiting in the EOD recap textarea later. */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2">
-        <div className="flex items-center justify-between">
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            Session journal
-          </label>
-          <span className="text-[10px] text-gray-600">
-            {notesSaveStatus === 'saving' && 'Saving…'}
-            {notesSaveStatus === 'saved' && 'Saved · syncs with EOD recap'}
-            {notesSaveStatus === 'error' && <span className="text-red-400">Save failed — will retry on next edit</span>}
-            {notesSaveStatus === 'idle' && 'Syncs with EOD recap'}
-          </span>
-        </div>
-        <textarea
-          rows={3}
-          spellCheck
-          autoCorrect="on"
-          placeholder="Jot down what you're seeing — emotions, level reactions, plan deviations. Shows up in the EOD recap automatically."
-          value={sessionNotes}
-          onChange={e => setSessionNotes(e.target.value)}
-          className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-y"
-        />
-      </div>
-
-      {/* Add button */}
-      {!isAdding && !editingId && (
-        <button type="button" onClick={() => setMode({ type: 'add' })}
-          className="flex items-center gap-2 w-full justify-center border border-dashed border-gray-700 hover:border-gray-500 text-gray-500 hover:text-gray-200 text-sm py-3 rounded-xl transition-colors bg-gray-800/20 hover:bg-gray-800/50"
+      {/* Session journal — demoted to a collapsed drawer (Pt 17, cut list) so it
+          stops competing with the paste-first hero. Same trading_days.eod_notes
+          field the EOD recap reads/writes, so anything jotted here is waiting in
+          the EOD recap textarea later. A "· has notes" hint + the save status
+          stay visible while collapsed so nothing feels hidden. */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowJournal(o => !o)}
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-800/40 hover:bg-gray-800 transition-colors"
         >
-          <Plus className="w-4 h-4" /> Log Trade
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            Session journal
+            {!showJournal && sessionNotes.trim() && (
+              <span className="ml-2 normal-case font-normal text-gray-600">· has notes</span>
+            )}
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="text-[10px] text-gray-600">
+              {notesSaveStatus === 'saving' && 'Saving…'}
+              {notesSaveStatus === 'saved' && 'Saved · syncs with EOD'}
+              {notesSaveStatus === 'error' && <span className="text-red-400">Save failed</span>}
+            </span>
+            {showJournal ? <ChevronUp className="w-3.5 h-3.5 text-gray-500" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-500" />}
+          </span>
         </button>
-      )}
+        {showJournal && (
+          <div className="p-4 pt-3 space-y-1.5">
+            <textarea
+              rows={3}
+              spellCheck
+              autoCorrect="on"
+              placeholder="Jot down what you're seeing — emotions, level reactions, plan deviations. Shows up in the EOD recap automatically."
+              value={sessionNotes}
+              onChange={e => setSessionNotes(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-y"
+            />
+            <p className="text-[10px] text-gray-600">Syncs with the EOD recap automatically.</p>
+          </div>
+        )}
+      </div>
 
       {/* Floating bulk-action bar — appears when 1+ trades are selected. */}
       {selectedIds.size > 0 && (
@@ -896,6 +928,84 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           src/components/intraday/ScreenshotLightbox.tsx. */}
       <ScreenshotLightbox src={zoomedScreenshot} onClose={() => setZoomedScreenshot(null)} />
 
+    </div>
+  )
+}
+
+/**
+ * Paste-first hero (Pt 17, mockup 03). The screenshot dropzone is the primary
+ * intraday surface: Ctrl+V (via the document listener in IntradayClient), drop
+ * an image, or tap/click to pick one → the parent opens the Add form pre-seeded
+ * with the file, and TradeForm auto-extracts on mount. Manual entry is the
+ * demoted text link underneath. `compact` shrinks the hero once the day already
+ * has trades so the list isn't pushed down.
+ *
+ * The card is a <label> wrapping a hidden file input, so a click/tap opens the
+ * native picker on every platform (mobile photo library included) while drop and
+ * the global paste still work on desktop.
+ */
+function PasteDropZone({
+  compact, onFile, onManual,
+}: {
+  compact: boolean
+  onFile: (file: File) => void
+  onManual: () => void
+}) {
+  const [dragging, setDragging] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const takeImage = (files: FileList | null | undefined) => {
+    const file = Array.from(files ?? []).find(f => f.type.startsWith('image/'))
+    if (file) onFile(file)
+  }
+
+  return (
+    <div>
+      <label
+        onDragOver={e => { e.preventDefault(); if (!dragging) setDragging(true) }}
+        onDragLeave={e => { e.preventDefault(); setDragging(false) }}
+        onDrop={e => {
+          e.preventDefault()
+          setDragging(false)
+          takeImage(e.dataTransfer?.files)
+        }}
+        className={`block cursor-pointer rounded-xl border border-dashed text-center transition-colors ${
+          compact ? 'px-4 py-3' : 'px-6 py-8'
+        } ${
+          dragging
+            ? 'border-blue-500 bg-blue-500/10'
+            : 'border-gray-700 hover:border-gray-500 bg-gray-800/20 hover:bg-gray-800/40'
+        }`}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={e => { takeImage(e.target.files); e.currentTarget.value = '' }}
+        />
+        <div className={`flex items-center justify-center gap-2 ${compact ? '' : 'flex-col'}`}>
+          <ImagePlus className={`text-gray-500 ${compact ? 'w-4 h-4' : 'w-7 h-7'}`} />
+          <div className={compact ? 'text-left' : ''}>
+            <div className={`font-semibold text-gray-200 ${compact ? 'text-sm' : 'text-base'}`}>
+              Paste your chart — TapeScore reads the trade
+            </div>
+            {!compact && (
+              <p className="text-xs text-gray-500 mt-1">
+                <span className="hidden sm:inline">Ctrl + V a screenshot, drop an image, or click to pick one. </span>
+                <span className="sm:hidden">Tap to add a screenshot. </span>
+                Instrument, side, entry, stop and target are extracted automatically.
+              </p>
+            )}
+          </div>
+        </div>
+      </label>
+      <p className="text-[11px] text-gray-600 mt-1.5 px-1">
+        Prefer typing?{' '}
+        <button type="button" onClick={onManual} className="text-blue-500 hover:text-blue-400 underline-offset-2 hover:underline">
+          Add a trade manually
+        </button>
+      </p>
     </div>
   )
 }

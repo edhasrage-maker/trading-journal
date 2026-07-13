@@ -329,6 +329,20 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
     }
   }
 
+  // Paste-first magic moment (Pt 17): when the form opens pre-seeded with a
+  // pasted/dropped screenshot (initialFile, new-trade only), auto-fire the read
+  // ONCE so paste → prefilled form needs no extra click. A misread still leaves
+  // the form open with an error for manual fixing (readScreenshot's own paths).
+  // The manual "Read Screenshot" button stays for re-reads. Ref-guarded so it
+  // never re-fires and never runs in edit mode.
+  const autoReadDoneRef = useRef(false)
+  useEffect(() => {
+    if (autoReadDoneRef.current || trade || !initialFile) return
+    autoReadDoneRef.current = true
+    void readScreenshot()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot auto-read on mount for the paste-first flow
+  }, [])
+
   const uploadScreenshot = async (file: File): Promise<string | null> => {
     const fd = new FormData()
     fd.append('file', file)
@@ -450,6 +464,11 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
                   Remove screenshot
                 </button>
               </div>
+              {/* Trust line (Pt 17) — say how the extraction works in one line so
+                  a trader can predict the failure mode and forgive a misread. */}
+              <p className="text-[11px] text-gray-600">
+                Read from your bracket orders — target and stop identified by P&amp;L sign, not color.
+              </p>
               {canNudgeFrame && showFrameNudge && (
                 <FrameNudge
                   videoFile={recVideoFile!}
