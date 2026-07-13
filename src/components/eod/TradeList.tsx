@@ -247,6 +247,11 @@ export default function TradeList({
             const pnl = t.pnl
             const time = t.entry_time ? format(new Date(t.entry_time), 'h:mm a') : '--'
             const summary = summaries[t.id]
+            // Same fallback as the pro table: the trader's own note stands in
+            // until an AI overview exists (or when it can't be generated, e.g.
+            // the read-only demo account).
+            const overviewText = summary ?? (t.notes?.trim() || null)
+            const overviewIsNotes = !summary && !!t.notes?.trim()
             const isLong = t.direction === 'long'
             return (
               <div
@@ -263,7 +268,14 @@ export default function TradeList({
                     {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
                   </span>
                 </div>
-                {summary && <p className="text-xs text-gray-500 mt-1.5 leading-snug">{summary}</p>}
+                {overviewText && (
+                  <p
+                    className={`text-xs text-gray-500 mt-1.5 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
+                    title={overviewIsNotes ? 'From your own notes on this trade — AI summary not yet generated.' : undefined}
+                  >
+                    {overviewText}
+                  </p>
+                )}
               </div>
             )
           })}
