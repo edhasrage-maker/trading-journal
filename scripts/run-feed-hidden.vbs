@@ -12,4 +12,8 @@ Set sh  = CreateObject("WScript.Shell")
 repoDir = fso.GetParentFolderName(fso.GetParentFolderName(WScript.ScriptFullName))
 sh.CurrentDirectory = repoDir
 ' 0 = hidden window, False = don't wait for it to finish.
-sh.Run "cmd /c npx tsx scripts\public-bar-feed.ts", 0, False
+' Call the repo-local tsx directly — NOT "npx tsx". npx re-resolves tsx against
+' the registry every run, and in a hidden window its "Ok to proceed?" prompt (or
+' a slow registry fetch) hangs forever, leaking a node process every interval
+' until the machine exhausts commit memory (happened 2026-07-13: 76 stuck runs).
+sh.Run "cmd /c node_modules\.bin\tsx.cmd scripts\public-bar-feed.ts", 0, False

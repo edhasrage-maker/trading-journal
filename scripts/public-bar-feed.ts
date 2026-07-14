@@ -64,6 +64,16 @@ function loadEnv(): void {
   }
 }
 
+// Watchdog: a run must never outlive the scheduler interval. This runs hidden
+// and detached, so a hung await (Supabase upsert, DNS) would otherwise leak an
+// invisible node process every few minutes until the machine runs out of commit
+// memory (happened 2026-07-13). Backfills (--days) get a longer leash.
+const WATCHDOG_MS = process.argv.includes('--days') ? 15 * 60_000 : 4 * 60_000
+setTimeout(() => {
+  console.error(`[public-bar-feed] watchdog: still running after ${WATCHDOG_MS / 60_000} min — force exit`)
+  process.exit(3)
+}, WATCHDOG_MS)
+
 async function main() {
   loadEnv()
   const url = process.env.PUBLIC_SUPABASE_URL
