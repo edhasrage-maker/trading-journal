@@ -194,7 +194,17 @@ function anchorTrade(bars: Bar[], i: number, n: number, wantWin: boolean, qty: n
   const favPtsSigned = pnl / (qty * MNQ_MULT)       // >0 on a win
   const exit = Math.round(entry + (isLong ? favPtsSigned : -favPtsSigned))
 
-  const stopPts = 18 + Math.round(rnd() * 22)                 // 18..40
+  // Stop placement must be consistent with the trade's story or the MAE%-of-stop
+  // and heat columns read as corrupt data (a "winner" whose recorded heat ran
+  // 3× past its stop is impossible — the stop would have filled):
+  //   winners  → the stop survived the trade's REAL adverse excursion, so it
+  //              sits a few points beyond the segment's actual heat;
+  //   losers   → the exit IS the stop-out, so the stop sits at the realized
+  //              adverse exit (the dollars already priced it).
+  const maePts = Math.max(0, Math.round(isLong ? entry - segLow : segHigh - entry))
+  const stopPts = wantWin
+    ? Math.max(18 + Math.round(rnd() * 22), maePts + 3 + Math.round(rnd() * 5))
+    : Math.max(8, Math.abs(Math.round(favPtsSigned)))
   const tp1Pts = Math.round(stopPts * (2.0 + rnd() * 0.6))    // ~2.0–2.6R
   const stop = entry + (isLong ? -stopPts : stopPts)
   const tp1 = entry + (isLong ? tp1Pts : -tp1Pts)
@@ -206,12 +216,20 @@ function anchorTrade(bars: Bar[], i: number, n: number, wantWin: boolean, qty: n
     ? Math.max(1, Math.round(atrWin.reduce((s, b) => s + (b.high - b.low), 0) / atrWin.length * 100) / 100)
     : null
 
+  // Recorded excursion extremes. Winners keep the real segment extremes (their
+  // stop is beyond them by construction). Losers clip the ADVERSE side at the
+  // stop-out fill — the position no longer exists past its stop, so heat beyond
+  // the exit is another impossible shape (MAE% > 100 of stop).
+  const high = wantWin
+    ? Math.max(Math.round(segHigh), exit)
+    : isLong ? Math.round(segHigh) : exit
+  const low = wantWin
+    ? Math.min(Math.round(segLow), exit)
+    : isLong ? exit : Math.round(segLow)
+
   return {
     dir, entry, exit, stop, tp1, pnl, atr1m,
-    // Extend the recorded extremes to cover the exit fill — a curated loss can
-    // overshoot the bar segment's adverse extreme, and an exit outside
-    // [low, high] is exactly the corrupt shape the excursion guards reject.
-    high: Math.max(Math.round(segHigh), exit), low: Math.min(Math.round(segLow), exit),
+    high, low,
     // Full-position peak-favorable $ (pts × qty × multiplier) — the same unit
     // captureComponents grades against. The old pts × $2 value forgot qty and
     // shrank the denominator 5-10×, which is what printed 218% Conversion.
@@ -316,16 +334,21 @@ function genEodAI(date: string, dayType: string, ts: SeedTrade[], dayPnl: number
     summary: breach
       ? `Session is a Breach: P2 and P3 failed — the last two entries sized to 10 MNQ after losses with no qualifying orderflow — and the ${money(dayPnl)} net blew the daily loss limit (P1). Execution was compromised: revenge cycling the same ${dayType.toLowerCase()} thesis without a structural reset.`
       : `Compliant ${dayType.toLowerCase()} day, net ${money(dayPnl)} on ${wins}W / ${losses}L. All five safety rails held; execution was ${composite && composite >= 0.6 ? 'clean' : 'workable'} — ${bigWin ? `T${bigWin.n} (${money(bigWin.pnl)}) carried the day` : 'gains came from disciplined base setups'}.`,
-    what_worked: green
+    what_worked: breach
       ? [
-          bigWin ? `T${bigWin.n} ${bigWin.dir} on ${bigWin.setup} (${money(bigWin.pnl)}) — a clean playbook read with follow-through and no mistake tags.` : 'Stuck to standard 5 MNQ sizing and let the base setup work.',
-          'Standard sizing held all session — no reaching for the size-up exception without qualifying orderflow.',
-          'Areas of interest were pre-marked in prep, so entries were at levels rather than chased mid-range.',
+          'The session started disciplined — the first entry was standard size at a pre-marked level with a defined stop.',
+          'The rule breaks were logged honestly the same day instead of buried — that is what makes tomorrow\'s reset possible.',
         ]
-      : [
-          'Losses were controlled and stops respected — no blowing through the daily loss limit.',
-          'Kept sizing at 5 MNQ despite the red tape; discipline held even when the reads didn\'t.',
-        ],
+      : green
+        ? [
+            bigWin ? `T${bigWin.n} ${bigWin.dir} on ${bigWin.setup} (${money(bigWin.pnl)}) — a clean playbook read with follow-through and no mistake tags.` : 'Stuck to standard 5 MNQ sizing and let the base setup work.',
+            'Standard sizing held all session — no reaching for the size-up exception without qualifying orderflow.',
+            'Areas of interest were pre-marked in prep, so entries were at levels rather than chased mid-range.',
+          ]
+        : [
+            'Losses were controlled and stops respected — no blowing through the daily loss limit.',
+            'Kept sizing at 5 MNQ despite the red tape; discipline held even when the reads didn\'t.',
+          ],
     mistakes: breach
       ? [
           `T${ts.length - 1} and T${ts.length} sized to 10 MNQ on Supply & Demand with no documented 2/3 orderflow — violating the size-up gate (P2).`,
@@ -375,7 +398,10 @@ function genEodAI(date: string, dayType: string, ts: SeedTrade[], dayPnl: number
         ? 'Only the early trades pass all per-trade rules; the 10-lot entries are excluded. Even on the compliant trades, orderflow was absent and entries weren\'t break-of-cluster, dragging execution parameters down.'
         : 'Entries were setup-in-playbook at clear areas of interest with sensible stops. The main variance is MFE capture — a little more patience on runners would lift the composite.',
     },
-    analyzed_at: `${date}T21:02:00.000Z`,
+    // Stamped at seed-run time, NOT the trading date: the EOD card flags the
+    // analysis "Stale — re-run" whenever a trade's updated_at (= the reseed
+    // moment) is newer than analyzed_at, and the demo can't re-run Analyze.
+    analyzed_at: new Date().toISOString(),
   }
 }
 
