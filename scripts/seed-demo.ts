@@ -333,7 +333,7 @@ function genEodAI(date: string, dayType: string, ts: SeedTrade[], dayPnl: number
     headline,
     summary: breach
       ? `Session is a Breach: P2 and P3 failed — the last two entries sized to 10 MNQ after losses with no qualifying orderflow — and the ${money(dayPnl)} net blew the daily loss limit (P1). Execution was compromised: revenge cycling the same ${dayType.toLowerCase()} thesis without a structural reset.`
-      : `Compliant ${dayType.toLowerCase()} day, net ${money(dayPnl)} on ${wins}W / ${losses}L. All five safety rails held; execution was ${composite && composite >= 0.6 ? 'clean' : 'workable'} — ${bigWin ? `T${bigWin.n} (${money(bigWin.pnl)}) carried the day` : 'gains came from disciplined base setups'}.`,
+      : `Clean ${dayType.toLowerCase()} day, net ${money(dayPnl)} on ${wins}W / ${losses}L. Every safety rail held; execution was ${composite && composite >= 0.6 ? 'sharp' : 'workable'} — ${bigWin ? `T${bigWin.n} (${money(bigWin.pnl)}) carried the day` : 'gains came from disciplined base setups'}.`,
     what_worked: breach
       ? [
           'The session started disciplined — the first entry was standard size at a pre-marked level with a defined stop.',
