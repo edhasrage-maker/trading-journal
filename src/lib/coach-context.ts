@@ -112,6 +112,7 @@ NO TRADE DATA — no trading days in this window.
       .select('id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, notes')
       .in('trading_day_id', dayIds)
       .order('entry_time', { ascending: false })
+      .order('id', { ascending: false })   // repo-convention tiebreaker → deterministic paging past 1000 rows
       .range(p * PAGE, p * PAGE + PAGE - 1)
     if (!data || data.length === 0) break
     trades.push(...data)
@@ -161,6 +162,7 @@ NO TRADE DATA — no trading days in this window.
       .select('id, post_exit_favorable_pts, post_exit_against_pts')
       .in('trading_day_id', dayIds)
       .not('post_exit_favorable_pts', 'is', null)
+      .order('id', { ascending: true })   // deterministic paging (was unordered → non-deterministic pages >1000 rows)
       .range(p * PAGE, p * PAGE + PAGE - 1)
     if (peErr || !pe || pe.length === 0) break   // column missing / no rows → stop
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -191,14 +193,14 @@ NO TRADE DATA — the trader logged no trades in this window.
 
   const setupBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number; rs: number[]; capPcts: number[]; lefts: number[] }>()
   const mistakeCounts = new Map<string, { count: number; pnl: number }>()
-  const dayTypeBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
-  const ofBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
-  const structureBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
+  const dayTypeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
+  const ofBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
+  const structureBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
   const monthBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
   // Day-condition regime buckets (#2c) — trades bucketed by their day's RVOL/ATR
   // flag so the coach can see if the trader is selective on the regimes they win in.
-  const rvolBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
-  const atrRegimeBuckets = new Map<string, { count: number; wins: number; pnl: number }>()
+  const rvolBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
+  const atrRegimeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
 
   // Exit efficiency (MFE capture) — answers "am I leaving runners on the table /
   // should I hold for a TP2?". PRIMARY basis is DOLLARS: mfe_dollars_per_leg
@@ -310,21 +312,21 @@ NO TRADE DATA — the trader logged no trades in this window.
 
     const dayTypes = dayTypesById.get(t.trading_day_id) ?? []
     for (const dt of dayTypes) {
-      const b = dayTypeBuckets.get(dt) ?? { count: 0, wins: 0, pnl: 0 }
-      b.count++; if (isWin) b.wins++; b.pnl += pnl
+      const b = dayTypeBuckets.get(dt) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
       dayTypeBuckets.set(dt, b)
     }
 
     const ofs = (t.tags_json?.order_flow as string[]) ?? []
     for (const o of ofs) {
-      const b = ofBuckets.get(o) ?? { count: 0, wins: 0, pnl: 0 }
-      b.count++; if (isWin) b.wins++; b.pnl += pnl
+      const b = ofBuckets.get(o) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
       ofBuckets.set(o, b)
     }
 
     if (t.structure_5m_alignment) {
-      const b = structureBuckets.get(t.structure_5m_alignment) ?? { count: 0, wins: 0, pnl: 0 }
-      b.count++; if (isWin) b.wins++; b.pnl += pnl
+      const b = structureBuckets.get(t.structure_5m_alignment) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
       structureBuckets.set(t.structure_5m_alignment, b)
     }
 
@@ -332,21 +334,24 @@ NO TRADE DATA — the trader logged no trades in this window.
     const mc = mcByDay.get(t.trading_day_id)
     const rvolBand = classifyBand(mc?.rvol ?? null, rvolCut, ['low participation', 'normal', 'high participation'])
     if (rvolBand) {
-      const b = rvolBuckets.get(rvolBand) ?? { count: 0, wins: 0, pnl: 0 }
-      b.count++; if (isWin) b.wins++; b.pnl += pnl
+      const b = rvolBuckets.get(rvolBand) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
       rvolBuckets.set(rvolBand, b)
     }
     const atrBand = classifyBand(mc?.atr ?? null, atrCut, ['low volatility', 'normal', 'high volatility'])
     if (atrBand) {
-      const b = atrRegimeBuckets.get(atrBand) ?? { count: 0, wins: 0, pnl: 0 }
-      b.count++; if (isWin) b.wins++; b.pnl += pnl
+      const b = atrRegimeBuckets.get(atrBand) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
       atrRegimeBuckets.set(atrBand, b)
     }
 
     // Per-calendar-month bucket (key = YYYY-MM) so the coach can answer
-    // month-over-month questions. Uses the trade's entry_time, NOT the
-    // day-id, so it works regardless of trading_days join state.
-    const ym = (t.entry_time ?? '').slice(0, 7)
+    // month-over-month questions. Keyed off the trade's PT session date
+    // (trading_days.date, already fetched) so months bucket on the app's PT
+    // convention — a late-evening PT trade doesn't slip into the next UTC month
+    // and disagree with the analytics page. Falls back to entry_time only if the
+    // day-date is somehow missing.
+    const ym = (dayDateById.get(t.trading_day_id) ?? (t.entry_time ?? '')).slice(0, 7)
     if (ym) {
       const b = monthBuckets.get(ym) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
       b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
@@ -413,9 +418,12 @@ NO TRADE DATA — the trader logged no trades in this window.
     const endMs = Date.parse(endDate + 'T23:59:59Z')
     const past7 = new Date(endMs - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10)
     const past14 = new Date(endMs - 14 * 24 * 3600 * 1000).toISOString().slice(0, 10)
-    const tradesThisWeek = trades.filter(t => (t.entry_time ?? '').slice(0, 10) >= past7)
+    // Bucket by PT session date (trading_days.date), not the UTC slice of
+    // entry_time, so week boundaries match the app's PT convention.
+    const ptDate = (t: TradeContextRow) => dayDateById.get(t.trading_day_id) ?? (t.entry_time ?? '').slice(0, 10)
+    const tradesThisWeek = trades.filter(t => ptDate(t) >= past7)
     const tradesPriorWeek = trades.filter(t => {
-      const d = (t.entry_time ?? '').slice(0, 10)
+      const d = ptDate(t)
       return d >= past14 && d < past7
     })
     const wkPnl = (arr: TradeContextRow[]) => arr.reduce((s, t) => s + (t.pnl ?? 0), 0)
@@ -473,10 +481,10 @@ ${MAE_BUCKETS.map(([label]) => {
     : `  ${rt.n} of ${rt.measurable} evaluable trades round-tripped (ran ≥${giveBackAtr}×ATR in favor, then closed ≤ breakeven) · gave back ${usd(rt.giveBackUsd)} from peak to exit.`
 
   // Day-conditions regime performance (#2c) — are they selective on the regimes they win in?
-  const regimeLine = (m: Map<string, { count: number; wins: number; pnl: number }>, order: string[]) =>
+  const regimeLine = (m: Map<string, { count: number; wins: number; losers: number; pnl: number }>, order: string[]) =>
     order.filter(k => m.has(k)).map(k => {
       const b = m.get(k)!
-      return `    ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / b.count) * 100)}%`
+      return `    ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`
     }).join('\n')
   const conditionsBlock = (rvolBuckets.size === 0 && atrRegimeBuckets.size === 0)
     ? '  (not enough market-context data to split days by regime in this window)'
@@ -563,7 +571,7 @@ ${sortByPnl(setupBuckets).map(([s, b]) => {
   }).join('\n')}
 
 DAY TYPE PERFORMANCE (by total PnL, top 10):
-${sortByPnl(dayTypeBuckets).map(([d, b]) => `  ${d}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / b.count) * 100)}%`).join('\n') || '  (no day_types tagged in window)'}
+${sortByPnl(dayTypeBuckets).map(([d, b]) => `  ${d}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no day_types tagged in window)'}
 
 DAY CONDITIONS — PERFORMANCE BY REGIME (are you selective on the conditions you win in? judge day-type selectivity against this):
 ${conditionsBlock}
@@ -575,10 +583,10 @@ BEHAVIORAL PATTERNS ACROSS SESSIONS (derived from the fill sequence — tilt/sta
 ${proxyBlock}
 ${journalBlock ? '\n' + journalBlock + '\n' : ''}
 ORDER FLOW SIGNAL PERFORMANCE (by total PnL, top 10):
-${sortByPnl(ofBuckets).map(([o, b]) => `  ${o}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / b.count) * 100)}%`).join('\n') || '  (no orderflow tags logged in window)'}
+${sortByPnl(ofBuckets).map(([o, b]) => `  ${o}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no orderflow tags logged in window)'}
 
 5M STRUCTURE ALIGNMENT:
-${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / b.count) * 100)}%`).join('\n') || '  (no structure_5m_alignment values yet — backfill pending)'}
+${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no structure_5m_alignment values yet — backfill pending)'}
 
 RECENT TRADES (newest first, terse format, capped at ${recentTradesLimit}):
 ${recent}
