@@ -273,6 +273,15 @@ function tradesLogicalRange(
 // operation; turn on when debugging TF-switch / zoom / saved-view issues.
 const LIVECHART_DEBUG = false
 
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "2026-07-13" → "Jul 13". Parsed by hand (not new Date()) so a YYYY-MM-DD
+ *  never shifts a day across the viewer's timezone. Returns the input on a
+ *  non-standard string. */
+function shortDate(d: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d)
+  return m ? `${MONTHS_SHORT[Number(m[2]) - 1]} ${Number(m[3])}` : d
+}
+
 /** Imperative handle exposed via ref so parents (e.g. PrepClient) can grab a
  *  PNG of the live chart canvas. Used as a fallback chart-read image for AI
  *  prep when the user hasn't pasted a Sierra screenshot. Returns null when
@@ -2273,15 +2282,17 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           </div>
         )}
 
-        {/* Snapped-to-latest-data note: the requested date had no bars, so the
-            server returned the most recent session's bars instead. Non-blocking
-            pill so the chart underneath stays fully interactive. */}
+        {/* Chart provenance (Pt 20 · Ticket 5): the requested date had no bars,
+            so the server returned another session's bars. A PERSISTENT overlay
+            label (not a transient toast) so the trader is never misled about
+            which day's tape they're reading. Non-blocking pill — the chart
+            underneath stays fully interactive. */}
         {!loading && !error && fallbackDate && bars && bars.length > 0 && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-            <div className="flex items-center gap-1.5 bg-gray-900/90 border border-gray-700 rounded-full px-3 py-1 shadow-lg">
+            <div className="flex items-center gap-1.5 bg-gray-900/90 border border-amber-700/60 rounded-full px-3 py-1 shadow-lg">
               <Database className="w-3 h-3 text-amber-400" />
-              <span className="text-[11px] text-gray-300">
-                No data for {date} — showing {fallbackDate}
+              <span className="text-[11px] text-gray-200">
+                Showing {shortDate(fallbackDate)} <span className="text-gray-400">({shortDate(date)} unavailable)</span>
               </span>
             </div>
           </div>
