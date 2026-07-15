@@ -412,7 +412,7 @@ export default function RecordingCommentary({ trades, onTradesChanged }: Props) 
       </div>
       <p className="text-xs text-gray-500">
         Pick an OBS recording of this session. The AI coach pulls a frame at each trade&apos;s entry (and exit) and
-        commentates on what was on screen vs. what you did. Frames stay on this machine.
+        commentates on what was on screen vs. what you did. Your video stays on this machine — only the individual frames analyzed are sent to our AI provider for commentary.
         {dir && <span className="block mt-1 font-mono text-gray-600">{dir}</span>}
       </p>
 

@@ -387,8 +387,8 @@ export default function BrowserRecap({ trades, date }: Props) {
       <p className="text-xs text-gray-500">
         Pick your screen recording of this session. Your browser reads a frame at each trade&apos;s entry so you can see
         what was on your chart when you pulled the trigger.{' '}
-        <span className="text-gray-400">The video never leaves your device</span> — frames are extracted right here.
-        MP4 / H.264 recordings work best. Once frames are extracted you can run AI commentary on them.
+        <span className="text-gray-400">Your video never leaves your device — only the individual frames you analyze are sent to our AI provider for commentary.</span> Frames are extracted right here in your browser.
+        MP4 / H.264 recordings work best.
       </p>
 
       {/* File picker */}
