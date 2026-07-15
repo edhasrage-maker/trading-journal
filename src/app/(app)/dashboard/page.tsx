@@ -8,14 +8,14 @@ import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardSt
 import DashboardCharts from '@/components/dashboard/DashboardCharts'
 import DashboardModeSwitch from '@/components/dashboard/DashboardModeSwitch'
 import BeginnerDashboard from '@/components/dashboard/BeginnerDashboard'
-import { symbolToMultiplier } from '@/lib/futures-symbols'
-import { avgCaptureRatio, avgMaeHeatRatio, formatCapturePct, type TradeWithExcursion } from '@/lib/analytics'
+import { formatCapturePct } from '@/lib/analytics'
 // Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
 // ATR from `ohlcv_bars` on every request. That path was retired in favor of
 // reading the pre-backfilled `trades.entry_atr_1m` column. Imports kept off
 // the file so the bundle doesn't carry unused code.
 import type { TradingDay } from '@/lib/supabase/types'
-import { tapeScoreFromAnalyses, aggregateTapeScore } from '@/lib/tapescore'
+import { aggregateTapeScore } from '@/lib/tapescore'
+import { computeDayStats } from '@/lib/day-stats'
 
 const PAGE_SIZE = 1000
 
@@ -186,232 +186,27 @@ export default async function DashboardPage() {
     prepAtrByDay.set(c.trading_day_id, c.atr_1m)
   }
 
-  // Per-trade LIVE ATR: read from trades.entry_atr_1m, populated by
-  // scripts/backfill-entry-metrics.ts (Wilder ATR-10 at the trade's entry
-  // minute, computed from 1m bars at backfill time). Previously the
-  // dashboard fetched 14+ sym-day bars-of-day from `ohlcv_bars` and
-  // recomputed `liveAtr()` per-trade on every request — paid 500-600ms cold
-  // latency per load for a value that already lives in the DB. New SC
-  // imports also populate this column at insert time. Falls back silently to
-  // prep_atr (market_context.atr_1m) when entry_atr_1m is null (pre-2025
-  // trades that predate the backfill cutoff).
-  const liveAtrByTradeId = new Map<string, number>()
-  for (const t of (tradesRaw ?? []) as TradeSlim[]) {
-    if (t.entry_atr_1m != null && t.entry_atr_1m > 0) {
-      liveAtrByTradeId.set(t.id, t.entry_atr_1m)
-    }
-  }
-  tick('liveAtr from entry_atr_1m', liveAtrByTradeId.size)
-
-  const recentDaysMapped = recentDaysBase.map(d => {
-    const trades = tradesByDay.get(d.id) ?? []
-    // Top 2 most-frequent setups across the day's trades.
-    const setupCounts = new Map<string, number>()
-    for (const t of trades) {
-      const setups = (t.tags_json?.setups ?? []) as string[]
-      for (const s of setups) setupCounts.set(s, (setupCounts.get(s) ?? 0) + 1)
-    }
-    // Full sorted-by-frequency setups list — drives the filter dropdown and
-    // any future "main setups" display column (just slice the first N).
-    const setupsAll = Array.from(setupCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([s]) => s)
-    // Displayed PnL: explicit eod_pnl override wins; else sum of trades; else null
-    // (so the row shows "—" for days with no trades and no manual override).
-    const summedPnl = trades.reduce((acc, t) => acc + (t.pnl ?? 0), 0)
-    const displayedPnl = d.eod_pnl != null
-      ? d.eod_pnl
-      : trades.length > 0 ? summedPnl : null
-    // Win rate: wins / total trades. Null when the day has no trades —
-    // dividing by zero would be misleading, and "0%" reads as "all losses".
-    const tradesWithPnl = trades.filter(t => t.pnl != null)
-    const winsOnDay = tradesWithPnl.filter(t => (t.pnl ?? 0) > 0).length
-    const winRate = tradesWithPnl.length > 0
-      ? (winsOnDay / tradesWithPnl.length) * 100
-      : null
-
-    // Avg MFE / MAE per trade for the day. Per-trade definitions:
-    //   long:  MFE = high - entry,   MAE = entry - low
-    //   short: MFE = entry - low,    MAE = high - entry
-    // Both stored as positive magnitudes — display layer applies sign.
-    const mfeMaeTrades = trades.filter(t =>
-      t.entry_price != null &&
-      t.high_during_position != null &&
-      t.low_during_position != null &&
-      t.direction != null
-    )
-    let avgMfePts: number | null = null
-    let avgMaePts: number | null = null
-    let avgMfeDollars: number | null = null
-    let avgMaeDollars: number | null = null
-    if (mfeMaeTrades.length > 0) {
-      let mfeSum = 0, maeSum = 0, mfeDollarSum = 0, maeDollarSum = 0
-      for (const t of mfeMaeTrades) {
-        const isLong = t.direction === 'long'
-        // Floor at 0 — MFE/MAE are non-negative excursion magnitudes. A trade
-        // that never went adverse has MAE = 0, not a negative value that would
-        // cancel out real heat in the day's average. Mirrors mfeMaePoints().
-        const mfe = Math.max(0, isLong
-          ? (t.high_during_position! - t.entry_price!)
-          : (t.entry_price! - t.low_during_position!))
-        const mae = Math.max(0, isLong
-          ? (t.entry_price! - t.low_during_position!)
-          : (t.high_during_position! - t.entry_price!))
-        mfeSum += mfe
-        maeSum += mae
-        const mult = symbolToMultiplier(t.symbol ?? '')
-        const qty = t.quantity ?? 1
-        mfeDollarSum += mfe * mult * qty
-        maeDollarSum += mae * mult * qty
-      }
-      avgMfePts = mfeSum / mfeMaeTrades.length
-      avgMaePts = maeSum / mfeMaeTrades.length
-      avgMfeDollars = mfeDollarSum / mfeMaeTrades.length
-      avgMaeDollars = maeDollarSum / mfeMaeTrades.length
-    }
-
-    // Day-level execution quality: avg MFE capture % and avg MAE loss ×R.
-    // Cast trades to TradeWithExcursion[] via unknown — TradeSlim has the
-    // fields the helpers actually read; id/trading_day_id/entry_time/tags_json
-    // are unused by the helpers but kept in TradeSlim for other code paths.
-    const xcTrades = trades as unknown as TradeWithExcursion[]
-    const captureStats = avgCaptureRatio(xcTrades)
-    const heatStats = avgMaeHeatRatio(xcTrades)
-
-    // Live ATR averaged across the day's trades — replaces prep_atr for the
-    // dashboard "in ATR" display. Falls back to prep_atr when bars are
-    // missing (older days before SCID import).
-    let avgLiveAtr1m: number | null = null
-    let liveAtrCount = 0
-    let liveAtrSum = 0
-    for (const t of trades) {
-      const v = liveAtrByTradeId.get(t.id)
-      if (v != null) { liveAtrSum += v; liveAtrCount++ }
-    }
-    if (liveAtrCount > 0) avgLiveAtr1m = liveAtrSum / liveAtrCount
-
-    // ×ATR average that MATCHES the EOD recap's AvgMfeMaeCard: the mean of
-    // per-trade (excursion / that trade's OWN entry_atr_1m), skipping trades
-    // without a live entry ATR. The dashboard historically divided the day's
-    // AVG points by the AVG ATR (ratio-of-averages) over a mismatched trade
-    // set — numerator counted every excursion trade, denominator only the
-    // ATR-bearing ones — so it diverged from the EOD card whenever ATR varied
-    // across trades or a no-ATR (e.g. GBX) trade was present. Average-of-ratios
-    // over the same skip-null set reconciles the two surfaces exactly.
-    let avgMfeAtr: number | null = null
-    let avgMaeAtr: number | null = null
-    {
-      let mfeAtrSum = 0, maeAtrSum = 0, n = 0
-      for (const t of mfeMaeTrades) {
-        const atr = liveAtrByTradeId.get(t.id)
-        if (atr == null || atr <= 0) continue
-        const isLong = t.direction === 'long'
-        const mfe = Math.max(0, isLong ? (t.high_during_position! - t.entry_price!) : (t.entry_price! - t.low_during_position!))
-        const mae = Math.max(0, isLong ? (t.entry_price! - t.low_during_position!) : (t.high_during_position! - t.entry_price!))
-        mfeAtrSum += mfe / atr
-        maeAtrSum += mae / atr
-        n++
-      }
-      if (n > 0) { avgMfeAtr = mfeAtrSum / n; avgMaeAtr = maeAtrSum / n }
-    }
-
-    return {
-      id: d.id,
-      date: d.date,
-      eod_pnl: displayedPnl,
-      day_type: d.day_type,
-      // Multi-select array (Option C in the dashboard layout discussion).
-      // Falls back to [day_type] when the array is empty/null so legacy days
-      // (saved before the array column landed) still render their chip.
-      day_types: (d.day_types && d.day_types.length > 0)
-        ? d.day_types
-        : (d.day_type ? [d.day_type] : []),
-      // Earned achievement coin ids (persisted trading_days.achievements_json).
-      // Empty until the migration + backfill have run — rows just show no coins.
-      achievements: achievementsByDayId.get(d.id) ?? [],
-      trade_count: trades.length,
-      // Trade-level win counts — feeds the per-trade win rate stat card
-      // (distinct from `win_rate` which is the same value but per-day, used
-      // for the table row's own column). Stored as raw counts so the client
-      // can sum across a period and divide once for the aggregate rate.
-      trade_wins: winsOnDay,
-      trades_with_pnl_count: tradesWithPnl.length,
-      setups: setupsAll,
-      process_score: d.ai_analysis_json?.score ?? null,
-      // overall_grade: prefer v1.3+ execution.composite (0..1 scaled to 0..10
-      // and rounded) over the legacy `score` field.
-      //
-      // v1.4 null-composite case: if the EOD AI ran v1.4 (execution object
-      // present) but couldn't compute a composite because zero trades passed
-      // every per-trade rule, return 0 rather than null. "0 execution" is
-      // semantically correct — every trade either breached or had no data
-      // to score against — and it stops the dashboard from showing "—" as
-      // if the analysis hadn't run yet.
-      overall_grade: (() => {
-        const j = d.eod_ai_analysis_json
-        const composite = j?.execution?.composite
-        if (composite != null) return Math.round(composite * 10)
-        if (j?.execution != null) return 0   // ran but couldn't aggregate → 0
-        return j?.score ?? null
-      })(),
-      // v1.3 Process: binary verdict (Compliant / Breach, threshold-relaxed to
-      // 5/7 per 2026-06-08 amendment) + a 0-10 derived from "rules that didn't
-      // fail" out of 7. P7 incomplete is tolerated per spec.
-      process_verdict: (() => {
-        const p = d.eod_ai_analysis_json?.process
-        return p?.verdict ?? null
-      })(),
-      // v1.4 (2026-06-08 amendment 3): Process is now 5 hard safety-rail
-      // rules (P1-P5). Score is Math.round((pass_count / 5) * 10). Legacy
-      // rows analyzed pre-amendment may have P1-P7 in their data; only the
-      // new P1-P5 IDs are counted, so legacy rows will appear understated
-      // (their old P5/P6/P7 entries don't map to anything). Re-running the
-      // analyze-session button on those days will refresh under v1.4.
-      process_v13_score: (() => {
-        const p = d.eod_ai_analysis_json?.process
-        if (!p?.per_rule) return null
-        const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5'] as const
-        let passCount = 0
-        for (const id of ruleIds) {
-          const r = p.per_rule[id]
-          if (!r) continue
-          if (r.status === 'pass') passCount += 1
-        }
-        return Math.round((passCount / 5) * 10)
-      })(),
-      // One TapeScore (Ruleset amendment 5): single 0-100 headline derived
-      // from the process rails + execution composite + prep quality score.
-      // Pure derivation (src/lib/tapescore.ts) — legacy rows included.
-      tapescore: tapeScoreFromAnalyses(d.eod_ai_analysis_json, d.ai_analysis_json?.score ?? null),
-      process_breach_rules: (() => {
-        const p = d.eod_ai_analysis_json?.process
-        if (!p?.per_rule) return null
-        const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5'] as const
-        const failed: string[] = []
-        for (const id of ruleIds) {
-          const r = p.per_rule[id]
-          if (!r) continue
-          // v1.4: all 5 rules are enforcement-critical. No incomplete tier.
-          if (r.status === 'fail' || r.status === 'incomplete') failed.push(id)
-        }
-        return failed
-      })(),
-      win_rate: winRate,
-      avg_mfe_pts: avgMfePts,
-      avg_mae_pts: avgMaePts,
-      avg_mfe_dollars: avgMfeDollars,
-      avg_mae_dollars: avgMaeDollars,
-      avg_capture: captureStats.avg,    // 0..1 fraction, or null
-      avg_heat: heatStats.avg,          // 0..n× of planned stop (displayed as %), or null
-      atr_1m: prepAtrByDay.get(d.id) ?? null,
-      avg_live_atr_1m: avgLiveAtr1m,
-      live_atr_count: liveAtrCount,
-      // Per-trade average-of-ratios ×ATR (matches the EOD AvgMfeMaeCard).
-      // Null when no trade on the day had a live entry ATR.
-      avg_mfe_atr: avgMfeAtr,
-      avg_mae_atr: avgMaeAtr,
-    }
-  })
+  // Per-day rollup via the shared pure function (src/lib/day-stats.ts) so the
+  // dashboard, the materialized trading_days.stats_json, and any read-through
+  // fallback all produce identical numbers. Live ATR is read per-trade inside
+  // computeDayStats (trades.entry_atr_1m), so no global ATR map is needed here.
+  const recentDaysMapped = recentDaysBase.map(d =>
+    computeDayStats(
+      {
+        id: d.id,
+        date: d.date,
+        eod_pnl: d.eod_pnl,
+        day_type: d.day_type,
+        day_types: d.day_types,
+        ai_analysis_json: d.ai_analysis_json,
+        eod_ai_analysis_json: d.eod_ai_analysis_json,
+        achievements: achievementsByDayId.get(d.id) ?? [],
+      },
+      tradesByDay.get(d.id) ?? [],
+      prepAtrByDay.get(d.id) ?? null,
+    ),
+  )
+  tick('per-day rollup', recentDaysMapped.length)
 
   // Drop BLANK days: an empty `trading_days` row (e.g. prep opened for a date
   // but no trades logged and no eod_pnl override saved) carries no result and
