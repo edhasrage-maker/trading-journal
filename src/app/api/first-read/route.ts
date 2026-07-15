@@ -98,7 +98,7 @@ function teaserFor(date: string, dayTrades: TeaserTrade[], pnl: number): FirstRe
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
@@ -114,6 +114,17 @@ export async function GET() {
     armed = fr != null
     dismissed = fr?.dismissed === true
   } catch { /* columns not migrated → treat as unarmed */ }
+
+  // The dashboard card ONLY renders when armed && !dismissed. On every other
+  // dashboard load (returning users — the overwhelming majority) the expensive
+  // whole-history days+trades scan below is pure waste. Short-circuit on the
+  // cheap flag read so those loads cost one small query, not ~1s. The /import
+  // success block always needs the teaser regardless of the flag, so it asks
+  // with ?force=1.
+  const force = new URL(req.url).searchParams.get('force') === '1'
+  if (!force && (!armed || dismissed)) {
+    return NextResponse.json({ armed, dismissed, best: null, worst: null })
+  }
 
   // Days + their P&L (eod_pnl override wins; else sum of the day's trade P&L).
   let days: { id: string; date: string; eod_pnl: number | null }[] = []

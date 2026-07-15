@@ -29,7 +29,11 @@ export default function FirstReadCards({ variant }: { variant: 'dashboard' | 'im
     let cancelled = false
     ;(async () => {
       try {
-        const r = await fetch('/api/first-read').then(res => res.json())
+        // The dashboard gate returns early on the cheap armed/dismissed flag;
+        // the import success block always needs the teaser, so it forces the
+        // full history scan.
+        const url = variant === 'import' ? '/api/first-read?force=1' : '/api/first-read'
+        const r = await fetch(url).then(res => res.json())
         if (cancelled) return
         // Dashboard only shows once armed (first import) and not dismissed.
         const show = variant === 'import' ? true : (r.armed === true && r.dismissed !== true)
