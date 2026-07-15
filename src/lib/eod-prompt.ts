@@ -197,8 +197,12 @@ ${ofCriterion}
      on a deteriorating read is a VALID read-based exit (pass), not a mistake. NEVER judge
      the exit by what price did AFTER the trader was out (outcome bias is forbidden).
   8. no_mistakes_tagged — tags_json.mistakes is empty on the trade.
-  9. stable_emotion — tags_json.emotions includes "Stable". Compromised = fail; MAXRAGE =
-     fail and signals they shouldn't have been trading (call it out in notes).
+  9. stable_emotion — the trade's tags_json.emotions reflect a composed, in-control state
+     (in whatever words THIS trader uses — e.g. calm, focused, disciplined, confident,
+     "Stable") → pass. A clearly compromised / tilted state (e.g. fearful, FOMO, revenge,
+     frustrated, "on tilt", MAXRAGE) → fail, and note they shouldn't have been trading
+     compromised. An ambiguous or absent emotion tag → N/A (skip it; do not guess). Never
+     require one specific tag word — judge the STATE in this trader's own vocabulary.
 
 ══ NARRATIVE DISCIPLINE (apply literally — don't soften, don't tell stories) ══
 
