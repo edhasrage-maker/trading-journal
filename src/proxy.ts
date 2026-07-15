@@ -83,5 +83,9 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
+  // Exclude the crawler/PWA metadata routes (robots.txt, sitemap.xml,
+  // manifest.webmanifest) so the auth redirect can't turn them into app HTML —
+  // they're served as plain text/JSON by app/robots.ts, app/sitemap.ts and
+  // app/manifest.ts. Also excludes Next internals + static image assets.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|robots\\.txt|sitemap\\.xml|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 }
