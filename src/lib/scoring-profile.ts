@@ -84,6 +84,7 @@ export function parseTpRMultiple(tp?: string | null): number | null {
  *  Coach Score needs. Missing fields fall back to the owner's v1.3 defaults, so
  *  an empty/undefined profile reproduces the pre-wiring behavior exactly. */
 export function resolveRubric(sp?: ScoringProfile | null): ResolvedRubric {
+  const isOwner = isEmptyScoringProfile(sp)
   const usesOF = sp?.execution?.uses_orderflow
   const stopMode = sp?.stop?.mode?.toLowerCase()
   const stopVal = sp?.stop?.value
@@ -91,11 +92,27 @@ export function resolveRubric(sp?: ScoringProfile | null): ResolvedRubric {
     stopMode === 'atr' && typeof stopVal === 'number' && stopVal > 0
       ? stopVal
       : DEFAULT_RUBRIC.atrStopTarget
+
+  // Order flow is opt-IN for real users (feedback_no_forced_orderflow): default
+  // FALSE when a non-empty profile omits the flag. The owner's empty profile is
+  // the ONLY case that inherits the v1.3 TRUE default (owner-parity contract).
+  const usesOrderFlow =
+    usesOF != null ? !!usesOF : (isOwner ? DEFAULT_RUBRIC.usesOrderFlow : false)
+
+  // Size-up threshold = the trader's OWN max_size rail (like resolveRails), so a
+  // 10-lot-normal trader doesn't trip the size-up stop band + OF gate on every
+  // trade. Owner/empty profile → the v1.3 default (5). A non-empty profile that
+  // never set max_size → Infinity (no size-up concept — never gate on size).
+  const maxSize = sp?.rails?.max_size
+  const sizeUpLots = isOwner
+    ? DEFAULT_RUBRIC.sizeUpLots
+    : (typeof maxSize === 'number' && maxSize > 0 ? maxSize : Number.POSITIVE_INFINITY)
+
   return {
-    usesOrderFlow: usesOF == null ? DEFAULT_RUBRIC.usesOrderFlow : !!usesOF,
+    usesOrderFlow,
     atrStopTarget,
     tp1RMultiple: parseTpRMultiple(sp?.tp) ?? DEFAULT_RUBRIC.tp1RMultiple,
-    sizeUpLots: DEFAULT_RUBRIC.sizeUpLots,
+    sizeUpLots,
   }
 }
 

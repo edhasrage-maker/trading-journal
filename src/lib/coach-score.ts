@@ -105,6 +105,21 @@ export interface CoachScore {
 const arr = (v?: string[]): string[] => (Array.isArray(v) ? v : [])
 const lc = (s: string) => s.toLowerCase()
 
+/** Emotion tags that count as a clearly STABLE psychological state (criterion 9
+ *  passes). Owner uses the literal "Stable"; public users tag their own words. */
+const STABLE_EMOTIONS = new Set([
+  'stable', 'calm', 'focused', 'confident', 'composed', 'patient',
+  'disciplined', 'neutral', 'relaxed', 'clear', 'in control', 'centered',
+])
+/** Emotion tags that count as a clearly COMPROMISED state (criterion 9 fails).
+ *  Owner uses "Compromised"/"MAXRAGE"; these cover the common tilt vocabulary. */
+const COMPROMISED_EMOTIONS = new Set([
+  'compromised', 'maxrage', 'rage', 'angry', 'anger', 'tilt', 'tilted',
+  'fomo', 'fear', 'fearful', 'anxious', 'anxiety', 'greedy', 'greed',
+  'frustrated', 'frustration', 'revenge', 'nervous', 'panic', 'panicked',
+  'impatient', 'hesitant', 'stressed', 'euphoric', 'overconfident', 'desperate',
+])
+
 /** Weighted 0–10 blend of the axes, renormalized over whichever axes are
  *  present. Null when nothing is scorable. */
 export function composeCoachScore(a: CoachAxes): number | null {
@@ -241,7 +256,8 @@ export function computeCoachScore(
     } else if (qty > rubric.sizeUpLots) {
       c.push({ key: 'two_thirds_of', label: '2/3 order flow (size-up)', status: orderFlow.length >= 2 ? 'pass' : 'fail', source: 'auto', reason: `${orderFlow.length}/3 OF` })
     } else {
-      c.push({ key: 'two_thirds_of', label: '2/3 order flow (size-up)', status: 'na', source: 'auto', reason: `≤${rubric.sizeUpLots} lots — N/A` })
+      const reason = Number.isFinite(rubric.sizeUpLots) ? `≤${rubric.sizeUpLots} lots — N/A` : 'base size — N/A'
+      c.push({ key: 'two_thirds_of', label: '2/3 order flow (size-up)', status: 'na', source: 'auto', reason })
     }
   }
 
@@ -277,12 +293,25 @@ export function computeCoachScore(
   // 8. no_mistakes_tagged.
   c.push({ key: 'no_mistakes', label: 'No mistakes tagged', status: mistakes.length === 0 ? 'pass' : 'fail', source: 'auto', reason: mistakes.length ? mistakes.join(', ') : undefined })
 
-  // 9. stable_emotion — emotions includes "Stable" (Compromised / MAXRAGE fail).
+  // 9. stable_emotion — a clearly-stable emotion PASSES, a clearly-compromised
+  //    one FAILS, and anything else (an ambiguous tag, or none) is `unknown` so
+  //    the AI pass can judge it from the notes. Previously only the literal
+  //    "Stable" tag passed, making "Calm"/"Focused"/"Confident" a deterministic
+  //    FAIL the AI could never overturn (it only resolves `unknown`).
   if (emotions.length === 0) {
     c.push({ key: 'stable_emotion', label: 'Stable emotion', status: 'unknown', source: 'auto', reason: 'No emotion tagged' })
   } else {
-    const stable = emotions.some(e => lc(e) === 'stable')
-    c.push({ key: 'stable_emotion', label: 'Stable emotion', status: stable ? 'pass' : 'fail', source: 'auto', reason: stable ? undefined : emotions.join(', ') })
+    const norm = emotions.map(lc)
+    const compromised = norm.some(e => COMPROMISED_EMOTIONS.has(e))
+    const stable = norm.some(e => STABLE_EMOTIONS.has(e))
+    if (compromised) {
+      // Any compromised read is a red flag even if a stable tag rides alongside.
+      c.push({ key: 'stable_emotion', label: 'Stable emotion', status: 'fail', source: 'auto', reason: emotions.join(', ') })
+    } else if (stable) {
+      c.push({ key: 'stable_emotion', label: 'Stable emotion', status: 'pass', source: 'auto' })
+    } else {
+      c.push({ key: 'stable_emotion', label: 'Stable emotion', status: 'unknown', source: 'auto', reason: `Ambiguous emotion (${emotions.join(', ')}) — needs read of notes` })
+    }
   }
 
   return summarizeCoachScore(c, { hasPlaybook })
