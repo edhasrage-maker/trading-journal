@@ -13,7 +13,7 @@ import CoachScoreBadge from './CoachScoreBadge'
 import CoachScorePanel from './CoachScorePanel'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import { deleteBlob } from '@/lib/storage'
-import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, type BarLike } from '@/lib/analytics'
+import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, formatCapturePct, type BarLike } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { useMfeUnit, formatMfeMae } from '@/lib/mfe-unit'
 import { mergeTradeTags } from '@/lib/suggest-tags'
@@ -60,8 +60,9 @@ function rMultiple(t: Trade): string | null {
 function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
   const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
   if (r == null) return null
-  const pct = Math.max(-999, Math.min(999, r * 100))
-  return `${pct.toFixed(0)}%`
+  // Invariant guard: a ratio past 100+ε is a data mismatch (banked more than the
+  // peak favorable move — impossible). Show "—", never the raw number.
+  return formatCapturePct(r) ?? '—'
 }
 
 /** Display-formatted MAE Heat as a percentage. Null when no stop or no MAE.

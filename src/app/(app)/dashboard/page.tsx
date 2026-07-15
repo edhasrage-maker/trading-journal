@@ -9,7 +9,7 @@ import DashboardCharts from '@/components/dashboard/DashboardCharts'
 import DashboardModeSwitch from '@/components/dashboard/DashboardModeSwitch'
 import BeginnerDashboard from '@/components/dashboard/BeginnerDashboard'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
-import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
+import { avgCaptureRatio, avgMaeHeatRatio, formatCapturePct, type TradeWithExcursion } from '@/lib/analytics'
 // Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
 // ATR from `ohlcv_bars` on every request. That path was retired in favor of
 // reading the pre-backfilled `trades.entry_atr_1m` column. Imports kept off
@@ -474,7 +474,11 @@ export default async function DashboardPage() {
   const capVals = recentDays
     .filter(d => d.date >= past30Start && d.avg_capture != null)
     .map(d => d.avg_capture as number)
-  const avgCap = capVals.length ? capVals.reduce((a, b) => a + b, 0) / capVals.length : null
+  // Invariant guard: a capture fraction outside [0, 1+ε] is a data mismatch
+  // (realized PnL above the peak-favorable-$ ceiling) — never surface it as a
+  // number or in coaching prose. Fall through to win-rate-based coaching.
+  const avgCapRaw = capVals.length ? capVals.reduce((a, b) => a + b, 0) / capVals.length : null
+  const avgCap = avgCapRaw != null && formatCapturePct(avgCapRaw) != null ? avgCapRaw : null
   // Trade win rate + capture % over the 30-day window — plain "how am I doing"
   // signals for the Beginner summary (same numbers Pro shows, plainly labeled).
   const beginnerWinWindow = recentDays.filter(d => d.date >= past30Start)

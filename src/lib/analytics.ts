@@ -574,6 +574,40 @@ export function captureRatioScaled(
 }
 
 /**
+ * Display tolerance for capture / conversion ratios. A legitimate ratio can
+ * float a hair past 1.0 when an exit prints at the exact favorable extreme
+ * (independent rounding in the excursion vs the realized-PnL paths). Anything
+ * beyond this is a DATA MISMATCH — realized PnL exceeding the peak-favorable-$
+ * ceiling is physically impossible (you can't bank more than the best price the
+ * trade ever reached), so it must never render as a raw percentage. See the
+ * invariant note on captureComponents (~line 231). 2 percentage points of slack
+ * absorbs rounding without letting a true corruption (116%, 129%, 218%) through.
+ */
+export const CAPTURE_DISPLAY_EPSILON = 0.02
+
+/** The tooltip shown in place of an out-of-bounds capture/conversion value. */
+export const CAPTURE_MISMATCH_TOOLTIP = 'Unavailable — data mismatch'
+
+/**
+ * Format a capture / conversion RATIO (0..1, where 1 = 100% of the favorable
+ * move banked) for display as a bounded percent string. This is the single
+ * render-time invariant guard for every capture/conversion surface.
+ *
+ *   - null / non-finite            → null  (caller renders "—", missing data)
+ *   - outside [0, 1 + ε]           → null  (caller renders "—" + mismatch tip)
+ *   - in-range, incl. ≤ε overshoot → "N%"  (values in (1, 1+ε] clamp to 100%)
+ *
+ * Returning null for BOTH missing-data and data-mismatch keeps callers simple;
+ * they distinguish the two by whether the underlying inputs exist (a mismatch
+ * has a value, it's just impossible) and attach CAPTURE_MISMATCH_TOOLTIP.
+ */
+export function formatCapturePct(ratio: number | null | undefined): string | null {
+  if (ratio == null || !Number.isFinite(ratio)) return null
+  if (ratio < 0 || ratio > 1 + CAPTURE_DISPLAY_EPSILON) return null
+  return `${Math.round(Math.min(ratio, 1) * 100)}%`
+}
+
+/**
  * True if the trade is a "real" give-back: closed at a loss AND had MFE of
  * at least 1.0R favorable before reversing. Used to bold the capture chip in
  * the row header so the trader sees these on review.

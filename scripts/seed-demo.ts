@@ -540,6 +540,14 @@ async function seed(uid: string) {
             return { dir: (isLong ? 'long' : 'short') as 'long' | 'short', entry, exit: entry + (isLong ? mv : -mv), stop: entry + (isLong ? -30 : 30), tp1: entry + (isLong ? 70 : -70), pnl: mv * qty * MNQ_MULT, atr1m: 9, high: entry + 45, low: entry - 25, mfeLeg: (isLong ? 45 : 25) * qty * MNQ_MULT, entryTime: `${date}T${String(14 + i).padStart(2, '0')}:10:00Z`, exitTime: `${date}T${String(14 + i).padStart(2, '0')}:40:00Z` }
           })()
 
+      // Invariant guard (fail loudly): realized PnL can NEVER exceed the peak
+      // favorable-$ ceiling — banking more than the best price the trade ever
+      // reached is physically impossible and makes capture/Conversion read
+      // >100% (a data mismatch). This is the check that stops a future edit to
+      // the pnl/excursion math from silently reintroducing the 218% bug.
+      if (a.pnl > 0 && a.pnl > a.mfeLeg + 1) {
+        throw new Error(`seed invariant violated: ${date}#${i + 1} winner pnl $${a.pnl} exceeds MFE-$ ceiling $${a.mfeLeg} (capture would read ${Math.round((a.pnl / a.mfeLeg) * 100)}%)`)
+      }
       dayPnl += a.pnl
       if (a.pnl >= 0) winSum += a.pnl; else lossSum += -a.pnl
 

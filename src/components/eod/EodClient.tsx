@@ -28,7 +28,7 @@ import AchievementShowcase from '@/components/eod/AchievementShowcase'
 import { dayAchievements, type AchievementId } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
-import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, type BarLike } from '@/lib/analytics'
+import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, formatCapturePct, CAPTURE_MISMATCH_TOOLTIP, type BarLike } from '@/lib/analytics'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import type {
   TradingDay,
@@ -870,8 +870,9 @@ export default function EodClient({
             </div>
             <div className={`font-mono text-sm ${captureStats.avg == null ? 'text-gray-500'
               : captureStats.avg < 0 ? 'text-red-400 font-bold'
-              : 'text-gray-400'}`}>
-              {captureStats.avg == null ? '—' : `${(captureStats.avg * 100).toFixed(0)}%`}
+              : 'text-gray-400'}`}
+              title={captureStats.avg != null && formatCapturePct(captureStats.avg) == null ? CAPTURE_MISMATCH_TOOLTIP : undefined}>
+              {captureStats.avg == null ? '—' : (formatCapturePct(captureStats.avg) ?? '—')}
             </div>
             {mfeInfoOpen && (
               <div

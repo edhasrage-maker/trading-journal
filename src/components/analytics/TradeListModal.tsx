@@ -4,7 +4,7 @@ import { useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { X, ExternalLink } from 'lucide-react'
 import type { TradeWithContext } from '@/lib/analytics'
-import { mfeMaePoints, captureRatio, maeHeatRatio, rMultiple } from '@/lib/analytics'
+import { mfeMaePoints, captureRatio, maeHeatRatio, rMultiple, formatCapturePct, CAPTURE_MISMATCH_TOOLTIP } from '@/lib/analytics'
 import { displayDayType, displayDayTypes } from '@/lib/day-type-display'
 
 /**
@@ -238,9 +238,9 @@ function TradeRow({ t }: { t: TradeWithContext }) {
           : cap < 0 ? 'text-red-400 font-bold'
           : 'text-gray-400'
         }`}
-        title={xc ? `MFE = ${xc.mfe.toFixed(2)} pts` : 'No MFE data'}
+        title={cap != null && formatCapturePct(cap) == null ? CAPTURE_MISMATCH_TOOLTIP : xc ? `MFE = ${xc.mfe.toFixed(2)} pts` : 'No MFE data'}
       >
-        {cap == null ? '—' : `${(cap * 100).toFixed(0)}%`}
+        {cap == null ? '—' : (formatCapturePct(cap) ?? '—')}
       </td>
       <td
         className={`py-1.5 pr-3 text-right whitespace-nowrap ${

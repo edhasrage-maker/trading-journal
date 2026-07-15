@@ -8,6 +8,7 @@ import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, Che
 import type { TapeScoreResult } from '@/lib/tapescore'
 import AchievementCoin from '@/components/AchievementCoin'
 import { ACHIEVEMENT_CATALOG, type AchievementId } from '@/lib/achievements'
+import { formatCapturePct, CAPTURE_MISMATCH_TOOLTIP } from '@/lib/analytics'
 
 export interface DayRowData {
   id: string
@@ -634,7 +635,13 @@ function DayRowItem({
           ),
           capture: (
             <td key="capture" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
-              {day.avg_capture == null ? <span className="text-gray-700">—</span> : `${Math.round(day.avg_capture * 100)}%`}
+              {(() => {
+                if (day.avg_capture == null) return <span className="text-gray-700">—</span>
+                const pct = formatCapturePct(day.avg_capture)
+                return pct == null
+                  ? <span className="text-gray-700" title={CAPTURE_MISMATCH_TOOLTIP}>—</span>
+                  : pct
+              })()}
             </td>
           ),
           pnl: (

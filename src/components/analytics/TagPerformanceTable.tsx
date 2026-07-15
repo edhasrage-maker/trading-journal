@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import { ArrowUpDown, ArrowUp, ArrowDown, ChevronDown } from 'lucide-react'
 import type { TagPerf } from '@/lib/analytics'
+import { formatCapturePct, CAPTURE_MISMATCH_TOOLTIP } from '@/lib/analytics'
 import { MIN_SAMPLE } from '@/lib/sample-size'
 
 interface Props {
@@ -228,9 +229,9 @@ export default function TagPerformanceTable({
                       : stats.avg_capture < 0.25 ? 'text-red-400 font-bold'
                       : 'text-gray-400'
                     }`}
-                    title={stats.avg_capture == null ? 'No native trades with MFE data in this group' : `Native trades only. Avg of (realized PnL / peak favorable in $), floored at 0 per trade, across ${stats.capture_count} of ${stats.count} trades. Historical (imported) trades are excluded — their capture is on a different unit basis. Red bold means weak capture (<25% of the favorable move banked).`}
+                    title={stats.avg_capture == null ? 'No native trades with MFE data in this group' : formatCapturePct(stats.avg_capture) == null ? CAPTURE_MISMATCH_TOOLTIP : `Native trades only. Avg of (realized PnL / peak favorable in $), floored at 0 per trade, across ${stats.capture_count} of ${stats.count} trades. Historical (imported) trades are excluded — their capture is on a different unit basis. Red bold means weak capture (<25% of the favorable move banked).`}
                   >
-                    {stats.avg_capture == null ? '—' : `${(stats.avg_capture * 100).toFixed(0)}%`}
+                    {stats.avg_capture == null ? '—' : (formatCapturePct(stats.avg_capture) ?? '—')}
                   </td>
                   <td
                     className={`py-1.5 pr-3 text-right ${

@@ -18,7 +18,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
-import { avgCaptureRatio, avgMfeMaeRatio, type TradeWithExcursion } from '@/lib/analytics'
+import { avgCaptureRatio, avgMfeMaeRatio, formatCapturePct, type TradeWithExcursion } from '@/lib/analytics'
 import { computeBehavioralProxies, type ProxyTrade } from '@/lib/behavioral-proxies'
 import { userConflict } from '@/lib/tenant-conflict'
 
@@ -82,7 +82,10 @@ function teaserFor(date: string, dayTrades: TeaserTrade[], pnl: number): FirstRe
   const wins = withPnl.filter(t => (t.pnl ?? 0) > 0).length
   const winRate = withPnl.length > 0 ? (wins / withPnl.length) * 100 : null
   const cap = avgCaptureRatio(dayTrades)
-  const capturePct = cap.avg == null ? null : Math.round(cap.avg * 100)
+  // Invariant guard: drop an out-of-bounds capture (>100+ε) rather than teasing
+  // an impossible number — a mismatch means realized PnL exceeded the peak
+  // favorable $, which can't happen. Null → the teaser chip hides it.
+  const capturePct = cap.avg != null && formatCapturePct(cap.avg) != null ? Math.round(cap.avg * 100) : null
   const ratio = avgMfeMaeRatio(dayTrades).ratio
   return {
     date,

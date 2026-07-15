@@ -21,6 +21,8 @@ import {
   aggregateByStructureFollowFade,
   tagImpact,
   computeStats,
+  formatCapturePct,
+  CAPTURE_MISMATCH_TOOLTIP,
   type TradeWithContext,
 } from '@/lib/analytics'
 
@@ -348,9 +350,10 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
         {(mode === 'pro' || overall.avg_capture != null) && (
           <StatCard
             label="Profit Captured"
-            value={overall.avg_capture == null ? '—' : `${(overall.avg_capture * 100).toFixed(0)}%`}
+            value={overall.avg_capture == null ? '—' : (formatCapturePct(overall.avg_capture) ?? '—')}
+            title={overall.avg_capture != null && formatCapturePct(overall.avg_capture) == null ? CAPTURE_MISMATCH_TOOLTIP : undefined}
             hint={mode === 'beginner' ? "of your trade's best point" : `${overall.capture_count} of ${overall.count}`}
-            positive={overall.avg_capture != null && overall.avg_capture >= 0.5}
+            positive={overall.avg_capture != null && formatCapturePct(overall.avg_capture) != null && overall.avg_capture >= 0.5}
           />
         )}
         {mode === 'pro' && (
@@ -451,15 +454,17 @@ function StatCard({
   value,
   hint,
   positive,
+  title,
 }: {
   label: string
   value: string
   hint?: string
   positive: boolean | null
+  title?: string
 }) {
   const color = positive == null ? 'text-white' : positive ? 'text-green-400' : 'text-red-400'
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-3">
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-3" title={title}>
       <p className="text-xs text-gray-500 mb-1">{label}</p>
       <p className={`text-lg font-bold ${color}`}>{value}</p>
       {hint && <p className="text-[10px] text-gray-600 mt-0.5">{hint}</p>}
