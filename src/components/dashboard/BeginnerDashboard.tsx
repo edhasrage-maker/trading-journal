@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { Target, ChevronRight } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
 import type { TapeScorePeriod } from '@/lib/tapescore'
-import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
+import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroParts'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
 
 /**
@@ -95,12 +95,13 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
         <TapeScoreRing
           score={score}
           band={band}
-          title="TapeScore — one 0-100 score per day: rules kept (50%), execution quality (35%), prep (15%). Days that broke 2+ rules cap at 49."
+          title="TapeScore — one 0-100 score per day: risk limits kept (50%), execution quality (35%), prep (15%). Days that broke 2+ risk rails cap at 49."
         />
         <div className="flex-1 min-w-[240px]">
           <div className="flex items-center gap-2 mb-2">
             <span className={`w-2 h-2 rounded-full ${tone.dot}`} />
             <span className={`text-xs font-medium ${tone.text}`}>{v.label}</span>
+            <TapeScoreFormulaInfo />
           </div>
           <p className="text-lg font-semibold text-white leading-snug">{v.text}</p>
           {score != null && (
