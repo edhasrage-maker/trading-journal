@@ -52,36 +52,34 @@ export default async function DashboardPage() {
   // + the new top-of-page charts all derive from this one window (start-of-
   // last-year → today). The separate per-date "today" fetch was dropped along
   // with the Today quick-action tiles it fed.
-  const recentResult = await supabase
-    .from('trading_days')
-    .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
-    .gte('date', statsWindowStartParallel)
-    .order('date', { ascending: false })
-    .limit(PAGE_SIZE)
-  tick('recentDays')
-
-  // Persisted achievement coin ids per day (gamification Phase 2) — feeds the
-  // Recent Days coin markers. Fetched SEPARATELY from the main select above and
-  // guarded: until the achievements_json migration has run, this select errors
-  // and the map stays empty (rows simply show no coins). Folding the column
-  // into the main select instead would null the entire dashboard dataset on a
-  // pre-migration DB.
-  const achievementsByDayId = new Map<string, string[]>()
-  {
-    const { data: achRows, error: achErr } = await supabase
+  // The main trading_days select and the achievements select scan the SAME
+  // window and are fully independent, so fire them CONCURRENTLY (one round-trip
+  // instead of two). Achievements stays a SEPARATE guarded query — folding
+  // achievements_json into the main select would null the entire dashboard
+  // dataset on a pre-migration DB; a separate query just yields no coins there.
+  const [recentResult, achResult] = await Promise.all([
+    supabase
+      .from('trading_days')
+      .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
+      .gte('date', statsWindowStartParallel)
+      .order('date', { ascending: false })
+      .limit(PAGE_SIZE),
+    supabase
       .from('trading_days')
       .select('id, achievements_json')
       .gte('date', statsWindowStartParallel)
       .order('date', { ascending: false })
-      .limit(PAGE_SIZE) as { data: { id: string; achievements_json: string[] | null }[] | null; error: unknown }
-    if (!achErr && achRows) {
-      for (const r of achRows) {
-        if (Array.isArray(r.achievements_json) && r.achievements_json.length > 0) {
-          achievementsByDayId.set(r.id, r.achievements_json)
-        }
+      .limit(PAGE_SIZE) as unknown as Promise<{ data: { id: string; achievements_json: string[] | null }[] | null; error: unknown }>,
+  ])
+  tick('recentDays + achievements')
+
+  const achievementsByDayId = new Map<string, string[]>()
+  if (!achResult.error && achResult.data) {
+    for (const r of achResult.data) {
+      if (Array.isArray(r.achievements_json) && r.achievements_json.length > 0) {
+        achievementsByDayId.set(r.id, r.achievements_json)
       }
     }
-    tick('achievements', achievementsByDayId.size)
   }
 
   // Reuse the window constants computed for the parallel fetch above so we
