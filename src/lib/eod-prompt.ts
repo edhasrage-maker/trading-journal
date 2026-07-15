@@ -231,23 +231,32 @@ export interface BuildEodPromptInput {
   /** Whether to include chart-image instructions. The image itself is attached
    *  by the caller as a separate content part — this lib only deals with text. */
   hasImage?: boolean
-  /** The trader's own scoring rules (onboarding). An empty/absent profile → the
-   *  founder's verbatim Ruleset v1.3 path (byte-identical). A non-empty profile
-   *  → a generic per-user rubric. */
+  /** The trader's own scoring rules (onboarding). A non-empty profile → a generic
+   *  per-user rubric. An empty/absent profile → the founder's verbatim Ruleset v1.3
+   *  path ONLY when `isLocalOwner` (byte-identical); on the public build an empty
+   *  profile → the generic block with all rails NOT TRACKED. */
   scoringProfile?: ScoringProfile | null
+  /** True on the founder's LOCAL build (the analyze-eod route passes
+   *  `LOCAL_FEATURES_ENABLED`). Gates the empty-profile → owner-v1.3 fallback so a
+   *  public un-onboarded tester is NOT graded against the founder's rails. Defaults
+   *  to `true` so the local rescore script stays byte-identical without opting in. */
+  isLocalOwner?: boolean
 }
 
 /** Returns the full text prompt that gets sent to Claude. */
 export function buildEodPrompt({
   trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage = false, scoringProfile,
+  isLocalOwner = true,
 }: BuildEodPromptInput): string {
   const ruleset = loadRulesetMarkdown()
   const useV13 = ruleset.length > 0
-  // Pt 2 — multi-tenant grading. Empty profile → founder's v1.3 (below,
-  // unchanged); non-empty → a generic per-user ruleset block + the same
-  // structured JSON schema.
-  const ownerPath = isEmptyScoringProfile(scoringProfile)
-  const rc = resolveRails(scoringProfile)
+  // Pt 2 / Pt 8 — multi-tenant grading. The owner v1.3 block is reserved for the
+  // founder's LOCAL build with an empty profile; on the public build an empty /
+  // un-onboarded profile falls to the generic block (all rails NOT TRACKED), and a
+  // non-empty profile → a generic per-user ruleset block + the same structured JSON
+  // schema. `resolveRails` gets the same flag so its empty-profile fallback matches.
+  const ownerPath = isLocalOwner && isEmptyScoringProfile(scoringProfile)
+  const rc = resolveRails(scoringProfile, isLocalOwner)
 
   const tradesBlock = trades.length === 0
     ? '  No trades taken today.'
@@ -642,7 +651,7 @@ CRITICAL weighting rules:
   // OWNER path: the verbatim v1.3 block (+ its legacy fallback) exactly as
   // before. PER-USER path: a generic ruleset built from the profile, always
   // using the structured (v1.4) JSON schema so the parser/UI are unchanged.
-  const rulesetSection = ownerPath ? `${v13Block}${legacyFrameworkBlock}` : genericRulesetBlock(scoringProfile!, rc)
+  const rulesetSection = ownerPath ? `${v13Block}${legacyFrameworkBlock}` : genericRulesetBlock(scoringProfile ?? {}, rc)
   const useStructuredSchema = ownerPath ? useV13 : true
 
   return `You are an objective trading coach reviewing a trader's completed session${hasImage ? ' and the day\'s chart' : ''}.

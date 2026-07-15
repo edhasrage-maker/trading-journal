@@ -60,7 +60,10 @@ async function handle(req: Request) {
       scoringProfile = profRow.scoring_profile_json as ScoringProfile
     }
   }
-  const rc = resolveRails(scoringProfile)
+  // Empty-profile fallback is founder-vs-public aware: local build → owner v1.3
+  // rails (byte-identical); public + empty → UNTRACKED_RAILS (nothing graded until
+  // the tester onboards). Same flag drives buildEodPrompt's block selection below.
+  const rc = resolveRails(scoringProfile, LOCAL_FEATURES_ENABLED)
 
   const body = (await req.json()) as AnalyzeEodBody
   const { trades, eodNotes, prepNotes, prepAnalysis, marketContext, imageBase64, imageMediaType } = body
@@ -112,7 +115,7 @@ async function handle(req: Request) {
     + behavioralProxiesPromptBlock(trades)
     + journalBlock
     + coachingBlock
-    + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage, scoringProfile })
+    + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage, scoringProfile, isLocalOwner: LOCAL_FEATURES_ENABLED })
 
   const userContent: Anthropic.MessageParam['content'] = hasImage
     ? [

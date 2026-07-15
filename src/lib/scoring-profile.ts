@@ -164,10 +164,10 @@ export interface RailConfig {
   tradeCap: number | null
 }
 
-/** The founder's Ruleset v1.3 rails — the fallback for an empty/absent profile,
- *  matching the constants previously hardcoded in `computeDeterministicRules`.
- *  An empty profile resolving to THIS is what keeps the founder's grading
- *  byte-identical. */
+/** The founder's Ruleset v1.3 rails — the fallback for an empty/absent profile
+ *  ON THE FOUNDER'S LOCAL BUILD, matching the constants previously hardcoded in
+ *  `computeDeterministicRules`. An empty profile resolving to THIS is what keeps
+ *  the founder's grading byte-identical. */
 export const OWNER_RAILS: RailConfig = {
   isOwner: true,
   dailyLossLimit: -500,
@@ -177,6 +177,25 @@ export const OWNER_RAILS: RailConfig = {
   postLossCap: 5,
   cooldownSec: 90,
   tradeCap: 7,
+}
+
+/** Nothing-tracked rails — the PUBLIC un-onboarded state. An empty profile on the
+ *  hosted build resolves to THIS (not OWNER_RAILS) so a tester who hasn't onboarded
+ *  is NOT graded against the founder's ≤5-MNQ / −$500 / ≤7 rails (the 2026-07-09
+ *  test-session bug). Every P-rule is null → INACTIVE → auto-passes and is excluded
+ *  from the verdict, so nothing is graded until they set their own rails in
+ *  onboarding. Shape is identical to `resolveRails` of a non-owner profile that set
+ *  no rails. `isOwner:false` routes the proportional (non-owner) verdict branch and
+ *  keeps P2 off the AI's S&D-conditional path. */
+export const UNTRACKED_RAILS: RailConfig = {
+  isOwner: false,
+  dailyLossLimit: null,
+  dllBuffer: 50,
+  maxSize: null,
+  p2Deterministic: false,
+  postLossCap: null,
+  cooldownSec: null,
+  tradeCap: null,
 }
 
 /** True when the profile carries no gradable rules → resolve to the owner
@@ -193,12 +212,18 @@ export function isEmptyScoringProfile(sp?: ScoringProfile | null): boolean {
   return true
 }
 
-/** Collapse a per-user scoring profile into the concrete P-rule numbers. Empty
- *  profile → OWNER_RAILS (founder parity). Units per RulesStep.tsx:
- *  `cooldown_min` is minutes; `daily_loss_limit` is a positive magnitude the
- *  user typed → negated here. */
-export function resolveRails(sp?: ScoringProfile | null): RailConfig {
-  if (isEmptyScoringProfile(sp)) return { ...OWNER_RAILS }
+/** Collapse a per-user scoring profile into the concrete P-rule numbers. Units
+ *  per RulesStep.tsx: `cooldown_min` is minutes; `daily_loss_limit` is a positive
+ *  magnitude the user typed → negated here.
+ *
+ *  Empty-profile fallback is gated on `isLocalOwner` (the analyze-eod route passes
+ *  `LOCAL_FEATURES_ENABLED`): on the founder's LOCAL build an empty profile → the
+ *  owner's v1.3 rails (byte-identical parity); on the PUBLIC build an empty /
+ *  un-onboarded profile → UNTRACKED_RAILS (nothing graded until they onboard).
+ *  Defaults to `true` so every existing caller (and the local rescore script)
+ *  keeps the historical owner-parity behavior unless it explicitly opts out. */
+export function resolveRails(sp?: ScoringProfile | null, isLocalOwner = true): RailConfig {
+  if (isEmptyScoringProfile(sp)) return isLocalOwner ? { ...OWNER_RAILS } : { ...UNTRACKED_RAILS }
   const r = sp!.rails ?? {}
   const maxSize = r.max_size != null ? r.max_size : null
   return {
