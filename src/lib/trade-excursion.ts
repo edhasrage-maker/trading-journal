@@ -16,7 +16,7 @@
  * trades that have the extremes but no per-leg backfill, use the ceiling itself).
  */
 
-const SYM_MULT: Record<string, number> = { NQ: 20, MNQ: 2, ES: 50, MES: 5 }
+import { MULTIPLIERS, symbolRoot } from './futures-symbols'
 
 /**
  * Favorable-excursion bar a trade must clear to count as "was up" for the
@@ -38,11 +38,20 @@ const SYM_MULT: Record<string, number> = { NQ: 20, MNQ: 2, ES: 50, MES: 5 }
  */
 const ROUND_TRIP_MFE_ATR = 1
 
-/** Dollar-per-point multiplier for a contract symbol (front-month/root aware). */
-export function symbolMultiplier(s: string | null): number {
-  if (!s) return 1
-  const root = s.replace(/\.[A-Z]+$/, '').replace(/[HMUZ]\d+$/, '')
-  return SYM_MULT[root] ?? 1
+/**
+ * Dollar-per-point multiplier for a contract symbol (front-month/root aware).
+ * Backed by the canonical `MULTIPLIERS` table (same source the P&L importer
+ * uses) so the coach's R-multiples/capture-$ match the trade's booked P&L across
+ * the full CME/CBOT/NYMEX/COMEX board (minis + micros).
+ *
+ * Returns `null` for a genuinely unknown symbol — callers must degrade to
+ * points/×ATR rather than emit a confident-but-wrong $1/point figure. (Was
+ * previously a 4-symbol table that silently defaulted every other instrument to
+ * $1/point, corrupting R / capture% / left-$ / give-back for YM/RTY/CL/GC/6E…)
+ */
+export function symbolMultiplier(s: string | null): number | null {
+  if (!s) return null
+  return MULTIPLIERS[symbolRoot(s)] ?? null
 }
 
 /** Minimal trade shape the interpretation needs. Superset-friendly — pass a
@@ -112,11 +121,13 @@ export interface TradeExcursion {
 export function interpretExcursion(t: TradeExcursionInput, roundTripAtr: number = ROUND_TRIP_MFE_ATR): TradeExcursion {
   const pnl = t.pnl ?? 0
   const isWin = pnl > 0
+  // null for an unknown instrument → every $-denominated metric below is skipped
+  // (points and ×ATR still populate). Never fabricate $1/point dollars.
   const mult = symbolMultiplier(t.symbol)
   const stopDist = (t.entry_price != null && t.stop_price != null)
     ? Math.abs(t.entry_price - t.stop_price)
     : null
-  const r = (stopDist && t.quantity) ? pnl / (stopDist * t.quantity * mult) : null
+  const r = (mult != null && stopDist && t.quantity) ? pnl / (stopDist * t.quantity * mult) : null
 
   // Favorable excursion in points — the best in-trade move in the trade's favor.
   // Computed once (no stop needed) and reused for $, R, and ×ATR below.
@@ -129,11 +140,16 @@ export function interpretExcursion(t: TradeExcursionInput, roundTripAtr: number 
 
   // Dollar-basis best case (primary; no stop needed). Clamp the per-leg MFE-$ at
   // the tick-precise full-position ceiling (favorable extreme × qty × mult).
-  let mfeUsd: number | null = t.mfe_dollars_per_leg ?? null
-  if (mfePts != null && t.quantity != null) {
-    const ceiling = mfePts * t.quantity * mult
-    if (mfeUsd == null) mfeUsd = ceiling
-    else if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
+  // Unknown instrument (mult == null) → no $ figure at all (a backfilled
+  // mfe_dollars_per_leg for such a symbol is itself untrustworthy $1/point).
+  let mfeUsd: number | null = null
+  if (mult != null) {
+    mfeUsd = t.mfe_dollars_per_leg ?? null
+    if (mfePts != null && t.quantity != null) {
+      const ceiling = mfePts * t.quantity * mult
+      if (mfeUsd == null) mfeUsd = ceiling
+      else if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
+    }
   }
   let capPct: number | null = null
   let leftUsd: number | null = null
