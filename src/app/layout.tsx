@@ -10,6 +10,7 @@ const hanken = Hanken_Grotesk({ variable: "--font-hanken", subsets: ["latin"], d
 const splineMono = Spline_Sans_Mono({ variable: "--font-spline-mono", subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://tapescore.app"),
   title: "TapeScore",
   description: "Game film for traders — an AI trading journal that reviews your game and captures more edge.",
   applicationName: "TapeScore",
@@ -17,6 +18,21 @@ export const metadata: Metadata = {
   icons: {
     icon: "/brand/tapescore-favicon.svg",
     apple: "/icons/apple-touch-icon.png",
+  },
+  // og:image / twitter:image are supplied by src/app/opengraph-image.png +
+  // twitter-image.png (Next auto-injects those). These add the title/description
+  // so the shared card reads as a branded preview, not just an image.
+  openGraph: {
+    type: "website",
+    siteName: "TapeScore",
+    title: "TapeScore — Game film for traders",
+    description: "An AI trading journal that reviews your game and captures more edge.",
+    url: "https://tapescore.app",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "TapeScore — Game film for traders",
+    description: "An AI trading journal that reviews your game and captures more edge.",
   },
   // iOS standalone (Add to Home Screen) behavior.
   appleWebApp: {

@@ -16,6 +16,7 @@
  */
 import opentype from 'opentype.js'
 import sharp from 'sharp'
+import pngToIco from 'png-to-ico'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -25,6 +26,13 @@ const ROOT = resolve(HERE, '..')
 const FONT_DIR = process.env.BRAND_FONT_DIR || resolve(HERE, 'brand-fonts')
 const BRAND_OUT = process.env.BRAND_OUT || resolve(ROOT, 'public/brand')
 const ICON_OUT = process.env.ICON_OUT || resolve(ROOT, 'public/icons')
+// The browser-tab favicon. Next.js auto-serves src/app/favicon.ico at
+// /favicon.ico (the path browsers request + cache hard), so it MUST be
+// regenerated with the brand set — otherwise the tab keeps the old icon.
+const FAVICON_OUT = process.env.FAVICON_OUT || resolve(ROOT, 'src/app/favicon.ico')
+// Social link-preview cards. Next.js auto-serves src/app/opengraph-image.png +
+// twitter-image.png and injects the og:image / twitter:image meta tags.
+const APP_OUT = process.env.APP_OUT || resolve(ROOT, 'src/app')
 
 const loadFont = (p) => {
   const b = readFileSync(p)
@@ -145,6 +153,36 @@ const lightIcon = () => svg(128, 128, `<rect width="128" height="128" rx="28" fi
 // mask never reveals transparent corners; content sits inside the safe zone.
 const maskableIcon = () => svg(128, 128, `<rect width="128" height="128" fill="#0F1318"/>` + iconBody('#E3A62F', '#0F1318', '#F3F5F7'))
 
+// ── Social card (1200×630) — film-frame lockup on the brand ground ───────────
+// Rasterized to PNG (via sharp/librsvg), so ALL text is outlined to paths — a
+// live <text> tagline would fall back to a random system font in the raster.
+// The tagline is set in Archivo Light (the brand display font we have vendored)
+// rather than the on-page mono subline, since only Archivo is available to
+// outline; uppercase + tracked keeps the tape-readout feel.
+function centeredWord(font, text, size, ls, y, fill, W) {
+  const r = outline(font, text, size, 0, 0, ls)
+  const width = r.x - ls // pen after last glyph, minus the trailing letter-space
+  return { svg: `<g transform="translate(${num((W - width) / 2)},${y})"><path d="${r.d}" fill="${fill}"/></g>`, width }
+}
+function ogCard() {
+  const W = 1200, H = 630
+  const bg = `<rect width="${W}" height="${H}" fill="#0E0F11"/>`
+  // Mark tile scaled up from the 128-unit icon, centered near the top third.
+  const tile = 214, s = tile / 128, tx = (W - tile) / 2, ty = 96
+  const mark = `<g transform="translate(${num(tx)},${ty}) scale(${num(s, 4)})">`
+    + `<rect width="128" height="128" rx="28" fill="#0F1318"/>` + iconBody('#E3A62F', '#0F1318', '#F3F5F7') + `</g>`
+  // Wordmark: Tape (Light) + Score (Bold), outlined, centered below the mark.
+  const wmSize = 104, wmY = ty + tile + 116
+  const a = outline(light, 'Tape', wmSize, 0, 0, -2.6)
+  const b = outline(bold, 'Score', wmSize, a.x, 0, -2.6)
+  const wmWidth = (b.x - -2.6)
+  const wmX = (W - wmWidth) / 2
+  const wm = `<g transform="translate(${num(wmX)},${wmY})"><path d="${a.d}" fill="#F3F5F7"/><path d="${b.d}" fill="#F3F5F7"/></g>`
+  // Tagline, Archivo Light, uppercase + tracked, muted.
+  const tag = centeredWord(light, 'GAME FILM FOR TRADERS', 27, 7, wmY + 66, '#8A94A0', W)
+  return svg(W, H, bg + mark + wm + tag.svg)
+}
+
 mkdirSync(BRAND_OUT, { recursive: true })
 mkdirSync(ICON_OUT, { recursive: true })
 
@@ -167,5 +205,21 @@ const pngs = [
 await Promise.all(pngs.map(([name, s, size]) =>
   sharp(Buffer.from(s), { density: 384 }).resize(size, size).png().toFile(`${ICON_OUT}/${name}`)))
 
+// favicon.ico — a real multi-resolution ICO (16/32/48) from the dark mark.
+// sharp can't write .ico, so rasterize each size to a PNG buffer and pack them
+// with png-to-ico. Rendered at high density then downscaled so the candles +
+// sprocket holes stay crisp at 16px.
+const faviconSvg = Buffer.from(darkIcon())
+const icoPngs = await Promise.all([16, 32, 48].map(size =>
+  sharp(faviconSvg, { density: 384 }).resize(size, size).png().toBuffer()))
+writeFileSync(FAVICON_OUT, await pngToIco(icoPngs))
+
+// Social cards (opengraph-image.png + twitter-image.png, identical).
+const ogPng = await sharp(Buffer.from(ogCard()), { density: 192 }).resize(1200, 630).png().toBuffer()
+writeFileSync(`${APP_OUT}/opengraph-image.png`, ogPng)
+writeFileSync(`${APP_OUT}/twitter-image.png`, ogPng)
+
 console.log('brand:', Object.keys(files).map(f => f.split(/[\\/]/).pop()).join(', '))
 console.log('icons:', pngs.map(p => p[0]).join(', '))
+console.log('favicon:', FAVICON_OUT.split(/[\\/]/).pop(), '(16/32/48)')
+console.log('social:', 'opengraph-image.png, twitter-image.png (1200×630)')
