@@ -612,7 +612,7 @@ function DayRowItem({
         const cellNodes: Record<ReorderableColumnId, React.ReactNode> = {
           tapescore: (
             <td key="tapescore" className={`py-2 pr-3 text-center ${cellBg}`}>
-              <TapeScorePill result={day.tapescore} />
+              <TapeScorePill result={day.tapescore} tradeCount={day.trade_count} />
             </td>
           ),
           trades: (
@@ -676,26 +676,34 @@ function DayRowItem({
  * failed) lands red via the <= 49 cap. The tooltip carries the component
  * breakdown so the old Execution / Process / prep detail is one hover away.
  */
-function TapeScorePill({ result }: { result: TapeScoreResult | null }) {
+/** Below this trade count a single day's TapeScore is dominated by one or two
+ *  trades — shown muted with a "low sample" note so a "92" on a one-trade day
+ *  never reads as a settled, precise grade. */
+const THIN_SAMPLE_TRADES = 3
+
+function TapeScorePill({ result, tradeCount }: { result: TapeScoreResult | null; tradeCount?: number }) {
   if (result == null) {
     return <span className="text-gray-700 font-mono" title="Not scored yet — run Analyze Session on the day's EOD recap.">—</span>
   }
-  const color =
-    result.band === 'high' ? 'text-green-300 border-green-800/60 bg-green-950/40'
+  const thin = tradeCount != null && tradeCount > 0 && tradeCount < THIN_SAMPLE_TRADES
+  const color = thin
+    ? 'text-gray-400 border-gray-700/60 bg-gray-800/40'
+    : result.band === 'high' ? 'text-green-300 border-green-800/60 bg-green-950/40'
     : result.band === 'mid' ? 'text-amber-300 border-amber-800/60 bg-amber-950/40'
     : 'text-red-300 border-red-800/60 bg-red-950/40'
   const { passCount, execution, prep } = result.components
   const tooltip = result.basis === 'legacy'
     ? 'Scored under an earlier rubric (pre-v1.3 single score).'
     : [
-        passCount != null ? `Rules kept ${passCount}/5` : null,
+        thin ? `Low sample — only ${tradeCount} trade${tradeCount === 1 ? '' : 's'}, read as a rough signal` : null,
+        passCount != null ? `Risk limits respected: ${passCount}/5` : null,
         execution != null ? `Execution ${execution}` : null,
         prep != null ? `Prep ${prep}` : null,
-        result.capped ? 'capped at 49 — 2+ rules broke' : null,
+        result.capped ? 'capped at 49 — 2+ rails broke' : null,
       ].filter(Boolean).join(' · ')
   return (
     <span
-      className={`font-mono font-bold border rounded px-1.5 py-0.5 inline-block w-9 text-center text-xs ${color}`}
+      className={`font-mono font-bold border rounded px-1.5 py-0.5 inline-block w-9 text-center text-xs ${color} ${thin ? 'opacity-60 italic' : ''}`}
       title={tooltip}
     >
       {result.score}

@@ -151,7 +151,7 @@ export default function WeeklyRecapClient({ weekStart, weekLabelText, dayCards, 
         <StatCard label="Trades" value={tradesTotal.toString()} positive={null} />
         <StatCard label="Win Rate" value={wrTotal != null ? `${wrTotal}%` : '—'} positive={wrTotal != null && wrTotal >= 50} />
         {mode === 'pro' && (
-          <StatCard label="Compliance" value={daysWithVerdict > 0 ? `${compliantDays}/${daysWithVerdict}` : '—'} positive={daysWithVerdict > 0 && compliantDays >= daysWithVerdict - 1} hint="days Compliant" />
+          <StatCard label="Risk limits" value={daysWithVerdict > 0 ? `${compliantDays}/${daysWithVerdict}` : '—'} positive={daysWithVerdict > 0 && compliantDays >= daysWithVerdict - 1} hint="days ≥4/5 rails kept" />
         )}
         <StatCard label="Trading Days" value={dayCards.filter(c => c.trade_count > 0).length.toString()} positive={null} hint="with trades" />
       </div>
@@ -270,8 +270,11 @@ function DayCardView({ card }: { card: DayCard }) {
             </span>
           )}
           {card.process_verdict && (
-            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${verdictColor}`}>
-              {card.process_verdict}
+            <span
+              className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${verdictColor}`}
+              title="P1–P5 are account risk guardrails (daily loss limit, size cap, no size-up after a loss, cooldown, trade cap) — not a measure of trade quality."
+            >
+              {card.process_verdict === 'Compliant' ? 'Rails kept' : 'Rail breach'}
             </span>
           )}
         </div>

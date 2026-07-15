@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { aggregateTapeScore, tapeScorePeriodSentence, type TapeScoreResult } from '@/lib/tapescore'
-import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
+import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroParts'
 
 /**
  * Period-selectable dashboard header: the TapeScore hero (one 0-100 score,
@@ -341,21 +341,24 @@ function TapeScoreHero({ period, periodLabel }: {
       <TapeScoreRing
         score={score}
         band={band}
-        title="TapeScore — one 0-100 score per day: rules kept (50%), execution quality (35%), prep (15%). Days that broke 2+ rules cap at 49."
+        title="TapeScore — one 0-100 score per day: risk limits kept (50%), execution quality (35%), prep (15%). Days that broke 2+ risk rails cap at 49."
       />
       <div className="flex-1 min-w-[240px]">
         {score != null ? (
           <>
-            <p className="text-white font-semibold text-[15px]">{sentence}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-white font-semibold text-[15px]">{sentence}</p>
+              <TapeScoreFormulaInfo />
+            </div>
             <p className="text-xs text-gray-500 mt-0.5">
               {periodLabel} · {scoredDays} scored session{scoredDays === 1 ? '' : 's'}
             </p>
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               {verdictDays > 0 && (
                 <HeroChip
-                  label={`Rules kept ${compliantDays}/${verdictDays}`}
+                  label={`Risk limits ${compliantDays}/${verdictDays}`}
                   tone={compliantDays / verdictDays >= 0.85 ? 'good' : compliantDays / verdictDays >= 0.6 ? 'mid' : 'bad'}
-                  title="Sessions that kept at least 4 of the 5 safety rails, out of sessions with a rules audit"
+                  title="Sessions that kept at least 4 of the 5 account risk rails, out of sessions with a rails audit. These rails are guardrails, not a measure of trade quality."
                 />
               )}
               {execution != null && (

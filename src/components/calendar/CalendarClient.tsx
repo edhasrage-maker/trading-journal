@@ -126,7 +126,7 @@ export default function CalendarClient({ days, defaultStartDate, defaultEndDate,
           label="Clean streak"
           value={insights.scoredDays ? `${insights.cleanStreak.current} day${insights.cleanStreak.current === 1 ? '' : 's'}` : '—'}
           tone="amber"
-          note={insights.scoredDays ? `Rule-compliant now. Best: ${insights.cleanStreak.best}.` : 'No graded sessions yet.'}
+          note={insights.scoredDays ? `Risk rails intact now. Best: ${insights.cleanStreak.best}.` : 'No graded sessions yet.'}
         />
         <InsightCard
           label="Green but sloppy"

@@ -3,6 +3,12 @@
 import { useMemo } from 'react'
 import type { EodAiAnalysis } from '@/lib/supabase/types'
 import { tapeScoreFromAnalyses, tapeScoreDaySentence } from '@/lib/tapescore'
+import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
+
+/** Below this many trades a single day's score rides on one or two decisions —
+ *  shown muted with a "low sample" note so a precise "92" never reads as a
+ *  settled grade on a one-trade day (Pt 20 · Ticket 4c). */
+const THIN_SAMPLE_TRADES = 3
 
 /**
  * EOD hero — the day's One TapeScore (Ruleset amendment 5): 0-100 ring,
@@ -35,8 +41,10 @@ export default function TapeScoreHeader({
   )
   if (!result) return null
 
-  const colors =
-    result.band === 'high' ? { stroke: '#4ade80', text: 'text-green-400' }
+  const thin = tradeCount > 0 && tradeCount < THIN_SAMPLE_TRADES
+  const colors = thin
+    ? { stroke: '#6b7280', text: 'text-gray-400' }
+    : result.band === 'high' ? { stroke: '#4ade80', text: 'text-green-400' }
     : result.band === 'mid' ? { stroke: '#fbbf24', text: 'text-amber-300' }
     : { stroke: '#f87171', text: 'text-red-400' }
   const R = 40
@@ -51,8 +59,8 @@ export default function TapeScoreHeader({
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-4 flex-wrap">
       <div
-        className="relative w-[76px] h-[76px] shrink-0"
-        title="TapeScore — one 0-100 score for the day: rules kept (50%), execution quality (35%), prep (15%). Days that broke 2+ rules cap at 49."
+        className={`relative w-[76px] h-[76px] shrink-0 ${thin ? 'opacity-60' : ''}`}
+        title="TapeScore — one 0-100 score for the day: risk limits kept (50%), execution quality (35%), prep (15%). Days that broke 2+ risk rails cap at 49."
       >
         <svg width="76" height="76" viewBox="0 0 92 92" className="-rotate-90">
           <circle cx="46" cy="46" r={R} fill="none" stroke="#1f2937" strokeWidth="7" />
@@ -70,7 +78,15 @@ export default function TapeScoreHeader({
         </div>
       </div>
       <div className="flex-1 min-w-[240px]">
-        <p className="text-white font-semibold text-[15px]">{sentence}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-white font-semibold text-[15px]">{sentence}</p>
+          <TapeScoreFormulaInfo />
+        </div>
+        {thin && (
+          <p className="text-[11px] text-gray-500 italic mt-0.5">
+            Low sample — only {tradeCount} trade{tradeCount === 1 ? '' : 's'}. Read this as a rough signal, not a settled grade.
+          </p>
+        )}
         <p className="text-xs text-gray-500 mt-0.5">
           {tradeCount} trade{tradeCount === 1 ? '' : 's'}
           {' · '}
@@ -87,9 +103,9 @@ export default function TapeScoreHeader({
             <>
               {passCount != null && (
                 <Chip
-                  label={`Rules kept ${passCount}/5`}
+                  label={`Risk limits ${passCount}/5`}
                   tone={passCount >= 5 ? 'good' : passCount === 4 ? 'mid' : 'bad'}
-                  title="The five safety rails: daily loss limit, size cap, no size-up after a loss, 90s cooldown, trade cap"
+                  title="The five account risk rails: daily loss limit, size cap, no size-up after a loss, 90s cooldown, trade cap. These are guardrails, not a measure of trade quality."
                 />
               )}
               {execution != null && (

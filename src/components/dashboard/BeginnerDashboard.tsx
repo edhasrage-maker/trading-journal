@@ -107,9 +107,9 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
             <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
               {verdictDays > 0 && (
                 <HeroChip
-                  label={`Rules kept ${compliantDays}/${verdictDays}`}
+                  label={`Risk limits ${compliantDays}/${verdictDays}`}
                   tone={compliantDays / verdictDays >= 0.85 ? 'good' : compliantDays / verdictDays >= 0.6 ? 'mid' : 'bad'}
-                  title="Sessions that kept at least 4 of the 5 safety rules, out of sessions with a rules check"
+                  title="Sessions that kept at least 4 of the 5 account risk rails, out of sessions with a rails check. These are guardrails, not a measure of trade quality."
                 />
               )}
               {execution != null && (
