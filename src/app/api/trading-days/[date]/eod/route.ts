@@ -7,6 +7,7 @@ import { signDayScreenshots, normalizeStoredScreenshot } from '@/lib/storage-url
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { clientError } from '@/lib/api-error'
 import { recomputeAndPersistDay } from '@/lib/achievements-server'
+import { recomputeDayStats } from '@/lib/day-stats-server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -54,6 +55,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
   if ((body.eod_ai_analysis_json !== undefined || body.eod_pnl !== undefined) && day) {
     const ids = await recomputeAndPersistDay(supabase, day)
     ;(day as TradingDay & { achievements_json?: string[] }).achievements_json = ids
+
+    // Warm the dashboard per-day stats cache (Pt 10). The upsert above nulled
+    // stats_json via the DB trigger; recompute it now (a separate stats-only
+    // update the BEFORE UPDATE trigger preserves) so the next dashboard load
+    // serves this day from cache. Best-effort — never throws. Trade/context
+    // mutations rely on the trigger + dashboard read-through instead of an
+    // explicit warm here, since their cache-null already fires from the trigger.
+    await recomputeDayStats(supabase, (day as TradingDay).id)
   }
 
   await signDayScreenshots(supabase, day)
