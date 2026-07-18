@@ -76,6 +76,47 @@ export interface DayStatsRollup {
 }
 
 /**
+ * Cache format version for the materialized `trading_days.stats_json`. Bump this
+ * whenever `computeDayStats`'s formula or output shape changes: the dashboard
+ * read path treats any row whose `stats_version` != this constant as dirty and
+ * recomputes it, so a formula change invalidates every cached row at once.
+ */
+export const STATS_VERSION = 1
+
+/** The rollup fields persisted in `stats_json` — everything `computeDayStats`
+ *  returns EXCEPT the fields that already live in dedicated `trading_days`
+ *  columns (id, date, day_type, day_types) or their own column merged at read
+ *  time (achievements). Those are re-attached by `fromStoredStats`. */
+export type DayStatsStored = Omit<DayStatsRollup, 'id' | 'date' | 'day_type' | 'day_types' | 'achievements'>
+
+/** Project a full rollup down to what we store in `stats_json` (drops the
+ *  column-owned fields so the cache never disagrees with the row). */
+export function toStoredStats(r: DayStatsRollup): DayStatsStored {
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  const { id, date, day_type, day_types, achievements, ...stored } = r
+  /* eslint-enable @typescript-eslint/no-unused-vars */
+  return stored
+}
+
+/** Rehydrate a full rollup from a stored `stats_json` blob + the day's own
+ *  columns. day_types is re-derived exactly as `computeDayStats` does. */
+export function fromStoredStats(
+  stored: DayStatsStored,
+  day: { id: string; date: string; day_type: string | null; day_types: string[] | null; achievements?: string[] },
+): DayStatsRollup {
+  return {
+    ...stored,
+    id: day.id,
+    date: day.date,
+    day_type: day.day_type,
+    day_types: (day.day_types && day.day_types.length > 0)
+      ? day.day_types
+      : (day.day_type ? [day.day_type] : []),
+    achievements: day.achievements ?? [],
+  }
+}
+
+/**
  * Compute the dashboard rollup for one day from its trades + prep ATR. Pure and
  * self-contained: live ATR is read from each trade's own `entry_atr_1m` (no
  * external map), and capture/heat/tapescore come from the shared analytics +

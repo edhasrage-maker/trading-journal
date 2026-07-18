@@ -31,6 +31,14 @@ create table if not exists trading_days (
   -- ai_analysis_json shape: { summary: string, flags: string[], score: number }
   eod_notes text,
   eod_pnl numeric(10,2),
+  -- Materialized per-day dashboard rollup (Pt 10). Produced by the shared pure
+  -- function src/lib/day-stats.ts::computeDayStats; stores everything it returns
+  -- except the column-owned fields (id, date, day_type, day_types,
+  -- achievements_json). stats_version pins the cache format; a null stats_json
+  -- or a stale version reads as dirty. See migration 20260718 + the triggers
+  -- at the end of this file and docs/dashboard-stats-materialization-plan.md.
+  stats_json jsonb,
+  stats_version smallint,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -715,6 +723,63 @@ alter table chart_annotations enable row level security;
 drop policy if exists "chart_annotations_auth" on chart_annotations;
 create policy "chart_annotations_auth" on chart_annotations
   for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- Per-day stats cache invalidation (Pt 10) — see migration 20260718.
+-- Layer 1 of the belt-and-suspenders invalidation: DB triggers null
+-- trading_days.stats_json on any change to a stats input, so no app path can
+-- leave a stale cache behind. Mirrors 20260718_day_stats_materialization.sql.
+-- ============================================================
+create or replace function public.invalidate_day_stats_from_child()
+returns trigger
+language plpgsql
+as $$
+begin
+  if (tg_op = 'DELETE') then
+    update trading_days set stats_json = null where id = old.trading_day_id;
+    return old;
+  else
+    update trading_days set stats_json = null where id = new.trading_day_id;
+    if (tg_op = 'UPDATE' and new.trading_day_id is distinct from old.trading_day_id) then
+      update trading_days set stats_json = null where id = old.trading_day_id;
+    end if;
+    return new;
+  end if;
+end;
+$$;
+
+drop trigger if exists trg_trades_invalidate_day_stats on trades;
+create trigger trg_trades_invalidate_day_stats
+  after insert or update or delete on trades
+  for each row execute function public.invalidate_day_stats_from_child();
+
+drop trigger if exists trg_market_context_invalidate_day_stats on market_context;
+create trigger trg_market_context_invalidate_day_stats
+  after insert or update or delete on market_context
+  for each row execute function public.invalidate_day_stats_from_child();
+
+create or replace function public.invalidate_day_stats_on_self_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  -- achievements_json excluded on purpose: not stored in stats_json.
+  if (new.ai_analysis_json is distinct from old.ai_analysis_json
+      or new.eod_ai_analysis_json is distinct from old.eod_ai_analysis_json
+      or new.eod_pnl is distinct from old.eod_pnl
+      or new.day_types is distinct from old.day_types
+      or new.day_type is distinct from old.day_type) then
+    new.stats_json := null;
+    new.stats_version := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_trading_days_invalidate_stats on trading_days;
+create trigger trg_trading_days_invalidate_stats
+  before update on trading_days
+  for each row execute function public.invalidate_day_stats_on_self_update();
 
 -- ============================================================
 -- Storage buckets (run separately in Supabase dashboard or CLI)
