@@ -15,7 +15,7 @@ import { formatCapturePct } from '@/lib/analytics'
 // the file so the bundle doesn't carry unused code.
 import type { TradingDay } from '@/lib/supabase/types'
 import { aggregateTapeScore } from '@/lib/tapescore'
-import { computeDayStats } from '@/lib/day-stats'
+import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type DayStatsStored } from '@/lib/day-stats'
 
 const PAGE_SIZE = 1000
 
@@ -57,13 +57,35 @@ export default async function DashboardPage() {
   // instead of two). Achievements stays a SEPARATE guarded query — folding
   // achievements_json into the main select would null the entire dashboard
   // dataset on a pre-migration DB; a separate query just yields no coins there.
-  const [recentResult, achResult] = await Promise.all([
+  // Read-through cache (Pt 10): the per-day rollup is materialized in
+  // trading_days.stats_json. Steady state, the dashboard reads those tiny rows
+  // and fetches ZERO trades / analysis blobs; only days whose cache is missing
+  // or stale (the DB triggers null it on any input change) are recomputed on the
+  // fly and written back. The dirty path below is byte-identical to the old
+  // full-compute — a pre-migration / pre-backfill DB just makes EVERY day dirty,
+  // so the dashboard behaves exactly as before, only uncached.
+  //
+  // Three concurrent, mutually-independent queries over the same window:
+  //   - lightweight day columns (NEVER the big ai/eod blobs — those are fetched
+  //     ONLY for dirty days below, which is where the win comes from),
+  //   - the materialized stats cache (SEPARATE + guarded: on a pre-migration DB
+  //     the stats_json/stats_version columns don't exist and this query errors,
+  //     which we read as "all days dirty"; folding it into the main select would
+  //     null the WHOLE dataset there — same reason achievements stays separate),
+  //   - achievements (separate + guarded, unchanged).
+  const [recentResult, statsResult, achResult] = await Promise.all([
     supabase
       .from('trading_days')
-      .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json')
+      .select('id, date, eod_pnl, day_type, day_types')
       .gte('date', statsWindowStartParallel)
       .order('date', { ascending: false })
       .limit(PAGE_SIZE),
+    supabase
+      .from('trading_days')
+      .select('id, stats_json, stats_version')
+      .gte('date', statsWindowStartParallel)
+      .order('date', { ascending: false })
+      .limit(PAGE_SIZE) as unknown as Promise<{ data: { id: string; stats_json: DayStatsStored | null; stats_version: number | null }[] | null; error: unknown }>,
     supabase
       .from('trading_days')
       .select('id, achievements_json')
@@ -71,7 +93,7 @@ export default async function DashboardPage() {
       .order('date', { ascending: false })
       .limit(PAGE_SIZE) as unknown as Promise<{ data: { id: string; achievements_json: string[] | null }[] | null; error: unknown }>,
   ])
-  tick('recentDays + achievements')
+  tick('recentDays + stats + achievements')
 
   const achievementsByDayId = new Map<string, string[]>()
   if (!achResult.error && achResult.data) {
@@ -82,28 +104,44 @@ export default async function DashboardPage() {
     }
   }
 
+  // Fresh cache map: dayId → stored rollup, ONLY for rows at the current version.
+  // A missing/errored stats query (pre-migration) leaves this empty → all dirty.
+  const cacheAvailable = !statsResult.error
+  const statsByDayId = new Map<string, DayStatsStored>()
+  if (cacheAvailable && statsResult.data) {
+    for (const r of statsResult.data) {
+      if (r.stats_json != null && r.stats_version === STATS_VERSION) {
+        statsByDayId.set(r.id, r.stats_json)
+      }
+    }
+  }
+
   // Reuse the window constants computed for the parallel fetch above so we
   // don't recompute Date math (and so the labels in the perf log stay correct).
   const past30Start = past30StartParallel
   const past180Start = past180StartParallel
 
-  // SELECT '*' would give us day_types automatically; we list columns explicitly,
-  // so we also need to coerce day_types to a typed array (it's a Postgres text[]
-  // but the supabase-js type only surfaces it when the column exists).
+  // We list columns explicitly, so coerce day_types to a typed array (it's a
+  // Postgres text[] but the supabase-js type only surfaces it when the column
+  // exists in the generated types).
   const recentDaysBase = (recentResult.data ?? []).map(d => {
-    const row = d as Record<string, unknown> & Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'>
+    const row = d as Record<string, unknown> & Pick<TradingDay, 'id' | 'date' | 'eod_pnl' | 'day_type'>
     return {
       ...row,
       day_types: Array.isArray(row.day_types) ? (row.day_types as string[]) : null,
     }
   })
 
+  // Dirty days: no fresh cache entry. Only these pay for trades + blobs + ATR.
+  const dirtyDays = recentDaysBase.filter(d => !statsByDayId.has(d.id))
+  const dirtyIds = dirtyDays.map(d => d.id)
+  tick('partition (dirty)', dirtyIds.length)
+
   // Trade stats per day (count + setup tags + summed pnl + MFE/MAE inputs) —
   // one batched query, grouped in code. PnL is needed so the dashboard can
   // fall back to sum(trades.pnl) when the user hasn't saved an explicit
   // eod_pnl override yet. high_during_position / low_during_position +
-  // direction + entry_price + symbol + quantity feed the per-day avg
-  // MFE / MAE computed below.
+  // direction + entry_price + symbol + quantity feed the per-day avg MFE / MAE.
   type TradeSlim = {
     id: string
     trading_day_id: string
@@ -119,30 +157,43 @@ export default async function DashboardPage() {
     quantity: number | null
     symbol: string | null
     // Per-trade Wilder ATR-10 at entry minute, populated by
-    // scripts/backfill-entry-metrics.ts. Replaces the dashboard's old
-    // bars-fetch-and-recompute pass (which paid 500-600ms cold latency per
-    // load). When null (e.g. pre-2025 trades), falls back to day-level
-    // market_context.atr_1m via the same precedence the dashboard had before.
+    // scripts/backfill-entry-metrics.ts. When null (e.g. pre-2025 trades),
+    // falls back to day-level market_context.atr_1m.
     entry_atr_1m: number | null
-    // Needed by the scaling-aware MFE-capture calc (captureComponents): the
-    // per-leg exits + any backfilled per-leg $. Without exits_json the dashboard
-    // silently fell back to the harsh full-qty capture, so a scaled-out trade
-    // read LOWER here than on the EOD recap (which has the full trade data).
+    // Needed by the scaling-aware MFE-capture calc: the per-leg exits + any
+    // backfilled per-leg $. Without exits_json a scaled-out trade reads LOWER
+    // here than on the EOD recap (which has the full trade data).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     exits_json: any
     mfe_dollars_per_leg: number | null
   }
-  const dayIds = recentDaysBase.map(d => d.id)
   // Chunk trading_day_ids for the .in() — 50 UUIDs per chunk to stay under
-  // PostgREST URL-length limits (same pattern as /api/metric-buckets).
-  // Trades pagination per chunk: range() up to PAGE_SIZE per loop because a
-  // busy 6-month chunk could exceed the 1000-row Supabase cap.
+  // PostgREST URL-length limits. Trades pagination per chunk: range() up to
+  // PAGE_SIZE because a busy 6-month chunk could exceed the 1000-row cap. All
+  // three fetches are scoped to dirtyIds — steady state that's empty → no-ops.
+  async function fetchDirtyBlobs(): Promise<Map<string, Pick<TradingDay, 'ai_analysis_json' | 'eod_ai_analysis_json'>>> {
+    const out = new Map<string, Pick<TradingDay, 'ai_analysis_json' | 'eod_ai_analysis_json'>>()
+    if (dirtyIds.length === 0) return out
+    const CHUNK = 50
+    for (let i = 0; i < dirtyIds.length; i += CHUNK) {
+      const slice = dirtyIds.slice(i, i + CHUNK)
+      const { data, error } = await supabase
+        .from('trading_days')
+        .select('id, ai_analysis_json, eod_ai_analysis_json')
+        .in('id', slice)
+      if (error) throw new Error(`trading_days blobs: ${error.message}`)
+      for (const r of (data ?? []) as (Pick<TradingDay, 'id' | 'ai_analysis_json' | 'eod_ai_analysis_json'>)[]) {
+        out.set(r.id, { ai_analysis_json: r.ai_analysis_json, eod_ai_analysis_json: r.eod_ai_analysis_json })
+      }
+    }
+    return out
+  }
   async function fetchTradesAll(): Promise<TradeSlim[]> {
-    if (dayIds.length === 0) return []
+    if (dirtyIds.length === 0) return []
     const CHUNK = 50
     const out: TradeSlim[] = []
-    for (let i = 0; i < dayIds.length; i += CHUNK) {
-      const slice = dayIds.slice(i, i + CHUNK)
+    for (let i = 0; i < dirtyIds.length; i += CHUNK) {
+      const slice = dirtyIds.slice(i, i + CHUNK)
       for (let p = 0; p < 50; p++) {
         const { data, error } = await supabase
           .from('trades')
@@ -159,11 +210,11 @@ export default async function DashboardPage() {
     return out
   }
   async function fetchContexts(): Promise<{ trading_day_id: string; atr_1m: number | null }[]> {
-    if (dayIds.length === 0) return []
+    if (dirtyIds.length === 0) return []
     const CHUNK = 50
     const out: { trading_day_id: string; atr_1m: number | null }[] = []
-    for (let i = 0; i < dayIds.length; i += CHUNK) {
-      const slice = dayIds.slice(i, i + CHUNK)
+    for (let i = 0; i < dirtyIds.length; i += CHUNK) {
+      const slice = dirtyIds.slice(i, i + CHUNK)
       const { data } = await supabase
         .from('market_context')
         .select('trading_day_id, atr_1m')
@@ -172,41 +223,71 @@ export default async function DashboardPage() {
     }
     return out
   }
-  const [tradesAll, contextsRaw] = await Promise.all([fetchTradesAll(), fetchContexts()])
-  tick('tradesAll + contexts', tradesAll.length)
-  const tradesRaw: TradeSlim[] = tradesAll
+  const [blobsByDayId, tradesAll, contextsRaw] = await Promise.all([fetchDirtyBlobs(), fetchTradesAll(), fetchContexts()])
+  tick('dirty trades + blobs + contexts', tradesAll.length)
   const tradesByDay = new Map<string, TradeSlim[]>()
-  for (const t of (tradesRaw ?? []) as TradeSlim[]) {
+  for (const t of tradesAll) {
     const arr = tradesByDay.get(t.trading_day_id) ?? []
     arr.push(t)
     tradesByDay.set(t.trading_day_id, arr)
   }
   const prepAtrByDay = new Map<string, number | null>()
-  for (const c of (contextsRaw ?? []) as { trading_day_id: string; atr_1m: number | null }[]) {
+  for (const c of contextsRaw) {
     prepAtrByDay.set(c.trading_day_id, c.atr_1m)
   }
 
-  // Per-day rollup via the shared pure function (src/lib/day-stats.ts) so the
-  // dashboard, the materialized trading_days.stats_json, and any read-through
-  // fallback all produce identical numbers. Live ATR is read per-trade inside
-  // computeDayStats (trades.entry_atr_1m), so no global ATR map is needed here.
-  const recentDaysMapped = recentDaysBase.map(d =>
-    computeDayStats(
+  // Per-day rollup: fresh days rehydrate from the cache (column-owned fields
+  // re-merged from the row); dirty days recompute via the SAME shared pure
+  // function so a cached row and a freshly-computed one are identical.
+  const recentDaysMapped = recentDaysBase.map(d => {
+    const cached = statsByDayId.get(d.id)
+    if (cached) {
+      return fromStoredStats(cached, {
+        id: d.id,
+        date: d.date,
+        day_type: d.day_type,
+        day_types: d.day_types,
+        achievements: achievementsByDayId.get(d.id) ?? [],
+      })
+    }
+    const blob = blobsByDayId.get(d.id)
+    return computeDayStats(
       {
         id: d.id,
         date: d.date,
         eod_pnl: d.eod_pnl,
         day_type: d.day_type,
         day_types: d.day_types,
-        ai_analysis_json: d.ai_analysis_json,
-        eod_ai_analysis_json: d.eod_ai_analysis_json,
+        ai_analysis_json: blob?.ai_analysis_json ?? null,
+        eod_ai_analysis_json: blob?.eod_ai_analysis_json ?? null,
         achievements: achievementsByDayId.get(d.id) ?? [],
       },
       tradesByDay.get(d.id) ?? [],
       prepAtrByDay.get(d.id) ?? null,
-    ),
-  )
+    )
+  })
   tick('per-day rollup', recentDaysMapped.length)
+
+  // Read-through write-back: warm the cache for the days we just recomputed so
+  // the next load serves them from cache. Best-effort — a stats-only UPDATE
+  // leaves the input columns untouched, so the BEFORE UPDATE invalidation
+  // trigger preserves what we write. Skipped when the columns are absent
+  // (pre-migration) or for read-only demo users (the write errors → swallowed;
+  // they simply recompute each load, which is correct). Never blocks the render
+  // on failure; errors are swallowed so a warm-cache miss can't break the page.
+  if (cacheAvailable && dirtyDays.length > 0) {
+    const byId = new Map(recentDaysMapped.map(r => [r.id, r]))
+    await Promise.all(dirtyDays.map(d => {
+      const rollup = byId.get(d.id)
+      if (!rollup) return Promise.resolve()
+      return supabase
+        .from('trading_days')
+        .update({ stats_json: toStoredStats(rollup), stats_version: STATS_VERSION } as never)
+        .eq('id', d.id)
+        .then(() => {}, () => {})
+    }))
+    tick('read-through write-back', dirtyDays.length)
+  }
 
   // Drop BLANK days: an empty `trading_days` row (e.g. prep opened for a date
   // but no trades logged and no eod_pnl override saved) carries no result and
@@ -310,11 +391,10 @@ export default async function DashboardPage() {
   tick('per-day computation loop')
   console.log('[dashboard perf]', perf.phases.map(p => `${p.name}=${p.ms}ms${p.rows != null ? ` (${p.rows})` : ''}`).join(' | '))
 
-  // First-run empty state: the account has no trades and no logged days in the
-  // whole stats window (and hasn't even opened today). Show an onboarding CTA
-  // instead of empty stat cards / an empty Recent Days table.
-  const isEmptyAccount =
-    tradesAll.length === 0 && recentDaysBase.length === 0
+  // First-run empty state: no logged days in the whole stats window. (Trades
+  // only exist under a trading_days row, so zero days ⇒ zero in-window trades;
+  // the old check also ANDed tradesAll, which is now only the dirty subset.)
+  const isEmptyAccount = recentDaysBase.length === 0
 
   if (isEmptyAccount) {
     return (
