@@ -503,9 +503,14 @@ across the session — so the UI can show which criteria are dragging.
        FAIL: "Exited early because I was scared to give back profits
               before my target" — PnL-anchored emotional exit.
   8. no_mistakes_tagged — tags_json.mistakes is empty on the trade.
-  9. stable_emotion — tags_json.emotions includes "Stable". Compromised
-     = fail. MAXRAGE = fail AND signals the trader shouldn't have been
-     trading at all (call this out in notes).
+  9. stable_emotion — tags_json.emotions reflect a composed, in-control
+     state (in the trader's OWN words — e.g. calm, focused, disciplined,
+     confident, "Stable") → pass. A clearly compromised / tilted state
+     (fearful, FOMO, revenge, frustrated, "on tilt", "Compromised",
+     MAXRAGE) → fail; MAXRAGE additionally signals the trader shouldn't
+     have been trading at all (call this out in notes). An ambiguous or
+     absent emotion tag → N/A (skip it; do not guess). Judge the STATE —
+     never require one specific tag word.
 
 **Be honest about what you can and can't see:** if orderflow context is missing
 for a trade, say so — don't infer it. If you can't tell whether an entry was
