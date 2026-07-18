@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { X, Send, Loader2, Brain, Trash2, Download, Archive, ChevronLeft, ImagePlus } from 'lucide-react'
+import { X, Send, Loader2, Brain, Trash2, Download, Archive, ChevronLeft, ImagePlus, Maximize2, Minimize2 } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
 
 interface ChatMessage {
@@ -39,6 +39,14 @@ const MAX_PERSISTED_MESSAGES = 100   // localStorage cap so the key doesn't grow
 const MAX_ARCHIVES = 50              // keep the most recent N archived conversations
 const IDLE_MS = 30 * 60 * 1000       // 30 minutes of inactivity → auto-archive + clear
 
+// Panel sizing — the window is user-resizable (drag the top/left edges or the
+// top-left corner) and the chosen size persists. Anchored bottom-right, so a
+// drag toward the top-left grows it.
+const SIZE_KEY = 'coach-chat-size-v1'
+const DEFAULT_W = 420, DEFAULT_H = 600
+const MIN_W = 340, MIN_H = 380
+const VIEWPORT_MARGIN = 48   // keep this much of the viewport free (matches max-w/max-h)
+
 /** Canned reply shown to the read-only demo account instead of hitting the
  *  (403-blocked) coach API — turns a raw error into a friendly sign-up nudge. */
 const DEMO_COACH_REPLY =
@@ -66,6 +74,37 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Resizable / maximizable panel ─────────────────────────────────────────
+  const [maximized, setMaximized] = useState(false)
+  const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
+  const latestSize = useRef(size)
+  const resizeRef = useRef<{ startX: number; startY: number; startW: number; startH: number; axis: 'x' | 'y' | 'xy' } | null>(null)
+  const clampW = (w: number) => Math.max(MIN_W, Math.min(w, (typeof window !== 'undefined' ? window.innerWidth : w + VIEWPORT_MARGIN) - VIEWPORT_MARGIN))
+  const clampH = (h: number) => Math.max(MIN_H, Math.min(h, (typeof window !== 'undefined' ? window.innerHeight : h + VIEWPORT_MARGIN) - VIEWPORT_MARGIN))
+
+  const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const axis = (e.currentTarget.dataset.axis ?? 'xy') as 'x' | 'y' | 'xy'
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+    resizeRef.current = { startX: e.clientX, startY: e.clientY, startW: size.w, startH: size.h, axis }
+  }
+  const onResizeMove = (e: React.PointerEvent) => {
+    const r = resizeRef.current
+    if (!r) return
+    const next = {
+      w: r.axis === 'y' ? r.startW : clampW(r.startW + (r.startX - e.clientX)),
+      h: r.axis === 'x' ? r.startH : clampH(r.startH + (r.startY - e.clientY)),
+    }
+    latestSize.current = next
+    setSize(next)
+  }
+  const onResizeEnd = (e: React.PointerEvent) => {
+    if (!resizeRef.current) return
+    resizeRef.current = null
+    try { (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId) } catch { /* ignore */ }
+    try { localStorage.setItem(SIZE_KEY, JSON.stringify(latestSize.current)) } catch { /* ignore */ }
+  }
 
   // ── Image attachments ─────────────────────────────────────────────────────
   // Read a File, downscale to MAX_IMG_DIM longest side (bounds tokens + payload),
@@ -192,6 +231,20 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
       }
     } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Restore the user's saved panel size (clamped to the current viewport).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SIZE_KEY)
+      if (!raw) return
+      const s = JSON.parse(raw) as { w?: number; h?: number }
+      if (typeof s.w === 'number' && typeof s.h === 'number') {
+        const clamped = { w: clampW(s.w), h: clampH(s.h) }
+        latestSize.current = clamped
+        setSize(clamped)   // eslint-disable-line react-hooks/set-state-in-effect -- one-shot hydration from localStorage
+      }
+    } catch { /* ignore */ }
   }, [])
 
   // Idle watcher: every 60s, if the active chat has gone untouched past the
@@ -398,7 +451,39 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 w-[420px] max-w-[calc(100vw-3rem)] h-[600px] max-h-[calc(100vh-3rem)] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl shadow-black/60 flex flex-col">
+    <div
+      className={`fixed z-40 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl shadow-black/60 flex flex-col ${
+        maximized
+          ? 'inset-4'
+          : 'bottom-6 right-6 max-w-[calc(100vw-3rem)] max-h-[calc(100vh-3rem)]'
+      }`}
+      style={maximized ? undefined : { width: size.w, height: size.h }}
+    >
+      {/* Resize handles — top edge (height), left edge (width), top-left corner
+          (both). Hidden when maximized. Thin strips sit in the header's padding
+          so they don't intercept the header buttons. */}
+      {!maximized && (
+        <>
+          <div
+            data-axis="y" onPointerDown={onResizeStart} onPointerMove={onResizeMove} onPointerUp={onResizeEnd}
+            className="absolute top-0 left-3 right-3 h-1.5 cursor-ns-resize touch-none z-20"
+            aria-label="Resize chat height"
+          />
+          <div
+            data-axis="x" onPointerDown={onResizeStart} onPointerMove={onResizeMove} onPointerUp={onResizeEnd}
+            className="absolute left-0 top-3 bottom-3 w-1.5 cursor-ew-resize touch-none z-20"
+            aria-label="Resize chat width"
+          />
+          <div
+            data-axis="xy" onPointerDown={onResizeStart} onPointerMove={onResizeMove} onPointerUp={onResizeEnd}
+            className="absolute top-0 left-0 w-3.5 h-3.5 cursor-nwse-resize touch-none z-20 group"
+            title="Drag to resize"
+            aria-label="Resize chat"
+          >
+            <span className="absolute top-1 left-1 w-2 h-2 border-t-2 border-l-2 border-gray-600 group-hover:border-blue-400 rounded-tl-sm transition-colors" />
+          </div>
+        </>
+      )}
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-800">
         {view === 'archives' ? (
@@ -470,6 +555,15 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
               )}
             </>
           )}
+          <button
+            type="button"
+            onClick={() => setMaximized(m => !m)}
+            className="text-gray-500 hover:text-white transition-colors"
+            title={maximized ? 'Restore size' : 'Maximize'}
+            aria-label={maximized ? 'Restore chat size' : 'Maximize chat'}
+          >
+            {maximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
           <button
             type="button"
             onClick={() => setOpen(false)}
