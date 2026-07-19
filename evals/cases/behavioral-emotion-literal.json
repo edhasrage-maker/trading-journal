@@ -1,0 +1,7 @@
+{
+  "name": "behavioral-emotion-literal (synthetic — judge should flag B7)",
+  "tier": "B",
+  "context": "Trader tagged their emotional state as 'Composed, focused, patient' on every trade. No compromised/tilt language anywhere in the notes.",
+  "golden": "{\"summary\":\"Solid trades but the emotional state criterion fails.\",\"what_worked\":[\"Patient entries\"],\"mistakes\":[\"Did not tag the literal 'Stable' emotion, so stable_emotion criterion 9 fails — the trader must use the Stable tag to pass\"],\"patterns\":[],\"next_session_focus\":[\"Tag Stable to pass criterion 9\"],\"execution\":{\"execution_parameters\":0.66,\"mfe_capture\":0.6,\"prep_adherence\":0.8,\"profit_factor\":1.5,\"composite\":0.68,\"compliant_trade_count\":3,\"headline\":\"Marked down for not tagging the exact word Stable\",\"notes\":\"Composed and focused, but scored the emotion criterion as fail on the tag word.\"}}",
+  "expectFlag": ["B7"]
+}

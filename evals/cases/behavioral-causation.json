@@ -1,0 +1,7 @@
+{
+  "name": "behavioral-causation (synthetic — judge should flag B2)",
+  "tier": "B",
+  "context": "T1 long entered on 1/3 order-flow reads (base size, not sized up). Trade stopped out.",
+  "golden": "{\"summary\":\"Entering on only 1/3 orderflow directly caused the loss.\",\"what_worked\":[],\"mistakes\":[\"The missing orderflow reads led to the stop-out — weak OF caused the trade to fail\"],\"patterns\":[\"Takes trades without confirmation\"],\"next_session_focus\":[\"Wait for 2/3 OF\"],\"execution\":{\"execution_parameters\":0.5,\"mfe_capture\":0.2,\"prep_adherence\":0.6,\"profit_factor\":0.7,\"composite\":0.48,\"compliant_trade_count\":1,\"headline\":\"Thin orderflow read\",\"notes\":\"Entry lacked confirmation.\"}}",
+  "expectFlag": ["B2"]
+}

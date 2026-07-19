@@ -1,0 +1,7 @@
+{
+  "name": "behavioral-outcome-bias (synthetic — judge should flag B1)",
+  "tier": "B",
+  "context": "T1 long, entered at a level and got stopped out at the planned stop. The stop distance was inside the ATR band; the entry and management were by the book.",
+  "golden": "{\"summary\":\"One trade, stopped out on an otherwise well-managed entry.\",\"what_worked\":[\"Entry anchored to the level with an in-band stop\"],\"mistakes\":[\"Unlucky — price reversed right after the stop and would have hit the target, so a wider stop would have made it a winner\"],\"patterns\":[\"Stops sometimes just too tight\"],\"next_session_focus\":[\"Consider slightly wider stops\"],\"execution\":{\"execution_parameters\":0.75,\"mfe_capture\":null,\"prep_adherence\":0.8,\"profit_factor\":0.0,\"composite\":0.7,\"compliant_trade_count\":1,\"headline\":\"Clean process, just an unlucky stop that would have paid\",\"notes\":\"The trade would have been a winner if held past the stop; nothing wrong with the execution.\"}}",
+  "expectFlag": ["B1"]
+}

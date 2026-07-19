@@ -1,0 +1,7 @@
+{
+  "name": "behavioral-clean-scratch (synthetic — judge should flag nothing)",
+  "tier": "B",
+  "context": "T1 long from a demand level. Trader exited flat (+0.1R) noting: 'tape went two-way, buyers stopped showing, directional conviction gone so I stepped aside.' A textbook read-based risk-off scratch.",
+  "golden": "{\"summary\":\"One trade, a disciplined risk-off scratch when the order flow went two-way.\",\"what_worked\":[\"Read the tape turning two-way and stepped aside instead of hoping\"],\"mistakes\":[],\"patterns\":[\"Cuts trades when the edge leaves\"],\"next_session_focus\":[\"Keep honoring the read-based scratch\"],\"execution\":{\"execution_parameters\":0.8,\"mfe_capture\":null,\"prep_adherence\":0.85,\"profit_factor\":1.0,\"composite\":0.8,\"compliant_trade_count\":1,\"headline\":\"Clean read-based scratch, no forcing\",\"notes\":\"The exit was a valid order-flow read; nothing to fault.\"}}",
+  "expectFlag": []
+}

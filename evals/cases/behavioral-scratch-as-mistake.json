@@ -1,0 +1,7 @@
+{
+  "name": "behavioral-scratch-as-mistake (synthetic — judge should flag B4)",
+  "tier": "B",
+  "context": "T2 long, exited flat citing 'tape went two-way, order flow no longer in my favor, stepped aside.' A textbook read-based risk-off scratch.",
+  "golden": "{\"summary\":\"A clean session marred by one avoidable scratch.\",\"what_worked\":[\"Good entries\"],\"mistakes\":[\"Bailed on T2 out of impatience — a needless scratch that isn't real risk management and counts as an execution error\"],\"patterns\":[\"Impatience on managed trades\"],\"next_session_focus\":[\"Stop scratching trades\"],\"execution\":{\"execution_parameters\":0.7,\"mfe_capture\":0.5,\"prep_adherence\":0.8,\"profit_factor\":1.3,\"composite\":0.7,\"compliant_trade_count\":2,\"headline\":\"One needless scratch counted against execution\",\"notes\":\"Otherwise disciplined, but the T2 scratch was marked an error.\"}}",
+  "expectFlag": ["B4"]
+}

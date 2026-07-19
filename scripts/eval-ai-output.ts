@@ -16,18 +16,24 @@
  *
  * Exits non-zero on any mismatch so it can gate a pre-push hook / CI.
  *
- * --live is a stub here; phase 4 adds the Haiku judge for the Tier-B rules.
+ * --live (needs ANTHROPIC_API_KEY) also runs the Tier-B behavioral rules via a
+ * cheap Haiku judge over every tier-B fixture, comparing the fired rule ids to
+ * the fixture's expectFlag. Tier-B fixtures are SKIPPED (not failed) offline.
  */
 import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
+import Anthropic from '@anthropic-ai/sdk'
 import {
-  checkRawOutput, checkStructural, checkPromptDrift, PROMPT_ANCHORS, type Violation,
+  checkRawOutput, checkStructural, checkPromptDrift, PROMPT_ANCHORS,
+  BEHAVIORAL_RULES, type Violation,
 } from '../src/lib/ai-constraints.ts'
 import { buildEodPrompt, parseEodResponse, applyDeterministicOverrides } from '../src/lib/eod-prompt.ts'
 import type { EodAiAnalysis, RuleId } from '../src/lib/supabase/types.ts'
 
 const LIVE = process.argv.includes('--live')
 const CASES_DIR = join('evals', 'cases')
+// Cheap, fast judge for the behavioral rules — deliberately NOT the grader tier.
+const JUDGE_MODEL = 'claude-haiku-4-5-20251001'
 
 interface Fixture {
   name: string
@@ -38,7 +44,22 @@ interface Fixture {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   input?: { trades?: any[] }
   /** The SET of Tier-A violation ids this golden should produce ([] = clean). */
-  expectViolations: string[]
+  expectViolations?: string[]
+  /** Tier B only: human-readable trade/notes context the judge sees. */
+  context?: string
+  /** Tier B only: the SET of behavioral rule ids that SHOULD fire ([] = clean). */
+  expectFlag?: string[]
+}
+
+// Load ANTHROPIC_API_KEY from .env.local for --live (the script runs outside
+// Next, so env isn't auto-loaded). Mirrors the backfill scripts.
+if (LIVE) {
+  try {
+    for (const l of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
+      const m = l.match(/^([A-Z_]+)=(.*)$/)
+      if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
+    }
+  } catch { /* no .env.local — rely on ambient env */ }
 }
 
 /** A7 — the golden's claimed safety rails must equal what the deterministic
@@ -65,10 +86,41 @@ function uniqueIds(vs: Violation[]): string[] {
 }
 const setsEqual = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
 
+// ── Tier-B judge (--live) ────────────────────────────────────────────────────
+let anthropic: Anthropic | null = null
+function judgeClient(): Anthropic {
+  if (!anthropic) anthropic = new Anthropic()
+  return anthropic
+}
+
+/** Ask the Haiku judge whether one behavioral rule was violated by `output`
+ *  given `context`. Returns true if violated. Fails CLOSED on a judge error
+ *  (returns false — a judge outage shouldn't fabricate a violation). */
+async function judge(ruleId: string, judgePrompt: string, context: string, output: string): Promise<{ violated: boolean; evidence: string }> {
+  const msg = await judgeClient().messages.create({
+    model: JUDGE_MODEL,
+    max_tokens: 200,
+    system: 'You are a strict, literal auditor of a trading coach\'s written analysis. You check ONE rule at a time and never invent violations. Output ONLY the requested JSON.',
+    messages: [{
+      role: 'user',
+      content: `TRADE CONTEXT:\n${context}\n\nCOACH ANALYSIS (the output under audit):\n${output}\n\nRULE TO CHECK (${ruleId}):\n${judgePrompt}`,
+    }],
+  })
+  const text = msg.content.map(b => (b.type === 'text' ? b.text : '')).join('').trim()
+  try {
+    const m = text.match(/\{[\s\S]*\}/)
+    const parsed = m ? JSON.parse(m[0]) as { violated?: boolean; evidence?: string } : {}
+    return { violated: parsed.violated === true, evidence: parsed.evidence ?? '' }
+  } catch {
+    return { violated: false, evidence: '' }
+  }
+}
+
 let failures = 0
 const fail = (msg: string) => { failures++; console.error(`  ✗ ${msg}`) }
 const pass = (msg: string) => console.log(`  ✓ ${msg}`)
 
+async function main() {
 // ── 1. Prompt-drift guard ────────────────────────────────────────────────────
 console.log('prompt-drift guard')
 const ownerPrompt = buildEodPrompt({ trades: [], scoringProfile: {}, isLocalOwner: true })
@@ -83,9 +135,12 @@ let files: string[] = []
 try { files = readdirSync(CASES_DIR).filter(f => f.endsWith('.json')).sort() }
 catch { console.error(`  (no fixtures dir at ${CASES_DIR})`) }
 
-console.log(`\nfixtures (${files.length})`)
-for (const f of files) {
-  const fx = JSON.parse(readFileSync(join(CASES_DIR, f), 'utf8')) as Fixture
+const fixtures = files.map(f => ({ f, fx: JSON.parse(readFileSync(join(CASES_DIR, f), 'utf8')) as Fixture }))
+
+// Tier A — structural, offline.
+const tierA = fixtures.filter(({ fx }) => fx.tier === 'A')
+console.log(`\nTier A — structural (${tierA.length})`)
+for (const { fx } of tierA) {
   const raw = fx.golden
   const violations = [
     ...checkRawOutput(raw),
@@ -93,7 +148,7 @@ for (const f of files) {
     ...checkOverrideAgreement(parseEodResponse(raw), fx.input?.trades ?? []),
   ]
   const got = uniqueIds(violations)
-  const want = [...fx.expectViolations].sort()
+  const want = [...(fx.expectViolations ?? [])].sort()
   if (setsEqual(got, want)) {
     pass(`${fx.name} — violations [${got.join(', ') || 'none'}]`)
   } else {
@@ -102,9 +157,37 @@ for (const f of files) {
   }
 }
 
-if (LIVE) {
-  console.log('\n--live: Tier-B model judge not implemented until phase 4 (skipped).')
+// Tier B — behavioral, needs the --live judge.
+const tierB = fixtures.filter(({ fx }) => fx.tier === 'B')
+console.log(`\nTier B — behavioral (${tierB.length})`)
+if (!LIVE) {
+  console.log(`  (skipped ${tierB.length} — run with --live + ANTHROPIC_API_KEY to judge)`)
+} else if (!process.env.ANTHROPIC_API_KEY) {
+  fail('--live requested but ANTHROPIC_API_KEY is not set')
+} else {
+  for (const { fx } of tierB) {
+    const context = fx.context ?? '(no context provided)'
+    const want = [...(fx.expectFlag ?? [])].sort()
+    const fired: string[] = []
+    const evidence: Record<string, string> = {}
+    // Run every behavioral rule so we test precision (clean → none fire) AND
+    // recall (bad → the target fires). Sequential to stay gentle on rate limits.
+    for (const rule of BEHAVIORAL_RULES) {
+      const r = await judge(rule.id, rule.judgePrompt, context, fx.golden)
+      if (r.violated) { fired.push(rule.id); evidence[rule.id] = r.evidence }
+    }
+    fired.sort()
+    if (setsEqual(fired, want)) {
+      pass(`${fx.name} — flagged [${fired.join(', ') || 'none'}]`)
+    } else {
+      fail(`${fx.name} — expected [${want.join(', ') || 'none'}], judge flagged [${fired.join(', ') || 'none'}]`)
+      for (const id of fired) console.error(`      ${id}: ${evidence[id]}`)
+    }
+  }
 }
 
 console.log(failures === 0 ? '\nEval passed.' : `\n${failures} eval failure(s).`)
 process.exit(failures === 0 ? 0 : 1)
+}
+
+main().catch(e => { console.error(e); process.exit(1) })

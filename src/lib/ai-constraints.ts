@@ -144,7 +144,7 @@ const JUDGE_TAIL =
 
 export const BEHAVIORAL_RULES: BehavioralRule[] = [
   { id: 'B1', description: 'No outcome bias (no post-exit counterfactuals)',
-    judgePrompt: `Does the analysis judge a trade by what price did AFTER the trader exited — e.g. "would have hit target", "scratched a winner", "subsequently ran in favor"? That is forbidden outcome bias. ${JUDGE_TAIL}` },
+    judgePrompt: `Does the analysis judge a trade by what price did AFTER the trader was already out? Flag ANY post-exit counterfactual — phrases like "would have hit target", "would have been a winner", "scratched a winner", "subsequently ran in favor", "ran X ATR after the exit/stop", "price reversed right after the stop". Using post-exit price to grade the decision is forbidden outcome bias, even if the sentence also makes another point. ${JUDGE_TAIL}` },
   { id: 'B2', description: 'Causation vs correlation (reads inform decisions, not market outcomes)',
     judgePrompt: `Does the analysis claim a trader's read/orderflow CAUSED a market outcome — e.g. "the missing OF caused the loss", "1/3 OF led to the stop"? Reads inform decisions; they don't drive the market. ${JUDGE_TAIL}` },
   { id: 'B3', description: 'No caveat-attached rail pass',
