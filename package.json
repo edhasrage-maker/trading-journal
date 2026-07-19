@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx scripts/test-derived-metrics.ts"
+    "test": "tsx scripts/test-derived-metrics.ts && tsx scripts/test-ai-constraints.ts",
+    "eval": "tsx scripts/eval-ai-output.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",

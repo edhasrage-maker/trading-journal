@@ -1,0 +1,6 @@
+{
+  "name": "bad-calc-trace-notes (synthetic — should flag A6 + A8)",
+  "tier": "A",
+  "golden": "{\"headline\":\"Exits dragged the score on an otherwise clean read\",\"summary\":\"Fine.\",\"what_worked\":[\"a\"],\"mistakes\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\"],\"patterns\":[],\"next_session_focus\":[\"a\"],\"execution\":{\"execution_parameters\":0.6,\"mfe_capture\":0.4,\"prep_adherence\":0.7,\"profit_factor\":1.2,\"composite\":0.55,\"compliant_trade_count\":3,\"headline\":\"Capture lagged entries\",\"notes\":\"T1 MAE = 19.25 vs the 19 band, and the composite 0.35*0.41+0.20 shows the drop.\"}}",
+  "expectViolations": ["A6", "A8"]
+}

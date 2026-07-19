@@ -1,0 +1,6 @@
+{
+  "name": "generic-empty-profile-legacy-shape (synthetic)",
+  "tier": "A",
+  "golden": "{\"summary\":\"Two trades, both to plan; nothing to flag on a light session.\",\"what_worked\":[\"Waited for the level before entering\",\"Kept size flat\"],\"mistakes\":[],\"patterns\":[\"Only traded the clean setups\"],\"next_session_focus\":[\"Keep passing on mid-range pokes\"],\"score\":8}",
+  "expectViolations": []
+}

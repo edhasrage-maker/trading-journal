@@ -1,0 +1,6 @@
+{
+  "name": "clean-breach-day (synthetic)",
+  "tier": "A",
+  "golden": "{\"headline\":\"Loss limit blown; process broke before size did\",\"summary\":\"A cooldown skip after the first loss cascaded the session.\",\"what_worked\":[\"First entry was clean\"],\"mistakes\":[\"Re-entered inside the cooldown window\"],\"patterns\":[\"Same-zone re-entry after a loss\"],\"next_session_focus\":[\"Honor the 90s cooldown\"],\"process\":{\"verdict\":\"Breach\",\"per_rule\":{\"P1\":{\"status\":\"fail\",\"breach_count\":1,\"reason\":\"Daily loss limit exceeded\"},\"P2\":{\"status\":\"pass\",\"breach_count\":0},\"P3\":{\"status\":\"pass\",\"breach_count\":0},\"P4\":{\"status\":\"fail\",\"breach_count\":1,\"reason\":\"Re-entry 40s after a loss\"},\"P5\":{\"status\":\"pass\",\"breach_count\":0}},\"breach_count_vector\":{\"P1\":1,\"P2\":0,\"P3\":0,\"P4\":1,\"P5\":0},\"headline\":\"Two rails breached: loss limit and cooldown\",\"notes\":\"The cooldown skip is the root cause behind the loss-limit breach.\"},\"execution\":{\"execution_parameters\":0.44,\"mfe_capture\":0.3,\"prep_adherence\":0.5,\"profit_factor\":0.6,\"composite\":0.41,\"compliant_trade_count\":1,\"headline\":\"Only the first trade traded clean\",\"notes\":\"Execution quality collapsed once the process broke; the clean trade was the exception.\"}}",
+  "expectViolations": []
+}

@@ -1,0 +1,6 @@
+{
+  "name": "bad-fenced-pnl-headline (synthetic — should flag A1 + A5)",
+  "tier": "A",
+  "golden": "```json\n{\"headline\":\"Compliance intact, +$512 booked on a clean read\",\"summary\":\"Good day.\",\"what_worked\":[\"held\"],\"mistakes\":[],\"patterns\":[],\"next_session_focus\":[\"repeat\"],\"process\":{\"verdict\":\"Compliant\",\"per_rule\":{\"P1\":{\"status\":\"pass\",\"breach_count\":0},\"P2\":{\"status\":\"pass\",\"breach_count\":0},\"P3\":{\"status\":\"pass\",\"breach_count\":0},\"P4\":{\"status\":\"pass\",\"breach_count\":0},\"P5\":{\"status\":\"pass\",\"breach_count\":0}},\"breach_count_vector\":{\"P1\":0,\"P2\":0,\"P3\":0,\"P4\":0,\"P5\":0}}}\n```",
+  "expectViolations": ["A1", "A5"]
+}
