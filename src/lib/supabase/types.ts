@@ -186,6 +186,16 @@ export type BarGranularity = '1m' | '5m' | '15m' | '1h' | '1d'
 export type TagCategory = 'setups' | 'confluences' | 'order_flow' | 'entry_model' | 'trade_management' | 'day_type' | 'mistakes' | 'emotions'
 export type StatCategory = 'rvol' | 'ib_sizing' | 'adr' | 'atr'
 
+/** One row of the "Where price can go" roadmap. `role` orders the card
+ *  (favored first); `direction` colors the arrow; trigger/target are free text
+ *  so the admin can write "28910" or "IB low". */
+export interface PriceScenario {
+  role: 'favored' | 'alt'
+  direction: 'up' | 'down'
+  trigger: string
+  target: string
+}
+
 export interface TradePlan {
   id: string
   direction: 'long' | 'short'
@@ -218,6 +228,15 @@ export interface PrepNotes {
   ema_slope?: 'flat' | 'sloped'
   mood?: string
   market_clarity?: string
+  /** Viewer-facing verdict for the Discord share card — a plain-language day
+   *  "stance" (traffic-light) plus a one-line read. Entered by the admin so the
+   *  card stays meaningful even when the bar feed hasn't auto-filled the stats. */
+  day_stance?: 'go' | 'caution' | 'avoid'
+  day_read?: string
+  /** "Where price can go" roadmap: a favored path + optional alternate, each a
+   *  trigger→target in the trader's own words. Rendered as if/then rows on the
+   *  Discord card. */
+  price_scenarios?: PriceScenario[]
   /** Which trading session this prep targets — drives session-aware levels/IB
    *  on the Prep page. RTH (default) is the day session; Asia/London are the
    *  GBX/overnight sessions. Persisted here so no schema change is needed. */
