@@ -1,6 +1,7 @@
 'use client'
 
 import { Brain, AlertTriangle, CheckCircle, Loader2, LineChart } from 'lucide-react'
+import AiDisclaimer from '@/components/AiDisclaimer'
 
 interface Analysis {
   summary: string
@@ -107,6 +108,8 @@ export default function AiAnalysisCard({ analysis, loading, onAnalyze, disabled 
               </ul>
             </div>
           )}
+
+          <AiDisclaimer className="pt-1" />
         </div>
       )}
     </div>

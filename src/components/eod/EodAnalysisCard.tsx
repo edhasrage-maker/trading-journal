@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Brain, AlertTriangle, CheckCircle, Loader2, TrendingUp, Target, ShieldCheck, ShieldX, Activity, RefreshCw } from 'lucide-react'
 import type { EodAiAnalysis, ProcessVerdict, ExecutionScore, RuleId, RuleStatus } from '@/lib/supabase/types'
 import { useUiMode } from '@/lib/ui-mode'
+import AiDisclaimer from '@/components/AiDisclaimer'
 
 interface Props {
   analysis: EodAiAnalysis | null
@@ -204,6 +205,8 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
               </ul>
             </div>
           )}
+
+          <AiDisclaimer className="pt-1" />
         </div>
       )}
     </div>

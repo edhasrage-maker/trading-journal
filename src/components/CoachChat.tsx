@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { X, Send, Loader2, Brain, Trash2, Download, Archive, ChevronLeft, ImagePlus, Maximize2, Minimize2 } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
+import AiDisclaimer from '@/components/AiDisclaimer'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -740,6 +741,7 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
           </button>
         </div>
         <p className="text-[10px] text-gray-600 mt-1.5">Enter to send · Shift+Enter for new line · attach or paste a chart image · auto-archives after 30m idle</p>
+        <AiDisclaimer className="mt-1" />
       </div>
       )}
     </div>

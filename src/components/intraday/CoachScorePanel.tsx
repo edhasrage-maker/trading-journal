@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, GraduationCap, Loader2, Sparkles } from 'lucide-react'
 import { computeCoachScore, applyAiResolutions, type GradableTrade, type CriterionStatus } from '@/lib/coach-score'
 import type { ScoringProfile } from '@/lib/scoring-profile'
+import AiDisclaimer from '@/components/AiDisclaimer'
 
 const SYM: Record<CriterionStatus, string> = { pass: '✓', fail: '✗', na: '–', unknown: '?' }
 const STATUS_COLOR: Record<CriterionStatus, string> = {
@@ -164,6 +165,7 @@ export default function CoachScorePanel({
           {!cs.axes.hasPlaybook && (
             <p className="text-[10px] text-gray-600 pl-1">No playbook set — setup-quality axis off; weights are 75% execution / 25% market read.</p>
           )}
+          <AiDisclaimer className="pt-1" />
         </div>
       )}
     </div>
