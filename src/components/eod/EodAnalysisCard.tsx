@@ -213,6 +213,29 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
   )
 }
 
+/** Consistency guard: the per-rule chips + verdict are structured/deterministic;
+ *  the `headline` is AI free text. When the headline contradicts the chips — e.g.
+ *  "All five safety rails held" while P4 shows fail (a stale-scorer artifact) — we
+ *  replace it with a computed factual line so the card can never render a self-
+ *  contradiction. Only fires on a genuine conflict; otherwise the headline is kept.
+ *  (The real fix for a wrong chip is re-scoring; this just prevents a misleading UI.) */
+export function reconcileProcessHeadline(
+  headline: string | null,
+  perRule: ProcessVerdict['per_rule'] | undefined,
+): string | null {
+  if (!perRule) return headline
+  const failed = RULE_ORDER.filter(id => perRule[id]?.status === 'fail')
+  const computed = failed.length === 0
+    ? `All ${RULE_ORDER.length} safety rails held.`
+    : `${RULE_ORDER.length - failed.length} of ${RULE_ORDER.length} rails held — ${failed.join(', ')} flagged.`
+  if (!headline) return failed.length > 0 ? computed : null
+  const saysAllHeld = /\ball\b[^.]*\b(held|clean|compliant|clear|intact)\b/i.test(headline) || /\bno (breach|violation)/i.test(headline)
+  const saysBreach = /\b(breach|breached|violat|broke|blew|failed)\b/i.test(headline)
+  if (failed.length > 0 && saysAllHeld) return computed  // claims all-clean, but a rule failed
+  if (failed.length === 0 && saysBreach) return computed  // claims a breach, but none exists
+  return headline
+}
+
 function ProcessCard({ process: p }: { process: ProcessVerdict }) {
   const [notesOpen, setNotesOpen] = useState(false)
   const isCompliant = p.verdict === 'Compliant'
@@ -228,7 +251,7 @@ function ProcessCard({ process: p }: { process: ProcessVerdict }) {
   const fauxHeadline = !p.headline && p.notes
     ? p.notes.split(/(?<=[.!?])\s+/)[0]
     : null
-  const visible = p.headline ?? fauxHeadline
+  const visible = reconcileProcessHeadline(p.headline ?? fauxHeadline, p.per_rule)
 
   return (
     <div className={`${bgColor} ${borderColor} border rounded-lg p-3 space-y-2`}>

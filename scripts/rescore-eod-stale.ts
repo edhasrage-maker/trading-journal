@@ -17,13 +17,25 @@
  *   node --experimental-strip-types scripts/rescore-eod-stale.ts --dry-run
  *   node --experimental-strip-types scripts/rescore-eod-stale.ts --limit 5
  *   node --experimental-strip-types scripts/rescore-eod-stale.ts --date 2026-06-08
+ *   node --experimental-strip-types scripts/rescore-eod-stale.ts --rules-only        # cheap, no AI
+ *   node --experimental-strip-types scripts/rescore-eod-stale.ts --rules-only --date 2026-07-20
  *   node --experimental-strip-types scripts/rescore-eod-stale.ts          # all stale, no cap
  *
  * Flags:
  *   --dry-run            : list which days WOULD be rescored, don't call AI or write
+ *   --rules-only         : re-derive the deterministic P1-P5 verdicts on the STORED
+ *                          analysis (no AI call, no cost). Sweeps every day with a
+ *                          process block; only writes days whose verdict changed.
+ *                          Fixes stale rule verdicts (e.g. a bad P4 cooldown breach).
  *   --limit N            : process at most N days (useful for testing)
  *   --date YYYY-MM-DD    : rescore one specific day (overrides staleness check)
- *   --pause-ms N         : sleep N ms between Anthropic calls (default 1500)
+ *   --pause-ms N         : sleep N ms between Anthropic calls (default 1500; ignored with --rules-only)
+ *   --env-file=PATH      : load env from PATH instead of .env.local (e.g. a local
+ *                          `supabase start` stack). Shell-set vars always win, so you
+ *                          can also inline them:
+ *                            $env:NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:54321"
+ *                            $env:SUPABASE_SERVICE_ROLE_KEY="<local service_role from `supabase status`>"
+ *                            node --experimental-strip-types scripts/rescore-eod-stale.ts --rules-only --date=2026-07-20
  */
 
 import { readFileSync } from 'fs'
@@ -36,9 +48,15 @@ import type { Trade, PrepNotes, AiAnalysis, MarketContext, EodAiAnalysis, Tradin
 
 // ─── env + clients ───────────────────────────────────────────────────────────
 
-for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
+// Env file defaults to .env.local; override with --env-file=<path> to target a
+// different DB (e.g. a local `supabase start` stack: --env-file=.env.local.supabase).
+// NO-CLOBBER: a var already set in the shell wins over the file, so
+// `$env:NEXT_PUBLIC_SUPABASE_URL=...; $env:SUPABASE_SERVICE_ROLE_KEY=...; node …`
+// also works without editing any file.
+const envFile = process.argv.find(a => a.startsWith('--env-file='))?.split('=')[1] ?? '.env.local'
+for (const line of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
   const m = line.match(/^([A-Z_]+)=(.*)$/)
-  if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
+  if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
 }
 
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -73,6 +91,12 @@ const toArg = argv.find(a => a.startsWith('--to='))
 const toDate = toArg ? toArg.split('=')[1] : null
 const pauseArg = argv.find(a => a.startsWith('--pause-ms='))
 const pauseMs = pauseArg ? parseInt(pauseArg.split('=')[1], 10) : 1500
+// Rules-only: re-apply the deterministic P1-P5 overrides + verdict re-derive to
+// the ALREADY-STORED analysis, with NO fresh AI call. P-rules are pure math, so
+// this repairs stale rule verdicts (e.g. a P4 cooldown breach computed under an
+// older scorer) for $0 and without touching the AI narrative. Processes every
+// day with trades + a stored process block (respecting --date/--from/--to/--limit).
+const rulesOnly = argv.includes('--rules-only')
 
 // ─── staleness check ─────────────────────────────────────────────────────────
 
@@ -150,7 +174,15 @@ async function findStaleDays(): Promise<StaleDay[]> {
     if (targetDate && d.date !== targetDate) continue
     if (useRange && (d.date < fromDate! || d.date > toDate!)) continue
     const check = isStale(d.eod_ai_analysis_json as EodAiAnalysis | null)
-    // --date or --from/--to force rescore even when not stale
+    // Rules-only sweeps EVERY day with a stored process block (verdict drift isn't
+    // structural staleness, so isStale() wouldn't flag it). --date/--from/--to
+    // also force a rescore even when not structurally stale.
+    if (rulesOnly) {
+      const hasProcess = !!(d.eod_ai_analysis_json as EodAiAnalysis | null)?.process
+      if (!hasProcess) continue
+      stale.push({ id: d.id, date: d.date, reason: 'rules-only re-derive' })
+      continue
+    }
     const forced = !!targetDate || useRange
     if (!check.stale && !forced) continue
     const reason = forced && !check.stale
@@ -199,6 +231,43 @@ async function loadDayPayload(dayId: string): Promise<{
     marketContext: (ctx ?? undefined) as Partial<MarketContext> | undefined,
     eodNotes: day.eod_notes ?? undefined,
   }
+}
+
+// Rules-only: re-apply deterministic overrides to the STORED analysis, no AI.
+// Returns { ok, changed, verdict, note } — `changed:false` means the stored
+// verdict already matched the deterministic recompute (no write performed).
+async function rescoreOneRulesOnly(d: StaleDay): Promise<{ ok: boolean; changed: boolean; verdict?: string; note?: string }> {
+  const { data: day, error: dayErr } = await sb
+    .from('trading_days')
+    .select('eod_ai_analysis_json')
+    .eq('id', d.id)
+    .single()
+  if (dayErr || !day) { console.error(`  day fetch failed: ${dayErr?.message}`); return { ok: false, changed: false } }
+
+  const stored = day.eod_ai_analysis_json as EodAiAnalysis | null
+  if (!stored?.process) return { ok: true, changed: false, note: 'no process block' }
+
+  const { data: trades } = await sb
+    .from('trades')
+    .select('*')
+    .eq('trading_day_id', d.id)
+    .order('entry_time', { ascending: true })
+  const tradeRows = (trades ?? []) as Trade[]
+  if (tradeRows.length === 0) return { ok: true, changed: false, note: 'no trades' }
+
+  const before = JSON.stringify(stored.process)
+  // Same deterministic overrides the live route + full rescore apply. Default
+  // OWNER_RAILS (matching rescoreOne's call) — correct for the founder's own DB.
+  applyDeterministicOverrides(stored, tradeRows)
+  const after = JSON.stringify(stored.process)
+  if (before === after) return { ok: true, changed: false, verdict: stored.process?.verdict ?? '—' }
+
+  const { error: upErr } = await sb
+    .from('trading_days')
+    .update({ eod_ai_analysis_json: stored })
+    .eq('id', d.id)
+  if (upErr) { console.error(`  write failed: ${upErr.message}`); return { ok: false, changed: false } }
+  return { ok: true, changed: true, verdict: stored.process?.verdict ?? '—' }
 }
 
 async function rescoreOne(d: StaleDay): Promise<{ ok: boolean; verdict?: string; compositeOf?: string }> {
@@ -268,14 +337,25 @@ async function main() {
     return
   }
 
-  console.log('')
+  console.log(rulesOnly ? '\n[rules-only] re-deriving deterministic verdicts, no AI calls.' : '')
   let ok = 0
   let failed = 0
+  let changed = 0
   for (let i = 0; i < planned.length; i++) {
     const d = planned[i]
-    process.stdout.write(`[${i + 1}/${planned.length}] rescoring ${d.date}… `)
+    process.stdout.write(`[${i + 1}/${planned.length}] ${rulesOnly ? 're-deriving' : 'rescoring'} ${d.date}… `)
     const start = Date.now()
     try {
+      if (rulesOnly) {
+        const r = await rescoreOneRulesOnly(d)
+        const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+        if (r.ok) {
+          console.log(r.changed ? `✎ ${r.verdict} (updated) · ${elapsed}s` : `· ${r.verdict ?? r.note ?? 'unchanged'} · ${elapsed}s`)
+          ok++
+          if (r.changed) changed++
+        } else { console.log(`✗ (see above) · ${elapsed}s`); failed++ }
+        continue // no AI pause needed
+      }
       const r = await rescoreOne(d)
       const elapsed = ((Date.now() - start) / 1000).toFixed(1)
       if (r.ok) {
@@ -294,7 +374,7 @@ async function main() {
     // generous but we're not in a hurry — be polite.
     if (i < planned.length - 1) await new Promise(r => setTimeout(r, pauseMs))
   }
-  console.log(`\nDone. ${ok} succeeded, ${failed} failed.`)
+  console.log(`\nDone. ${ok} succeeded, ${failed} failed${rulesOnly ? `, ${changed} updated` : ''}.`)
 }
 
 main().catch(e => { console.error(e); process.exit(1) })
