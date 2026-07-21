@@ -132,7 +132,7 @@ export default function DiscordDashboard({ date, marketContext: ctx, prepNotes, 
                 return (
                   <div key={i} style={{ background: '#1f2937', borderLeft: `3px solid ${accent}`, borderRadius: '0 8px 8px 0', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span style={{ color: tag, fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>
-                      {up ? '▲' : '▼'} {s.role === 'favored' ? 'Favored' : 'Alt'}
+                      {up ? '▲' : '▼'} {s.role === 'favored' ? 'Plan A' : 'Plan B'}
                     </span>
                     <span style={{ color: '#e5e7eb', fontSize: '12px' }}>{path}</span>
                   </div>

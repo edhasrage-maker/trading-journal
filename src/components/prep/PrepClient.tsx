@@ -612,6 +612,16 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         return
       }
       setAiAnalysis(analysis)
+      // Copy the AI's viewer read into the editable Discord-card fields. Overwrites
+      // on each analyze (that's the regenerate action); between analyzes, any manual
+      // override the admin types sticks.
+      if (analysis.day_stance || analysis.day_read) {
+        setPrepNotes(prev => ({
+          ...prev,
+          ...(analysis.day_stance ? { day_stance: analysis.day_stance } : {}),
+          ...(analysis.day_read ? { day_read: analysis.day_read } : {}),
+        }))
+      }
       showToast('Prep analysis ready', 'success')
     } catch (e) {
       showToast(`Analyze failed: ${e instanceof Error ? e.message : 'network or unknown error'}`, 'error')

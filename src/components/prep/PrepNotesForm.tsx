@@ -258,10 +258,11 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
           meaningful even when the bar feed hasn't auto-filled the stats. */}
       {showAdvanced && (
       <div>
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Discord card — viewer read</h3>
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Discord card — viewer read</h3>
+        <p className="text-xs text-gray-600 mb-3">Set automatically when you Analyze — change anything you don’t agree with.</p>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Day stance (verdict banner)</label>
+            <label className="block text-xs text-gray-400 mb-1">Day stance (AI-set — tap to override)</label>
             <div className="flex gap-2">
               {dayStanceOptions.map(o => (
                 <button key={o.value} type="button"
@@ -274,7 +275,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
             </div>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">One-line read (plain language for viewers)</label>
+            <label className="block text-xs text-gray-400 mb-1">One-line read (AI-set — edit to override)</label>
             <AutoGrowTextarea rows={1} spellCheck autoCorrect="on"
               placeholder="e.g. Choppy, low-energy open — let it pick a side first."
               value={value.day_read ?? ''} onChange={e => set('day_read', e.target.value)}
@@ -291,7 +292,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
             return (
               <div key={role} className="flex items-center gap-2">
                 <span className={`w-16 shrink-0 text-xs font-semibold uppercase ${role === 'favored' ? 'text-blue-400' : 'text-gray-500'}`}>
-                  {role === 'favored' ? 'Favored' : 'Alt'}
+                  {role === 'favored' ? 'Plan A' : 'Plan B'}
                 </span>
                 <button type="button"
                   onClick={() => setScenario(role, { direction: dir === 'up' ? 'down' : 'up' })}

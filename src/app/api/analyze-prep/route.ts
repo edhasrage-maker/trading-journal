@@ -282,10 +282,18 @@ ${hasImage ? 'Do NOT include chart_thesis or chart_structure_notes — those are
   "flags": ["<specific concern 1>", "<up to 5 total>"],
   "strengths": ["<what was done well>", "<up to 3 total>"],
   "score": <integer 1-10>,
-  "plan_assessments": [{"plan_id": "<exact id>", "ai_quality": <1-5>, "note": "<1-2 sentences, be direct if you disagree with trader rating>"}]
+  "plan_assessments": [{"plan_id": "<exact id>", "ai_quality": <1-5>, "note": "<1-2 sentences, be direct if you disagree with trader rating>"}],
+  "day_stance": "<go|caution|avoid>",
+  "day_read": "<ONE plain-language sentence, ~15-20 words>"
 }
 
 For plan_assessments: rate on structural clarity, invalidation precision, target reasonableness, risk awareness. Never penalize missing entry price.
+
+══ VIEWER READ (day_stance + day_read) — for a public Discord card ══
+
+These describe the DAY'S TRADEABILITY for a general audience — NOT the prep quality (that's "score"). Base them on the market conditions and your independent chart read: volatility (RVOL, IB size vs avg, ATR/ADR), whether structure is trending vs rotating vs choppy, and how clean the opportunity looks. A great prep on a dead choppy day is still "avoid"; a thin prep on a clean trend day is still "go".
+- day_stance: "go" = clean, tradeable, a clear opportunity is setting up. "caution" = mixed/selective/rotational — be picky. "avoid" = choppy, low-energy, or no clear edge — sit on hands.
+- day_read: ONE sentence, ~15-20 words, PLAIN LANGUAGE a non-trader understands. No jargon, no abbreviations (no RVOL/IB/ADR/VWAP), no price levels. Say what the market is doing and the stance. Example: "Quiet, choppy open with small ranges — no clear trend yet, so wait for price to pick a side."
 
 ══ SCORING RUBRIC FOR "score" ══
 
