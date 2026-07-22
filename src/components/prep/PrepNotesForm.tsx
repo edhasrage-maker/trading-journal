@@ -253,70 +253,6 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
         </div>
       </div>
 
-      {/* Discord card — Viewer read + Where price can go. Admin/owner only (the
-          card these feed is itself admin-gated). Manual so the shared card stays
-          meaningful even when the bar feed hasn't auto-filled the stats. */}
-      {showAdvanced && (
-      <div>
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Discord card — viewer read</h3>
-        <p className="text-xs text-gray-600 mb-3">Set automatically when you Analyze — change anything you don’t agree with.</p>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Day stance (AI-set — tap to override)</label>
-            <div className="flex gap-2">
-              {dayStanceOptions.map(o => (
-                <button key={o.value} type="button"
-                  onClick={() => set('day_stance', value.day_stance === o.value ? undefined : o.value)}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors border ${
-                    value.day_stance === o.value ? o.on : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
-                  }`}
-                >{o.label}</button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">One-line read (AI-set — edit to override)</label>
-            <AutoGrowTextarea rows={1} spellCheck autoCorrect="on"
-              placeholder="e.g. Choppy, low-energy open — let it pick a side first."
-              value={value.day_read ?? ''} onChange={e => set('day_read', e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
-            />
-          </div>
-        </div>
-
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mt-5 mb-3">Where price can go</h3>
-        <div className="space-y-2">
-          {(['favored', 'alt'] as const).map(role => {
-            const sc = getScenario(role)
-            const dir = sc?.direction ?? (role === 'favored' ? 'down' : 'up')
-            return (
-              <div key={role} className="flex items-center gap-2">
-                <span className={`w-16 shrink-0 text-xs font-semibold uppercase ${role === 'favored' ? 'text-blue-400' : 'text-gray-500'}`}>
-                  {role === 'favored' ? 'Plan A' : 'Plan B'}
-                </span>
-                <button type="button"
-                  onClick={() => setScenario(role, { direction: dir === 'up' ? 'down' : 'up' })}
-                  className={`w-9 shrink-0 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
-                    dir === 'up' ? 'bg-green-700 border-green-600 text-white' : 'bg-red-800 border-red-700 text-white'
-                  }`}
-                  title="Toggle direction"
-                >{dir === 'up' ? '▲' : '▼'}</button>
-                <input type="text" placeholder="trigger (e.g. 28910)"
-                  value={sc?.trigger ?? ''} onChange={e => setScenario(role, { trigger: e.target.value })}
-                  className="flex-1 min-w-0 bg-gray-800 border border-gray-700 text-white rounded-lg px-2.5 py-1.5 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                />
-                <span className="shrink-0 text-gray-500 text-sm">→</span>
-                <input type="text" placeholder="target (e.g. 28710)"
-                  value={sc?.target ?? ''} onChange={e => setScenario(role, { target: e.target.value })}
-                  className="flex-1 min-w-0 bg-gray-800 border border-gray-700 text-white rounded-lg px-2.5 py-1.5 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                />
-              </div>
-            )
-          })}
-        </div>
-      </div>
-      )}
-
       {/* HTF MGI Position — owner's methodology, Detailed Tape only (showAdvanced
           = isAdmin && mode==='pro'). Hidden in the simplified public/beginner prep. */}
       {showAdvanced && (
@@ -465,6 +401,71 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
           )}
         </div>
       </div>
+
+      {/* Discord card — Viewer read + Where price can go. Admin/owner only (the
+          card these feed is itself admin-gated). Placed LAST so it sits at the
+          bottom of the prep, out of the core prep flow. day_stance + day_read are
+          auto-populated by Analyze (analyze-prep); everything here is editable. */}
+      {showAdvanced && (
+      <div>
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Discord card — viewer read</h3>
+        <p className="text-xs text-gray-600 mb-3">Set automatically when you Analyze — change anything you don’t agree with.</p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Day stance (AI-set — tap to override)</label>
+            <div className="flex gap-2">
+              {dayStanceOptions.map(o => (
+                <button key={o.value} type="button"
+                  onClick={() => set('day_stance', value.day_stance === o.value ? undefined : o.value)}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors border ${
+                    value.day_stance === o.value ? o.on : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                  }`}
+                >{o.label}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">One-line read (AI-set — edit to override)</label>
+            <AutoGrowTextarea rows={1} spellCheck autoCorrect="on"
+              placeholder="e.g. Choppy, low-energy open — let it pick a side first."
+              value={value.day_read ?? ''} onChange={e => set('day_read', e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
+            />
+          </div>
+        </div>
+
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mt-5 mb-3">Where price can go</h3>
+        <div className="space-y-2">
+          {(['favored', 'alt'] as const).map(role => {
+            const sc = getScenario(role)
+            const dir = sc?.direction ?? (role === 'favored' ? 'down' : 'up')
+            return (
+              <div key={role} className="flex items-center gap-2">
+                <span className={`w-16 shrink-0 text-xs font-semibold uppercase ${role === 'favored' ? 'text-blue-400' : 'text-gray-500'}`}>
+                  {role === 'favored' ? 'Plan A' : 'Plan B'}
+                </span>
+                <button type="button"
+                  onClick={() => setScenario(role, { direction: dir === 'up' ? 'down' : 'up' })}
+                  className={`w-9 shrink-0 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
+                    dir === 'up' ? 'bg-green-700 border-green-600 text-white' : 'bg-red-800 border-red-700 text-white'
+                  }`}
+                  title="Toggle direction"
+                >{dir === 'up' ? '▲' : '▼'}</button>
+                <input type="text" placeholder="trigger (e.g. 28910)"
+                  value={sc?.trigger ?? ''} onChange={e => setScenario(role, { trigger: e.target.value })}
+                  className="flex-1 min-w-0 bg-gray-800 border border-gray-700 text-white rounded-lg px-2.5 py-1.5 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+                <span className="shrink-0 text-gray-500 text-sm">→</span>
+                <input type="text" placeholder="target (e.g. 28710)"
+                  value={sc?.target ?? ''} onChange={e => setScenario(role, { target: e.target.value })}
+                  className="flex-1 min-w-0 bg-gray-800 border border-gray-700 text-white rounded-lg px-2.5 py-1.5 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      )}
 
     </div>
   )

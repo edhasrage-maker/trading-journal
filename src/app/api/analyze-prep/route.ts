@@ -278,14 +278,16 @@ ${planIdsBlock}
 
 Respond with ONLY valid JSON in this exact structure (no markdown, no code fences).
 ${hasImage ? 'Do NOT include chart_thesis or chart_structure_notes — those are supplied by the separate blind-read pass above and must not be regenerated here.\n' : ''}{
+  "day_stance": "<go|caution|avoid>",
+  "day_read": "<ONE plain-language sentence, ~15-20 words>",
   "summary": "<2-3 sentences on overall prep quality${hasImage ? '; state whether your independent chart read above ALIGNS or CONFLICTS with the trader bias' : ''}>",
   "flags": ["<specific concern 1>", "<up to 5 total>"],
   "strengths": ["<what was done well>", "<up to 3 total>"],
   "score": <integer 1-10>,
-  "plan_assessments": [{"plan_id": "<exact id>", "ai_quality": <1-5>, "note": "<1-2 sentences, be direct if you disagree with trader rating>"}],
-  "day_stance": "<go|caution|avoid>",
-  "day_read": "<ONE plain-language sentence, ~15-20 words>"
+  "plan_assessments": [{"plan_id": "<exact id>", "ai_quality": <1-5>, "note": "<1-2 sentences, be direct if you disagree with trader rating>"}]
 }
+
+day_stance + day_read are REQUIRED and must ALWAYS be the first two keys — never omit them.
 
 For plan_assessments: rate on structural clarity, invalidation precision, target reasonableness, risk awareness. Never penalize missing entry price.
 
@@ -350,7 +352,7 @@ Cite the rubric tier in "summary" so the trader can sanity-check the score.`
 
   const message = await client.messages.create({
     model: 'claude-opus-4-8',
-    max_tokens: 2000,
+    max_tokens: 2500,
     messages: [{ role: 'user', content: userContent }],
   })
 
