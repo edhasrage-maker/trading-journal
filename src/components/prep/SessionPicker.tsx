@@ -1,6 +1,5 @@
 'use client'
 
-import { Clock, Moon } from 'lucide-react'
 import type { SessionKind, SessionLevels } from '@/lib/session-levels'
 
 const SESSIONS: { key: SessionKind; label: string; window: string }[] = [
@@ -35,20 +34,23 @@ export default function SessionPicker({
   const active = SESSIONS.find(s => s.key === value) ?? SESSIONS[0]
   const ibTag = value === 'asia' ? 'Asia IB' : value === 'london' ? 'London IB' : 'IB'
 
+  // No card wrapper and no "Session" label of its own — the enclosing
+  // PrepSection supplies the heading, and the Pt 14 redesign separates
+  // surfaces with hairline rules rather than boxing each one.
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+    <div className="space-y-3">
       <div className="flex items-center gap-4 flex-wrap">
-        <span className="flex items-center gap-1.5 text-sm text-gray-400">
-          <Clock className="w-4 h-4" /> Session
-        </span>
-        <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
+        <div className="inline-flex border border-gray-700 rounded overflow-hidden text-xs">
           {SESSIONS.map(s => (
             <button
               key={s.key}
               type="button"
               onClick={() => onChange(s.key)}
-              className={`px-4 py-1.5 transition-colors ${
-                value === s.key ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              aria-pressed={value === s.key}
+              className={`px-3.5 py-1.5 border-r border-gray-700 last:border-r-0 transition-colors ${
+                value === s.key
+                  ? 'bg-gray-800 text-gray-100 shadow-[inset_0_-2px_0_var(--color-accent-deep)]'
+                  : 'text-gray-400 hover:text-gray-200'
               }`}
             >
               {s.label}
@@ -57,8 +59,8 @@ export default function SessionPicker({
         </div>
         <span className="font-mono text-xs text-gray-500">{active.window}</span>
         {value !== 'rth' && (
-          <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">
-            <Moon className="w-3 h-3" /> Planned GBX
+          <span className="text-[11px] px-2 py-0.5 rounded border border-yellow-700 text-yellow-400 bg-yellow-400/[0.08]">
+            Planned GBX
           </span>
         )}
       </div>

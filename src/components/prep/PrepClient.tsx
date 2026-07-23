@@ -1256,10 +1256,20 @@ function PrepTiming({
     return () => clearInterval(id)
   }, [])
 
+  // Hydration safety. Everything below formats an absolute instant into WALL
+  // CLOCK time, which depends on the runtime's timezone: the server renders in
+  // UTC and the browser in the trader's zone, so "Started 3:50 PM" (server) met
+  // "Started 7:50 AM" (client) and React threw a text-mismatch on every load.
+  // The elapsed duration has the same problem against the clock. Render nothing
+  // time-derived until after mount, when only the browser's zone is in play.
+  const [mounted, setMounted] = useState(false)
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount flag for hydration-safe render
+  useEffect(() => { setMounted(true) }, [])
+
   if (!startedAt) {
     if (!isToday) return null
     return (
-      <p className="text-xs text-gray-600 mt-1 italic">
+      <p className="text-xs text-gray-600 italic">
         Edit any field to start the prep timer
       </p>
     )
@@ -1277,11 +1287,14 @@ function PrepTiming({
 
   return (
     <p
-      className="text-xs text-gray-500 mt-1 font-mono"
-      title={`Started ${start.toLocaleString()}${completedAt ? ` · last edit ${new Date(completedAt).toLocaleString()}` : ''}`}
+      className="text-xs text-gray-500 font-mono"
+      title={mounted
+        ? `Started ${start.toLocaleString()}${completedAt ? ` · last edit ${new Date(completedAt).toLocaleString()}` : ''}`
+        : undefined}
     >
-      <span className="text-gray-600">⏱</span> Started {format(start, 'h:mm a')} · {duration}
-      {!isToday && ' (final)'}
+      {mounted
+        ? <>Started {format(start, 'h:mm a')} · {duration}{!isToday && ' (final)'}</>
+        : 'Prep timer running'}
     </p>
   )
 }
