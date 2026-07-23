@@ -244,6 +244,38 @@ export interface PrepNotes {
    *  on the Prep page. RTH (default) is the day session; Asia/London are the
    *  GBX/overnight sessions. Persisted here so no schema change is needed. */
   session?: 'rth' | 'asia' | 'london'
+  /** Who the day stance belongs to. TapeScore suggests it from conditions; the
+   *  trader owns it. 'trader' means they set or overrode it deliberately — the
+   *  Prep hero shows that provenance so the app never sounds like the
+   *  authority on someone else's decision (Pt 13 R2). */
+  day_stance_source?: 'suggested' | 'trader'
+  /** The trader's reason when they override the suggested stance. */
+  day_stance_reason?: string
+  /** The Review → Prep commitment the trader chose to track today. Written when
+   *  they hit "Track this today" / "Protect this today"; resolved at review
+   *  time. This is the loop the whole bridge exists for — a displayed focus
+   *  that nobody resolves is just a label. */
+  commitment?: PrepCommitment
+}
+
+/** One tracked commitment carried from a review finding into a session. */
+export interface PrepCommitment {
+  /** Stable identity of the source finding (e.g. "setup:Opening pullback"). */
+  key: string
+  /** 'protect' = an edge to keep; 'correct' = a leak to avoid. */
+  mode: 'protect' | 'correct'
+  /** Window the finding came from, e.g. "July review". */
+  source: string
+  /** The measured fact, and the number behind it — snapshotted so the
+   *  commitment still reads correctly after the underlying stats move on. */
+  finding: string
+  metric: string
+  /** What the trader committed to doing today. */
+  today: string
+  tracked_at: string
+  /** Set at review time once the session is graded against the commitment. */
+  resolved?: 'followed' | 'not_followed'
+  resolved_at?: string
 }
 
 export interface AiAnalysis {

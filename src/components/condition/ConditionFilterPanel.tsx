@@ -424,8 +424,9 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
 // ─────────────────────────────────────────────────────────────────────────────
 
 // formatMetricValue + BucketReadout (the raw metric card grid) were removed
-// 2026-07-12 — the Today's Tape card (ConditionVerdicts) now owns that surface
-// with verdict-first chips and a collapsed raw-numbers grid.
+// 2026-07-12 — the verdict-first conditions read owns that surface. As of the
+// Pt 14 Prep redesign that read lives in the page hero (PrepHero), which
+// absorbed the old Today's Tape card.
 
 function ConsolidatedVerdict({
   verdict,

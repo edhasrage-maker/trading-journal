@@ -22,6 +22,11 @@ interface Props {
    *  into an optional one-liner. Keeps the input near zero-effort. PrepClient
    *  passes `mode !== 'pro'`. Defaults to false (Detailed Tape / owner). */
   beginner?: boolean
+  /** Which half of the form to render. The Pt 14 Prep redesign splits these
+   *  across two sections — "Your read" (bias / observations / mood) sits high
+   *  on the page, while the owner's methodology fields drop to "Prep notes —
+   *  detailed" much further down. Omit to render both, as before. */
+  part?: 'read' | 'advanced'
 }
 
 // "Still developing" is the default — it represents the pre-break state before
@@ -65,7 +70,12 @@ function calcExts(ibh: number, ibl: number, ibSize: number) {
   return result
 }
 
-export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showAdvanced = false, beginner = false }: Props) {
+export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showAdvanced = false, beginner = false, part }: Props) {
+  // `part` selects which half renders; omitting it keeps the original
+  // both-halves behaviour. The advanced half is additionally gated on
+  // showAdvanced, exactly as before.
+  const showRead = part == null || part === 'read'
+  const showMethodology = showAdvanced && (part == null || part === 'advanced')
   const [mgiOpen, setMgiOpen] = useState(false)
   const [extsOpen, setExtsOpen] = useState(false)
   const set = (key: keyof PrepNotes, val: unknown) => onChange({ ...value, [key]: val })
@@ -110,7 +120,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
       {/* IB Break Timing + Volume Profile — owner methodology, Detailed Tape
           only. The public/beginner prep is simplified to Bias / Observations /
           Mood. */}
-      {showAdvanced && (<>
+      {showMethodology && (<>
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">IB Break Timing</h3>
         <div className="space-y-4">
@@ -210,6 +220,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
 
       {/* Bias — direction buttons. The "Bias reasoning" textarea moved BELOW
           the HTF MGI section so the trader fills it in after touching levels. */}
+      {showRead && (
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Bias</h3>
         <div className="flex gap-2">
@@ -226,10 +237,11 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
           ))}
         </div>
       </div>
+      )}
 
       {/* HTF MGI Position — owner's methodology, Detailed Tape only (showAdvanced
           = isAdmin && mode==='pro'). Hidden in the simplified public/beginner prep. */}
-      {showAdvanced && (
+      {showMethodology && (
       <div className="border border-gray-800 rounded-xl overflow-hidden">
         <button
           type="button"
@@ -317,6 +329,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
       {/* Bias reasoning — moved BELOW HTF MGI so the trader writes it after
           working through the levels above. Reasoning often references which
           MGI levels the bias is built on. */}
+      {showRead && (
       <div>
         <label className="block text-xs text-gray-400 mb-1">
           {beginner ? 'Anything on your mind? (optional)' : 'Observations / reasoning'}
@@ -327,8 +340,10 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
           className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
         />
       </div>
+      )}
 
       {/* Mood & Clarity */}
+      {showRead && (
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Mood</h3>
         <div className="space-y-3">
@@ -344,14 +359,18 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
                   const selected = value.mood === chip
                   const isFlag = (READINESS_FLAG as readonly string[]).includes(chip)
                   return (
+                    /* Squared to 4px with a tinted (not solid) active fill.
+                       Bright, fully-rounded, densely-packed chips were the
+                       "Nintendo game" read the founder flagged — the chips
+                       themselves stay, the loud treatment doesn't. */
                     <button key={chip} type="button"
                       onClick={() => set('mood', selected ? '' : chip)}
-                      className={`px-3.5 py-2 rounded-full text-sm font-medium border transition-colors ${
+                      className={`px-3 py-1.5 rounded text-[13px] border transition-colors ${
                         selected
                           ? isFlag
-                            ? 'bg-amber-600 border-amber-500 text-white'
-                            : 'bg-emerald-600 border-emerald-500 text-white'
-                          : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                            ? 'border-yellow-700 text-yellow-400 bg-yellow-400/[0.08]'
+                            : 'border-green-700 text-green-400 bg-green-400/[0.08]'
+                          : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
                       }`}
                     >{chip}</button>
                   )
@@ -375,6 +394,7 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
           )}
         </div>
       </div>
+      )}
 
     </div>
   )

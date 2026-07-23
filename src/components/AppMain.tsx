@@ -1,22 +1,18 @@
 'use client'
 
 import Link from 'next/link'
-import { useSidebarCollapsed } from '@/lib/sidebar-collapsed'
 
 /**
- * The main content pane. Its desktop left margin tracks the sidebar's collapsed
- * state (ml-16 collapsed / ml-60 expanded) so content expands to fill the space
- * the collapsed rail frees up. Mobile is unaffected (no left margin; bottom tab
- * bar + top bar clearance via pt/pb).
+ * The main content pane.
+ *
+ * Pt 14 retired the left rail for a fixed top masthead, so there is no left
+ * margin to track any more — content runs full width and only needs to clear
+ * the fixed chrome: the masthead (62px desktop / 56px mobile top bar) and, on
+ * mobile, the bottom tab bar.
  */
 export default function AppMain({ children }: { children: React.ReactNode }) {
-  const [collapsed] = useSidebarCollapsed()
   return (
-    <main
-      className={`flex-1 p-6 pt-20 md:pt-6 pb-24 md:pb-6 overflow-y-auto transition-[margin] duration-200 ${
-        collapsed ? 'md:ml-16' : 'md:ml-60'
-      }`}
-    >
+    <main className="flex-1 min-w-0 p-6 pt-20 md:pt-[86px] pb-24 md:pb-10 overflow-y-auto">
       {children}
       {/* App-shell footer — gives signed-in users a path to the legal pages and
           support, which otherwise only exist on the logged-out landing. */}

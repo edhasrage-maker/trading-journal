@@ -4,21 +4,25 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 import { todayPT } from '@/lib/pt-time'
-import { Save, Loader2, Sparkles, SpellCheck, Check, AlertTriangle, Layers, Image as ImageIcon, CandlestickChart } from 'lucide-react'
+import { Loader2, Check, AlertTriangle } from 'lucide-react'
 import ScreenshotUpload from './ScreenshotUpload'
 import ConditionFilterPanel from '@/components/condition/ConditionFilterPanel'
-import ConditionVerdicts from './ConditionVerdicts'
 import MarketContextForm from './MarketContextForm'
 import PrepNotesForm from './PrepNotesForm'
 import SessionPicker from './SessionPicker'
-import AiAnalysisCard from './AiAnalysisCard'
 import DiscordDashboard from './DiscordDashboard'
 import DiscordCardInputs from './DiscordCardInputs'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
 import HighImpactNews from './HighImpactNews'
-import CollapsibleCard from '@/components/CollapsibleCard'
+import PrepSection, { GhostButton, Segmented, Chip } from './PrepSection'
+import PrepHero from './PrepHero'
+import PrepBridge from './PrepBridge'
+import PrepLedger from './PrepLedger'
+import PrepAiRead, { WatchKeep } from './PrepAiRead'
+import { dayTypeConsequence, formatR, type Carryover } from '@/lib/prep-carryover'
+import type { TradeWithContext } from '@/lib/analytics'
 import type { NewsEvent } from '@/lib/economic-calendar'
 import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
@@ -55,9 +59,17 @@ interface Props {
   /** Admin (owner) flag — the Morning Conditions panel is admin-only, matching
    *  the admin-only Condition Lookup settings page. Computed server-side. */
   isAdmin: boolean
+  /** The Review → Prep carryover: one finding from the trader's own recent
+   *  sessions, turned into a commitment for today. Null when nothing separated
+   *  itself — the bridge then renders its honest "no read" state rather than
+   *  manufacturing a lesson. */
+  carryover: Carryover | null
+  /** Trades from the carryover window, joined with day/context. Powers the
+   *  per-day-type consequence line ("on high-action days you average +0.6R"). */
+  historyTrades: TradeWithContext[]
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades, highImpactNews, isAdmin }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades, highImpactNews, isAdmin, carryover, historyTrades }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -814,69 +826,68 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     showToast(`Applied ${toApply.length} fix${toApply.length === 1 ? '' : 'es'}`, 'success')
   }
 
+  const pro = mode === 'pro'
+  // Per-day-type consequence — turns the day-type taxonomy from a description
+  // into something with a personal stake. Null until the trader has enough
+  // scored trades on that day type to say anything honest.
+  const consequence = dayTypeConsequence(historyTrades, dayTypes)
+
+  // "FRI JUL 25 · RTH · NQ"
+  const eyebrow = [
+    format(new Date(date + 'T12:00:00'), 'EEE MMM d').toUpperCase(),
+    session.toUpperCase(),
+    (context.symbol ?? 'NQ').toUpperCase(),
+  ].join(' · ')
+
+  const nothingToAnalyze =
+    !chartUrl &&
+    !pendingFile &&
+    !prepNotes.bias &&
+    !prepNotes.bias_notes &&
+    !prepNotes.setups_areas &&
+    !prepNotes.ib_behaviour &&
+    !prepNotes.volume_profile_shape &&
+    !prepNotes.volume_profile_notes &&
+    !prepNotes.mood &&
+    !prepNotes.market_clarity &&
+    !prepNotes.trade_plans?.length
+
+  const analyzeButton = (
+    <GhostButton onClick={analyze} disabled={analyzing || nothingToAnalyze}>
+      {analyzing && <Loader2 className="w-3 h-3 animate-spin" />}
+      {analyzing ? 'Reading…' : aiAnalysis ? 'Run read again' : 'Run the read'}
+    </GhostButton>
+  )
+
+  const chartControl = (
+    <>
+      {chartView === 'live' && LOCAL_FEATURES_ENABLED && (
+        <BarWatcher activeDate={date} onRefresh={() => setBarsVersion(v => v + 1)} />
+      )}
+      {chartView === 'screenshot' && (pendingFile || chartUrl) && (
+        <GhostButton onClick={extractContext} disabled={extracting}>
+          {extracting && <Loader2 className="w-3 h-3 animate-spin" />}
+          {extracting ? 'Reading chart…' : 'Auto-fill from chart'}
+        </GhostButton>
+      )}
+      <Segmented
+        value={chartView}
+        onChange={setChartView}
+        options={[{ value: 'screenshot', label: 'Screenshot' }, { value: 'live', label: 'Live chart' }]}
+      />
+    </>
+  )
+
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-[1080px]">
       {/* Toast */}
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium transition-all
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all
           ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
           {toast.type === 'success' ? '✓' : '✕'} {toast.msg}
         </div>
       )}
-      {/* Red-folder economic news for the day — pinned to the very top. */}
-      <HighImpactNews events={highImpactNews} />
-      {/* Header */}
-      <div data-tour="prep-header" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-white">Daily Prep</h1>
-          <div className="flex items-center gap-3 mt-1">
-            <input
-              type="date"
-              value={date}
-              onChange={e => {
-                const next = e.target.value
-                if (next && next !== date) {
-                  if (isDirty && !confirm('You have unsaved changes. Switch days anyway?')) return
-                  router.push(`/prep/${next}`)
-                }
-              }}
-              className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
-              title="Switch to a different day's prep"
-            />
-            <span className="text-gray-400 text-sm">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</span>
-          </div>
-          <PrepTiming startedAt={prepStartedAt} completedAt={prepCompletedAt} isToday={isToday} />
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <SaveStatus
-            saving={saving}
-            isDirty={isDirty}
-            saveStatus={saveStatus}
-            lastSavedAt={lastSavedAt}
-          />
-          <button
-            onClick={runSpellCheck}
-            disabled={spellCheckLoading}
-            className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors disabled:opacity-60"
-            title="Run AI spell + grammar check on all prep notes"
-          >
-            {spellCheckLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <SpellCheck className="w-4 h-4" />}
-            Spell Check
-          </button>
-          <button
-            onClick={() => save()}
-            disabled={saving}
-            className={`flex items-center gap-2 font-medium px-4 py-2 rounded-lg text-sm transition-colors text-white disabled:opacity-60 ${
-              isDirty ? 'bg-yellow-600 hover:bg-yellow-500' : 'bg-blue-600 hover:bg-blue-500'
-            }`}
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-        </div>
-      </div>
 
-      {/* Spell check modal */}
       <SpellCheckModal
         open={spellCheckOpen}
         loading={spellCheckLoading}
@@ -886,228 +897,261 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         onClose={() => setSpellCheckOpen(false)}
       />
 
-      {/* Session picker — RTH / Asia / London. Detailed Tape (pro) only, like
-          Market Context: GBX/overnight session planning is an advanced flow.
-          Re-anchors the chart's IB + reference levels and sets the planned GBX
-          chip; session choice persists in prep_notes_json.session. */}
-      {mode === 'pro' && (
-        <SessionPicker value={session} onChange={changeSession} levels={session !== 'rth' ? liveLevels : null} />
-      )}
-
-      {/* Chart — toggle between the morning Sierra Chart screenshot (with
-          MGI levels marked, used for AI auto-fill) and the in-app LiveChart
-          (live bars from .scid + session levels). Same pattern as EodClient. */}
-      <div data-tour="prep-chart" className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-white">
-            {chartView === 'screenshot' ? 'Chart Screenshot (with MGI levels marked)' : 'Live Chart'}
-          </h2>
-          <div className="flex items-center gap-3">
-            {chartView === 'live' && LOCAL_FEATURES_ENABLED && (
-              <BarWatcher
-                activeDate={date}
-                onRefresh={() => setBarsVersion(v => v + 1)}
-              />
-            )}
-            <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
-              <button
-                type="button"
-                onClick={() => setChartView('screenshot')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                  chartView === 'screenshot' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                }`}
-              >
-                <ImageIcon className="w-3.5 h-3.5" /> Screenshot
-              </button>
-              <button
-                type="button"
-                onClick={() => setChartView('live')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                  chartView === 'live' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                }`}
-              >
-                <CandlestickChart className="w-3.5 h-3.5" /> Live chart
-              </button>
-            </div>
-          </div>
-        </div>
-        {chartView === 'screenshot' ? (
-          <>
-            <ScreenshotUpload
-              value={chartUrl}
-              onChange={handleScreenshotChange}
-              label=""
-            />
-            {(pendingFile || chartUrl) && (
-              <button
-                onClick={extractContext}
-                disabled={extracting}
-                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-              >
-                {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                {extracting ? 'Reading chart...' : 'Auto-fill from chart'}
-              </button>
-            )}
-          </>
-        ) : (
-          <LiveChart
-            ref={liveChartRef}
-            date={date}
-            symbol={activeSymbol}
-            symbolOptions={symbolOptions}
-            onSymbolChange={onSymbolChange}
-            trades={chartTrades}
-            refreshKey={barsVersion}
-            onLevels={handleLevels}
-            session={session}
+      {/* Utility bar — day switcher + save. Deliberately quiet: the old "Daily
+          Prep" h1 is gone because the hero headline IS the page's title, and a
+          generic screen-name heading was one of the AI-dashboard tells. */}
+      <div data-tour="prep-header" className="flex flex-wrap items-center justify-between gap-3 pb-5">
+        <div className="flex items-center gap-3 flex-wrap min-w-0">
+          <input
+            type="date"
+            value={date}
+            onChange={e => {
+              const next = e.target.value
+              if (next && next !== date) {
+                if (isDirty && !confirm('You have unsaved changes. Switch days anyway?')) return
+                router.push(`/prep/${next}`)
+              }
+            }}
+            className="bg-gray-950 border border-gray-700 text-gray-300 text-xs rounded px-2 py-1 font-mono focus:outline-none focus:border-blue-600"
+            title="Switch to a different day's prep"
           />
-        )}
+          <PrepTiming startedAt={prepStartedAt} completedAt={prepCompletedAt} isToday={isToday} />
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <SaveStatus saving={saving} isDirty={isDirty} saveStatus={saveStatus} lastSavedAt={lastSavedAt} />
+          <GhostButton
+            onClick={runSpellCheck}
+            disabled={spellCheckLoading}
+            title="Run AI spell + grammar check on all prep notes"
+          >
+            {spellCheckLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+            Spell check
+          </GhostButton>
+          <button
+            onClick={() => save()}
+            disabled={saving}
+            className={`text-xs font-semibold px-3.5 py-1.5 rounded border transition-colors disabled:opacity-60 ${
+              isDirty
+                ? 'border-yellow-700 text-yellow-400 bg-yellow-400/[0.08] hover:bg-yellow-400/[0.14]'
+                : 'border-gray-700 text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
       </div>
 
-      {/* Day Type — chips sourced from trade_tags.day_type so prep + intraday
-          stay in sync. Falls back to a hint when the library is empty. */}
-      <CollapsibleCard title="Day Type" desktopCollapsible>
-        {dayTypeOptions.length === 0 ? (
-          <p className="text-xs text-gray-500">
-            No day types in the library yet. Add some from <span className="font-mono">/settings/tags</span>.
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {dayTypeOptions.map(t => {
-              const isSelected = dayTypes.includes(t)
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => toggleDayType(t)}
-                  className={`px-3 py-1.5 rounded-lg text-sm transition-colors border ${
-                    isSelected
-                      ? 'bg-blue-600 border-blue-500 text-white'
-                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
-                  }`}
-                >
-                  {t}
-                </button>
-              )
-            })}
-          </div>
-        )}
-        {dayTypes.length > 0 && (
-          <button
-            type="button"
-            onClick={backfillDayType}
-            disabled={backfilling}
-            className="mt-3 flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
-            title={`Set day_type tag = [${dayTypes.join(', ')}] on every existing trade for ${date}`}
-          >
-            {backfilling
-              ? <Loader2 className="w-3 h-3 animate-spin" />
-              : <Layers className="w-3 h-3" />}
-            {backfilling
-              ? 'Applying…'
-              : `Apply ${dayTypes.length === 1 ? `"${dayTypes[0]}"` : `${dayTypes.length} day types`} to existing trades for this day`}
-          </button>
-        )}
-        <DayTypePredictor
-          date={date}
-          currentDayTypes={dayTypes}
-          // Multi-axis predictor returns an array — dedupe-append to the
-          // multi-select so structural + regime + flags all land in one click.
-          onAccept={labels => setDayTypes(prev => {
-            const next = [...prev]
-            for (const l of labels) if (!next.includes(l)) next.push(l)
-            return next
-          })}
-        />
-      </CollapsibleCard>
+      {/* Red-folder economic news for the day. */}
+      <HighImpactNews events={highImpactNews} />
 
-      {/* Today's Tape — verdict-first conditions read (all users). Plain-
-          language headline + chips from market_context; no history tables
-          needed, so it renders even where Morning Conditions is admin-only. */}
-      <ConditionVerdicts context={context as Partial<MarketContext>} atrBaseline={atrBaseline} />
+      {/* ── The read + the trader's stance ── */}
+      <PrepHero
+        context={context as Partial<MarketContext>}
+        atrBaseline={atrBaseline}
+        prepNotes={prepNotes}
+        onPrepNotesChange={setPrepNotes}
+        eyebrow={eyebrow}
+        isToday={isToday}
+        maxConditions={pro ? 5 : 3}
+      />
 
-      {/* Condition Filter (Morning Conditions) */}
-      {/* dr_adr is reactive: compute from live context.day_range / context.adr
-          first so screenshot re-extraction updates the pill immediately.
-          drAdrAuto (server-computed, may be bar-based) is the fallback for
-          days where the screenshot hasn't been extracted yet. */}
-      {isAdmin && (
-        <ConditionFilterPanel
-          date={date}
-          beginner={mode !== 'pro'}
-          marketContext={{
-            rvol: context.rvol ?? null,
-            ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
-            atr_1m: context.atr_1m ?? null,
-            dr_adr:
-              context.day_range != null && context.adr != null && context.adr > 0
-                ? Math.round((context.day_range / context.adr) * 100) / 100
-                : drAdrAuto,
-          }}
-        />
+      {/* ── The commitment: Review diagnoses, Prep prescribes ── */}
+      <PrepBridge
+        carryover={carryover}
+        prepNotes={prepNotes}
+        onPrepNotesChange={setPrepNotes}
+        canTrack={isToday}
+      />
+
+      {/* Session — Detailed Tape only. GBX/overnight planning is advanced; it
+          re-anchors the chart's IB + reference levels. */}
+      {pro && (
+        <PrepSection title="Session" sub="drives the chart’s levels and initial balance">
+          <SessionPicker value={session} onChange={changeSession} levels={session !== 'rth' ? liveLevels : null} />
+        </PrepSection>
       )}
 
-      {/* Market Context — Detailed Tape only (levels / IB / volatility / MGI) */}
-      {mode === 'pro' && (
-        <CollapsibleCard title="Market Context" desktopCollapsible>
-          <MarketContextForm value={context} onChange={setContext} />
-        </CollapsibleCard>
-      )}
+      {/* Chart — UNCHANGED by the redesign, by explicit founder instruction.
+          Only the container around it moved from a card to a section. */}
+      <PrepSection title="Chart" control={chartControl} className="[&_h2]:sr-only sm:[&_h2]:not-sr-only">
+        <div data-tour="prep-chart">
+          {chartView === 'screenshot' ? (
+            <ScreenshotUpload value={chartUrl} onChange={handleScreenshotChange} label="" />
+          ) : (
+            <LiveChart
+              ref={liveChartRef}
+              date={date}
+              symbol={activeSymbol}
+              symbolOptions={symbolOptions}
+              onSymbolChange={onSymbolChange}
+              trades={chartTrades}
+              refreshKey={barsVersion}
+              onLevels={handleLevels}
+              session={session}
+            />
+          )}
+        </div>
+      </PrepSection>
 
-      {/* Prep Notes */}
-      <CollapsibleCard title="Prep Notes" defaultOpen>
+      {/* Your read — bias, observations, how ready you feel. */}
+      <PrepSection
+        title="Your read"
+        sub={pro ? 'the read you are taking in' : 'kept short on purpose'}
+      >
         <PrepNotesForm
+          part="read"
           value={prepNotes}
           onChange={setPrepNotes}
           ibh={context.ibh as number | null}
           ibl={context.ibl as number | null}
           ibSize={context.ib_size as number | null}
-          // Owner's full methodology fields (IB timing/extensions, Volume
-          // Profile, HTF MGI, market clarity): Detailed Tape + owner only.
-          showAdvanced={isAdmin && mode === 'pro'}
-          // Highlights: one-tap readiness chips + optional one-liner observations.
-          beginner={mode !== 'pro'}
+          showAdvanced={isAdmin && pro}
+          beginner={!pro}
         />
-      </CollapsibleCard>
+      </PrepSection>
 
-      {/* Trade Plans — Detailed Tape only (named playbook setups) */}
-      {mode === 'pro' && (
-        <CollapsibleCard title="Trade Plans / Setups">
+      {/* Highlights stops here: one thing to watch, one to keep. Day-type
+          classification, the full conditions ledger and the long-form AI read
+          all live in Detailed Tape. */}
+      {!pro && (
+        <PrepSection title="Watch / Keep" control={analyzeButton}>
+          <WatchKeep analysis={aiAnalysis} />
+        </PrepSection>
+      )}
+
+      {pro && (<>
+        {/* Day type — chips sourced from trade_tags so prep + intraday stay in
+            sync. No invented axes: the library is the trader's own. */}
+        <PrepSection
+          title="Day type"
+          control={dayTypes.length > 0 ? (
+            <GhostButton
+              onClick={backfillDayType}
+              disabled={backfilling}
+              title={`Set day_type tag = [${dayTypes.join(', ')}] on every existing trade for ${date}`}
+            >
+              {backfilling && <Loader2 className="w-3 h-3 animate-spin" />}
+              {backfilling ? 'Applying…' : 'Apply to today’s trades'}
+            </GhostButton>
+          ) : undefined}
+        >
+          {dayTypeOptions.length === 0 ? (
+            <p className="text-xs text-gray-500">
+              No day types in the library yet. Add some from <span className="font-mono">/settings/tags</span>.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {dayTypeOptions.map(t => (
+                <Chip key={t} selected={dayTypes.includes(t)} onClick={() => toggleDayType(t)}>
+                  {t}
+                </Chip>
+              ))}
+            </div>
+          )}
+
+          <DayTypePredictor
+            date={date}
+            currentDayTypes={dayTypes}
+            // Multi-axis predictor returns an array — dedupe-append to the
+            // multi-select so structural + regime + flags all land in one click.
+            onAccept={labels => setDayTypes(prev => {
+              const next = [...prev]
+              for (const l of labels) if (!next.includes(l)) next.push(l)
+              return next
+            })}
+          />
+
+          {consequence && (
+            <div className="mt-4 pt-3.5 border-t border-gray-800 max-w-[66ch]">
+              <span className="block text-[11px] tracking-wide uppercase text-gray-500 mb-1.5">
+                Why this matters for you
+              </span>
+              <p className="text-sm text-gray-100 leading-normal">
+                On <b className="font-semibold">{consequence.label}</b> days you average{' '}
+                <b className={consequence.avgR >= 0 ? 'text-green-400 font-bold tabular-nums' : 'text-red-400 font-bold tabular-nums'}>
+                  {formatR(consequence.avgR)} / trade
+                </b>{' '}
+                across {consequence.n} trades.
+              </p>
+            </div>
+          )}
+        </PrepSection>
+
+        {/* Market context as a ledger, not a form — verdicts lead, raw numbers
+            are demoted, and editing sits behind a disclosure because nearly
+            every value auto-fills from the bar feed. */}
+        <PrepSection title="Market context" sub="most values auto-fill — read the verdicts, edit the rest">
+          <PrepLedger
+            context={context as Partial<MarketContext>}
+            atrBaseline={atrBaseline}
+            drAdrAuto={drAdrAuto}
+          />
+          <details className="mt-3 group">
+            <summary className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer inline-block list-none marker:content-none">
+              <span className="group-open:hidden">Edit values</span>
+              <span className="hidden group-open:inline">Hide editor</span>
+            </summary>
+            <div className="mt-4 pt-4 border-t border-gray-800">
+              <MarketContextForm value={context} onChange={setContext} />
+            </div>
+          </details>
+        </PrepSection>
+
+        {/* Morning conditions — where today sits vs the trader's own history.
+            dr_adr is reactive: compute from live context first so screenshot
+            re-extraction updates it immediately; drAdrAuto is the fallback. */}
+        {isAdmin && (
+          <PrepSection title="Morning conditions" sub="where today sits vs your history">
+            <ConditionFilterPanel
+              date={date}
+              beginner={!pro}
+              marketContext={{
+                rvol: context.rvol ?? null,
+                ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
+                atr_1m: context.atr_1m ?? null,
+                dr_adr:
+                  context.day_range != null && context.adr != null && context.adr > 0
+                    ? Math.round((context.day_range / context.adr) * 100) / 100
+                    : drAdrAuto,
+              }}
+            />
+          </PrepSection>
+        )}
+
+        {/* The owner's methodology fields, dropped well below the read. */}
+        {isAdmin && (
+          <PrepSection title="Prep notes — detailed" sub="IB timing · volume profile · HTF MGI">
+            <PrepNotesForm
+              part="advanced"
+              value={prepNotes}
+              onChange={setPrepNotes}
+              ibh={context.ibh as number | null}
+              ibl={context.ibl as number | null}
+              ibSize={context.ib_size as number | null}
+              showAdvanced
+              beginner={false}
+            />
+          </PrepSection>
+        )}
+
+        <PrepSection title="Trade plans" sub="your playbook — TapeScore names the gap, not a score">
           <TradePlansSection
             plans={prepNotes.trade_plans ?? []}
             onChange={plans => setPrepNotes({ ...prepNotes, trade_plans: plans })}
             planAssessments={(aiAnalysis as AiAnalysis | null)?.plan_assessments as PlanAssessment[] | undefined}
           />
-        </CollapsibleCard>
-      )}
+        </PrepSection>
 
-      {/* Prep Analysis */}
-      <AiAnalysisCard
-        analysis={aiAnalysis as Parameters<typeof AiAnalysisCard>[0]['analysis']}
-        loading={analyzing}
-        onAnalyze={analyze}
-        disabled={
-          // Disable only when there's truly nothing to analyze:
-          // no chart screenshot AND no prep text AND no trade plans
-          !chartUrl &&
-          !pendingFile &&
-          !prepNotes.bias &&
-          !prepNotes.bias_notes &&
-          !prepNotes.setups_areas &&
-          !prepNotes.ib_behaviour &&
-          !prepNotes.volume_profile_shape &&
-          !prepNotes.volume_profile_notes &&
-          !prepNotes.mood &&
-          !prepNotes.market_clarity &&
-          !prepNotes.trade_plans?.length
-        }
-      />
+        <PrepSection title="TapeScore read" sub="plain read · yours to override" control={analyzeButton}>
+          <PrepAiRead analysis={aiAnalysis} />
+        </PrepSection>
+      </>)}
 
       {/* Discord prep-share card — the owner's personal community workflow
           (generates a prep-summary PNG to post to Discord). Admin-gated so it's
           available on the cloud site for the owner, hidden for public users. */}
       {isAdmin && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <PrepSection title="Discord card" sub="your community post for this prep">
           {/* Viewer-read + roadmap inputs sit directly above the preview they
               feed, at the very bottom of the prep (moved out of Prep Notes). */}
           <DiscordCardInputs value={prepNotes} onChange={setPrepNotes} />
@@ -1117,7 +1161,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             prepNotes={prepNotes}
             symbol={context.symbol ?? 'NQ'}
           />
-        </div>
+        </PrepSection>
       )}
     </div>
   )

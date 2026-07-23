@@ -4,6 +4,8 @@ import { computeDrAdr } from '@/lib/dr-adr'
 import { fetchHighImpactNews } from '@/lib/economic-calendar'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
+import { computeCarryover } from '@/lib/prep-carryover'
+import { joinTradesWithContext } from '@/lib/analytics'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 export default async function PrepPage({ params }: { params: Promise<{ date: string }> }) {
@@ -96,6 +98,54 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
   await signDayScreenshots(supabase, day)
   await signTradeScreenshots(supabase, trades)
 
+  // ── Review → Prep carryover ────────────────────────────────────────────
+  // The bridge's finding, computed from the trader's OWN recent sessions.
+  // Window = the calendar month up to (but excluding) this prep's date, so the
+  // read is "your July review" on a July morning. If that's too thin to say
+  // anything defensible, widen to the trailing 60 days and relabel honestly.
+  // computeCarryover returns null when nothing separates itself, and the
+  // bridge renders its "no read yet" state rather than inventing a lesson.
+  const monthStart = `${date.slice(0, 7)}-01`
+  const sixtyDaysBefore = new Date(`${date}T12:00:00Z`)
+  sixtyDaysBefore.setUTCDate(sixtyDaysBefore.getUTCDate() - 60)
+  const wideStart = sixtyDaysBefore.toISOString().slice(0, 10)
+
+  const { data: windowDays } = await supabase
+    .from('trading_days')
+    .select('id, date, day_type, day_types')
+    .gte('date', wideStart)
+    .lt('date', date)
+  const reviewDays = (windowDays ?? []) as { id: string; date: string; day_type: string | null; day_types: string[] | null }[]
+
+  const { data: windowTradesRaw } = reviewDays.length > 0
+    ? await supabase
+        .from('trades')
+        .select('*')
+        .in('trading_day_id', reviewDays.map(d => d.id))
+    : { data: [] as Trade[] }
+  const windowTrades = (windowTradesRaw ?? []) as Trade[]
+
+  const dayDateById = new Map(reviewDays.map(d => [d.id, d.date]))
+  const inMonth = windowTrades.filter(t => (dayDateById.get(t.trading_day_id) ?? '') >= monthStart)
+
+  const monthLabel = new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { month: 'long' })
+  let carryover = computeCarryover(inMonth, `${monthLabel} review`)
+  if (!carryover) carryover = computeCarryover(windowTrades, 'last 60 sessions')
+
+  // Per-day-type consequence for the Detailed Tape day-type section, over the
+  // same wide window (day types are sparse — the month alone rarely has n≥10).
+  const { data: windowCtxRaw } = reviewDays.length > 0
+    ? await supabase
+        .from('market_context')
+        .select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m')
+        .in('trading_day_id', reviewDays.map(d => d.id))
+    : { data: [] }
+  const windowTradesWithContext = joinTradesWithContext(
+    windowTrades,
+    reviewDays.map(d => ({ id: d.id, date: d.date, day_type: d.day_type, day_types: d.day_types })),
+    (windowCtxRaw ?? []) as Parameters<typeof joinTradesWithContext>[2],
+  )
+
   return (
     <PrepClient
       date={date}
@@ -107,6 +157,8 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
       initialTrades={trades}
       highImpactNews={highImpactNews}
       isAdmin={isAdmin}
+      carryover={carryover}
+      historyTrades={windowTradesWithContext}
     />
   )
 }

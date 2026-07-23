@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import Sidebar from '@/components/Sidebar'
+import Masthead from '@/components/Masthead'
 import AppMain from '@/components/AppMain'
 import CoachChat from '@/components/CoachChat'
 import OnboardingGate from '@/components/onboarding/OnboardingGate'
@@ -22,8 +22,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <UiModeProvider>
-      <div className="flex min-h-screen">
-        <Sidebar isAdmin={isAdmin} />
+      <div className="flex flex-col min-h-screen">
+        <Masthead isAdmin={isAdmin} />
         <AppMain>
           {isDemo && <DemoBanner />}
           {/* Cloud-only setup nudge; the local owner's app is untouched. The

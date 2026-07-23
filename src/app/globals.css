@@ -10,80 +10,180 @@
   --font-mono: var(--font-spline-mono);
 }
 
-/* ── TapeScore palette (brand handoff) ────────────────────────────────────
-   The app uses Tailwind's default gray + blue directly across ~40 files.
-   Overriding the ramps re-skins everything into the brand identity:
-   cool near-black surface (#0E0F11) + amber accent (#E0A33C).
-   Warnings intentionally left on default `yellow` so caution never collides
-   with the amber accent (which now comes from the blue ramp).                 */
+/* ── TapeScore palette — the R4 IDENTITY LOCK (Pt 12, 2026-07-21) ─────────
+   Supersedes the warm-graphite + amber brand handoff. Amber was dropped: on a
+   dark "trading terminal" it is the AI-default attractor every AI-assisted
+   journal converges on, and it doubled as our caution semantic.
+
+   LOCKED:
+     ground   carbon-black, cool-neutral (#0C0D10) — not violet, not warm
+     accent   scoreboard-blue #4F97CE = BRAND / UI ONLY (nav, links, focus)
+     meaning  green / red / caution-gold #D6B24E = TRADING MEANING ONLY
+              (P&L + score bands), never chrome
+
+   Premium comes from proportion, type and spacing — never simulated material
+   (silver/gradients/shine read as AI-tells). The app consumes Tailwind's gray
+   and blue ramps directly across ~40 files, so re-pointing the ramps rolls the
+   lock across every surface without a find-replace.                           */
 @theme {
-  /* Neutrals → cool near-black. Brand ground is #0E0F11, but the surface steps
-     are spread so panels read as distinct from the ground and borders stay
-     visible: ground (950) → card (900) → border/control (800) each a legible
-     step. (Earlier values were packed too close and cards melted into the bg.) */
-  --color-gray-50:  #F3F4F1;
-  --color-gray-100: #E7E8E5;
-  --color-gray-200: #D3D6D0;
-  --color-gray-300: #B7BBB5;
-  --color-gray-400: #8E938E;
-  --color-gray-500: #6E7378;
-  --color-gray-600: #4A5058;
-  --color-gray-700: #383E46;  /* dividers / hover borders (stronger)   */
-  --color-gray-800: #2A2F36;  /* card borders + controls — visible on a card */
-  --color-gray-900: #191C21;  /* card / panel — clearly lifts off the ground */
-  --color-gray-950: #0E0F11;  /* app ground (brand surface) */
+  /* Neutrals → carbon, cool-neutral. Surface steps stay spread so panels read
+     distinct from the ground and borders stay visible: ground (950) → panel
+     (900) → control/border (800) → divider (700). */
+  --color-gray-50:  #F4F6F8;
+  --color-gray-100: #E8EAED;  /* ink */
+  --color-gray-200: #D2D6DB;
+  --color-gray-300: #B9BEC6;
+  --color-gray-400: #969BA3;  /* muted */
+  --color-gray-500: #5E636B;  /* faint */
+  --color-gray-600: #3D434B;
+  --color-gray-700: #282C32;  /* dividers / hover borders */
+  --color-gray-800: #1F232A;  /* card borders + control fills */
+  --color-gray-900: #131519;  /* card / panel */
+  --color-gray-950: #0C0D10;  /* app ground */
 
-  /* Accent → amber (brand #E0A33C); replaces stock blue */
-  --color-blue-50:  #FBF3E2;
-  --color-blue-100: #F7E6C0;
-  --color-blue-200: #F0D293;
-  --color-blue-300: #EABF66;
-  --color-blue-400: #E5AE45;
-  --color-blue-500: #E0A33C;
-  --color-blue-600: #C0872C;
-  --color-blue-700: #97691F;
-  --color-blue-800: #6E4C17;
-  --color-blue-900: #4A3310;
-  --color-blue-950: #2A1D07;
+  /* Accent → scoreboard-blue. Brand + UI only; carries no P&L meaning. */
+  --color-blue-50:  #EAF3FA;
+  --color-blue-100: #CFE4F3;
+  --color-blue-200: #A9CDE9;
+  --color-blue-300: #79B4E6;  /* accent-bright */
+  --color-blue-400: #6BAADA;
+  --color-blue-500: #4F97CE;  /* accent */
+  --color-blue-600: #3E7CAD;
+  --color-blue-700: #2C5A7E;  /* accent-deep */
+  --color-blue-800: #21445F;
+  --color-blue-900: #16303F;
+  --color-blue-950: #08151F;  /* accent-ink */
 
-  /* Profit → calm emerald */
+  /* Profit → locked pos #4FC58E */
   --color-green-50:  #ECFBF4;
   --color-green-100: #CFF3E2;
   --color-green-200: #A6E8C9;
-  --color-green-300: #79DBAD;
-  --color-green-400: #52C99A;
-  --color-green-500: #34B07F;
-  --color-green-600: #259068;
-  --color-green-700: #1C6E50;
-  --color-green-800: #155138;
-  --color-green-900: #0F3A29;
-  --color-green-950: #0A2A1E;
+  --color-green-300: #79D9AC;
+  --color-green-400: #4FC58E;
+  --color-green-500: #3CAF7C;
+  --color-green-600: #2F8F65;
+  --color-green-700: #24704F;
+  --color-green-800: #1A5239;
+  --color-green-900: #123A29;
+  --color-green-950: #0B291D;
 
-  /* Loss → clay (informs, doesn't scream) */
+  /* Loss → locked neg #E0685F (informs, doesn't scream) */
   --color-red-50:  #FCEFEE;
   --color-red-100: #F8DEDC;
   --color-red-200: #F1C0BC;
-  --color-red-300: #EA9C96;
-  --color-red-400: #E5645F;
-  --color-red-500: #D34E49;
-  --color-red-600: #B23E39;
-  --color-red-700: #8E322E;
-  --color-red-800: #6B2624;
-  --color-red-900: #4C1C1A;
-  --color-red-950: #351312;
+  --color-red-300: #EA9691;
+  --color-red-400: #E0685F;
+  --color-red-500: #CE564D;
+  --color-red-600: #B0443C;
+  --color-red-700: #8C352F;
+  --color-red-800: #692724;
+  --color-red-900: #4B1C1A;
+  --color-red-950: #341312;
 
-  /* Semantic aliases (enable bg-accent / text-pos / bg-surface-1 later) */
-  --color-app: #0E0F11;
-  --color-surface-1: #191C21;
-  --color-surface-2: #2A2F36;
-  --color-surface-3: #383E46;
-  --color-accent: #E0A33C;
-  --color-accent-bright: #F0BC63;
-  --color-accent-contrast: #2A1D07;
-  --color-pos: #52C99A;
-  --color-neg: #E5645F;
-  --color-warn: #EAB308;   /* distinct from the amber accent */
-  --color-danger: #E5645F;
+  /* Caution → locked gold #D6B24E. A trading-MEANING colour (mid score band,
+     risk flags). It is no longer the accent, so the two never collide. */
+  --color-yellow-50:  #FBF6E6;
+  --color-yellow-100: #F5EAC4;
+  --color-yellow-200: #EBD897;
+  --color-yellow-300: #E3C877;
+  --color-yellow-400: #D6B24E;
+  --color-yellow-500: #C39F3C;
+  --color-yellow-600: #A5842D;
+  --color-yellow-700: #806521;
+  --color-yellow-800: #5E4A18;
+  --color-yellow-900: #423411;
+  --color-yellow-950: #2A210A;
+
+  /* ── Off-palette compatibility remap ──────────────────────────────────
+     ~280 stock-Tailwind amber / emerald / orange / purple / rose usages are
+     spread across 48 files (warning banners, AI actions, streak badges). Left
+     alone they'd render stock hues against the carbon + scoreboard-blue lock —
+     the exact "AI-default" look this identity exists to kill. Re-pointing the
+     ramps collapses them onto locked meaning without touching a component:
+       amber, orange  → caution-gold  (attention / warning)
+       emerald        → pos green     (profit / good state)
+       rose, fuchsia  → neg red       (loss / danger)
+       purple         → accent blue   (AI + generate actions = brand, not a
+                                       second accent hue)
+     Rebuild a surface to the locked language and it should use gray/blue/
+     green/red/yellow directly; these aliases are the bridge until then. */
+  --color-amber-50:  #FBF6E6;  --color-orange-50:  #FBF6E6;
+  --color-amber-100: #F5EAC4;  --color-orange-100: #F5EAC4;
+  --color-amber-200: #EBD897;  --color-orange-200: #EBD897;
+  --color-amber-300: #E3C877;  --color-orange-300: #E3C877;
+  --color-amber-400: #D6B24E;  --color-orange-400: #D6B24E;
+  --color-amber-500: #C39F3C;  --color-orange-500: #C39F3C;
+  --color-amber-600: #A5842D;  --color-orange-600: #A5842D;
+  --color-amber-700: #806521;  --color-orange-700: #806521;
+  --color-amber-800: #5E4A18;  --color-orange-800: #5E4A18;
+  --color-amber-900: #423411;  --color-orange-900: #423411;
+  --color-amber-950: #2A210A;  --color-orange-950: #2A210A;
+
+  --color-emerald-50:  #ECFBF4;
+  --color-emerald-100: #CFF3E2;
+  --color-emerald-200: #A6E8C9;
+  --color-emerald-300: #79D9AC;
+  --color-emerald-400: #4FC58E;
+  --color-emerald-500: #3CAF7C;
+  --color-emerald-600: #2F8F65;
+  --color-emerald-700: #24704F;
+  --color-emerald-800: #1A5239;
+  --color-emerald-900: #123A29;
+  --color-emerald-950: #0B291D;
+
+  --color-rose-50:  #FCEFEE;  --color-fuchsia-50:  #FCEFEE;
+  --color-rose-100: #F8DEDC;  --color-fuchsia-100: #F8DEDC;
+  --color-rose-200: #F1C0BC;  --color-fuchsia-200: #F1C0BC;
+  --color-rose-300: #EA9691;  --color-fuchsia-300: #EA9691;
+  --color-rose-400: #E0685F;  --color-fuchsia-400: #E0685F;
+  --color-rose-500: #CE564D;  --color-fuchsia-500: #CE564D;
+  --color-rose-600: #B0443C;  --color-fuchsia-600: #B0443C;
+  --color-rose-700: #8C352F;  --color-fuchsia-700: #8C352F;
+  --color-rose-800: #692724;  --color-fuchsia-800: #692724;
+  --color-rose-900: #4B1C1A;  --color-fuchsia-900: #4B1C1A;
+  --color-rose-950: #341312;  --color-fuchsia-950: #341312;
+
+  --color-purple-50:  #EAF3FA;
+  --color-purple-100: #CFE4F3;
+  --color-purple-200: #A9CDE9;
+  --color-purple-300: #79B4E6;
+  --color-purple-400: #6BAADA;
+  --color-purple-500: #4F97CE;
+  --color-purple-600: #3E7CAD;
+  --color-purple-700: #2C5A7E;
+  --color-purple-800: #21445F;
+  --color-purple-900: #16303F;
+  --color-purple-950: #08151F;
+
+  /* Semantic aliases */
+  --color-app: #0C0D10;
+  --color-surface-1: #131519;
+  --color-surface-2: #1F232A;
+  --color-surface-3: #282C32;
+  --color-accent: #4F97CE;
+  --color-accent-bright: #79B4E6;
+  --color-accent-deep: #2C5A7E;
+  --color-accent-contrast: #08151F;
+  --color-pos: #4FC58E;
+  --color-neg: #E0685F;
+  --color-warn: #D6B24E;
+  --color-danger: #E0685F;
+}
+
+/* ── Locked-design surface roles ──────────────────────────────────────────
+   Named roles for screens rebuilt to the locked language (Prep first, then
+   Review). Components read these instead of guessing a gray-N step, so the
+   hairline/divider hierarchy the design depends on stays consistent as more
+   screens roll over. Values mirror the @theme ramp above. */
+:root {
+  --ts-ground: #0C0D10;
+  --ts-panel: #131519;
+  --ts-panel-2: #1B1E23;
+  --ts-line: #282C32;   /* section rules, control borders */
+  --ts-hair: #1C2026;   /* row hairlines — quieter than --ts-line */
+  --ts-ink: #E8EAED;
+  --ts-mut: #969BA3;
+  --ts-faint: #5E636B;
 }
 
 /* ── Base type ──────────────────────────────────────────────────────────── */
@@ -100,12 +200,18 @@ h1, h2, h3 {
   letter-spacing: -0.01em;
 }
 
-/* Solid amber fills (primary buttons, solid badges) carry dark text — the brand
-   rule is dark-on-amber, never low-contrast white. Tinted fills like
-   `bg-blue-600/20` (active nav) use a different class name and are unaffected.
-   Unlayered, so it overrides the `text-white` utility on those fills. */
+/* Solid accent fills (primary buttons, solid badges) carry accent-ink text
+   rather than low-contrast white. Tinted fills like `bg-blue-600/20` (active
+   nav) use a different class name and are unaffected. Unlayered, so it
+   overrides the `text-white` utility on those fills. */
 .bg-blue-500,
-.bg-blue-600 {
+.bg-blue-600,
+.bg-purple-500,
+.bg-purple-600,
+.bg-amber-400,
+.bg-amber-500,
+.bg-yellow-400,
+.bg-yellow-500 {
   color: var(--color-accent-contrast);
 }
 
@@ -128,12 +234,12 @@ h1, h2, h3 {
 
 /* ── First-login guided tour (driver.js) — TapeScore skin ──────────────────
    Scoped to the .tapescore-tour popoverClass so it never touches any other
-   driver.js use. Warm-graphite popover + amber primary action, matching the
-   onboarding banner / brand identity. */
+   driver.js use. Carbon popover + scoreboard-blue primary action, matching the
+   locked identity. */
 .driver-popover.tapescore-tour {
-  background: #0c0a09;                       /* graphite */
-  color: #e7e5e4;
-  border: 1px solid rgba(120, 53, 15, 0.6); /* amber-900/60 */
+  background: #0c0d10;                       /* carbon ground */
+  color: #e8eaed;
+  border: 1px solid rgba(44, 90, 126, 0.6); /* accent-deep/60 */
   border-radius: 12px;
   box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7);
   max-width: 320px;
@@ -142,22 +248,22 @@ h1, h2, h3 {
   font-family: var(--font-display), system-ui, sans-serif;
   font-size: 15px;
   font-weight: 700;
-  color: #fafaf9;
+  color: #f4f6f8;
 }
 .driver-popover.tapescore-tour .driver-popover-description {
-  color: #a8a29e;
+  color: #969ba3;
   font-size: 13px;
   line-height: 1.5;
 }
 .driver-popover.tapescore-tour .driver-popover-progress-text {
-  color: #78716c;
+  color: #5e636b;
   font-size: 11px;
 }
 .driver-popover.tapescore-tour .driver-popover-close-btn {
-  color: #78716c;
+  color: #5e636b;
 }
 .driver-popover.tapescore-tour .driver-popover-close-btn:hover {
-  color: #f59e0b;
+  color: #79b4e6;
 }
 .driver-popover.tapescore-tour .driver-popover-next-btn,
 .driver-popover.tapescore-tour .driver-popover-prev-btn {
@@ -168,41 +274,41 @@ h1, h2, h3 {
   padding: 6px 12px;
 }
 .driver-popover.tapescore-tour .driver-popover-next-btn {
-  background: #f59e0b;                       /* amber-500 */
-  color: #1c1917;
+  background: #4f97ce;                       /* accent */
+  color: #08151f;                            /* accent-ink */
   border: none;
 }
 .driver-popover.tapescore-tour .driver-popover-next-btn:hover {
-  background: #fbbf24;                       /* amber-400 */
+  background: #79b4e6;                       /* accent-bright */
 }
 .driver-popover.tapescore-tour .driver-popover-prev-btn {
   background: transparent;
-  color: #a8a29e;
-  border: 1px solid #292524;
+  color: #969ba3;
+  border: 1px solid #282c32;
 }
 .driver-popover.tapescore-tour .driver-popover-prev-btn:hover {
-  color: #e7e5e4;
-  background: #1c1917;
+  color: #e8eaed;
+  background: #1f232a;
 }
 /* Explicit "Skip tour" link injected into the footer (prepended, pushed left). */
 .driver-popover.tapescore-tour .ts-tour-skip {
   margin-right: auto;
   background: none;
   border: none;
-  color: #78716c;
+  color: #5e636b;
   font-size: 12px;
   cursor: pointer;
   padding: 4px 2px;
 }
 .driver-popover.tapescore-tour .ts-tour-skip:hover {
-  color: #d6d3d1;
+  color: #d2d6db;
   text-decoration: underline;
 }
-/* Arrow tint — match the graphite popover on every side. */
-.driver-popover.tapescore-tour .driver-popover-arrow-side-left { border-left-color: #0c0a09; }
-.driver-popover.tapescore-tour .driver-popover-arrow-side-right { border-right-color: #0c0a09; }
-.driver-popover.tapescore-tour .driver-popover-arrow-side-top { border-top-color: #0c0a09; }
-.driver-popover.tapescore-tour .driver-popover-arrow-side-bottom { border-bottom-color: #0c0a09; }
+/* Arrow tint — match the carbon popover on every side. */
+.driver-popover.tapescore-tour .driver-popover-arrow-side-left { border-left-color: #0c0d10; }
+.driver-popover.tapescore-tour .driver-popover-arrow-side-right { border-right-color: #0c0d10; }
+.driver-popover.tapescore-tour .driver-popover-arrow-side-top { border-top-color: #0c0d10; }
+.driver-popover.tapescore-tour .driver-popover-arrow-side-bottom { border-bottom-color: #0c0d10; }
 
 /* Highlighted target — an amber ring + soft glow so the spotlighted element
    (especially the small amber coach FAB in the corner, which otherwise blends
