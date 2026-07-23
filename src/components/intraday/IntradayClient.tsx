@@ -404,6 +404,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
             const t = trades.find(x => x.id === id)
             if (t) setMode({ type: 'edit', trade: t })
           }}
+          editingId={mode.type === 'edit' ? mode.trade.id : null}
           flashTradeId={highlightId}
           rowIdPrefix="trade-"
         />

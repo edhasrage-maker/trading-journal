@@ -35,6 +35,12 @@ interface Props {
   defaultSymbol?: string | null
   /** Other trades on the same day — used for the "Copy tags from..." dropdown. */
   dayTrades?: Trade[]
+  /** Compact "quick edit" layout for the EOD recap edit-in-place drawer: renders
+   *  only entry/stop/TP1/qty + a single Setup dropdown + notes, with no card
+   *  chrome or header (the drawer supplies those). Reuses the same FormState +
+   *  save() as the full form — everything not shown is preserved from the trade.
+   *  (Session-merge Pt 13, step 2.) */
+  compact?: boolean
   onSave: (trade: Trade) => void
   onCancel: () => void
 }
@@ -108,7 +114,7 @@ function rMultiple(s: FormState, symbol: string | null | undefined): string | nu
   return null
 }
 
-export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, onSave, onCancel }: Props) {
+export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, compact = false, onSave, onCancel }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
@@ -411,19 +417,22 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   const r = rMultiple(form, trade?.symbol ?? defaultSymbol ?? null)
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl">
-      {/* Form header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
-        <h3 className="font-semibold text-white">{trade ? 'Edit Trade' : 'Log Trade'}</h3>
-        <button type="button" onClick={onCancel} className="text-gray-500 hover:text-gray-300 transition-colors">
-          <X className="w-4 h-4" />
-        </button>
-      </div>
+    <div className={compact ? '' : 'bg-gray-900 border border-gray-800 rounded-xl'}>
+      {/* Form header — the drawer supplies its own header + close in compact mode. */}
+      {!compact && (
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <h3 className="font-semibold text-white">{trade ? 'Edit Trade' : 'Log Trade'}</h3>
+          <button type="button" onClick={onCancel} className="text-gray-500 hover:text-gray-300 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
-      <div className="p-5 space-y-6">
+      <div className={compact ? 'space-y-4' : 'p-5 space-y-6'}>
 
-        {/* Direction */}
-        <div className="flex gap-2">
+        {/* Direction — hidden in the quick-edit drawer (flipping direction is a
+            full-log operation; it re-derives stop/TP1 sides). */}
+        {!compact && <div className="flex gap-2">
           {(['long', 'short'] as const).map(d => (
             <button key={d} type="button" onClick={() => set('direction', d)}
               className={`flex-1 py-2.5 rounded-lg text-sm font-bold border transition-colors ${
@@ -433,10 +442,10 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               }`}
             >{d === 'long' ? '▲ Long' : '▼ Short'}</button>
           ))}
-        </div>
+        </div>}
 
-        {/* Screenshot upload */}
-        <div>
+        {/* Screenshot upload — full-log only; the drawer is a quick numeric edit. */}
+        {!compact && <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Trade Screenshot</label>
           {form.screenshot_url ? (
             <div className="space-y-3">
@@ -530,12 +539,13 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               </div>
             </div>
           )}
-        </div>
+        </div>}
 
-        {/* Trade details */}
+        {/* Trade details. Compact (drawer) shows only the numeric levels + qty;
+            the full form also carries instrument, entry time, and P&L. */}
         <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trade Details</label>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {!compact && <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Trade Details</label>}
+          <div className={compact ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-3 sm:grid-cols-3'}>
             {[
               { key: 'symbol', label: 'Instrument', type: 'text', placeholder: 'e.g. ESU6.CME' },
               { key: 'entry_time', label: 'Entry Time', type: 'text', placeholder: 'HH:MM' },
@@ -544,7 +554,9 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               { key: 'stop_price', label: 'Stop Price', type: 'number' },
               { key: 'tp1_price', label: 'TP1 Price', type: 'number' },
               { key: 'pnl', label: r ? `P&L (${r})` : 'P&L ($)', type: 'number' },
-            ].map(({ key, label, type, placeholder }) => (
+            ]
+              .filter(f => !compact || ['entry_price', 'stop_price', 'tp1_price', 'quantity'].includes(f.key))
+              .map(({ key, label, type, placeholder }) => (
               <div key={key}>
                 <label className="block text-xs text-gray-400 mb-1">{label}</label>
                 <input
@@ -564,16 +576,43 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           <label className="block text-xs text-gray-400 mb-1">Notes</label>
           <textarea rows={2} spellCheck autoCorrect="on" placeholder="Execution notes, observations..."
             value={form.notes} onChange={e => set('notes', e.target.value)}
-            onBlur={suggestTagsFromNotes}
+            onBlur={compact ? undefined : suggestTagsFromNotes}
             className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
           />
         </div>
 
+        {/* Setup — the drawer swaps the full tag editor for a single setup
+            dropdown (the field the recap most often needs corrected). Reuses
+            form.tags; other tag categories are preserved untouched on save.
+            Full tag editing stays behind "Open full log". */}
+        {compact && (() => {
+          const setupLabels = allTags.filter(t => t.category === 'setups').map(t => t.label)
+          const current = form.tags.setups?.[0]
+          if (current && !setupLabels.includes(current)) setupLabels.unshift(current)
+          return (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Setup</label>
+              <select
+                value={current ?? ''}
+                onChange={e => {
+                  const v = e.target.value
+                  set('tags', { ...form.tags, setups: v ? [v] : [] })
+                }}
+                className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+              >
+                <option value="">— No setup —</option>
+                {setupLabels.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          )
+        })()}
+
         {/* Tags — render even when allTags is empty so the user can add the
             first one inline. TagSelector itself handles the empty-category
             case with "+ Add tag" affordances. The header shows a "Copy tags
-            from…" dropdown when other tagged trades exist on the same day. */}
-        <div>
+            from…" dropdown when other tagged trades exist on the same day.
+            Full mode only — the drawer uses the single Setup dropdown above. */}
+        {!compact && <div>
           <div className="flex items-center justify-between mb-3 gap-3">
             <div className="flex items-center gap-2">
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</label>
@@ -631,7 +670,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             onChange={t => set('tags', t)}
             onTagCreated={onTagCreated}
           />
-        </div>
+        </div>}
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -641,7 +680,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-medium px-4 py-2 rounded-lg text-sm transition-colors"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {saving ? 'Saving...' : 'Save Trade'}
+            {saving ? 'Saving...' : compact ? 'Save changes' : 'Save Trade'}
           </button>
           <button type="button" onClick={onCancel}
             className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 transition-colors">
@@ -652,8 +691,9 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       </div>
 
       {/* Edit-form zoom lightbox — fires when the screenshot's PinPlacement
-          is clicked. Mounted at TradeForm's root so it overlays the form. */}
-      <ScreenshotLightbox src={zoomedScreenshot} onClose={() => setZoomedScreenshot(null)} />
+          is clicked. Mounted at TradeForm's root so it overlays the form.
+          No screenshot in compact mode, so no lightbox. */}
+      {!compact && <ScreenshotLightbox src={zoomedScreenshot} onClose={() => setZoomedScreenshot(null)} />}
     </div>
   )
 }

@@ -106,10 +106,15 @@ interface Props {
   nearDuplicateIds?: Set<string>
   onDelete: (tradeId: string) => void
   deletingId: string | null
-  /** Open this trade's full log in the intraday page (review row-click). */
+  /** Open this trade's full log in the intraday page. Row-click fallback when
+   *  no onEdit is given; on EOD it moves into the drawer's "open full log". */
   onRowOpen?: (tradeId: string) => void
-  /** Edit this trade in place (capture row-click + per-row "edit" button). */
+  /** Edit this trade in place — the per-row "edit" button and the row-click.
+   *  Intraday opens the inline TradeForm; EOD opens the recap edit drawer. */
   onEdit?: (tradeId: string) => void
+  /** Id of the trade currently open in an editor, so its row button reads
+   *  "editing…" and the row gets a subtle highlight. */
+  editingId?: string | null
   /** DOM id prefix for each data row so page-level deep-link scroll can find it.
    *  Defaults to `eod-trade-` (review); Intraday passes `trade-`. */
   rowIdPrefix?: string
@@ -142,6 +147,7 @@ export default function SessionTradeTable({
   deletingId,
   onRowOpen,
   onEdit,
+  editingId,
   rowIdPrefix = 'eod-trade-',
   summaries = {},
   summariesLoading = false,
@@ -153,8 +159,9 @@ export default function SessionTradeTable({
   // AI sub-rows are gated OFF in capture; the review path evaluates exactly as
   // before so its render stays byte-identical.
   const isCapture = config === 'capture'
-  // Row-click action: edit in place (capture) or open the full log (review).
-  const rowAction = isCapture ? onEdit : onRowOpen
+  // Row-click action: edit in place when an edit handler is provided (Intraday
+  // inline form, or the EOD recap drawer), else open the full log (deep-link).
+  const rowAction = onEdit ?? onRowOpen
   // Effective column visibility. Capture forces Stop/TP1/Qty on and every
   // score/verdict column off, ignoring the per-device toggle. Review defers to
   // the user's saved `cols` prefs exactly as before.
@@ -620,6 +627,8 @@ export default function SessionTradeTable({
               const isFlashing = flashTradeId === t.id
               const isSelected = selectedIds.has(t.id)
               const isNearDup = nearDuplicateIds?.has(t.id) ?? false
+              // Row whose edit drawer / inline form is currently open.
+              const isEditing = editingId === t.id
               const summary = summaries[t.id]
               // AI overview (or the trader's own notes as fallback) renders as a
               // full-width sub-row under the data row — the old Overview COLUMN
@@ -632,6 +641,7 @@ export default function SessionTradeTable({
               const hasOverviewRow = !isCapture && (overviewText != null || !!summariesLoading)
               const isExpanded = expandedOverviews.has(t.id)
               const rowBg = isFlashing ? 'bg-blue-700/40'
+                : isEditing ? 'bg-amber-950/20'
                 : isSelected ? 'bg-blue-900/30'
                 : isHovered ? 'bg-blue-950/30'
                 : isNearDup ? 'bg-yellow-950/20'
@@ -643,13 +653,15 @@ export default function SessionTradeTable({
                   onMouseEnter={e => onHoverEnter?.(t.id, e)}
                   onMouseLeave={onHoverLeave}
                   onClick={() => rowAction?.(t.id)}
-                  title={isCapture ? 'Edit this trade' : "Open this trade's log in the intraday page"}
+                  title={onEdit ? 'Edit this trade' : "Open this trade's log in the intraday page"}
                   style={{ scrollMarginTop: 80 }}
                   className={`group ${hasOverviewRow ? '' : 'border-b'} transition-colors ${rowAction ? 'cursor-pointer' : 'cursor-default'} ${
                     // Flash spotlight takes precedence: a bright ring + fill so
                     // the jumped-to row is unmistakable, holding until it fades.
                     isFlashing
                       ? 'bg-blue-700/40 ring-2 ring-inset ring-blue-400 border-blue-700'
+                      : isEditing
+                      ? 'bg-amber-950/20 ring-1 ring-inset ring-amber-700/40 border-amber-900/60'
                       : isSelected
                       ? 'bg-blue-900/30 border-gray-800'
                       : isHovered
@@ -831,18 +843,22 @@ export default function SessionTradeTable({
                       </td>
                     )
                   })()}
-                  <td className={`py-1.5 pl-2 text-right${isCapture ? ' whitespace-nowrap' : ''}`}>
-                    {/* Capture: an explicit per-row edit affordance (opens the
-                        TradeForm in place). Review has no edit button — the whole
-                        row is the deep-link, and step 2 adds the recap drawer. */}
-                    {isCapture && onEdit && (
+                  <td className={`py-1.5 pl-2 text-right${onEdit ? ' whitespace-nowrap' : ''}`}>
+                    {/* Per-row edit affordance. Capture opens the inline TradeForm;
+                        review opens the recap edit drawer (step 2). Reads
+                        "editing…" while this row's editor is open. */}
+                    {onEdit && (
                       <button
                         type="button"
                         onClick={e => { e.stopPropagation(); onEdit(t.id) }}
-                        className="inline-flex items-center gap-1 align-middle text-[10px] text-gray-500 hover:text-blue-400 border border-gray-700 hover:border-blue-500/60 rounded px-1.5 py-0.5 mr-1 transition-colors"
+                        className={`inline-flex items-center gap-1 align-middle text-[10px] border rounded px-1.5 py-0.5 mr-1 transition-colors ${
+                          isEditing
+                            ? 'text-amber-300 border-amber-600/60 bg-amber-950/40'
+                            : 'text-gray-500 hover:text-blue-400 border-gray-700 hover:border-blue-500/60'
+                        }`}
                         title="Edit this trade"
                       >
-                        <Pencil className="w-3 h-3" /> edit
+                        <Pencil className="w-3 h-3" /> {isEditing ? 'editing…' : 'edit'}
                       </button>
                     )}
                     <button
@@ -865,8 +881,8 @@ export default function SessionTradeTable({
                   <tr
                     onMouseEnter={e => onHoverEnter?.(t.id, e)}
                     onMouseLeave={onHoverLeave}
-                    onClick={() => onRowOpen?.(t.id)}
-                    className={`border-b border-gray-800 transition-colors ${onRowOpen ? 'cursor-pointer' : 'cursor-default'} ${rowBg}`}
+                    onClick={() => rowAction?.(t.id)}
+                    className={`border-b border-gray-800 transition-colors ${rowAction ? 'cursor-pointer' : 'cursor-default'} ${rowBg}`}
                   >
                     <td className="pr-2" />
                     <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pb-2 pt-0 pr-2">

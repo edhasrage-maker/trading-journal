@@ -14,6 +14,7 @@ import LiveChart from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
+import TradeEditDrawer from '@/components/session/TradeEditDrawer'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
@@ -80,6 +81,7 @@ export default function EodClient({
   initialDay,
   initialTrades,
   initialMarketContext,
+  allTags,
   liveAtrByTradeId,
   postExitByTradeId,
   pnlHistory,
@@ -88,6 +90,9 @@ export default function EodClient({
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
+  // Recap edit-in-place drawer (Session-merge Pt 13 step 2): the id of the trade
+  // being quick-edited, or null when the drawer is closed.
+  const [editingTradeId, setEditingTradeId] = useState<string | null>(null)
   // 1m bars for the day, fetched once on mount. Threaded into TradeList so
   // per-row MFE Realized % uses the scaling-aware capture calc (walks
   // exits_json + per-leg peaks). Falls back to simple peak × full-qty when
@@ -1127,13 +1132,38 @@ export default function EodClient({
         nearDuplicateIds={nearDuplicateIds}
         onDelete={handleDeleteTrade}
         deletingId={deletingTradeId}
-        onRowOpen={id => router.push(`/intraday/${date}?trade=${id}`)}
+        onEdit={setEditingTradeId}
+        editingId={editingTradeId}
         summaries={summaries}
         summariesLoading={summariesLoading}
         liveAtrByTradeId={liveAtrByTradeId}
         postExitByTradeId={postExitByTradeId}
         bars={bars}
       />
+
+      {/* Edit-in-place drawer (Pt 13 step 2). Opens on a recap row's edit
+          action; saves via the shared compact TradeForm and replaces the row in
+          place so R / capture / setup re-derive without a page bounce. The
+          deep-link to the full intraday log lives inside as "Open full log". */}
+      {editingTradeId && (() => {
+        const editingTrade = trades.find(tr => tr.id === editingTradeId)
+        if (!editingTrade) return null
+        return (
+          <TradeEditDrawer
+            trade={editingTrade}
+            date={date}
+            allTags={allTags}
+            defaultSymbol={chartSymbol}
+            onSave={saved => {
+              setTrades(prev => prev.map(tr => (tr.id === saved.id ? saved : tr)))
+              setEditingTradeId(null)
+              showToast('Trade updated', 'success')
+            }}
+            onClose={() => setEditingTradeId(null)}
+            onOpenFullLog={id => router.push(`/intraday/${date}?trade=${id}`)}
+          />
+        )
+      })()}
 
       {/* OBS frame commentary reads local recordings via ffmpeg — local only. */}
       {LOCAL_FEATURES_ENABLED && (
