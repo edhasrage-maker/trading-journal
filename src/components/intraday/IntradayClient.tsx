@@ -3,19 +3,14 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { GitMerge, Edit2, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2, ImagePlus } from 'lucide-react'
+import { GitMerge, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2, ImagePlus } from 'lucide-react'
 import TradeForm from './TradeForm'
-import ScreenshotLightbox from './ScreenshotLightbox'
+import SessionTradeTable from '@/components/session/SessionTradeTable'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
-import CoachScoreBadge from './CoachScoreBadge'
-import CoachScorePanel from './CoachScorePanel'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import { deleteBlob } from '@/lib/storage'
-import { captureRatio, captureRatioScaled, maeHeatRatio, mfeMaePoints, isGiveBackTrade, formatCapturePct, type BarLike } from '@/lib/analytics'
-import { symbolToMultiplier } from '@/lib/futures-symbols'
-import { useMfeUnit, formatMfeMae } from '@/lib/mfe-unit'
 import { mergeTradeTags } from '@/lib/suggest-tags'
 import type { ScoringProfile } from '@/lib/scoring-profile'
 import type { Trade, TradeTag, TradeTags } from '@/lib/supabase/types'
@@ -38,136 +33,19 @@ interface Props {
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
 
-function dirColor(d: string | null) { return d === 'long' ? 'text-green-400' : d === 'short' ? 'text-red-400' : 'text-gray-400' }
 function pnlColor(p: number | null) { return p == null ? 'text-gray-400' : p > 0 ? 'text-green-400' : p < 0 ? 'text-red-400' : 'text-gray-400' }
-function fmt(n: number | null) { return n == null ? '—' : n.toFixed(2) }
 
-function rMultiple(t: Trade): string | null {
-  if (!t.entry_price || !t.stop_price || !t.pnl) return null
-  // R = pnl / risk_in_dollars. Risk in dollars requires the contract multiplier;
-  // without it the value is off by 2× for MNQ, 20× for NQ, 50× for ES, etc.
-  const mult = symbolToMultiplier(t.symbol ?? '')
-  const risk = Math.abs(t.entry_price - t.stop_price) * (t.quantity ?? 1) * mult
-  if (risk === 0) return null
-  return (t.pnl / risk).toFixed(1) + 'R'
-}
-
-/** Display-formatted capture % — null when MFE can't be computed or was non-positive.
- *  When bars are provided, prefers the per-leg scaling-aware ratio (each leg's max
- *  possible bounded by the price IT could've captured before exiting); without
- *  bars OR when bar coverage has a gap, falls back to the simple peak × full-qty
- *  ratio so the trader always sees SOMETHING. */
-function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
-  const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
-  if (r == null) return null
-  // Invariant guard: a ratio past 100+ε is a data mismatch (banked more than the
-  // peak favorable move — impossible). Show "—", never the raw number.
-  return formatCapturePct(r) ?? '—'
-}
-
-/** Display-formatted MAE Heat as a percentage. Null when no stop or no MAE.
- *  100% = MAE touched stop level; >100% = blew past it. Negative heat (trade
- *  was instantly favorable and never traded back through entry) is floored at
- *  0% for display; the chip renderer adds a small ↑ marker so the signal isn't
- *  lost. */
-function heatDisplay(t: Trade): string | null {
-  const r = maeHeatRatio(t)
-  if (r == null) return null
-  return `${Math.round(Math.max(0, r) * 100)}%`
-}
-
-/**
- * Inline R · Capture · Heat line shown under the row's PnL in the collapsed
- * trade list. Capture and Heat each render as a small chip; gray by default,
- * red+bold only for the cross-case patterns that need review (give-back
- * loser, lucky-escape winner, heat past stop).
- */
-function CapHeatInline({ trade, rDisplay, bars, instrumentHasBars = true }: { trade: Trade; rDisplay: string | null; bars?: BarLike[]; instrumentHasBars?: boolean }) {
-  // Prefer per-leg scaling-aware capture when bars are available; fall back
-  // to the simple peak × full-qty calc otherwise. Matches the displayed %
-  // so the standout-color logic agrees with what the trader sees.
-  const cap = (bars && bars.length > 0 ? captureRatioScaled(trade, bars) : null) ?? captureRatio(trade)
-  const heat = maeHeatRatio(trade)
-  if (cap == null && heat == null && !rDisplay) return null
-
-  // Cross-case detection. These are the trades you most want to NOT miss on
-  // review — surfaced visibly so they don't blend into the row average.
-  //
-  // Give-back: had MFE >= 1R favorable AND closed at a loss. A negative
-  // capture alone isn't enough — a +0.2R MFE that turned into a small loss is
-  // just a normal small loss, not a "winner I gave back". 1R = the threshold
-  // for what the trader's own R-multiple framework considers a real winner.
-  //
-  // Lucky escape: a winning trade whose MAE exceeded the planned stop. Got
-  // bailed out by the trade reversing — a discipline lesson hiding in a W.
-  const isGiveBack = isGiveBackTrade(trade)
-  const isLuckyEscape = (trade.pnl ?? 0) > 0 && heat != null && heat > 1.0
-  // Also flag heat > 100% on losers (you blew through your planned stop).
-  const heatStandout = isLuckyEscape || (heat != null && heat > 1.0)
-
-  const capCls = isGiveBack ? 'text-red-400 font-bold' : 'text-gray-400'
-  const heatCls = heatStandout ? 'text-red-400 font-bold' : 'text-gray-400'
-
-  // Layout: R inline next to nothing (compact), then MFE Realized % stacked
-  // over MAE Heat % so the pair reads as a vertical unit. Each chip shows
-  // just the number; the labels live in the hover tooltips to keep the row
-  // compact. Gray default, red+bold on standout cases (give-back, lucky
-  // escape, heat past stop).
-  return (
-    <div className="flex flex-col items-end text-xs text-gray-500 leading-tight">
-      {rDisplay && <span>{rDisplay}</span>}
-      {instrumentHasBars && cap != null && (
-        <span
-          className={capCls}
-          title={isGiveBack
-            ? `Profit Captured: ${captureDisplay(trade, bars)} — give-back (trade went favorable then closed negative).`
-            : `Profit Captured: ${captureDisplay(trade, bars)} of peak favorable excursion realized as PnL.${bars && bars.length > 0 ? ' Per-leg scaling-aware.' : ''}`}
-        >
-          {captureDisplay(trade, bars)}
-        </span>
-      )}
-      {instrumentHasBars && heat != null && (
-        <span
-          className={heatCls}
-          title={isLuckyEscape
-            ? `MAE Heat %: ${heatDisplay(trade)} — lucky escape (winner that violated planned stop).`
-            : heat < 0
-              ? `MAE Heat %: 0% — trade never breached entry (instantly favorable).`
-              : `MAE Heat %: ${heatDisplay(trade)} of planned stop distance touched as MAE.`}
-        >
-          {heatDisplay(trade)}
-          {heat < 0 && (
-            <span className="ml-0.5 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
-          )}
-        </span>
-      )}
-    </div>
-  )
-}
-
-export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '', scoringProfile = null }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '' }: Props) {
   const router = useRouter()
-  // Live MFE/MAE display unit, synced with AvgMfeMaeCard via custom event +
-  // localStorage. Drives the Peak MFE / Peak MAE rows in per-trade details
-  // so flipping the unit in the summary bar updates the detail rows too.
-  const [mfeUnit] = useMfeUnit()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   // Tags are local so newly-created custom tags appear across every TradeForm
   // on the page (existing edit-mode forms + the "new" form) without a full
   // page refresh.
   const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
-  // Curated setup labels (lowercased) → Coach Score's "setup in playbook" check.
-  const setupLibrary = useMemo(
-    () => new Set(allTags.filter(t => t.category === 'setups').map(t => t.label.toLowerCase())),
-    [allTags],
-  )
   const addTag = (tag: TradeTag) => {
     setAllTags(prev => prev.some(t => t.id === tag.id) ? prev : [...prev, tag])
   }
   const [mode, setMode] = useState<Mode>({ type: 'list' })
-  const [expanded, setExpanded] = useState<Set<string>>(
-    () => (initialOpenTradeId ? new Set([initialOpenTradeId]) : new Set()),
-  )
   const [highlightId, setHighlightId] = useState<string | null>(initialOpenTradeId ?? null)
 
   // Deep-link from the EOD trade list: open + scroll to the requested trade.
@@ -179,36 +57,18 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     const t = setTimeout(() => setHighlightId(null), 2400)
     return () => clearTimeout(t)
   }, [initialOpenTradeId])
+  // The capture table's per-row "edit" opens the TradeForm above the table;
+  // scroll it into view so clicking edit on a lower row isn't silent.
+  useEffect(() => {
+    if (mode.type !== 'edit') return
+    document.getElementById('intraday-edit-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [mode])
   const [deleting, setDeleting] = useState<string | null>(null)
   const [pastedFile, setPastedFile] = useState<File | null>(null)
   const [showChart, setShowChart] = useState(true)
   // Session journal is demoted to a collapsed drawer (Pt 17, cut list) so it
   // stops competing with the paste-first hero. Closed by default.
   const [showJournal, setShowJournal] = useState(false)
-
-  // 1-minute bars for the day, used by the scaling-aware MFE Capture
-  // calculation. The trades share the symbol of the first trade with one
-  // set (Sierra import gives every trade a symbol; some legacy / Tradezella
-  // trades may have null). Without bars, the per-row capture % falls back
-  // to the simple peak × full-qty formula.
-  const [bars, setBars] = useState<BarLike[] | null>(null)
-  useEffect(() => {
-    const symbol = trades.find(t => t.symbol)?.symbol
-    if (!symbol) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing bars when day has no symbol
-      setBars(null)
-      return
-    }
-    let cancelled = false
-    fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}&date=${date}`)
-      .then(res => res.ok ? res.json() : null)
-      .then((data: { bars?: BarLike[] } | null) => {
-        if (cancelled) return
-        setBars(data?.bars ?? null)
-      })
-      .catch(() => { if (!cancelled) setBars(null) })
-    return () => { cancelled = true }
-  }, [trades, date])
 
   // Session journal — shared with EOD recap via trading_days.eod_notes.
   // The trader writes during the session; the same text is there waiting at
@@ -242,25 +102,15 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
 
   // Bulk multi-select for tag-apply. Checkbox per row toggles membership;
   // a floating bar appears when 1+ trades are selected. Selecting trades
-  // does NOT change `expanded` / `mode`, so the user can keep editing one
-  // trade while also bulk-tagging others.
+  // does NOT change `mode`, so the user can keep editing one trade while also
+  // bulk-tagging others.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkTagOpen, setBulkTagOpen] = useState(false)
   const [bulkApplying, setBulkApplying] = useState(false)
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [merging, setMerging] = useState(false)
-  // Zoom lightbox — set to a screenshot URL to open a fullscreen viewer
-  // overlay. Click backdrop or press Escape to close. Replaces the
-  // earlier "open in new tab" affordance.
-  const [zoomedScreenshot, setZoomedScreenshot] = useState<string | null>(null)
-  useEffect(() => {
-    if (!zoomedScreenshot) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoomedScreenshot(null) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [zoomedScreenshot])
   const toggleSelected = (id: string) =>
-    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+    setSelectedIds(prev => { const s = new Set(prev); if (s.has(id)) s.delete(id); else s.add(id); return s })
   const clearSelection = () => setSelectedIds(new Set())
 
   /** Merge exactly 2 selected trades — mirrors the EOD recap flow. Use case:
@@ -352,38 +202,6 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     setPastedFile(null)
   }
 
-  // Inline-remove a single tag from the expanded trade view. Saves the user
-  // a round-trip into the full edit form when they just want to drop one
-  // label. Optimistic update — flip the UI first, PATCH after; revert on
-  // failure. Strips empty categories so the tag block doesn't render a
-  // ghost section with no labels.
-  const removeTagFromTrade = async (trade: Trade, category: string, label: string) => {
-    const currentTags = (trade.tags_json ?? {}) as Record<string, unknown>
-    const currentArr = Array.isArray(currentTags[category])
-      ? (currentTags[category] as string[])
-      : typeof currentTags[category] === 'string'
-        ? [currentTags[category] as string]
-        : []
-    const nextArr = currentArr.filter(t => t !== label)
-    const nextTags: Record<string, unknown> = { ...currentTags }
-    if (nextArr.length > 0) nextTags[category] = nextArr
-    else delete nextTags[category]
-
-    const prevTrades = trades
-    setTrades(ts => ts.map(t => t.id === trade.id ? { ...t, tags_json: nextTags as Trade['tags_json'] } : t))
-    try {
-      const res = await fetch(`/api/trades/${trade.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags_json: nextTags }),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    } catch {
-      // Revert on failure so the UI doesn't lie about persistence.
-      setTrades(prevTrades)
-    }
-  }
-
   // Bulk-apply tags: for each selected trade, PATCH /api/trades/[id] with the
   // merged tags_json (additive — never replaces existing tags). Updates local
   // state in place so the UI reflects the change without a full reload.
@@ -445,12 +263,8 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     clearSelection()
   }
 
-  const toggle = (id: string) =>
-    setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
-
   const totalPnl = trades.reduce((sum, t) => sum + (t.pnl ?? 0), 0)
   const isAdding = mode.type === 'add'
-  const editingId = mode.type === 'edit' ? mode.trade.id : null
 
   // Most-common trade symbol for the day-level LiveChart (same derivation as
   // the EOD page). Null when no trades have a symbol.
@@ -474,8 +288,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const effectiveChartSymbol = chartSymbol ?? 'NQ'
 
   // ES/NQ instrument switcher for the chart (shared hook with EOD + prep).
-  // `tradeHasBars` gates the bar-derived Coach Score criterion / stats.
-  const { activeSymbol: activeChartSymbol, symbolOptions, onSymbolChange, chartTrades, tradeHasBars } = useChartInstruments(effectiveChartSymbol, trades)
+  const { activeSymbol: activeChartSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(effectiveChartSymbol, trades)
 
   return (
     <div className="space-y-4">
@@ -565,256 +378,36 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
         </div>
       )}
 
-      {/* Trade list */}
-      {trades.map(trade => {
-        const isOpen = expanded.has(trade.id)
-        const isEditing = editingId === trade.id
-        const r = rMultiple(trade)
-        const setupTag = trade.tags_json?.setups?.[0]
-        const topTags = [
-          ...(trade.tags_json?.confluences ?? []).slice(0, 2),
-          ...(trade.tags_json?.mistakes ?? []).slice(0, 1),
-        ]
+      {/* Trade list — the shared session table in capture configuration: no
+          scores, no verdicts, no AI while the market is open. Per-row "edit"
+          opens the TradeForm in place (rendered just above); every judgment
+          surface lives on the EOD recap after the close (Session-merge Pt 13). */}
+      {mode.type === 'edit' && (
+        <div id="intraday-edit-form">
+          <TradeForm key={mode.trade.id} date={date} allTags={allTags} trade={mode.trade}
+            onTagCreated={addTag}
+            defaultSymbol={chartSymbol}
+            dayTrades={trades}
+            onSave={handleSave} onCancel={() => setMode({ type: 'list' })} />
+        </div>
+      )}
 
-        if (isEditing) {
-          return (
-            <TradeForm key={trade.id} date={date} allTags={allTags} trade={trade}
-              onTagCreated={addTag}
-              defaultSymbol={chartSymbol}
-              dayTrades={trades}
-              onSave={handleSave} onCancel={() => setMode({ type: 'list' })} />
-          )
-        }
-
-        return (
-          <div
-            key={trade.id}
-            id={`trade-${trade.id}`}
-            className={`bg-gray-900 border rounded-xl overflow-hidden transition-colors ${
-              highlightId === trade.id ? 'border-blue-500 ring-1 ring-blue-500/60' : 'border-gray-800'
-            }`}
-          >
-            {/* Trade header row */}
-            <div className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-800/40 transition-colors select-none"
-              onClick={() => toggle(trade.id)}>
-              {/* Multi-select checkbox — clicking it doesn't toggle the row open */}
-              <input
-                type="checkbox"
-                checked={selectedIds.has(trade.id)}
-                onChange={() => toggleSelected(trade.id)}
-                onClick={e => e.stopPropagation()}
-                className="accent-blue-600 cursor-pointer shrink-0"
-                title="Select for bulk tag-apply"
-              />
-              {/* Direction badge — sized down so the time can carry the row */}
-              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 leading-none ${
-                trade.direction === 'long' ? 'bg-green-900/40 border-green-700 text-green-400' : 'bg-red-900/40 border-red-700 text-red-400'
-              }`}>
-                {trade.direction === 'long' ? '▲ L' : '▼ S'}
-              </span>
-
-              {/* Time — bolder + lighter color so it reads as the row's anchor */}
-              <span className="text-sm font-bold text-gray-200 font-mono shrink-0">
-                {trade.entry_time ? new Date(trade.entry_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}
-              </span>
-
-              {/* Setup */}
-              <span className="text-sm font-medium text-white flex-1 truncate">{setupTag ?? 'No setup tagged'}</span>
-
-              {/* Top tags */}
-              <div className="hidden sm:flex gap-1 shrink-0">
-                {topTags.slice(0, 2).map(tag => (
-                  <span key={tag} className="text-xs px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400">{tag}</span>
-                ))}
-              </div>
-
-              {/* Coach Score — deterministic per-trade execution grade (0–10). */}
-              <CoachScoreBadge trade={trade} setupLibrary={setupLibrary} instrumentHasBars={tradeHasBars(trade)} scoringProfile={scoringProfile} />
-
-              {/* P&L · R · Capture % · Loss ×R. Capture and loss are bolded when
-                  the trade matches a high-signal cross-case pattern:
-                    - "Give-back" = loser that went green first (negative capture)
-                    - "Lucky escape" = winner that violated the planned stop (loss > 1×R) */}
-              <div className="text-right shrink-0">
-                <div className={`text-sm font-bold ${pnlColor(trade.pnl)}`}>
-                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : '−'}$${Math.abs(trade.pnl).toFixed(0)}`}
-                </div>
-                <CapHeatInline trade={trade} rDisplay={r} bars={bars ?? undefined} instrumentHasBars={tradeHasBars(trade)} />
-              </div>
-
-              {isOpen ? <ChevronUp className="w-4 h-4 text-gray-600 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-600 shrink-0" />}
-            </div>
-
-            {/* Expanded detail */}
-            {isOpen && (
-              <div className="border-t border-gray-800 px-4 py-4 space-y-4">
-                <CoachScorePanel trade={trade} notes={trade.notes} setupLibrary={setupLibrary} instrumentHasBars={tradeHasBars(trade)} scoringProfile={scoringProfile} />
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
-                  {[
-                    { label: 'Entry', value: fmt(trade.entry_price) },
-                    { label: 'Stop', value: fmt(trade.stop_price) },
-                    { label: 'TP1', value: fmt(trade.tp1_price) },
-                    { label: 'Qty', value: trade.quantity?.toString() ?? '—' },
-                  ].map(({ label, value }) => (
-                    <div key={label}>
-                      <div className="text-xs text-gray-500 mb-0.5">{label}</div>
-                      <div className="text-white font-medium">{value}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Execution quality: Capture % (how much of MFE did I take?) and
-                    Heat % (did I sit through more than my planned stop?).
-                    Scaling-aware capture when bars are loaded — falls back to
-                    simple peak × full-qty when bars haven't arrived yet OR a
-                    bar coverage gap returns null. */}
-                {tradeHasBars(trade) && (captureDisplay(trade, bars ?? undefined) != null || heatDisplay(trade) != null) && (() => {
-                  const xc = mfeMaePoints(trade)
-                  const cap = captureDisplay(trade, bars ?? undefined)
-                  const heat = heatDisplay(trade)
-                  const capRatio = (bars && bars.length > 0 ? captureRatioScaled(trade, bars) : null) ?? captureRatio(trade)
-                  const heatRatio = maeHeatRatio(trade)
-                  // Gray default; red+bold only for standout cases (negative
-                  // capture = give-back, heat > 100% = past stop).
-                  const capCls = capRatio != null && capRatio < 0 ? 'text-red-400 font-bold' : 'text-gray-300'
-                  const heatCls = heatRatio != null && heatRatio > 1.0 ? 'text-red-400 font-bold' : 'text-gray-300'
-
-                  // Convert raw pts MFE/MAE to the active unit so Peak MFE /
-                  // Peak MAE responds to the same toggle that drives the
-                  // day-level Avg MFE/MAE in the summary bar. ATR mode prefers
-                  // the trade's own entry_atr_1m snapshot (no afternoon
-                  // lookahead); pre-2025 trades without that field render '—'
-                  // for ATR rather than fall back silently.
-                  const convert = (pts: number): number | null => {
-                    if (mfeUnit === 'pts') return pts
-                    if (mfeUnit === 'dollars') {
-                      const mult = symbolToMultiplier(trade.symbol ?? '')
-                      const qty = trade.quantity ?? 1
-                      return pts * qty * mult
-                    }
-                    // atr
-                    const entryAtr = (trade as Trade & { entry_atr_1m?: number | null }).entry_atr_1m
-                    if (entryAtr != null && entryAtr > 0) return pts / entryAtr
-                    return null
-                  }
-                  const peakMfe = xc ? convert(xc.mfe) : null
-                  const peakMae = xc ? convert(xc.mae) : null
-                  // formatMfeMae handles +/- prefix; we negate MAE since it's
-                  // stored as a positive magnitude (distance from entry).
-                  return (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                      <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="Profit Captured: realized PnL / peak favorable excursion DURING the position. 100% = you took the high.">
-                          Profit Captured
-                        </div>
-                        <div className={`font-medium ${capCls}`}>{cap ?? '—'}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-gray-500 mb-0.5" title="MAE Heat %: peak adverse excursion / planned stop distance. 100% = MAE touched your stop level. Red bold means past stop (you blew through or got slipped). ↑ means the trade never breached entry.">
-                          MAE Heat %
-                        </div>
-                        <div className={`font-medium ${heatCls}`}>
-                          {heat ?? '—'}
-                          {heatRatio != null && heatRatio < 0 && (
-                            <span className="ml-1 text-emerald-400" title="Never breached entry — trade was instantly favorable.">↑</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="hidden sm:block">
-                        <div className="text-xs text-gray-500 mb-0.5" title={`Peak favorable excursion (${mfeUnit === 'dollars' ? '$' : mfeUnit === 'atr' ? '×ATR' : 'pts'})`}>Peak MFE</div>
-                        <div className="text-gray-300 font-mono">{formatMfeMae(peakMfe, mfeUnit)}</div>
-                      </div>
-                      <div className="hidden sm:block">
-                        <div className="text-xs text-gray-500 mb-0.5" title={`Peak adverse excursion (${mfeUnit === 'dollars' ? '$' : mfeUnit === 'atr' ? '×ATR' : 'pts'})`}>Peak MAE</div>
-                        <div className="text-gray-300 font-mono">{formatMfeMae(peakMae == null ? null : -peakMae, mfeUnit)}</div>
-                      </div>
-                    </div>
-                  )
-                })()}
-
-                {/* Screenshot with pins. Click opens an in-page zoom lightbox
-                    (replaces the earlier open-in-new-tab affordance — the
-                    inline thumbnail is too small to read but a new tab is more
-                    friction than wanted). The pin-overlay SVG has
-                    pointer-events-none so it never intercepts the click. */}
-                {trade.screenshot_url && (
-                  <div className="relative rounded-lg overflow-hidden border border-gray-700 bg-gray-950 group">
-                    <button
-                      type="button"
-                      onClick={() => setZoomedScreenshot(trade.screenshot_url)}
-                      className="block w-full cursor-zoom-in p-0 m-0 border-0 bg-transparent"
-                      title="Click to zoom"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={trade.screenshot_url}
-                        alt="Trade"
-                        className="w-full object-contain max-h-80 transition-opacity group-hover:opacity-90"
-                      />
-                    </button>
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
-                      {([
-                        { key: 'entry', x: trade.entry_pin_x, y: trade.entry_pin_y, color: '#22c55e', short: 'E' },
-                        { key: 'stop',  x: trade.stop_pin_x,  y: trade.stop_pin_y,  color: '#ef4444', short: 'S' },
-                        { key: 'tp1',   x: trade.tp1_pin_x,   y: trade.tp1_pin_y,   color: '#eab308', short: 'T' },
-                      ] as const).map(p => p.x != null && p.y != null ? (
-                        <g key={p.key}>
-                          <circle cx={`${p.x}%`} cy={`${p.y}%`} r="10" fill={p.color} fillOpacity="0.85" stroke="white" strokeWidth="2" />
-                          <text x={`${p.x}%`} y={`${p.y}%`} textAnchor="middle" dominantBaseline="central" fill="white" fontSize="9" fontWeight="bold">{p.short}</text>
-                        </g>
-                      ) : null)}
-                    </svg>
-                  </div>
-                )}
-
-                {/* All tags — clickable to remove. Hover reveals an "×"
-                    so the user can drop tags inline without opening the
-                    full edit form. Color preserved per category. */}
-                {Object.keys(trade.tags_json ?? {}).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {Object.entries(trade.tags_json ?? {}).flatMap(([cat, val]) => {
-                      const items = Array.isArray(val) ? val : val ? [val] : []
-                      return items.map((tag: string) => {
-                        const colorCls = cat === 'mistakes' ? 'bg-red-900/30 border-red-700 text-red-400 hover:bg-red-900/60 hover:border-red-500'
-                          : cat === 'emotions' ? 'bg-purple-900/30 border-purple-700 text-purple-400 hover:bg-purple-900/60 hover:border-purple-500'
-                          : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:border-gray-500'
-                        return (
-                          <button
-                            key={`${cat}-${tag}`}
-                            type="button"
-                            onClick={e => { e.stopPropagation(); void removeTagFromTrade(trade, cat, tag) }}
-                            title={`Click to remove "${tag}" from this trade`}
-                            className={`group text-xs px-2 py-0.5 rounded-full border transition-colors inline-flex items-center gap-1 ${colorCls}`}
-                          >
-                            <span>{tag}</span>
-                            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px]">×</span>
-                          </button>
-                        )
-                      })
-                    })}
-                  </div>
-                )}
-
-                {trade.notes && (
-                  <p className="text-sm text-gray-400 italic">{trade.notes}</p>
-                )}
-
-                {/* Actions */}
-                <div className="flex gap-3 pt-1">
-                  <button type="button" onClick={() => setMode({ type: 'edit', trade })}
-                    className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-blue-400 transition-colors">
-                    <Edit2 className="w-3 h-3" /> Edit
-                  </button>
-                  <button type="button" onClick={() => handleDelete(trade.id)} disabled={deleting === trade.id}
-                    className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-red-400 transition-colors disabled:opacity-50">
-                    <Trash2 className="w-3 h-3" /> {deleting === trade.id ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )
-      })}
+      {trades.length > 0 && (
+        <SessionTradeTable
+          config="capture"
+          trades={trades}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelected}
+          onDelete={handleDelete}
+          deletingId={deleting}
+          onEdit={id => {
+            const t = trades.find(x => x.id === id)
+            if (t) setMode({ type: 'edit', trade: t })
+          }}
+          flashTradeId={highlightId}
+          rowIdPrefix="trade-"
+        />
+      )}
 
       {/* Add trade form */}
       {isAdding && (
@@ -924,10 +517,6 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
           onApply={handleBulkApplyTags}
         />
       )}
-
-      {/* Screenshot zoom lightbox. Shared with TradeForm (edit mode) via
-          src/components/intraday/ScreenshotLightbox.tsx. */}
-      <ScreenshotLightbox src={zoomedScreenshot} onClose={() => setZoomedScreenshot(null)} />
 
     </div>
   )
