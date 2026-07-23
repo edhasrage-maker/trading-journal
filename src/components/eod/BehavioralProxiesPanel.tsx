@@ -16,10 +16,10 @@ const TONE: Record<Exclude<ProxySeverity, 'none'>, { dot: string; text: string; 
   mild: { dot: 'bg-gray-400', text: 'text-gray-300', bg: 'rgba(107,114,128,0.10)', border: 'rgba(107,114,128,0.30)' },
 }
 
-export default function BehavioralProxiesPanel({ trades }: { trades: ProxyTrade[] }) {
+export default function BehavioralProxiesPanel({ trades, sessionEndedAt }: { trades: ProxyTrade[]; sessionEndedAt?: string | null }) {
   const { tradeCount, hasSignal, proxies } = useMemo(
-    () => computeBehavioralProxies(trades),
-    [trades],
+    () => computeBehavioralProxies(trades, sessionEndedAt),
+    [trades, sessionEndedAt],
   )
   if (tradeCount < 2) return null
 

@@ -835,11 +835,24 @@ export default function SessionTradeTable({
                     )
                   })()}
                   {showPostExit && (() => {
-                    const v = postExitVerdict(t as VerdictTrade, postExitByTradeId?.[t.id])
+                    const ext = postExitByTradeId?.[t.id]
+                    const v = postExitVerdict(t as VerdictTrade, ext)
                     if (!v) return <td className="py-1.5 pr-3 text-right text-gray-700">—</td>
+                    // The 30-min post-exit window hasn't fully filled — common
+                    // when the session was ended early (Pt 13 step 3). Flag the
+                    // verdict as provisional rather than silently under-counting.
+                    const partial = ext != null && ext.full_window === false
                     return (
                       <td className={`py-1.5 pr-3 text-right whitespace-nowrap ${VERDICT_TONE_CLASS[v.tone]}`} title={v.title}>
                         <span className="mr-0.5">{v.glyph}</span>{v.label}
+                        {partial && (
+                          <span
+                            className="ml-1.5 align-middle text-[9px] font-normal text-amber-400/80 border border-amber-700/50 rounded px-1 py-0.5"
+                            title="The 30-minute post-exit window hasn't fully elapsed yet — this verdict is provisional and updates once it does."
+                          >
+                            partial window
+                          </span>
+                        )}
                       </td>
                     )
                   })()}

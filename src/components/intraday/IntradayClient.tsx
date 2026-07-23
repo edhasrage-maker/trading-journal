@@ -3,13 +3,14 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { GitMerge, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2, ImagePlus } from 'lucide-react'
+import { GitMerge, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2, ImagePlus, Flag, ArrowRight } from 'lucide-react'
 import TradeForm from './TradeForm'
 import SessionTradeTable from '@/components/session/SessionTradeTable'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import TagSelector from './TagSelector'
 import LiveChart from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
+import { useSessionClock } from '@/lib/use-session-clock'
 import { deleteBlob } from '@/lib/storage'
 import { mergeTradeTags } from '@/lib/suggest-tags'
 import type { ScoringProfile } from '@/lib/scoring-profile'
@@ -29,13 +30,16 @@ interface Props {
   /** The trader's own onboarding scoring rules → per-user Coach Score. Null on
    *  the owner's local app (no onboarding) → default (Ruleset v1.3) rubric. */
   scoringProfile?: ScoringProfile | null
+  /** trading_days.session_ended_at — set once the trader manually ends the
+   *  session ("I'm done"). Drives the time-aware seam (Pt 13 step 3). */
+  initialSessionEndedAt?: string | null
 }
 
 type Mode = { type: 'list' } | { type: 'add' } | { type: 'edit'; trade: Trade }
 
 function pnlColor(p: number | null) { return p == null ? 'text-gray-400' : p > 0 ? 'text-green-400' : p < 0 ? 'text-red-400' : 'text-gray-400' }
 
-export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '' }: Props) {
+export default function IntradayClient({ date, initialTrades, allTags: initialAllTags, initialOpenTradeId, prepDayTypes, initialSessionNotes = '', initialSessionEndedAt = null }: Props) {
   const router = useRouter()
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   // Tags are local so newly-created custom tags appear across every TradeForm
@@ -47,6 +51,10 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   }
   const [mode, setMode] = useState<Mode>({ type: 'list' })
   const [highlightId, setHighlightId] = useState<string | null>(initialOpenTradeId ?? null)
+  // Manual end-session state (Pt 13 step 3). Seeded from the server; set locally
+  // when the trader hits "I'm done" so the seam flips without a full reload.
+  const [sessionEndedAt, setSessionEndedAt] = useState<string | null>(initialSessionEndedAt)
+  const [ending, setEnding] = useState(false)
 
   // Deep-link from the EOD trade list: open + scroll to the requested trade.
   useEffect(() => {
@@ -266,6 +274,35 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const totalPnl = trades.reduce((sum, t) => sum + (t.pnl ?? 0), 0)
   const isAdding = mode.type === 'add'
 
+  // Time-aware seam (Pt 13 step 3). Live = today, before the RTH close, not yet
+  // ended by choice → offer "I'm done". Once the clock has passed the close (or
+  // this is a past date, or it's been ended), the paste hero yields to a prompt
+  // to run the recap. Flags are false until mount, so nothing flashes on SSR.
+  const { mounted, isToday, beforeClose } = useSessionClock(date)
+  const sessionLive = isToday && beforeClose && !sessionEndedAt
+  const showRecapCta = mounted && !sessionLive
+
+  const endSession = async () => {
+    if (ending) return
+    if (!confirm(
+      'End the session now and run your recap?\n\n' +
+      'You can still add a missed trade afterward, but a trade entered after this ' +
+      'is flagged as re-opening the session — the tape holds you to calling it done.',
+    )) return
+    setEnding(true)
+    try {
+      const res = await fetch(`/api/trading-days/${date}/end-session`, { method: 'POST' })
+      if (!res.ok) { alert('Could not end the session. Please try again.'); return }
+      const data = await res.json() as { endedAt?: string }
+      setSessionEndedAt(data.endedAt ?? new Date().toISOString())
+      router.push(`/eod/${date}`)
+    } catch {
+      alert('Could not end the session. Please try again.')
+    } finally {
+      setEnding(false)
+    }
+  }
+
   // Most-common trade symbol for the day-level LiveChart (same derivation as
   // the EOD page). Null when no trades have a symbol.
   const chartSymbol = useMemo<string | null>(() => {
@@ -294,30 +331,66 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
     <div className="space-y-4">
 
       {/* Header — title + day switcher (mirrors the EOD / Prep page pattern) */}
-      <div>
-        <h1 className="text-2xl font-bold text-white">Intraday</h1>
-        <div className="flex items-center gap-3 mt-1">
-          <input
-            type="date"
-            value={date}
-            onChange={e => {
-              const next = e.target.value
-              if (next && next !== date) router.push(`/intraday/${next}`)
-            }}
-            className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
-            title="Switch to a different day"
-          />
-          <span className="text-gray-400 text-sm">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</span>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Intraday</h1>
+          <div className="flex items-center gap-3 mt-1">
+            <input
+              type="date"
+              value={date}
+              onChange={e => {
+                const next = e.target.value
+                if (next && next !== date) router.push(`/intraday/${next}`)
+              }}
+              className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
+              title="Switch to a different day"
+            />
+            <span className="text-gray-400 text-sm">{format(new Date(date + 'T12:00:00'), 'EEEE, MMMM d, yyyy')}</span>
+          </div>
         </div>
+        {/* Manual end-session (Pt 13 step 3) — only while the session is live
+            (today, before the RTH close, not already ended). Runs the recap on
+            the trader's terms; ending early is recorded as a discipline event. */}
+        {sessionLive && (
+          <button
+            type="button"
+            onClick={endSession}
+            disabled={ending}
+            className="shrink-0 self-center inline-flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-amber-600/60 text-gray-200 text-sm font-medium rounded-lg px-3.5 py-2 transition-colors disabled:opacity-60"
+            title="End the session now and run your end-of-day recap"
+          >
+            {ending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Flag className="w-4 h-4 text-amber-400" />}
+            I&rsquo;m done — end session
+          </button>
+        )}
       </div>
+
+      {/* After-close seam (Pt 13 step 3) — the session is over (past the RTH
+          close, a past date, or ended by choice), so the prominent affordance is
+          "run your recap", and the paste hero shrinks to an add-missed-trade box. */}
+      {mode.type === 'list' && showRecapCta && (
+        <button
+          type="button"
+          onClick={() => router.push(`/eod/${date}`)}
+          className="group w-full text-left rounded-xl border border-amber-800/50 bg-amber-950/20 hover:border-amber-600/70 px-5 py-4 transition-colors flex items-center gap-3"
+        >
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white">End session → run your recap</p>
+            <p className="text-[13px] text-gray-400 mt-0.5">
+              The market&rsquo;s closed for this session. Head to the recap for your TapeScore, verdicts, and AI read.
+            </p>
+          </div>
+          <ArrowRight className="w-5 h-5 text-amber-400 shrink-0 group-hover:translate-x-0.5 transition-transform" />
+        </button>
+      )}
 
       {/* Paste-first hero (Pt 17, mockup 03) — the screenshot dropzone IS the
           page. Ctrl+V / drop / tap → auto-extract → prefilled form. Hidden while
-          a form is open. Compact once the day already has trades so the list the
-          trader came to see isn't pushed down. Manual entry is the demoted link. */}
+          a form is open. Compact once the day already has trades (or the session
+          is over) so the list / recap CTA isn't pushed down. */}
       {mode.type === 'list' && (
         <PasteDropZone
-          compact={trades.length > 0}
+          compact={trades.length > 0 || showRecapCta}
           onFile={startFromFile}
           onManual={startManual}
         />

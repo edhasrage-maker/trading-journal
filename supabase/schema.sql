@@ -31,6 +31,10 @@ create table if not exists trading_days (
   -- ai_analysis_json shape: { summary: string, flags: string[], score: number }
   eod_notes text,
   eod_pnl numeric(10,2),
+  -- Set when the trader manually ends the session ("I'm done") during RTH.
+  -- NULL = never manually ended. Never cleared after a re-open — see migration
+  -- 20260722_session_ended_at.sql. Re-open is derived (trades entered after it).
+  session_ended_at timestamptz,
   -- Materialized per-day dashboard rollup (Pt 10). Produced by the shared pure
   -- function src/lib/day-stats.ts::computeDayStats; stores everything it returns
   -- except the column-owned fields (id, date, day_type, day_types,

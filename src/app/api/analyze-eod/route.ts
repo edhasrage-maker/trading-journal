@@ -23,6 +23,9 @@ interface AnalyzeEodBody {
   marketContext?: Partial<MarketContext>
   imageBase64?: string | null
   imageMediaType?: string | null
+  /** trading_days.session_ended_at — feeds the "re-opened after ending" flag
+   *  (Pt 13 step 3). Null/absent when the session wasn't manually ended. */
+  sessionEndedAt?: string | null
 }
 
 export async function POST(req: Request) {
@@ -66,7 +69,7 @@ async function handle(req: Request) {
   const rc = resolveRails(scoringProfile, LOCAL_FEATURES_ENABLED)
 
   const body = (await req.json()) as AnalyzeEodBody
-  const { trades, eodNotes, prepNotes, prepAnalysis, marketContext, imageBase64, imageMediaType } = body
+  const { trades, eodNotes, prepNotes, prepAnalysis, marketContext, imageBase64, imageMediaType, sessionEndedAt } = body
   const normalizedMediaType = imageBase64 ? normalizeAnthropicMediaType(imageMediaType) : null
   const hasImage = !!imageBase64 && normalizedMediaType != null
   if (imageBase64 && !hasImage) {
@@ -112,7 +115,7 @@ async function handle(req: Request) {
   }
 
   const prompt = profileContextBlock(traderProfile)
-    + behavioralProxiesPromptBlock(trades)
+    + behavioralProxiesPromptBlock(trades, sessionEndedAt)
     + journalBlock
     + coachingBlock
     + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage, scoringProfile, isLocalOwner: LOCAL_FEATURES_ENABLED })

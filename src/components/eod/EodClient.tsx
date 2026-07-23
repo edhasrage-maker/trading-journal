@@ -29,6 +29,7 @@ import AchievementShowcase from '@/components/eod/AchievementShowcase'
 import { dayAchievements, type AchievementId } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
+import { useSessionClock } from '@/lib/use-session-clock'
 import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, formatCapturePct, CAPTURE_MISMATCH_TOOLTIP, type BarLike } from '@/lib/analytics'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import type {
@@ -93,6 +94,19 @@ export default function EodClient({
   // Recap edit-in-place drawer (Session-merge Pt 13 step 2): the id of the trade
   // being quick-edited, or null when the drawer is closed.
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null)
+  // Time-aware seam (Pt 13 step 3). `endedAt` = the manual end-session stamp.
+  // The recap is still "live" only when it's today, before the RTH close, and
+  // the trader hasn't ended by choice — then judgment is premature and we point
+  // them back to Intraday instead. (Flags are false until mount → no flash/SSR
+  // mismatch.)
+  const { isToday, beforeClose } = useSessionClock(date)
+  const endedAt = day?.session_ended_at ?? null
+  const sessionStillLive = isToday && beforeClose && !endedAt
+  // Explicit PT (not date-fns local) so the SSR render (Vercel is UTC) matches
+  // the client's PT render — otherwise the "ended by choice" time hydrates wrong.
+  const endedAtLabel = endedAt
+    ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(endedAt))
+    : null
   // 1m bars for the day, fetched once on mount. Threaded into TradeList so
   // per-row MFE Realized % uses the scaling-aware capture calc (walks
   // exits_json + per-leg peaks). Falls back to simple peak × full-qty when
@@ -330,6 +344,7 @@ export default function EodClient({
           marketContext: initialMarketContext,
           imageBase64: image?.data ?? null,
           imageMediaType: image?.mediaType ?? null,
+          sessionEndedAt: day?.session_ended_at ?? null,
         }),
       })
       if (!res.ok) {
@@ -769,6 +784,14 @@ export default function EodClient({
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
         <div data-tour="eod-header" className="shrink-0">
           <h1 className="text-xl font-bold text-white">EOD Recap</h1>
+          {/* Ended by choice (Pt 13 step 3) — a positive discipline note when the
+              trader called the session early rather than trading to the close. */}
+          {endedAtLabel && (
+            <p className="mt-1 inline-flex items-center gap-1.5 text-[12px] text-emerald-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Ended by choice at {endedAtLabel}
+            </p>
+          )}
           {/* Achievement badges earned this day (Sniper, Grand Slam, …). */}
           <AchievementBadges items={achievements} className="mt-1.5" />
           {/* Date + action buttons share one row, aligned under the title. */}
@@ -954,16 +977,40 @@ export default function EodClient({
         </div>
       </div>
 
-      {/* One TapeScore hero (Ruleset amendment 5): 0-100 ring + day verdict
-          sentence + component chips. Hidden until the day has an analysis. */}
-      <TapeScoreHeader
-        analysis={aiAnalysis}
-        prepScore={day?.ai_analysis_json?.score ?? null}
-        tradeCount={trades.length}
-        winCount={winCount}
-        lossCount={lossCount}
-        pnl={computedPnl}
-      />
+      {/* Time-aware seam (Pt 13 step 3): before the close the score hero is
+          premature, so its slot shows a "session still live" state that points
+          back to Intraday. Judgment (scores, verdicts, AI) stays out of sight
+          until the market closes or the trader ends by choice. */}
+      {sessionStillLive ? (
+        <div className="rounded-xl border border-amber-800/50 bg-amber-950/20 px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-amber-300 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" /> LIVE
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white">Session still live — your recap unlocks at the close.</p>
+            <p className="text-[13px] text-gray-400 mt-0.5">
+              Scores, verdicts, and the AI read stay out of sight while the market is open. Keep logging on Intraday; end early with &ldquo;I&rsquo;m done&rdquo; when you&rsquo;re finished.
+            </p>
+          </div>
+          <Link
+            href={`/intraday/${date}`}
+            className="shrink-0 self-start sm:self-center inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-[#1b1408] text-sm font-semibold rounded-lg px-3.5 py-2 transition-colors"
+          >
+            Log trades →
+          </Link>
+        </div>
+      ) : (
+        /* One TapeScore hero (Ruleset amendment 5): 0-100 ring + day verdict
+           sentence + component chips. Hidden until the day has an analysis. */
+        <TapeScoreHeader
+          analysis={aiAnalysis}
+          prepScore={day?.ai_analysis_json?.score ?? null}
+          tradeCount={trades.length}
+          winCount={winCount}
+          lossCount={lossCount}
+          pnl={computedPnl}
+        />
+      )}
 
       {/* Differentiator, promoted above the fold (alpha-readiness item 23):
           lead the recap with the plain-language entry-efficiency read + the
@@ -974,7 +1021,7 @@ export default function EodClient({
           TradeList below. Reorder, not rebuild — same components as before. */}
       <MfeMaeEfficiency mfe={mfeMaeAtrStats.mfe} mae={mfeMaeAtrStats.mae} count={mfeMaeAtrStats.count} roundTrip={roundTripStats} />
 
-      <BehavioralProxiesPanel trades={trades} />
+      <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} />
 
       {/* Chart area — toggle between legacy screenshot+calibration and the
           new live-bars rendering. Screenshot path will be removed in Phase 5

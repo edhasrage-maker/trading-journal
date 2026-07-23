@@ -54,6 +54,7 @@ export default async function IntradayPage({
         scoringProfile={scoringProfile}
         initialOpenTradeId={openTradeId ?? null}
         initialSessionNotes={(day?.eod_notes as string | null) ?? ''}
+        initialSessionEndedAt={(day?.session_ended_at as string | null) ?? null}
         prepDayTypes={
           // Multi-select array if available, else legacy single primary as a
           // one-element array. Either form seeds the new trade's day_type tag.

@@ -37,3 +37,41 @@ export function isOutsideRth(ts: string | number): boolean {
   if (!Number.isFinite(ms)) return false
   return !isWithinRth(ms)
 }
+
+/** PT (America/Los_Angeles) calendar date of an instant as a YYYY-MM-DD string.
+ *  en-CA formats ISO-style (YYYY-MM-DD), so no manual assembly needed. */
+function ptDateString(ms: number): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(ms))
+}
+
+/** PT offset from UTC (ms) at an instant — e.g. -7h during PDT, -8h during PST.
+ *  Derived by diffing the same instant rendered in UTC vs PT wall-clock. */
+function ptOffsetMs(ms: number): number {
+  const d = new Date(ms)
+  const asUtc = new Date(d.toLocaleString('en-US', { timeZone: 'UTC' })).getTime()
+  const asPt = new Date(d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })).getTime()
+  return asPt - asUtc
+}
+
+/** UTC-ms of the RTH close (13:00 PT) on a YYYY-MM-DD date, DST-aware. NaN for
+ *  an unparseable date. */
+export function rthCloseMs(dateStr: string): number {
+  const guess = Date.parse(`${dateStr}T13:00:00Z`) // 13:00 "UTC" on that date
+  if (!Number.isFinite(guess)) return NaN
+  // 13:00 PT = 13:00 UTC shifted back by the PT offset at that instant.
+  return guess - ptOffsetMs(guess)
+}
+
+/** True if `dateStr` (YYYY-MM-DD) is the current PT calendar date. */
+export function isTodayPt(dateStr: string): boolean {
+  return ptDateString(Date.now()) === dateStr
+}
+
+/** True if the RTH close for `dateStr` is still in the future (session not yet
+ *  closed by the clock). Past dates → false; today before 13:00 PT → true. */
+export function isBeforeRthClose(dateStr: string): boolean {
+  const close = rthCloseMs(dateStr)
+  return Number.isFinite(close) && Date.now() < close
+}

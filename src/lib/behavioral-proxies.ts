@@ -25,7 +25,7 @@ export interface ProxyTrade {
 export type ProxySeverity = 'none' | 'mild' | 'flag'
 
 export interface BehavioralProxy {
-  key: 'revenge_reentry' | 'shrinking_hold' | 'stacking' | 'pressing_drawdown'
+  key: 'revenge_reentry' | 'shrinking_hold' | 'stacking' | 'pressing_drawdown' | 'reopened_after_ending'
   label: string
   severity: ProxySeverity
   /** How many times the pattern occurred (or the run length for stacking). */
@@ -119,8 +119,28 @@ function fmtHold(min: number): string {
   return `${(min / 60).toFixed(1)}h`
 }
 
-/** Compute the four behavioral proxies for one trading day's trades. */
-export function computeBehavioralProxies(trades: ProxyTrade[]): BehavioralProxies {
+/** HH:MM in PT for an ISO/parseable timestamp — the trader's display timezone. */
+function fmtPtTime(iso: string): string {
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return '?'
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(ms))
+}
+
+/**
+ * Compute the behavioral proxies for one trading day's trades.
+ *
+ * `sessionEndedAt` (Pt 13 step 3) is the trading day's manual end-session
+ * timestamp. When provided, a fifth "re-opened after ending" proxy is appended
+ * for any trade entered after it — the revenge/tilt pattern of trading again
+ * after calling it a day. Omit it and the proxy set is unchanged (four proxies),
+ * so callers that don't have the timestamp behave exactly as before.
+ */
+export function computeBehavioralProxies(
+  trades: ProxyTrade[],
+  sessionEndedAt?: string | null,
+): BehavioralProxies {
   const rows = buildRows(trades)
   const n = rows.length
   const proxies: BehavioralProxy[] = []
@@ -202,6 +222,29 @@ export function computeBehavioralProxies(trades: ProxyTrade[]): BehavioralProxie
     })
   }
 
+  // 5. Re-opened after ending (Pt 13 step 3) — only when the day carries a manual
+  //    end-session timestamp. Trading again after declaring "I'm done" is the
+  //    revenge/tilt pattern the behavioral flags exist to catch, so any such
+  //    trade is a flag. Appended only when sessionEndedAt is given, so callers
+  //    without it keep the original four-proxy set.
+  if (sessionEndedAt) {
+    const endMs = Date.parse(sessionEndedAt)
+    if (Number.isFinite(endMs)) {
+      const after = rows.filter(r => r.entry_time != null && Date.parse(r.entry_time) > endMs)
+      const count = after.length
+      const times = after.map(r => fmtPtTime(r.entry_time as string))
+      proxies.push({
+        key: 'reopened_after_ending',
+        label: 'Re-opened after ending',
+        severity: count >= 1 ? 'flag' : 'none',
+        count,
+        evidence: after.map(r => r.seq),
+        detail: count === 0 ? ''
+          : `re-opened after calling it done — ${count} trade${count === 1 ? '' : 's'} at ${times.join(', ')}`,
+      })
+    }
+  }
+
   return { tradeCount: n, hasSignal: proxies.some(p => p.severity !== 'none'), proxies }
 }
 
@@ -213,8 +256,8 @@ function fmtSignedUsd(n: number): string {
 /** Format the proxies as an interpreted context block for an AI prompt. Returns
  *  '' when there are too few trades or no signal, so a clean session adds no
  *  prompt weight. Framed as observations, NOT scoring criteria. */
-export function behavioralProxiesPromptBlock(trades: ProxyTrade[]): string {
-  const { tradeCount, hasSignal, proxies } = computeBehavioralProxies(trades)
+export function behavioralProxiesPromptBlock(trades: ProxyTrade[], sessionEndedAt?: string | null): string {
+  const { tradeCount, hasSignal, proxies } = computeBehavioralProxies(trades, sessionEndedAt)
   if (tradeCount < 2 || !hasSignal) return ''
   const lines = proxies
     .filter(p => p.severity !== 'none')

@@ -14,6 +14,9 @@ export interface Database {
           ai_analysis_json: AiAnalysis
           eod_notes: string | null
           eod_pnl: number | null
+          // Set when the trader manually ends the session during RTH (Pt 13
+          // step 3). NULL = never manually ended. Never cleared after a re-open.
+          session_ended_at: string | null
           eod_chart_screenshot_url: string | null
           chart_calibration_json: ChartCalibration | null
           eod_ai_analysis_json: EodAiAnalysis
