@@ -13,6 +13,7 @@ import PrepNotesForm from './PrepNotesForm'
 import SessionPicker from './SessionPicker'
 import AiAnalysisCard from './AiAnalysisCard'
 import DiscordDashboard from './DiscordDashboard'
+import DiscordCardInputs from './DiscordCardInputs'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
@@ -1107,6 +1108,9 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           available on the cloud site for the owner, hidden for public users. */}
       {isAdmin && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+          {/* Viewer-read + roadmap inputs sit directly above the preview they
+              feed, at the very bottom of the prep (moved out of Prep Notes). */}
+          <DiscordCardInputs value={prepNotes} onChange={setPrepNotes} />
           <DiscordDashboard
             date={date}
             marketContext={context as Partial<MarketContext>}
