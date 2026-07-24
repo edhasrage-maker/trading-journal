@@ -54,7 +54,7 @@ const settingsItems = [
 /** Brand lockup — film-frame mark + Tape(light)/Score(bold) wordmark. */
 function Brand({ className }: { className?: string }) {
   return (
-    <Link href="/dashboard" className={cn('flex items-center gap-2.5 flex-shrink-0', className)}>
+    <Link href="/review" className={cn('flex items-center gap-2.5 flex-shrink-0', className)}>
       {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
       <img src="/brand/tapescore-favicon.svg" alt="" aria-hidden className="w-7 h-7" />
       <span
