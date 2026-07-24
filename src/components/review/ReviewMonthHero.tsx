@@ -5,21 +5,14 @@ import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { Carryover } from '@/lib/prep-carryover'
 
 /**
- * Review pieces (the locked dashboard, artifact cebe7c02).
+ * The Dashboard hero (the locked dashboard, artifact cebe7c02).
  *
- * Split into two exports so the Overview can lead with the SCORE (the ring +
- * decision quality, over whatever period is selected) and place the monthly
- * FINDING as a section below it — the founder's structure: the all-trades
- * overview is the important thing, the finding sits under it, not in the way.
- *
- *   ScoreCluster   — composition ring + decision-quality list. The score,
- *                    decomposed into the same three axes the formula uses
- *                    (Risk 50 / Entry 30 / Capture 20). A green ring beside a
- *                    red P&L is the point: grade decisions, not money.
- *   FindingSection — the finding-first read: state eyebrow + quantified
- *                    headline + evidence rail. No ring (that's up top), no
- *                    session ledger (the overview's list owns sessions). Honest
- *                    "no clear read" state when nothing separates.
+ * The month's FINDING and the TapeScore live TOGETHER at the top: finding on
+ * the left (state eyebrow → quantified headline → evidence), the TapeScore
+ * composition ring + decision quality on the right. The ring's three weighted
+ * segments ARE the score's decomposition (Risk 50 / Entry 30 / Capture 20) —
+ * a green ring beside a red P&L is the point: grade decisions, not money. The
+ * finding refuses to manufacture itself; "no clear read" is a first-class state.
  */
 
 const BAND_TEXT: Record<'high' | 'mid' | 'low', string> = {
@@ -87,11 +80,9 @@ function CompositionRing({ score, subs, size = 132 }: {
   )
 }
 
-/**
- * The score, decomposed. Renders nothing when no day in the period was scored
- * (score null) — the overview's stat cards still stand on their own.
- */
-export function ScoreCluster({ period, periodLabel }: { period: TapeScorePeriod; periodLabel?: string }) {
+/** The TapeScore, decomposed — the ring + decision-quality list. Renders
+ *  nothing when no day in the period was scored (the stat cards still stand). */
+function ScoreCluster({ period }: { period: TapeScorePeriod }) {
   if (period.score == null) return null
   const subs = { risk: period.risk ?? 0, entry: period.entry ?? 0, capture: period.capture ?? 0 }
   const comps = [
@@ -100,84 +91,107 @@ export function ScoreCluster({ period, periodLabel }: { period: TapeScorePeriod;
     { name: 'Exit discipline', score: subs.capture, wt: '20% of score' },
   ]
   return (
-    <div className="flex items-center gap-6 flex-wrap">
-      <CompositionRing score={period.score} subs={subs} />
-      <div className="min-w-[172px]">
-        <div className="flex items-baseline gap-2 mb-2.5">
-          <span className="text-[12.5px] text-gray-500">Decision quality</span>
-          {periodLabel && <span className="text-[11px] text-gray-600">· {periodLabel}</span>}
-        </div>
-        {comps.map((c, i) => (
-          <div key={c.name} className={cn('py-2', i > 0 && 'border-t border-gray-800')}>
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[13.5px] text-gray-100">{c.name}</span>
-              <span className="text-[15px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
-                {c.score}
-              </span>
+    <div>
+      {/* Name the score — the ring reads "60 / Fair", and this says what 60 is. */}
+      <div className="flex items-baseline gap-2 mb-3">
+        <span className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+          TapeScore
+        </span>
+        <span className="text-[11px] text-gray-500">· all time</span>
+      </div>
+      <div className="flex items-center gap-6 flex-wrap">
+        <CompositionRing score={period.score} subs={subs} />
+        <div className="min-w-[172px]">
+          <div className="text-[12.5px] text-gray-500 mb-2">Decision quality</div>
+          {comps.map((c, i) => (
+            <div key={c.name} className={cn('py-2', i > 0 && 'border-t border-gray-800')}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-[13.5px] text-gray-100">{c.name}</span>
+                <span className="text-[15px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+                  {c.score}
+                </span>
+              </div>
+              <div className="text-[11px] text-gray-500">{c.wt}</div>
             </div>
-            <div className="text-[11px] text-gray-500">{c.wt}</div>
-          </div>
-        ))}
-        {period.scoredDays > 0 && (
-          <div className="text-[11px] text-gray-600 mt-2">Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}</div>
-        )}
+          ))}
+          {period.scoredDays > 0 && (
+            <div className="text-[11px] text-gray-600 mt-2">Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}</div>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
+/** The finding copy — measured facts, never a causal story; honest "no read". */
+function findingCopy(carryover: Carryover | null, tradeCount: number, monthLabel: string) {
+  const state = carryover == null ? 'none' : carryover.mode === 'protect' ? 'edge' : 'leak'
+  return {
+    eyebrow: `${monthLabel} · ${tradeCount} trade${tradeCount === 1 ? '' : 's'}`,
+    fstate: state === 'edge' ? 'Clear edge' : state === 'leak' ? 'Clear leak' : 'No clear read',
+    fstateCls: state === 'edge' ? 'text-green-400' : state === 'leak' ? 'text-blue-400' : 'text-gray-500',
+    headline: carryover ? `${carryover.finding}.` : 'Quiet month. Nothing separated itself.',
+    sub: carryover
+      ? `${carryover.metric}.`
+      : 'No setup family or behaviour stood out this month — your numbers sit inside your normal range.',
+    next: carryover?.today ?? 'No change to force — keep taking your A setups and let the sample build.',
+  }
+}
+
 /**
- * The monthly finding, as a section under the overview. Finding-state eyebrow +
- * quantified headline + evidence rail. Honest inconclusive state.
+ * The Dashboard hero — the month's finding and the TapeScore, together. Finding
+ * on the left, the composition ring + decision quality on the right, evidence
+ * across the bottom.
  */
-export function FindingSection({
+export function DashboardHero({
+  period,
   carryover,
   tradeCount,
   monthLabel,
 }: {
+  period: TapeScorePeriod
   carryover: Carryover | null
   tradeCount: number
   /** e.g. "July". */
   monthLabel: string
 }) {
-  const state = carryover == null ? 'none' : carryover.mode === 'protect' ? 'edge' : 'leak'
-  const eyebrow = `${monthLabel} · ${tradeCount} trade${tradeCount === 1 ? '' : 's'}`
-  const fstate = state === 'edge' ? 'Clear edge' : state === 'leak' ? 'Clear leak' : 'No clear read'
-  const fstateCls = state === 'edge' ? 'text-green-400' : state === 'leak' ? 'text-blue-400' : 'text-gray-500'
-  const headline = carryover ? `${carryover.finding}.` : 'Quiet month. Nothing separated itself.'
-  const sub = carryover
-    ? `${carryover.metric}.`
-    : 'No setup family or behaviour stood out this month — your numbers sit inside your normal range.'
-  const next = carryover?.today ?? 'No change to force — keep taking your A setups and let the sample build.'
-
+  const c = findingCopy(carryover, tradeCount, monthLabel)
   return (
-    <section className="pt-6 mt-2 border-t border-gray-700">
-      <h2 className="text-base font-bold tracking-tight text-gray-100 mb-4" style={{ fontFamily: 'var(--font-display)' }}>
-        This month&apos;s read
-      </h2>
+    <div>
+      <div className="grid gap-8 lg:grid-cols-[1fr_auto] items-start">
+        {/* Finding — this month's read */}
+        <div className="lg:pr-8">
+          <div className="font-mono text-[11.5px] tracking-wide text-gray-500 mb-2.5">This month · {c.eyebrow}</div>
+          <div className={cn('text-[12.5px] font-semibold mb-2.5 flex items-center gap-2', c.fstateCls)}>
+            {c.fstate}
+            <span aria-hidden className="text-[11px] opacity-70">▸</span>
+          </div>
+          <h1
+            className="text-[clamp(24px,3.2vw,32px)] font-bold leading-[1.08] tracking-[-0.025em] text-gray-100 text-balance max-w-[22ch]"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            {c.headline}
+          </h1>
+          <p className="mt-3.5 text-[15px] text-gray-100 max-w-[52ch] leading-normal">{c.sub}</p>
+          <div className="mt-4 flex gap-3 items-baseline">
+            <span className="text-[13px] font-bold text-blue-400 flex-shrink-0" style={{ fontFamily: 'var(--font-display)' }}>
+              Next month
+            </span>
+            <span className="text-[15px] font-semibold text-gray-100 leading-snug max-w-[52ch]">{c.next}</span>
+          </div>
+        </div>
 
-      <div className="font-mono text-[11.5px] tracking-wide text-gray-500 mb-3">{eyebrow}</div>
-      <div className={cn('text-[12.5px] font-semibold mb-2.5 flex items-center gap-2', fstateCls)}>
-        {fstate}
-        <span aria-hidden className="text-[11px] opacity-70">▸</span>
+        {/* TapeScore — the score, named and decomposed */}
+        {period.score != null && (
+          <div className="lg:border-l border-gray-800 lg:pl-8 pt-6 lg:pt-0 border-t lg:border-t-0">
+            <ScoreCluster period={period} />
+          </div>
+        )}
       </div>
-      <h3
-        className="text-[clamp(20px,2.8vw,28px)] font-bold leading-[1.1] tracking-[-0.02em] text-gray-100 text-balance max-w-[26ch]"
-        style={{ fontFamily: 'var(--font-display)' }}
-      >
-        {headline}
-      </h3>
-      <p className="mt-3 text-[15px] text-gray-100 max-w-[56ch] leading-normal">{sub}</p>
 
-      <div className="mt-4 flex gap-3 items-baseline">
-        <span className="text-[13px] font-bold text-blue-400 flex-shrink-0" style={{ fontFamily: 'var(--font-display)' }}>
-          Next month
-        </span>
-        <span className="text-[15px] font-semibold text-gray-100 leading-snug max-w-[56ch]">{next}</span>
-      </div>
-
+      {/* Evidence — R per trade, across the bottom */}
       {carryover && carryover.evidence.length > 0 && (
-        <div className="mt-6">
+        <div className="mt-7 pt-5 border-t border-gray-800">
           <div className="flex items-baseline justify-between mb-3 max-w-[560px]">
             <span className="text-[12.5px] text-gray-500">The evidence</span>
             <span className="text-xs text-gray-600">R per trade</span>
@@ -204,6 +218,6 @@ export function FindingSection({
           </div>
         </div>
       )}
-    </section>
+    </div>
   )
 }

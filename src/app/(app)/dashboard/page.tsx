@@ -18,7 +18,7 @@ import { aggregateTapeScore } from '@/lib/tapescore'
 import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type DayStatsStored } from '@/lib/day-stats'
 import { computeCarryover } from '@/lib/prep-carryover'
 import type { TradeWithExcursion } from '@/lib/analytics'
-import { ScoreCluster, FindingSection } from '@/components/review/ReviewMonthHero'
+import { DashboardHero } from '@/components/review/ReviewMonthHero'
 import { resolveReviewScope } from '@/lib/review-scope'
 import Link from 'next/link'
 
@@ -479,17 +479,20 @@ export default async function DashboardPage() {
           />
         }
       >
-        {/* Score cluster (all-time): composition ring + decision quality. This
-            owns the score, so the period stats below drop their own ring. */}
-        <div className="mb-2">
-          <ScoreCluster period={allTimePeriod} periodLabel="all time" />
-        </div>
+        {/* Hero: the month's finding + the TapeScore, together. The ring owns
+            the score, so the period stats below drop their own ring. */}
+        <DashboardHero
+          period={allTimePeriod}
+          carryover={monthCarryover}
+          tradeCount={monthTrades.length}
+          monthLabel={monthLabel}
+        />
 
         {/* The all-trades overview: period-selectable stats + equity/P&L charts.
             The period is the trader's saved preference (defaults to Last 30
             Days / YtD); the all-time total is a dropdown away, and the score
             ring above is always all-time regardless. */}
-        <div className="mt-6 pt-5 border-t border-gray-800">
+        <div className="mt-8 pt-5 border-t border-gray-700">
           <DashboardStats days={statsDays} hideScoreHero />
         </div>
         <DashboardCharts days={statsDays} />
@@ -504,9 +507,6 @@ export default async function DashboardPage() {
             defaultFilterStart={defaultFilterStart}
           />
         </div>
-
-        {/* This month's read — the finding, below the overview. */}
-        <FindingSection carryover={monthCarryover} tradeCount={monthTrades.length} monthLabel={monthLabel} />
       </DashboardModeSwitch>
     </div>
   )
