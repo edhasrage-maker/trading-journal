@@ -5,6 +5,7 @@ import { consumeAiUsage } from '@/lib/ai-usage'
 import { createClient } from '@/lib/supabase/server'
 import type { TradeTags, TagCategory } from '@/lib/supabase/types'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
+import { followFade, type Regime } from '@/lib/market-structure'
 
 const client = new Anthropic()
 
@@ -31,21 +32,28 @@ const SUGGESTABLE: TagCategory[] = [
   'setups', 'confluences', 'order_flow', 'entry_model', 'trade_management', 'mistakes', 'emotions',
 ]
 
+/** Deterministic 5m-structure confluence labels. `followFade(side, regime)` is
+ *  exact math, so these are suggested from the trade's stored
+ *  `structure_5m_regime` — never guessed by the model. Labels must exist in the
+ *  trader's library (migration 20260718_structure_confluence_tags) or the
+ *  suggestion is silently skipped, so this degrades cleanly pre-migration. */
+const STRUCTURE_TAG: Record<'follow' | 'fade', string> = {
+  follow: 'Follow LTF structure',
+  fade: 'Fade LTF structure',
+}
+
 export async function POST(req: Request) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
-  }
-
-  if (!LOCAL_FEATURES_ENABLED) {
-    const supabase = await createClient()
-    const gate = await consumeAiUsage(supabase, 'suggest_tags')
-    if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
-  }
-
-  let body: { notes?: string; existing?: TradeTags }
+  let body: { notes?: string; existing?: TradeTags; tradeId?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid body' }, { status: 400 }) }
   const notes = (body.notes ?? '').trim()
-  if (notes.length < 3) return NextResponse.json({ suggestions: {} })
+  const tradeId = typeof body.tradeId === 'string' ? body.tradeId : null
+  // The model only runs on real prose; the structure suggestion below is pure
+  // math and works with no notes at all (imported trades often have none).
+  const wantModel = notes.length >= 3
+  if (!wantModel && !tradeId) return NextResponse.json({ suggestions: {} })
+  if (wantModel && !process.env.ANTHROPIC_API_KEY) {
+    return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const supabase: any = await createClient()
@@ -73,6 +81,46 @@ export async function POST(req: Request) {
   for (const cat of Object.keys(body.existing ?? {}) as TagCategory[]) {
     for (const l of (Array.isArray(body.existing?.[cat]) ? body.existing![cat] : []) as string[]) {
       existingKeys.add(`${cat}|${l}`)
+    }
+  }
+
+  // ── Deterministic: 5m market-structure follow/fade ─────────────────────────
+  // The regime is computed at SC-log import (import-sc-log step 4d) and stored
+  // on the trade, so follow/fade is EXACT math — never a model guess. Only a
+  // decided bull/bear regime yields a tag; neutral/insufficient suggest nothing
+  // (precision over recall, same bar as the rest of this route).
+  const suggestions: Partial<Record<TagCategory, string[]>> = {}
+  if (tradeId) {
+    const { data: tRow } = await supabase
+      .from('trades')
+      .select('direction, structure_5m_regime')
+      .eq('id', tradeId)
+      .maybeSingle() as { data: { direction: 'long' | 'short' | null; structure_5m_regime: Regime | null } | null }
+    const dir = tRow?.direction
+    const regime = tRow?.structure_5m_regime
+    if (dir && regime) {
+      const ff = followFade(dir, regime)
+      if (ff === 'follow' || ff === 'fade') {
+        const label = STRUCTURE_TAG[ff]
+        const key = `confluences|${label}`
+        // Skip when the label isn't in the library yet (pre-migration) or the
+        // trader already applied it.
+        if (validKeys.has(key) && !existingKeys.has(key)) suggestions.confluences = [label]
+      }
+    }
+  }
+
+  // Nothing more to do without prose — return the structural suggestion alone
+  // (and never spend an AI-usage unit on it).
+  if (!wantModel) return NextResponse.json({ suggestions: suggestions as TradeTags })
+
+  // The model path is the only thing that costs quota, so gate it here rather
+  // than at the top of the route.
+  if (!LOCAL_FEATURES_ENABLED) {
+    const gate = await consumeAiUsage(supabase, 'suggest_tags')
+    if (!gate.allowed) {
+      // Out of quota still returns the deterministic suggestion — it's free.
+      return NextResponse.json({ suggestions: suggestions as TradeTags, ...gate, error: gate.message }, { status: 429 })
     }
   }
 
@@ -136,7 +184,8 @@ Return the tags you're confident the notes describe.`
     let parsed: { tags?: Array<{ category?: string; label?: string }> } = {}
     try { parsed = JSON.parse(text) } catch { parsed = {} }
 
-    const suggestions: Partial<Record<TagCategory, string[]>> = {}
+    // Merge the model's picks INTO the deterministic suggestion (which already
+    // holds the structure confluence, if any).
     for (const t of parsed.tags ?? []) {
       if (typeof t?.category !== 'string' || typeof t?.label !== 'string') continue
       const cat = t.category as TagCategory
@@ -152,6 +201,10 @@ Return the tags you're confident the notes describe.`
   } catch (e) {
     const err = e as { message?: string; error?: { message?: string }; status?: number }
     console.error('[trades/suggest-tags] failed:', err)
+    // A model failure must not swallow the deterministic structure suggestion.
+    if (Object.keys(suggestions).length > 0) {
+      return NextResponse.json({ suggestions: suggestions as TradeTags })
+    }
     return NextResponse.json(
       { error: err?.error?.message ?? err?.message ?? 'tag suggestion failed' },
       { status: err?.status ?? 500 },

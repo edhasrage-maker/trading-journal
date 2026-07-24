@@ -198,16 +198,24 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   // the button (or no edit) doesn't re-hit the API.
   const [suggestingTags, setSuggestingTags] = useState(false)
   const lastSuggestedNotesRef = useRef<string>('')
+  // Lets the server add the DETERMINISTIC 5m follow/fade confluence from the
+  // trade's stored structure_5m_regime (imported trades only). Hoisted out of
+  // the callback so the memo deps match what the compiler infers.
+  const editingTradeId = trade?.id ?? null
   const suggestTagsFromNotes = useCallback(async () => {
     const notes = form.notes.trim()
-    if (notes.length < 3 || notes === lastSuggestedNotesRef.current) return
-    lastSuggestedNotesRef.current = notes
+    // The structure suggestion is worth a call even when the notes haven't
+    // changed, so it bypasses the notes dedupe when we have an id and no prose.
+    const tradeId = editingTradeId
+    if (notes.length < 3 && !tradeId) return
+    if (notes.length >= 3 && notes === lastSuggestedNotesRef.current) return
+    if (notes.length >= 3) lastSuggestedNotesRef.current = notes
     setSuggestingTags(true)
     try {
       const res = await fetch('/api/trades/suggest-tags', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes, existing: form.tags }),
+        body: JSON.stringify({ notes, existing: form.tags, tradeId }),
       })
       if (!res.ok) return
       const data = await res.json() as { suggestions?: TradeTags }
@@ -216,7 +224,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       }
     } catch { /* best-effort: suggestions are optional */ }
     finally { setSuggestingTags(false) }
-  }, [form.notes, form.tags])
+  }, [form.notes, form.tags, editingTradeId])
 
   const handleFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
