@@ -1,26 +1,24 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Check, X, Film } from 'lucide-react'
-import { VideoFrameGrabber, parseObsFilenameStartMs } from '@/lib/browser-frames'
+import { Loader2, Check, X, Film, RotateCcw } from 'lucide-react'
+import {
+  useRecording, supportsFsAccess, pickRecordingViaHandle, ingestFile, reopenSavedRecording,
+} from '@/lib/recording-store'
 import type { Trade } from '@/lib/supabase/types'
 
 /**
  * Frame-nudge for the CLOUD build — the browser-decode twin of FrameNudge.
  *
  * The local nudge shells out to ffmpeg against the OBS file on the founder's
- * machine (`/api/video/frame`), which tapescore.app can't do: no filesystem, no
- * ffmpeg, and the recording is gigabytes sitting on the trader's own disk. So
- * here the trader picks the clip, and everything happens client-side with the
- * same VideoFrameGrabber that BrowserRecap uses — the video is decoded in a
- * <video> element and never uploaded. Only the single chosen JPEG goes up.
+ * machine (`/api/video/frame`); tapescore.app has neither the file nor ffmpeg.
+ * Here the trader picks the clip once and it's decoded client-side — the video
+ * never uploads, only the single chosen JPEG does.
  *
- * Aligning video time to trade time needs a recording START. Best source is the
- * OBS filename (it encodes the start); otherwise we estimate from the file's
- * last-modified date minus its duration (mtime ≈ when recording stopped). The
- * estimate can drift, so the anchor source is shown and the slider is wider than
- * the local nudge's ±60s — a filename anchor is exact and only needs to absorb
- * minute-rounded entry times, but an estimated one may need real correction.
+ * The picked recording lives in a page-level store (`useRecording`), so it's
+ * picked ONCE and reused for every trade you adjust; on Chromium the file
+ * handle persists across visits (one-click re-open, no dialog). This component
+ * owns only the per-trade bits: which second to grab and saving that frame.
  */
 
 /** Seconds either side of the computed entry moment. */
@@ -41,7 +39,7 @@ interface Props {
   entryTimeIso: string
   /** Existing recording_commentary, preserved on save (commentary text, levels). */
   recordingCommentary?: Trade['recording_commentary']
-  /** Filename recorded on a previous save — shown as a hint of which clip to pick. */
+  /** Filename recorded on a previous save — a hint of which clip to pick. */
   suggestedFileName?: string | null
   /** Starting delta (a previously-saved nudge). */
   initialDelta?: number
@@ -52,64 +50,31 @@ interface Props {
 export default function BrowserFrameNudge({
   tradeId, entryTimeIso, recordingCommentary, suggestedFileName, initialDelta = 0, onSaved, onClose,
 }: Props) {
-  const [grabber, setGrabber] = useState<VideoFrameGrabber | null>(null)
-  const [fileName, setFileName] = useState<string | null>(null)
-  const [duration, setDuration] = useState(0)
-  const [anchorMs, setAnchorMs] = useState<number | null>(null)
-  const [anchorSource, setAnchorSource] = useState<'filename' | 'filedate'>('filename')
+  const rec = useRecording()
   const [delta, setDelta] = useState(initialDelta)
   const [preview, setPreview] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   // Guards against out-of-order grabs while dragging the slider.
   const reqToken = useRef(0)
 
-  // Tear the grabber down when it's replaced or the component unmounts —
-  // it holds an object URL and a detached <video>.
-  useEffect(() => () => { grabber?.dispose() }, [grabber])
-
   const entryMs = Date.parse(entryTimeIso)
-  // Where in the video the trade's entry falls, plus the user's nudge.
-  const offsetSec = anchorMs != null && Number.isFinite(entryMs)
-    ? (entryMs - anchorMs) / 1000 + delta
+  const ready = rec.status === 'ready' && rec.grabber != null && rec.anchorMs != null
+  // Where in the shared recording this trade's entry falls, plus the user's nudge.
+  const offsetSec = ready && Number.isFinite(entryMs)
+    ? (entryMs - rec.anchorMs!) / 1000 + delta
     : null
-  const inRange = offsetSec != null && offsetSec >= 0 && offsetSec <= duration
-
-  const pickFile = async (picked: File) => {
-    setError(null)
-    setPreview(null)
-    setGrabber(prev => { prev?.dispose(); return null })
-    setFileName(picked.name)
-    // maxWidth well above a typical 1080p/1440p capture so the SAVED frame keeps
-    // its native detail — the grabber's 1280 default would quietly downscale the
-    // screenshot and make it mush the moment anyone zoomed in.
-    const g = new VideoFrameGrabber(picked, { maxWidth: 2560, quality: 0.92 })
-    setLoading(true)
-    try {
-      await g.ready
-    } catch {
-      setError('Could not decode that file. OBS .mkv often needs remuxing to .mp4 — the browser can only play what it has a codec for.')
-      setLoading(false)
-      g.dispose()
-      return
-    }
-    setDuration(g.duration)
-    // Prefer the OBS filename's embedded start; fall back to (file date − duration).
-    const fromName = parseObsFilenameStartMs(picked.name)
-    setAnchorMs(fromName ?? picked.lastModified - g.duration * 1000)
-    setAnchorSource(fromName ? 'filename' : 'filedate')
-    setGrabber(g)
-    setLoading(false)
-  }
+  const inRange = offsetSec != null && offsetSec >= 0 && offsetSec <= rec.duration
 
   const grabAt = useCallback(async (sec: number) => {
-    if (!grabber) return
+    if (!rec.grabber) return
     const token = ++reqToken.current
     setLoading(true)
     setError(null)
     try {
-      const url = await grabber.grab(sec)
+      const url = await rec.grabber.grab(sec)
       if (token !== reqToken.current) return
       setPreview(url)
     } catch {
@@ -117,14 +82,14 @@ export default function BrowserFrameNudge({
     } finally {
       if (token === reqToken.current) setLoading(false)
     }
-  }, [grabber])
+  }, [rec.grabber])
 
-  // Debounced preview as the slider moves (and once the clip is loaded).
+  // Debounced preview as the slider moves (and when a recording becomes ready).
   useEffect(() => {
-    if (!grabber || offsetSec == null || !inRange) return
+    if (!ready || offsetSec == null || !inRange) return
     const id = setTimeout(() => { void grabAt(offsetSec) }, 200)
     return () => clearTimeout(id)
-  }, [grabber, offsetSec, inRange, grabAt])
+  }, [ready, offsetSec, inRange, grabAt])
 
   const save = async () => {
     if (!preview) return
@@ -143,25 +108,21 @@ export default function BrowserFrameNudge({
       if (!up.ok || !upData.url) { setError(upData.error ?? 'Upload failed'); return }
 
       // Keep any existing commentary/levels; flag the source + chosen nudge so a
-      // later open restores the slider where you left it. recording_commentary is
-      // jsonb but legacy rows (from the localStorage backfill) can come back as a
-      // JSON *string* — tolerate both, exactly as TradeForm does when reading it.
-      const rc = ((): Record<string, unknown> => {
-        const raw = recordingCommentary as unknown
-        if (raw && typeof raw === 'object') return raw as unknown as Record<string, unknown>
-        if (typeof raw === 'string') {
-          try { return JSON.parse(raw) as Record<string, unknown> } catch { return {} }
-        }
-        return {}
-      })()
+      // later open restores the slider. recording_commentary is jsonb but legacy
+      // rows can come back as a JSON string — tolerate both (as TradeForm does).
+      const rcRaw = recordingCommentary as unknown
+      const rcObj: Record<string, unknown> =
+        rcRaw && typeof rcRaw === 'object' ? (rcRaw as Record<string, unknown>)
+          : typeof rcRaw === 'string' ? (() => { try { return JSON.parse(rcRaw) } catch { return {} } })()
+            : {}
       const res = await fetch(`/api/trades/${tradeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           screenshot_url: upData.url,
           recording_commentary: {
-            ...rc,
-            video_file: fileName ?? (rc.video_file as string | undefined) ?? null,
+            ...rcObj,
+            video_file: rec.name ?? (rcObj.video_file as string | undefined) ?? null,
             screenshot_source: 'obs',
             screenshot_delta_sec: delta,
           },
@@ -180,6 +141,12 @@ export default function BrowserFrameNudge({
     }
   }
 
+  // FS Access picker on Chromium; the hidden <input> everywhere else.
+  const openPicker = () => {
+    if (supportsFsAccess()) void pickRecordingViaHandle()
+    else inputRef.current?.click()
+  }
+
   const fmtClock = (s: number) => {
     if (!Number.isFinite(s)) return '--:--'
     const sign = s < 0 ? '-' : ''
@@ -192,35 +159,69 @@ export default function BrowserFrameNudge({
     <div className="bg-gray-950/60 border border-gray-700 rounded-lg p-3 space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold text-gray-300">Adjust entry frame</span>
-        {onClose && (
-          <button type="button" onClick={onClose} className="text-gray-500 hover:text-white" aria-label="Close">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {ready && (
+            <button
+              type="button"
+              onClick={openPicker}
+              className="text-[10px] text-gray-500 hover:text-gray-300 inline-flex items-center gap-1"
+              title="Use a different recording"
+            >
+              <RotateCcw className="w-3 h-3" /> Change clip
+            </button>
+          )}
+          {onClose && (
+            <button type="button" onClick={onClose} className="text-gray-500 hover:text-white" aria-label="Close">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {!grabber ? (
+      {/* Hidden fallback picker for browsers without the File System Access API. */}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="video/*"
+        className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) void ingestFile(f); e.currentTarget.value = '' }}
+      />
+
+      {!ready ? (
         <div className="space-y-1.5">
-          <label className="flex flex-col items-center gap-1.5 border-2 border-dashed border-gray-700 hover:border-gray-500 rounded-lg px-3 py-4 cursor-pointer transition-colors text-center">
-            <Film className="w-4 h-4 text-gray-500" />
-            <span className="text-[11px] text-gray-300 font-medium">Pick your screen recording</span>
-            <span className="text-[10px] text-gray-600">
-              Stays on your machine — only the frame you choose is uploaded.
-            </span>
-            <input
-              type="file"
-              accept="video/*"
-              className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) void pickFile(f); e.currentTarget.value = '' }}
-            />
-          </label>
-          {suggestedFileName && (
-            <p className="text-[10px] text-gray-600">Last used: <span className="font-mono text-gray-500">{suggestedFileName}</span></p>
+          {rec.status === 'loading' ? (
+            <p className="text-[11px] text-gray-400 inline-flex items-center gap-1.5 py-3 px-1">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading <span className="font-mono text-gray-500">{rec.name}</span>…
+            </p>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={openPicker}
+                className="w-full flex flex-col items-center gap-1.5 border-2 border-dashed border-gray-700 hover:border-gray-500 rounded-lg px-3 py-4 cursor-pointer transition-colors text-center"
+              >
+                <Film className="w-4 h-4 text-gray-500" />
+                <span className="text-[11px] text-gray-300 font-medium">Pick your screen recording</span>
+                <span className="text-[10px] text-gray-600">
+                  Stays on your machine — only the frame you choose is uploaded. Picked once, reused for every trade.
+                </span>
+              </button>
+              {/* One-click re-open of a previously-used clip (Chromium). */}
+              {rec.savedHandleName && (
+                <button
+                  type="button"
+                  onClick={() => void reopenSavedRecording()}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-[11px] text-blue-300 hover:text-blue-200 border border-blue-900/60 hover:border-blue-700 rounded-md py-1.5 transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3" /> Re-open <span className="font-mono">{rec.savedHandleName}</span>
+                </button>
+              )}
+              {!rec.savedHandleName && suggestedFileName && (
+                <p className="text-[10px] text-gray-600">Last used: <span className="font-mono text-gray-500">{suggestedFileName}</span></p>
+              )}
+            </>
           )}
-          {loading && (
-            <p className="text-[10px] text-gray-400 inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Reading the clip…</p>
-          )}
-          {error && <p className="text-[10px] text-red-400">{error}</p>}
+          {rec.error && <p className="text-[10px] text-red-400">{rec.error}</p>}
         </div>
       ) : (
         <>
@@ -234,7 +235,7 @@ export default function BrowserFrameNudge({
             )}
             {!inRange && !loading && (
               <div className="absolute inset-0 flex items-center justify-center text-[11px] text-amber-300 px-3 text-center">
-                This trade lands outside the clip ({fmtClock(offsetSec ?? 0)} of {fmtClock(duration)}) — wrong recording, or the start estimate is off.
+                This trade lands outside the clip ({fmtClock(offsetSec ?? 0)} of {fmtClock(rec.duration)}) — wrong recording, or the start estimate is off.
               </div>
             )}
           </div>
@@ -242,10 +243,7 @@ export default function BrowserFrameNudge({
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-gray-500 font-mono w-9 text-right">-{RANGE}s</span>
             <input
-              type="range"
-              min={-RANGE}
-              max={RANGE}
-              step={1}
+              type="range" min={-RANGE} max={RANGE} step={1}
               value={delta}
               onChange={e => setDelta(Number(e.target.value))}
               className="flex-1 accent-blue-500"
@@ -274,8 +272,8 @@ export default function BrowserFrameNudge({
           </div>
 
           <p className="text-[10px] text-gray-600">
-            <span className="font-mono text-gray-500">{fileName}</span> · start{' '}
-            {anchorSource === 'filename'
+            <span className="font-mono text-gray-500">{rec.name}</span> · start{' '}
+            {rec.anchorSource === 'filename'
               ? 'read from the filename'
               : 'estimated from the file date — nudge further if the frame looks off'}
           </p>
