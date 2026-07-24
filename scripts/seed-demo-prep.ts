@@ -163,10 +163,49 @@ const SEED: Array<{ rank: number; label: string; notes: PrepNotes }> = [
   },
 ]
 
+/** Resolve the demo user.
+ *
+ *  The auth admin API can come back empty on a transient blip, and treating
+ *  "empty list" as "user does not exist" produced a confidently wrong error.
+ *  So: retry, distinguish an API failure from a genuine absence, print what it
+ *  actually saw when it can't match, and allow --user-id=<uuid> to bypass the
+ *  lookup entirely. */
+async function findDemoUser(): Promise<{ id: string; email?: string }> {
+  const override = process.argv.find(a => a.startsWith('--user-id='))?.split('=')[1]
+  if (override) {
+    console.log(`using --user-id override: ${override}`)
+    return { id: override, email: DEMO_EMAIL }
+  }
+  let lastErr = ''
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { data, error } = await db.auth.admin.listUsers({ page: 1, perPage: 200 })
+    if (error) {
+      lastErr = error.message
+      console.warn(`  listUsers attempt ${attempt}/3 failed: ${error.message}`)
+      await new Promise(r => setTimeout(r, 600 * attempt))
+      continue
+    }
+    const users = data?.users ?? []
+    if (users.length === 0) {
+      lastErr = 'auth returned zero users'
+      console.warn(`  listUsers attempt ${attempt}/3 returned an empty list — retrying`)
+      await new Promise(r => setTimeout(r, 600 * attempt))
+      continue
+    }
+    const hit = users.find(u => (u.email ?? '').toLowerCase() === DEMO_EMAIL)
+    if (hit) return hit
+    console.error(`
+Auth returned ${users.length} users, none matching "${DEMO_EMAIL}":`)
+    for (const u of users) console.error(`   - ${u.email}`)
+    console.error(`
+Set NEXT_PUBLIC_DEMO_EMAIL, or pass --user-id=<uuid>.`)
+    throw new Error('demo user not found')
+  }
+  throw new Error(`Could not reach the auth admin API after 3 attempts (${lastErr}). Retry, or pass --user-id=<uuid>.`)
+}
+
 async function main() {
-  const { data: list } = await db.auth.admin.listUsers()
-  const demo = (list?.users ?? []).find(u => (u.email ?? '').toLowerCase() === DEMO_EMAIL)
-  if (!demo) throw new Error(`No user with email ${DEMO_EMAIL}`)
+  const demo = await findDemoUser()
 
   const { data: dayRows } = await db.from('trading_days')
     .select('id, date, prep_notes_json')
@@ -204,4 +243,5 @@ async function main() {
     : '\nDRY RUN — nothing written. Re-run with --apply to commit.')
 }
 
-main().catch(e => { console.error(e); process.exit(1) })
+main().catch(e => { console.error(`
+${e instanceof Error ? e.message : e}`); process.exitCode = 1 })
