@@ -490,7 +490,7 @@ export default async function DashboardPage() {
         <div className="mt-6 pt-5 border-t border-gray-800">
           <DashboardStats days={statsDays} hideScoreHero defaultPeriod="all" />
         </div>
-        <DashboardCharts days={statsDays} />
+        <DashboardCharts days={statsDays} defaultPeriod="all" />
 
         {/* Every session — toggle between the list and the calendar. */}
         <div className="mt-8 pt-5 border-t border-gray-700">

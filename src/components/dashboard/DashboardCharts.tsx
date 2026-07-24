@@ -24,7 +24,10 @@ import type { DayStat } from './DashboardStats'
  */
 
 type Period = 'month' | '30d' | 'ytd' | 'last_year' | 'all'
-const PERIOD_KEY = 'dashboard-charts-period-v1'
+// v2 (Pt 14): reset the saved chart range once so the Dashboard's all-time
+// default takes effect for existing users, matching the all-time stat total
+// above the charts (a stale 'ytd'/'30d' otherwise contradicted it).
+const PERIOD_KEY = 'dashboard-charts-period-v2'
 const PERIOD_LABELS: Record<Period, string> = {
   month: 'This Month',
   '30d': 'Last 30 Days',
@@ -147,10 +150,13 @@ function signedLineSegments(
 
 interface Props {
   days: DayStat[]
+  /** Starting range before the user's saved preference loads. The Dashboard
+   *  passes 'all' so the equity curve matches the all-time stat total. */
+  defaultPeriod?: Period
 }
 
-export default function DashboardCharts({ days }: Props) {
-  const [period, setPeriod] = useState<Period>('ytd')
+export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) {
+  const [period, setPeriod] = useState<Period>(defaultPeriod)
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => {
     try {
