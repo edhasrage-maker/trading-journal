@@ -16,7 +16,7 @@ import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
 import HighImpactNews from './HighImpactNews'
-import PrepSection, { GhostButton, Segmented, Chip } from './PrepSection'
+import Section, { GhostButton, Segmented, Chip } from '@/components/ui/Section'
 import PrepHero from './PrepHero'
 import PrepBridge from './PrepBridge'
 import PrepLedger from './PrepLedger'
@@ -966,14 +966,14 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       {/* Session — Detailed Tape only. GBX/overnight planning is advanced; it
           re-anchors the chart's IB + reference levels. */}
       {pro && (
-        <PrepSection title="Session" sub="drives the chart’s levels and initial balance">
+        <Section title="Session" sub="drives the chart’s levels and initial balance">
           <SessionPicker value={session} onChange={changeSession} levels={session !== 'rth' ? liveLevels : null} />
-        </PrepSection>
+        </Section>
       )}
 
       {/* Chart — UNCHANGED by the redesign, by explicit founder instruction.
           Only the container around it moved from a card to a section. */}
-      <PrepSection title="Chart" control={chartControl} className="[&_h2]:sr-only sm:[&_h2]:not-sr-only">
+      <Section title="Chart" control={chartControl} className="[&_h2]:sr-only sm:[&_h2]:not-sr-only">
         <div data-tour="prep-chart">
           {chartView === 'screenshot' ? (
             <ScreenshotUpload value={chartUrl} onChange={handleScreenshotChange} label="" />
@@ -991,10 +991,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             />
           )}
         </div>
-      </PrepSection>
+      </Section>
 
       {/* Your read — bias, observations, how ready you feel. */}
-      <PrepSection
+      <Section
         title="Your read"
         sub={pro ? 'the read you are taking in' : 'kept short on purpose'}
       >
@@ -1008,21 +1008,21 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           showAdvanced={isAdmin && pro}
           beginner={!pro}
         />
-      </PrepSection>
+      </Section>
 
       {/* Highlights stops here: one thing to watch, one to keep. Day-type
           classification, the full conditions ledger and the long-form AI read
           all live in Detailed Tape. */}
       {!pro && (
-        <PrepSection title="Watch / Keep" control={analyzeButton}>
+        <Section title="Watch / Keep" control={analyzeButton}>
           <WatchKeep analysis={aiAnalysis} />
-        </PrepSection>
+        </Section>
       )}
 
       {pro && (<>
         {/* Day type — chips sourced from trade_tags so prep + intraday stay in
             sync. No invented axes: the library is the trader's own. */}
-        <PrepSection
+        <Section
           title="Day type"
           control={dayTypes.length > 0 ? (
             <GhostButton
@@ -1075,12 +1075,12 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               </p>
             </div>
           )}
-        </PrepSection>
+        </Section>
 
         {/* Market context as a ledger, not a form — verdicts lead, raw numbers
             are demoted, and editing sits behind a disclosure because nearly
             every value auto-fills from the bar feed. */}
-        <PrepSection title="Market context" sub="most values auto-fill — read the verdicts, edit the rest">
+        <Section title="Market context" sub="most values auto-fill — read the verdicts, edit the rest">
           <PrepLedger
             context={context as Partial<MarketContext>}
             atrBaseline={atrBaseline}
@@ -1095,7 +1095,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               <MarketContextForm value={context} onChange={setContext} />
             </div>
           </details>
-        </PrepSection>
+        </Section>
 
         {/* Morning conditions — where today sits vs the trader's OWN history.
             Un-gated in Pt 14. It was admin-only because condition_lookup was
@@ -1110,7 +1110,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
             dr_adr is reactive: compute from live context first so screenshot
             re-extraction updates it immediately; drAdrAuto is the fallback. */}
-        <PrepSection title="Morning conditions" sub="where today sits vs your history">
+        <Section title="Morning conditions" sub="where today sits vs your history">
           <ConditionFilterPanel
             date={date}
             beginner={!pro}
@@ -1124,11 +1124,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
                   : drAdrAuto,
             }}
           />
-        </PrepSection>
+        </Section>
 
         {/* The owner's methodology fields, dropped well below the read. */}
         {isAdmin && (
-          <PrepSection title="Prep notes — detailed" sub="IB timing · volume profile · HTF MGI">
+          <Section title="Prep notes — detailed" sub="IB timing · volume profile · HTF MGI">
             <PrepNotesForm
               part="advanced"
               value={prepNotes}
@@ -1139,27 +1139,27 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               showAdvanced
               beginner={false}
             />
-          </PrepSection>
+          </Section>
         )}
 
-        <PrepSection title="Trade plans" sub="your playbook — TapeScore names the gap, not a score">
+        <Section title="Trade plans" sub="your playbook — TapeScore names the gap, not a score">
           <TradePlansSection
             plans={prepNotes.trade_plans ?? []}
             onChange={plans => setPrepNotes({ ...prepNotes, trade_plans: plans })}
             planAssessments={(aiAnalysis as AiAnalysis | null)?.plan_assessments as PlanAssessment[] | undefined}
           />
-        </PrepSection>
+        </Section>
 
-        <PrepSection title="TapeScore read" sub="plain read · yours to override" control={analyzeButton}>
+        <Section title="TapeScore read" sub="plain read · yours to override" control={analyzeButton}>
           <PrepAiRead analysis={aiAnalysis} />
-        </PrepSection>
+        </Section>
       </>)}
 
       {/* Discord prep-share card — the owner's personal community workflow
           (generates a prep-summary PNG to post to Discord). Admin-gated so it's
           available on the cloud site for the owner, hidden for public users. */}
       {isAdmin && (
-        <PrepSection title="Discord card" sub="your community post for this prep">
+        <Section title="Discord card" sub="your community post for this prep">
           {/* Viewer-read + roadmap inputs sit directly above the preview they
               feed, at the very bottom of the prep (moved out of Prep Notes). */}
           <DiscordCardInputs value={prepNotes} onChange={setPrepNotes} />
@@ -1169,7 +1169,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             prepNotes={prepNotes}
             symbol={context.symbol ?? 'NQ'}
           />
-        </PrepSection>
+        </Section>
       )}
     </div>
   )

@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
  * hairline rule and a real type hierarchy instead of being boxed. Same DNA as
  * the locked dashboard.
  */
-export default function PrepSection({
+export default function Section({
   title,
   sub,
   control,

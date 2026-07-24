@@ -85,12 +85,17 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
   const todayStr = format(new Date(), 'yyyy-MM-dd')
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+    <div className="border-t border-gray-800 pt-4">
       <div className="flex items-baseline justify-between mb-3">
-        <h3 className="font-semibold text-white text-sm">{format(month, 'MMMM yyyy')}</h3>
-        <div className="text-xs">
-          {avgScore != null && <span className="text-amber-400">TS {avgScore}</span>}
-          <span className={`ml-2 ${monthPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+        <h3
+          className="text-sm font-bold tracking-tight text-gray-100"
+          style={{ fontFamily: 'var(--font-display)' }}
+        >
+          {format(month, 'MMMM yyyy')}
+        </h3>
+        <div className="text-xs tabular-nums">
+          {avgScore != null && <span className="text-gray-400">TapeScore {avgScore}</span>}
+          <span className={`ml-3 ${monthPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
             {monthPnl >= 0 ? '+' : ''}${Math.round(monthPnl).toLocaleString()}
           </span>
         </div>
@@ -98,7 +103,7 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
 
       <div className="grid grid-cols-7 gap-1 mb-1">
         {DOW_LABELS.map((d, i) => (
-          <div key={i} className="text-[9px] text-gray-600 text-center font-medium uppercase tracking-wider">{d}</div>
+          <div key={i} className="text-[10px] text-gray-500 text-center">{d}</div>
         ))}
       </div>
 

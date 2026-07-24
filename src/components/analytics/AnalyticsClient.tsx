@@ -194,8 +194,13 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div data-tour="analytics-header">
-          <h1 className="text-2xl font-bold text-white">Analytics</h1>
-          <p className="text-gray-400 text-sm mt-1">
+          <h1
+            className="text-[clamp(22px,2.6vw,28px)] font-bold tracking-[-0.025em] text-gray-100 leading-tight"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            What repeats in your trading.
+          </h1>
+          <p className="text-gray-400 text-sm mt-1.5 tabular-nums">
             {format(new Date(startDate + 'T12:00:00'), 'MMM d, yyyy')} – {format(new Date(endDate + 'T12:00:00'), 'MMM d, yyyy')}
           </p>
         </div>
@@ -207,15 +212,15 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
             {/* Range selector — preset windows plus a "Custom" button that
                 reveals From/To date inputs below. Custom is a sibling of the
                 presets (not a separate mode toggle) so it's discoverable. */}
-            <div className={`flex bg-gray-900 border border-gray-800 rounded-lg overflow-hidden ${isPending ? 'opacity-60' : ''}`}>
+            <div className={`inline-flex border border-gray-700 rounded overflow-hidden text-xs ${isPending ? 'opacity-60' : ''}`}>
               {RANGE_OPTIONS.map(o => (
                 <button
                   key={o.label}
                   onClick={() => applyRange(o.param)}
-                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  className={`px-3 py-1.5 border-r border-gray-700 last:border-r-0 transition-colors ${
                     activeRange === o.param && !customOpen
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                      ? 'bg-gray-800 text-gray-100 shadow-[inset_0_-2px_0_var(--color-accent-deep)]'
+                      : 'text-gray-400 hover:text-gray-200'
                   }`}
                 >
                   {o.label}
@@ -242,7 +247,7 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
                 value={customFrom}
                 max={customTo}
                 onChange={e => { setCustomFrom(e.target.value); applyCustom(e.target.value, customTo) }}
-                className="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-gray-200 [color-scheme:dark] focus:outline-none focus:border-blue-600"
+                className="bg-gray-950 border border-gray-700 rounded px-2 py-1 text-gray-200 [color-scheme:dark] focus:outline-none focus:border-blue-600"
               />
               <label className="text-gray-500">To</label>
               <input
@@ -251,7 +256,7 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
                 min={customFrom}
                 max={today}
                 onChange={e => { setCustomTo(e.target.value); applyCustom(customFrom, e.target.value) }}
-                className="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-gray-200 [color-scheme:dark] focus:outline-none focus:border-blue-600"
+                className="bg-gray-950 border border-gray-700 rounded px-2 py-1 text-gray-200 [color-scheme:dark] focus:outline-none focus:border-blue-600"
               />
             </div>
           )}
@@ -260,8 +265,8 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
 
       {/* Cross-tab tag filter — pick a category + label, every aggregation
           below re-scopes to just trades carrying that tag. */}
-      <div className="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 flex-wrap">
-        <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Filter trades by tag</span>
+      <div className="flex items-center gap-3 border-t border-gray-800 pt-3 flex-wrap">
+        <span className="text-xs text-gray-500">Filter trades by tag</span>
         <select
           value={filterCategory}
           onChange={e => {
@@ -462,12 +467,20 @@ function StatCard({
   positive: boolean | null
   title?: string
 }) {
-  const color = positive == null ? 'text-white' : positive ? 'text-green-400' : 'text-red-400'
+  const color = positive == null ? 'text-gray-100' : positive ? 'text-green-400' : 'text-red-400'
+  // A hairline row, not a boxed KPI card. The grid of bordered stat cards is
+  // the most recognisable AI-dashboard move there is; the locked language reads
+  // numbers as display numerals on a rule instead.
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-3" title={title}>
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className={`text-lg font-bold ${color}`}>{value}</p>
-      {hint && <p className="text-[10px] text-gray-600 mt-0.5">{hint}</p>}
+    <div className="grid grid-cols-[1fr_auto] gap-x-4 items-baseline py-2 border-t border-gray-800" title={title}>
+      <span className="text-[13px] text-gray-400">{label}</span>
+      <span
+        className={`text-[17px] font-bold tabular-nums text-right ${color}`}
+        style={{ fontFamily: 'var(--font-display)' }}
+      >
+        {value}
+      </span>
+      {hint && <span className="text-[11px] text-gray-500 col-span-2">{hint}</span>}
     </div>
   )
 }

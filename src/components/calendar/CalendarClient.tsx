@@ -55,22 +55,32 @@ export default function CalendarClient({ days, defaultStartDate, defaultEndDate,
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      {/* Header. The locked language: the sentence carries the meaning, not a
+          screen-name h1 over a row of filled controls. Active states are inset
+          underlines rather than solid accent fills. */}
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Calendar</h1>
-          <p className="text-sm text-gray-400 mt-1">Your decisions over time — colored by TapeScore, not P&amp;L.</p>
+          <h1
+            className="text-[clamp(22px,2.6vw,28px)] font-bold tracking-[-0.025em] text-gray-100 leading-tight"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            Your decisions over time.
+          </h1>
+          <p className="text-sm text-gray-400 mt-1.5">Coloured by TapeScore, not P&amp;L.</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {/* Color mode */}
-          <div className="flex bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+          <div className="inline-flex border border-gray-700 rounded overflow-hidden text-xs">
             {(['tapescore', 'pnl'] as ColorMode[]).map(m => (
               <button
                 key={m}
                 onClick={() => setColorMode(m)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  colorMode === m ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                aria-pressed={colorMode === m}
+                className={`px-3 py-1.5 border-r border-gray-700 last:border-r-0 transition-colors ${
+                  colorMode === m
+                    ? 'bg-gray-800 text-gray-100 shadow-[inset_0_-2px_0_var(--color-accent-deep)]'
+                    : 'text-gray-400 hover:text-gray-200'
                 }`}
                 title={m === 'tapescore' ? 'Color days by decision grade' : 'Color days by P&L'}
               >
@@ -80,13 +90,16 @@ export default function CalendarClient({ days, defaultStartDate, defaultEndDate,
           </div>
 
           {/* Range selector */}
-          <div className="flex bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+          <div className="inline-flex border border-gray-700 rounded overflow-hidden text-xs">
             {RANGE_OPTIONS.map(o => (
               <button
                 key={o.label}
                 onClick={() => setRangeMonths(o.months)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  rangeMonths === o.months ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                aria-pressed={rangeMonths === o.months}
+                className={`px-3 py-1.5 border-r border-gray-700 last:border-r-0 transition-colors ${
+                  rangeMonths === o.months
+                    ? 'bg-gray-800 text-gray-100 shadow-[inset_0_-2px_0_var(--color-accent-deep)]'
+                    : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
                 {o.label}
@@ -99,7 +112,7 @@ export default function CalendarClient({ days, defaultStartDate, defaultEndDate,
             <select
               value={dayType}
               onChange={e => setDayType(e.target.value)}
-              className="bg-gray-900 border border-gray-800 text-gray-300 text-xs font-medium rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500"
+              className="bg-gray-950 border border-gray-700 text-gray-300 text-xs rounded px-3 py-1.5 focus:outline-none focus:border-blue-600"
             >
               <option value="all">All day types</option>
               {dayTypes.map(d => <option key={d} value={d}>{displayDayType(d)}</option>)}
@@ -141,21 +154,22 @@ export default function CalendarClient({ days, defaultStartDate, defaultEndDate,
         />
       </div>
 
-      {/* Compact reference strip — the P&L numbers, without the old 5-card wall. */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
+      {/* Compact reference strip — numerals on a rule, not a boxed row. */}
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-sm border-t border-gray-800 pt-3">
         <Stat label="Total P&L" value={money(insights.totalPnl)} tone={insights.totalPnl >= 0 ? 'good' : 'bad'} />
         <Stat label="Trading days" value={String(insights.tradedDays)} />
         <Stat label="Day win rate" value={insights.dayWinRate == null ? '—' : `${insights.dayWinRate.toFixed(0)}%`} />
-        <Stat label="Avg TapeScore" value={insights.avgTapeScore == null ? '—' : String(insights.avgTapeScore)} tone="amber" />
+        <Stat label="Avg TapeScore" value={insights.avgTapeScore == null ? '—' : String(insights.avgTapeScore)} />
       </div>
 
       {/* Heatmap */}
       <CalendarHeatmap days={filtered} startDate={startDate} endDate={endDate} colorMode={colorMode} />
 
       {filtered.length === 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500 text-sm">
-          No trading days in this range. Adjust the filters or start logging trades.
-        </div>
+        <p className="text-sm text-gray-500 max-w-[62ch] leading-normal">
+          No trading days in this range. Widen the range, clear the day-type filter, or log a
+          session — the grid fills in from your own days.
+        </p>
       )}
     </div>
   )
@@ -172,17 +186,20 @@ function InsightCard({ label, value, note, tone = 'neutral', flag }: {
   tone?: 'good' | 'bad' | 'amber' | 'neutral'
   flag?: boolean
 }) {
+  // A flagged insight earns a coloured left rule, not a gradient-washed box —
+  // gradients are one of the AI-default tells the locked identity rules out, and
+  // colour here has to mean "this one needs your attention", nothing decorative.
   return (
-    <div
-      className="rounded-xl border p-3"
-      style={flag
-        ? { background: 'linear-gradient(180deg, rgba(224,163,60,0.10), rgba(25,28,33,1))', borderColor: 'rgba(224,163,60,0.35)' }
-        : undefined}
-    >
-      <div className={`text-[10px] uppercase tracking-wider mb-1 ${flag ? 'text-amber-400' : 'text-gray-500'} ${!flag ? '' : 'flex items-center gap-1'}`}>
-        {flag && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}{label}
+    <div className={`border-l-2 pl-3.5 py-1 ${flag ? 'border-yellow-600' : 'border-gray-700'}`}>
+      <div className={`text-[11px] mb-1 flex items-center gap-1.5 ${flag ? 'text-yellow-400' : 'text-gray-500'}`}>
+        {flag && <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-yellow-400" />}{label}
       </div>
-      <div className={`text-lg font-bold ${TONE_TEXT[tone]}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+      <div
+        className={`text-[19px] font-bold tabular-nums ${TONE_TEXT[tone]}`}
+        style={{ fontFamily: 'var(--font-display)' }}
+      >
+        {value}
+      </div>
       <div className="text-[11px] text-gray-500 mt-0.5 leading-snug">{note}</div>
     </div>
   )
@@ -190,9 +207,14 @@ function InsightCard({ label, value, note, tone = 'neutral', flag }: {
 
 function Stat({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: 'good' | 'bad' | 'amber' | 'neutral' }) {
   return (
-    <div>
-      <span className="text-xs text-gray-500 mr-2">{label}</span>
-      <span className={`font-semibold ${TONE_TEXT[tone]}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+    <div className="flex items-baseline gap-2">
+      <span className="text-xs text-gray-500">{label}</span>
+      <span
+        className={`font-bold tabular-nums ${TONE_TEXT[tone]}`}
+        style={{ fontFamily: 'var(--font-display)' }}
+      >
+        {value}
+      </span>
     </div>
   )
 }
