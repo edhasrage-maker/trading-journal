@@ -7,12 +7,18 @@ import { X, ZoomIn, ZoomOut } from 'lucide-react'
  * Fullscreen zoom modal for trade screenshots. Shared by both the read-mode
  * view (IntradayClient) and the edit-mode form (TradeForm via PinPlacement).
  *
- * Three zoom levels:
- *   1 — Fit to viewport (object-contain, default)
- *   2 — 2× the fit size
- *   3 — 3× the fit size
+ * Three zoom levels, sized off the image's OWN pixels rather than the viewport:
+ *   0 — Fit to viewport (object-contain, default)
+ *   1 — 100%: one image pixel to one screen pixel — the sharpest possible read,
+ *       and the level that actually makes Sierra's small text legible
+ *   2 — 200%: magnified past native; bigger but interpolated
  *
- * Click the image to cycle 1 → 2 → 3 → 1. When zoomed in (>1) the outer
+ * Earlier levels were viewport multiples (200vw / 300vw), so on a typical
+ * ~1920px capture even "2×" already overshot the source resolution and every
+ * zoomed view looked soft. Anchoring to naturalWidth gives an honest 100% stop
+ * and makes the labels mean what they say.
+ *
+ * Click the image to cycle 0 → 1 → 2 → 0. When zoomed in (>0) the outer
  * container becomes scrollable so the trader can pan around the chart by
  * scrolling. + / − buttons in the corner step zoom up/down explicitly.
  *
@@ -26,9 +32,13 @@ export default function ScreenshotLightbox({
   src: string | null
   onClose: () => void
 }) {
-  // Zoom level cycles 1 → 2 → 3 → 1. Reset to 1 whenever a new src arrives
-  // so opening another screenshot starts from fit.
-  const [zoom, setZoom] = useState(1)
+  // Zoom level cycles 0 (fit) → 1 (100%) → 2 (200%) → 0. Reset whenever a new
+  // src arrives so opening another screenshot starts from fit.
+  const [zoom, setZoom] = useState(0)
+  // The image's intrinsic pixel size, read on load. Levels 1 and 2 are computed
+  // from this, so "100%" is a true 1:1 pixel mapping rather than a viewport
+  // multiple that may or may not exceed the source resolution.
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // Drag-to-pan state. While dragging, scroll position follows the cursor.
   // dragStart captures the initial mouse + scroll position; movedRef tracks
@@ -41,7 +51,9 @@ export default function ScreenshotLightbox({
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: reset zoom when a NEW screenshot opens so each modal starts at Fit
-    setZoom(1)
+    setZoom(0)
+    // Drop the previous image's intrinsic size; the new one reports its own on load.
+    setNatural(null)
   }, [src])
 
   // Auto-center the scroll position whenever zoom changes. Without this,
@@ -50,7 +62,7 @@ export default function ScreenshotLightbox({
   // Centering on zoom-in puts equal scroll room on every side so drag-to-
   // pan works symmetrically.
   useEffect(() => {
-    if (!scrollRef.current || zoom === 1) return
+    if (!scrollRef.current || zoom === 0) return
     // Use rAF so the layout has settled after the size change before we
     // read scrollWidth / scrollHeight (otherwise we'd center against the
     // PREVIOUS zoom level's measurements).
@@ -67,9 +79,9 @@ export default function ScreenshotLightbox({
     if (!src) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
-      else if (e.key === '+' || e.key === '=') setZoom(z => Math.min(3, z + 1))
-      else if (e.key === '-' || e.key === '_') setZoom(z => Math.max(1, z - 1))
-      else if (e.key === '0') setZoom(1)
+      else if (e.key === '+' || e.key === '=') setZoom(z => Math.min(2, z + 1))
+      else if (e.key === '-' || e.key === '_') setZoom(z => Math.max(0, z - 1))
+      else if (e.key === '0') setZoom(0)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -104,26 +116,31 @@ export default function ScreenshotLightbox({
 
   if (!src) return null
 
-  // Cycle: 1 → 2 → 3 → 1
-  const cycleZoom = () => setZoom(z => (z >= 3 ? 1 : z + 1))
+  // Cycle: 0 (fit) → 1 (100%) → 2 (200%) → 0
+  const cycleZoom = () => setZoom(z => (z >= 2 ? 0 : z + 1))
 
-  // The wrapper div takes an EXPLICIT size per zoom level so the outer
-  // `overflow-auto` container has a real, scrollable child. Earlier
-  // approach used a min-w-full flex wrapper with an oversized image
-  // overflowing via justify-center — but `overflow-auto` ignores flex
-  // children that overflow their parent via center justification, so
-  // scrollLeft had no real range and pan only worked in one direction.
-  // With the wrapper sized to the image, the scroll container sees a
-  // child larger than itself and creates proper bi-directional scroll.
-  const wrapperClass = zoom === 1
-    ? 'w-full h-full'
-    : zoom === 2
-      ? 'w-[200vw] h-[200vh]'
-      : 'w-[300vw] h-[300vh]'
+  // Displayed size at levels 1/2 — derived from the image's own pixels, so
+  // level 1 is a true 1:1 mapping. Null until the image reports naturalWidth
+  // (and at Fit), in which case we fall back to the object-contain path.
+  const displayW = zoom > 0 && natural ? natural.w * zoom : null
+  const displayH = zoom > 0 && natural ? natural.h * zoom : null
+  const sized = displayW != null && displayH != null
+
+  // The wrapper div takes an EXPLICIT size so the outer `overflow-auto`
+  // container has a real, scrollable child. Earlier approach used a min-w-full
+  // flex wrapper with an oversized image overflowing via justify-center — but
+  // `overflow-auto` ignores flex children that overflow their parent via center
+  // justification, so scrollLeft had no real range and pan only worked in one
+  // direction. Sizing the wrapper to max(container, image) keeps the image
+  // centered when it's smaller AND gives the scroll container a child larger
+  // than itself when it's bigger, so bi-directional pan still works.
+  const wrapperStyle: React.CSSProperties = sized
+    ? { width: `max(100%, ${displayW}px)`, height: `max(100%, ${displayH}px)` }
+    : { width: '100%', height: '100%' }
   // Cursor reflects state: actively dragging > grabbable (zoomed in) > zoom-in.
   const cursorClass = isDragging
     ? 'cursor-grabbing'
-    : zoom > 1
+    : zoom > 0
       ? 'cursor-grab'
       : 'cursor-zoom-in'
 
@@ -146,13 +163,15 @@ export default function ScreenshotLightbox({
         className="absolute inset-0 overflow-auto cursor-zoom-out"
         onClick={onClose}
       >
-        <div className={`${wrapperClass} flex items-center justify-center p-2`}>
+        <div className="flex items-center justify-center p-2" style={wrapperStyle}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src}
           alt="Trade screenshot (zoomed)"
           draggable={false}
-          className={`max-w-full max-h-full w-full h-full object-contain rounded shadow-2xl ${cursorClass} select-none`}
+          onLoad={e => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+          style={sized ? { width: displayW!, height: displayH!, maxWidth: 'none', maxHeight: 'none' } : undefined}
+          className={`${sized ? '' : 'max-w-full max-h-full w-full h-full object-contain'} rounded shadow-2xl ${cursorClass} select-none`}
           onMouseDown={e => {
             // Begin a drag session. Only "consumes" the click if it
             // actually pans — see movedRef logic in onClick below.
@@ -187,21 +206,24 @@ export default function ScreenshotLightbox({
         <div className="bg-gray-900/90 border border-gray-700 rounded-full px-3 h-9 flex items-center gap-2 shadow-lg">
           <button
             type="button"
-            onClick={() => setZoom(z => Math.max(1, z - 1))}
-            disabled={zoom === 1}
+            onClick={() => setZoom(z => Math.max(0, z - 1))}
+            disabled={zoom === 0}
             className="text-gray-300 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed"
             aria-label="Zoom out"
             title="Zoom out (-)"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
-          <span className="text-xs font-mono text-gray-300 select-none tabular-nums">
-            {zoom === 1 ? 'Fit' : `${zoom}×`}
+          <span
+            className="text-xs font-mono text-gray-300 select-none tabular-nums"
+            title={zoom === 1 ? 'Actual size — one image pixel per screen pixel' : undefined}
+          >
+            {zoom === 0 ? 'Fit' : `${zoom * 100}%`}
           </span>
           <button
             type="button"
-            onClick={() => setZoom(z => Math.min(3, z + 1))}
-            disabled={zoom === 3}
+            onClick={() => setZoom(z => Math.min(2, z + 1))}
+            disabled={zoom === 2}
             className="text-gray-300 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed"
             aria-label="Zoom in"
             title="Zoom in (+)"
@@ -223,9 +245,11 @@ export default function ScreenshotLightbox({
       {/* Hint changes contextually — keystroke reference plus drag hint
           when zoomed in (where the panning capability is non-obvious). */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] text-gray-500 font-mono pointer-events-none bg-gray-900/60 rounded px-2 py-1">
-        {zoom === 1
-          ? 'click image to zoom · + / − keys · esc to close'
-          : 'click to zoom further · drag to pan · esc to close'}
+        {zoom === 0
+          ? 'click image for 100% · + / − keys · esc to close'
+          : zoom === 1
+            ? 'actual size · click to magnify · drag to pan · esc to close'
+            : 'past actual size · click for fit · drag to pan · esc to close'}
       </div>
     </div>
   )
