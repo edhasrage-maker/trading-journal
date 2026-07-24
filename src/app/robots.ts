@@ -20,7 +20,7 @@ export default function robots(): MetadataRoute.Robots {
       allow: ['/', '/login', '/privacy', '/terms'],
       disallow: [
         '/api/',
-        '/dashboard',
+        '/review',
         '/prep',
         '/eod',
         '/intraday',

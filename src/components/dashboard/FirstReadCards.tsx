@@ -103,7 +103,7 @@ function TeaserCard({ teaser, kind }: { teaser: FirstReadTeaser; kind: 'best' | 
 
   return (
     <Link
-      href={`/eod/${teaser.date}`}
+      href={`/review/today/${teaser.date}`}
       className={`group block rounded-lg border p-4 transition-colors ${
         isBest
           ? 'border-emerald-900/50 bg-emerald-950/20 hover:border-emerald-700/70'

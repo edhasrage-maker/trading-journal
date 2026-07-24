@@ -635,7 +635,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   const activateArrow = (id: string) => {
     setArrowMenu(null)
     if (onTradeActivate) onTradeActivate(id)
-    else if (!readOnly) router.push(`/eod/${date}?trade=${id}`)
+    else if (!readOnly) router.push(`/review/today/${date}?trade=${id}`)
   }
 
   // Native double-click (kept as a belt-and-suspenders path alongside the

@@ -26,13 +26,13 @@ import { useUiMode } from '@/lib/ui-mode'
  */
 
 // data-tour anchors for the first-login SiteTour (src/lib/site-tour.ts targets
-// nav-prep / nav-eod / nav-analytics). Matched by href prefix so the dated
-// Prep/EOD links resolve. Applied to both the masthead link and the mobile tab —
-// the tour's viewport-aware resolver targets whichever is visible.
+// nav-prep / nav-eod / nav-analytics). Matched by href prefix so the dated Prep
+// link resolves. Applied to both the masthead link and the mobile tab — the
+// tour's viewport-aware resolver targets whichever is visible. 'nav-eod' now
+// points at Review, which is where the session debrief lives.
 function navTourAnchor(href: string): string | undefined {
   if (href.startsWith('/prep')) return 'nav-prep'
-  if (href.startsWith('/eod')) return 'nav-eod'
-  if (href === '/dashboard') return 'nav-dashboard'
+  if (href.startsWith('/review')) return 'nav-eod'
   if (href === '/analytics') return 'nav-analytics'
   return undefined
 }
@@ -186,12 +186,16 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
 
   // `match` is the prefix that lights the item up — kept separate from href so
   // the dated links (/prep/2026-07-25) still match their section.
+  // The locked five. EOD and Dashboard are gone as destinations — both are time
+  // scopes of Review now (docs/REVIEW_EOD_MERGE_SPEC.md), so the loop the
+  // product promises reads straight off the nav: Prep → Trade → Review.
+  // Bare /review resolves its own scope: Today when a session is awaiting
+  // completion, Month otherwise.
   const navItems = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome', match: '/welcome' }] : []),
     { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
-    { href: `/eod/${reviewDate}`, label: 'EOD', match: '/eod' },
-    { href: '/dashboard', label: 'Review', match: '/dashboard' },
+    { href: '/review', label: 'Review', match: '/review' },
     { href: '/calendar', label: 'Calendar', match: '/calendar' },
     { href: '/analytics', label: 'Patterns', match: '/analytics' },
   ]
@@ -202,8 +206,8 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   const mobileTabs = [
     { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
-    { href: `/eod/${reviewDate}`, label: 'EOD', match: '/eod' },
-    { href: '/dashboard', label: 'Review', match: '/dashboard' },
+    { href: '/review', label: 'Review', match: '/review' },
+    { href: '/calendar', label: 'Calendar', match: '/calendar' },
   ]
   const moreNav = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome' }] : []),

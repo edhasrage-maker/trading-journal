@@ -201,7 +201,7 @@ function TradeRow({ t }: { t: TradeWithContext }) {
       <td className="py-1.5 px-3 whitespace-nowrap">
         {native && t.date ? (
           <Link
-            href={`/eod/${t.date}`}
+            href={`/review/today/${t.date}`}
             className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
           >
             {t.date}

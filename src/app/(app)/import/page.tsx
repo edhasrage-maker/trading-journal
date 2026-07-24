@@ -141,7 +141,7 @@ export default function ImportPage() {
 
   return (
     <div>
-      <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-white mb-6">
+      <Link href="/review" className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-white mb-6">
         <ArrowLeft className="w-4 h-4" /> Back to dashboard
       </Link>
 
@@ -214,7 +214,7 @@ export default function ImportPage() {
               {warnings.map((w, i) => <li key={i}>{w}</li>)}
             </ul>
           )}
-          <Link href="/dashboard" className="inline-block mt-3 text-sm text-blue-400 hover:text-blue-300">
+          <Link href="/review" className="inline-block mt-3 text-sm text-blue-400 hover:text-blue-300">
             View your dashboard →
           </Link>
         </div>

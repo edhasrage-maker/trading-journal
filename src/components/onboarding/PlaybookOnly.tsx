@@ -11,6 +11,6 @@ import PlaybookStep from './PlaybookStep'
  */
 export default function PlaybookOnly() {
   const router = useRouter()
-  const done = () => router.push('/dashboard')
+  const done = () => router.push('/review')
   return <PlaybookStep onNext={done} onSkipAll={done} />
 }

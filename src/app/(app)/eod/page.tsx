@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { todayPT } from '@/lib/pt-time'
 
-/** Bare /eod → today's recap instead of a 404. */
+/** EOD is no longer a destination — it is Review's Today view. */
 export default function EodIndexRedirect() {
-  redirect(`/eod/${todayPT()}`)
+  redirect(`/review/today/${todayPT()}`)
 }

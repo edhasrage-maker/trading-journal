@@ -114,7 +114,7 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
             return (
               <Link
                 key={i}
-                href={`/eod/${dateStr}`}
+                href={`/review/today/${dateStr}`}
                 className={`min-h-[46px] rounded flex items-start justify-start p-1 text-[9px] text-gray-700 hover:bg-gray-800 transition-colors border ${isToday ? 'border-amber-500/60' : 'border-gray-800/40'}`}
                 title={`${format(d, 'EEE, MMM d, yyyy')} — no trades`}
               >
@@ -133,7 +133,7 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
           return (
             <Link
               key={i}
-              href={`/eod/${dateStr}`}
+              href={`/review/today/${dateStr}`}
               className={`relative min-h-[46px] rounded flex flex-col items-center justify-center hover:ring-2 hover:ring-blue-400 transition-all ${isToday ? 'ring-2 ring-amber-500/70' : ''}`}
               style={{ backgroundColor: bg }}
               title={tip}

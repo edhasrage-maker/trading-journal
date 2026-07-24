@@ -295,7 +295,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
       if (!res.ok) { alert('Could not end the session. Please try again.'); return }
       const data = await res.json() as { endedAt?: string }
       setSessionEndedAt(data.endedAt ?? new Date().toISOString())
-      router.push(`/eod/${date}`)
+      router.push(`/review/today/${date}`)
     } catch {
       alert('Could not end the session. Please try again.')
     } finally {
@@ -371,7 +371,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
       {mode.type === 'list' && showRecapCta && (
         <button
           type="button"
-          onClick={() => router.push(`/eod/${date}`)}
+          onClick={() => router.push(`/review/today/${date}`)}
           className="group w-full text-left rounded-xl border border-amber-800/50 bg-amber-950/20 hover:border-amber-600/70 px-5 py-4 transition-colors flex items-center gap-3"
         >
           <div className="flex-1 min-w-0">

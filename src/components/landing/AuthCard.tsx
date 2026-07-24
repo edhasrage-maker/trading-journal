@@ -33,7 +33,7 @@ export default function AuthCard() {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || 'Demo is unavailable right now.')
       }
-      window.location.href = '/dashboard'
+      window.location.href = '/review'
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Demo is unavailable right now.')
       setLoading(false)
@@ -63,11 +63,11 @@ export default function AuthCard() {
       } else if (mode === 'password') {
         const { error } = await sb.auth.signInWithPassword({ email, password, options: { captchaToken: captcha } })
         if (error) throw error
-        window.location.href = '/dashboard'
+        window.location.href = '/review'
       } else {
         const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo(), captchaToken: captcha } })
         if (error) throw error
-        if (data.session) window.location.href = '/dashboard'      // email confirmation off → in immediately
+        if (data.session) window.location.href = '/review'      // email confirmation off → in immediately
         else setMsg('Account created — check your email to confirm, then sign in.')
       }
     } catch (err) {

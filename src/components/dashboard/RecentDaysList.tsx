@@ -554,7 +554,7 @@ function DayRowItem({
   // Wrapping each cell in a Link would inflate markup; instead use a single
   // overlay link via the row's last cell with an onClick stopPropagation guard
   // on the checkbox + delete button.
-  const navigate = () => { window.location.href = `/eod/${day.date}` }
+  const navigate = () => { window.location.href = `/review/today/${day.date}` }
 
   return (
     <tr className={`group border-b border-gray-800/60 transition-colors ${selected ? 'bg-blue-950/40' : ''}`}>
@@ -579,7 +579,7 @@ function DayRowItem({
           <Icon className={`w-4 h-4 shrink-0 ${pnlColor}`} />
           {/* whitespace-nowrap keeps "Thu, Jun 4" inline — without it, a wide
               combo-tag chip pushes the date to wrap into "Thu," / "Jun 4". */}
-          <Link href={`/eod/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium whitespace-nowrap">
+          <Link href={`/review/today/${day.date}`} className="text-white hover:text-blue-300 transition-colors font-medium whitespace-nowrap">
             {format(new Date(day.date + 'T12:00:00'), 'EEE, MMM d')}
           </Link>
           {/* Achievement coins earned that day (persisted ids). Unknown ids

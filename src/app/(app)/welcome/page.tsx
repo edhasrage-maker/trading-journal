@@ -18,7 +18,7 @@ const STEPS = [
     icon: LineChart,
     title: 'See how you\'re really doing',
     body: 'Your dashboard fills in the second you import — your P&L, win rate, best and worst days, and a plain-English read on the one thing to work on next. No minimum history.',
-    href: '/dashboard',
+    href: '/review',
     cta: 'Open dashboard',
   },
   {
@@ -117,7 +117,7 @@ export default function WelcomePage() {
 
       <div className="mt-8 text-center">
         <Link
-          href="/dashboard"
+          href="/review"
           className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300 font-medium"
         >
           Take me to my dashboard <ArrowRight className="w-4 h-4" />

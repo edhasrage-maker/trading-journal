@@ -806,7 +806,7 @@ export default function EodClient({
               value={date}
               onChange={e => {
                 const next = e.target.value
-                if (next && next !== date) router.push(`/eod/${next}`)
+                if (next && next !== date) router.push(`/review/today/${next}`)
               }}
               className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2 py-1 font-mono focus:outline-none focus:border-blue-500"
               title="Switch to a different day's recap"

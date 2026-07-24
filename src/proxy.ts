@@ -72,10 +72,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // Signed-in user shouldn't sit on the landing or login — go to the dashboard.
+  // Signed-in user shouldn't sit on the landing or login — go to Review.
   if (user && (pathname === '/' || pathname === '/login')) {
     const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
+    url.pathname = '/review'
     return NextResponse.redirect(url)
   }
 

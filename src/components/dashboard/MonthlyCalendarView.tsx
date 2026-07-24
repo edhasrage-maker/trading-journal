@@ -23,7 +23,7 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
  * Renders one month at a time as a 7-column grid (Sunday-first), with a
  * sidebar of weekly rollups. Each day cell shows PnL, trade count, win
  * rate %, and the AI overall grade (color-banded). Cells are clickable
- * shortcuts to `/eod/{date}`.
+ * shortcuts to `/review/today/{date}`.
  *
  * Month navigation is bounded by the data window passed in from the
  * dashboard server query (currently 180 days). For long-range views
@@ -287,7 +287,7 @@ function DayCell({
   // are not clickable (cleaner UX, avoids accidental nav to neighboring month).
   if (inMonth) {
     return (
-      <Link href={`/eod/${dateStr}`} className="block">
+      <Link href={`/review/today/${dateStr}`} className="block">
         {content}
       </Link>
     )

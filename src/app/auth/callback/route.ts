@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   const type = searchParams.get('type') as EmailOtpType | null
   // Land in the app on success (not the landing, which would just bounce
   // authenticated users onward anyway).
-  const next = searchParams.get('next') ?? '/dashboard'
+  const next = searchParams.get('next') ?? '/review'
 
   const supabase = await createClient()
 

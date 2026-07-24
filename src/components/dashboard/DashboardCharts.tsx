@@ -433,7 +433,7 @@ function BarsChart({ bars, height }: { bars: { date: string; pnl: number }[]; he
   // Click a bar → jump to that day's EOD Recap to study it.
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const i = idxFromEvent(e)
-    if (i != null) router.push(`/eod/${bars[i].date}`)
+    if (i != null) router.push(`/review/today/${bars[i].date}`)
   }
 
   return (
