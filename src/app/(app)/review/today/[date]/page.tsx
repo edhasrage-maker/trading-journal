@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import EodClient from '@/components/eod/EodClient'
+import CommitmentResolution from '@/components/review/CommitmentResolution'
 import { fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from '@/lib/atr'
 import { configuredAtr } from '@/lib/atr-config'
 import { getAtrConfig, getGiveBackAtr } from '@/lib/atr-config-server'
@@ -122,18 +123,26 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   await signDayScreenshots(supabase, day)
   await signTradeScreenshots(supabase, trades)
 
+  // The Prep commitment for this session, if one was tracked. Review · Today is
+  // its one obvious resolution home — that is the whole reason EOD folded in
+  // here rather than staying a separate destination.
+  const commitment = day?.prep_notes_json?.commitment ?? null
+
   return (
-    <EodClient
-      date={date}
-      initialDay={day}
-      initialTrades={trades}
-      initialMarketContext={marketContext}
-      allTags={tags ?? []}
-      liveAtrByTradeId={liveAtrByTradeId}
-      postExitByTradeId={postExitByTradeId}
-      pnlHistory={pnlHistory}
-      achievementCounts={counts}
-      giveBackAtr={giveBackAtr}
-    />
+    <>
+      {commitment && <CommitmentResolution date={date} commitment={commitment} />}
+      <EodClient
+        date={date}
+        initialDay={day}
+        initialTrades={trades}
+        initialMarketContext={marketContext}
+        allTags={tags ?? []}
+        liveAtrByTradeId={liveAtrByTradeId}
+        postExitByTradeId={postExitByTradeId}
+        pnlHistory={pnlHistory}
+        achievementCounts={counts}
+        giveBackAtr={giveBackAtr}
+      />
+    </>
   )
 }
