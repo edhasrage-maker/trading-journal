@@ -27,9 +27,10 @@
  *                     which is RTH-baselined, so the size lens is only supported
  *                     for RTH; overnight sessions carry it null (mute in the UI).
  *
- * Everything here is normalized (ratios and bands); the historical edge numbers
- * live in `ib-fade-reference.ts`. Feed the classifier the day's IB range,
- * meanHL10, Wilder-10 fallback, and ib_vs_10d_avg — all available from
+ * Everything here is normalized (ratios and bands) — the panel renders these as
+ * a day-character read (choppy / normal / extended + small / normal / large) and
+ * maps them onto the trader's day-type chips. Feed the classifier the day's IB
+ * range, meanHL10, Wilder-10 fallback, and ib_vs_10d_avg — all available from
  * `contextStatsForDate()` in `market-context-from-bars.ts`.
  */
 

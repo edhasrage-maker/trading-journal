@@ -3,59 +3,43 @@
 import { useMemo } from 'react'
 import { Check, Plus } from 'lucide-react'
 import { classifyIbDayType, type RegimeBand, type SizeBand } from '@/lib/ib-day-type'
-import {
-  IB_FADE_BASIS,
-  PLAYBOOK_A_SETUP,
-  PLAYBOOK_RULES,
-  PLAYBOOK_CAUTIONS,
-  CONFIDENCE_LABEL,
-  sessionEdge,
-  regimeEdge,
-  sizeEdge,
-  formatNetR,
-  type Confidence,
-} from '@/lib/ib-fade-reference'
 import type { SessionKind } from '@/lib/session-levels'
 import type { DayContextStats } from '@/lib/market-context-from-bars'
 
 /**
- * IB-fade Day-Type Overview — a prep-time read that classifies today's Initial
- * Balance along three independent lenses and surfaces the historical fade edge +
- * playbook for each. Same idea as Morning Conditions (condition_lookup), but the
- * reference edge is the static IB-fade study (ib-fade-reference.ts), not the
- * trader's own trade history, and the classification is deterministic
- * (ib-day-type.ts) rather than a DB lookup.
+ * IB Day-Type read — a prep-time classifier that reads today's Initial Balance
+ * and answers two questions the trader uses to characterize the day:
+ *   - Is it CHOPPY / NORMAL / EXTENDED?  (IB range ÷ ATR — directionality)
+ *   - How big is the IB vs typical?      (IB range ÷ 10-day avg — magnitude)
  *
- * The lenses are marginal (each read on its own axis), never crossed into one
- * bucket — the fully-crossed cell is too thin. Honesty is explicit: the chop-day
- * fade + 0.5×ATR floor + 2-entry sequence are VERIFIED; "mid/expanded also work"
- * and the whole size lens are PRELIMINARY, and rendered muted.
- *
- * Beyond the fade edge, the two IB lenses also OBJECTIVELY suggest day-type
- * chips — validated against the trader's own tagging history:
- *   - IB/ATR regime → Trend Day / Range Day (it measures directionality; Trend
- *     11.0 vs Range 8.4 median separate cleanly, High/Med/Low do not).
- *   - IB size (÷10d) → High / Medium / Low action (medians 1.31/0.85/0.58 fall
- *     right on the size cuts; this is the magnitude axis IB/ATR can't see).
+ * It exists to feed the day-type classification, NOT to prescribe a trade. The
+ * two reads map onto the trader's own day-type chips — validated against their
+ * tagging history:
+ *   - IB÷ATR → Trend Day / Range Day  (Trend 11.0 vs Range 8.4 median separate;
+ *     High/Med/Low do not — IB÷ATR sees direction, not magnitude)
+ *   - IB size → High / Medium / Low action  (medians 1.31/0.85/0.58 fall on the
+ *     size cuts — the magnitude axis IB÷ATR can't see)
  * Suggestions are one-click and only offered for labels that exist in the
- * trader's library. (Phase 2: persist these to market_context/day_types[] so
- * condition_lookup can bucket actual trades against the edge.)
+ * library. (Phase 2: persist these to market_context/day_types[] so
+ * condition_lookup can bucket actual trades by day type.)
+ *
+ * NQ-focused. RTH fully supported; overnight sessions keep the regime read but
+ * mute IB size (ib_vs_10d isn't baselined overnight).
  */
 
 interface Props {
-  /** The session this prep targets (drives the session-keyed edge + IB windows). */
+  /** The session this prep targets — drives the IB windows + size support. */
   session: SessionKind
-  /** Full bar-derived stats for the day. Null until bars load. `ib_size` = IB
-   *  range, `meanHL10` = study ATR, `atr_at_ib_close` = Wilder fallback,
-   *  `ib_vs_10d_avg` = size ratio. */
+  /** Bar-derived stats for the day. Null until bars load. `ib_size` = IB range,
+   *  `meanHL10` = study ATR, `atr_at_ib_close` = Wilder fallback, `ib_vs_10d_avg`
+   *  = size ratio. */
   stats: DayContextStats | null
-  /** Day-type chips available in the trader's library — a mapped suggestion is
-   *  only offered when its label exists here (degrades if the library differs). */
+  /** Day-type chips in the trader's library — a mapped suggestion is only
+   *  offered when its label exists here (degrades if the library is renamed). */
   dayTypeOptions: string[]
   /** Currently-selected day-type chips, so suggestions mark already-set labels. */
   currentDayTypes: string[]
-  /** Append handler — same contract as DayTypePredictor's onAccept; the parent
-   *  dedupes and appends to its day_types[] state. */
+  /** Append handler — same contract as DayTypePredictor's onAccept. */
   onSuggest: (labels: string[]) => void
 }
 
@@ -72,13 +56,29 @@ const REGIME_TO_CHIP: Partial<Record<RegimeBand, string>> = {
   // mid → deliberately no structural call (the ambiguous middle)
 }
 
-const REGIME_LABEL: Record<RegimeBand, string> = { chop: 'Chop', mid: 'Mid', expanded: 'Expanded' }
-const SIZE_LABEL: Record<SizeBand, string> = { small: 'Small', normal: 'Normal', large: 'Large' }
+// The trader's language for the regime, plus how common each band is (base rate
+// across the study's day sample — useful context, not a trade edge).
+const REGIME_DISPLAY: Record<RegimeBand, { label: string; share: number }> = {
+  chop: { label: 'Choppy', share: 0.22 },
+  mid: { label: 'Normal', share: 0.54 },
+  expanded: { label: 'Extended', share: 0.24 },
+}
+const SIZE_DISPLAY: Record<SizeBand, string> = { small: 'Small', normal: 'Normal', large: 'Large' }
 
-/** Left-rule tone by fade confidence — verified reads lead in green, preliminary
- *  ones are muted so they never masquerade as the A-setup. */
-function ruleTone(c: Confidence): string {
-  return c === 'verified' ? 'border-green-700' : 'border-gray-700'
+const REGIME_SCALE = [
+  { key: 'chop', label: 'choppy <7.7' },
+  { key: 'mid', label: 'normal 7.7–13' },
+  { key: 'expanded', label: 'extended 13+' },
+]
+const SIZE_SCALE = [
+  { key: 'small', label: 'small <0.75' },
+  { key: 'normal', label: 'normal 0.75–1.25' },
+  { key: 'large', label: 'large >1.25' },
+]
+
+/** Subtle non-judgmental tint on the regime headline (a cue, not good/bad). */
+function regimeTint(b: RegimeBand): string {
+  return b === 'chop' ? 'text-yellow-300' : b === 'expanded' ? 'text-blue-300' : 'text-gray-100'
 }
 
 export default function IbDayTypeOverview({
@@ -92,11 +92,10 @@ export default function IbDayTypeOverview({
     ibVs10dAvg: stats?.ib_vs_10d_avg ?? null,
   }), [session, stats])
 
-  const sEdge = sessionEdge(session)
   const ibPrinted = cls.regimeBand != null
   const preSession = !stats?.realized || !ibPrinted
 
-  // Objective chip suggestions from the two IB lenses (only labels that exist in
+  // One-click chip suggestions from the two IB reads (only labels that exist in
   // the library and aren't already set).
   const currentSet = useMemo(() => new Set(currentDayTypes), [currentDayTypes])
   const optionSet = useMemo(() => new Set(dayTypeOptions), [dayTypeOptions])
@@ -116,117 +115,58 @@ export default function IbDayTypeOverview({
 
   return (
     <div className="space-y-5">
-      {/* Provenance — the section owns the heading. */}
-      <div className="text-xs text-gray-500 -mt-1">{IB_FADE_BASIS}</div>
+      <p className="text-xs text-gray-500 -mt-1 max-w-[64ch]">
+        Where today’s initial balance sits — is it choppy, normal, or extended, and how big vs your typical IB. NQ.
+      </p>
 
-      {/* ── Three lenses ── */}
       <div className="space-y-4">
-        {/* Lens 1 — Session (chop-day fade edge, verified) */}
-        <Lens
-          label="Session"
-          tone={ruleTone(sEdge.confidence)}
-          classification={
-            <ClassLine
-              value={`${sEdge.label}${sEdge.star ? ' ★' : ''}`}
-              sub={`${sEdge.windowPT} · ${sEdge.ibWindowPT}`}
-            />
-          }
-        >
-          <EdgeReadout
-            headline={formatNetR(sEdge.twoEntryR)}
-            headlineNote="net R · 2-entry chop-day fade"
-            sub={`win ${(sEdge.chopWinRate * 100).toFixed(0)}% · single ${formatNetR(sEdge.singleEntryR)}${sEdge.splits ? ` · ${sEdge.splits} yrs` : ''}`}
-            confidence={sEdge.confidence}
-          />
-          <MetaLine text={`Timing: ${sEdge.timing}`} />
-          {sEdge.note && <MetaLine text={sEdge.note} />}
-        </Lens>
-
-        {/* Lens 2 — IB / ATR regime (fade edge by band + Trend/Range read) */}
-        <Lens
-          label="IB / ATR regime"
-          tone={cls.regimeBand ? ruleTone(regimeEdge(cls.regimeBand).confidence) : 'border-gray-700'}
-          classification={
-            ibPrinted && cls.regimeBand && cls.regimeRatio != null ? (
+        {/* Regime — choppy / normal / extended (IB ÷ ATR) */}
+        <div className="border-l-2 border-gray-700 pl-4 py-1">
+          <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Day character · IB ÷ ATR</div>
+          {ibPrinted && cls.regimeBand && cls.regimeRatio != null ? (
+            <>
               <ClassLine
-                value={`${REGIME_LABEL[cls.regimeBand]} · ${cls.regimeRatio.toFixed(1)}×`}
-                sub={`IB ${fmtPts(stats?.ib_size)} ÷ ATR ${fmtPts(cls.regimeBasis === 'wilder' ? stats?.atr_at_ib_close : stats?.meanHL10)}${cls.regimeBasis === 'wilder' ? ' (Wilder — approx.)' : ''} · ${(regimeEdge(cls.regimeBand).share * 100).toFixed(0)}% of days`}
+                value={REGIME_DISPLAY[cls.regimeBand].label}
+                valueTone={regimeTint(cls.regimeBand)}
+                sub={`IB ${fmtPts(stats?.ib_size)} ÷ ATR ${fmtPts(cls.regimeBasis === 'wilder' ? stats?.atr_at_ib_close : stats?.meanHL10)} = ${cls.regimeRatio.toFixed(1)}×${cls.regimeBasis === 'wilder' ? ' (Wilder — approx.)' : ''} · ~${Math.round(REGIME_DISPLAY[cls.regimeBand].share * 100)}% of days`}
               />
-            ) : (
-              <PendingLine text="IB not yet printed — updates at IB close." />
-            )
-          }
-        >
-          {ibPrinted && cls.regimeBand && (() => {
-            const e = regimeEdge(cls.regimeBand)
-            const r = session === 'rth' ? e.rthR : e.allNqR
-            return (
-              <EdgeReadout
-                headline={formatNetR(r)}
-                headlineNote={`net R · 2-entry${session === 'rth' ? ' · RTH' : ' · all-NQ'}`}
-                sub={`${session === 'rth' && e.rthSplits ? `${e.rthSplits} yrs · ` : ''}${e.band === 'chop' ? 'A-setup' : 'edge tilts to chop'}`}
-                confidence={e.confidence}
-              />
-            )
-          })()}
-          {ibPrinted && cls.regimeBand && REGIME_TO_CHIP[cls.regimeBand] && (
-            <MetaLine text={`Reads as a ${REGIME_TO_CHIP[cls.regimeBand]} (IB÷ATR gauges direction).`} />
+              <ScaleLine segments={REGIME_SCALE} active={cls.regimeBand} />
+            </>
+          ) : (
+            <PendingLine text="IB not printed yet — this updates at IB close." />
           )}
-          {ibPrinted && cls.regimeBand === 'mid' && (
-            <MetaLine text="Mid is the ambiguous middle — no Trend/Range call." />
-          )}
-        </Lens>
+        </div>
 
-        {/* Lens 3 — IB size (magnitude → action level; RTH-only, thin) */}
-        <Lens
-          label="IB size"
-          tone={cls.sizeBand ? ruleTone(sizeEdge(cls.sizeBand).confidence) : 'border-gray-700'}
-          classification={
-            !cls.sizeSupported ? (
-              <PendingLine text="RTH-only — IB-vs-10d isn’t baselined overnight." muted />
-            ) : cls.sizeBand && cls.sizeRatio != null ? (
+        {/* IB size — small / normal / large vs the 10-day average */}
+        <div className="border-l-2 border-gray-700 pl-4 py-1">
+          <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">IB size · vs 10-day avg</div>
+          {!cls.sizeSupported ? (
+            <PendingLine text="RTH-only — IB size isn’t baselined overnight." muted />
+          ) : ibPrinted && cls.sizeBand && cls.sizeRatio != null ? (
+            <>
               <ClassLine
-                value={`${SIZE_LABEL[cls.sizeBand]} · ${cls.sizeRatio.toFixed(2)}×`}
-                sub={`IB vs 10-day avg${cls.sizeBand === 'normal' ? ' (normal)' : ''}`}
+                value={SIZE_DISPLAY[cls.sizeBand]}
+                sub={`${cls.sizeRatio.toFixed(2)}× your 10-day average IB`}
               />
-            ) : (
-              <PendingLine text="IB not yet printed — updates at IB close." />
-            )
-          }
-        >
-          {cls.sizeSupported && cls.sizeBand && (() => {
-            const e = sizeEdge(cls.sizeBand)
-            return (
-              <EdgeReadout
-                headline={formatNetR(e.rthR)}
-                headlineNote="net R · 2-entry · RTH"
-                sub={`${e.splits} yrs · thin${e.star ? ' · best size band' : ''}`}
-                confidence={e.confidence}
-              />
-            )
-          })()}
-          {cls.sizeSupported && cls.sizeBand && SIZE_TO_CHIP[cls.sizeBand] && optionSet.has(SIZE_TO_CHIP[cls.sizeBand]) && (
-            <MetaLine text={`Reads as a ${SIZE_TO_CHIP[cls.sizeBand]} day (IB magnitude gauges action).`} />
+              <ScaleLine segments={SIZE_SCALE} active={cls.sizeBand} />
+            </>
+          ) : (
+            <PendingLine text="IB not printed yet — this updates at IB close." />
           )}
-        </Lens>
+        </div>
       </div>
 
-      {/* ── Playbook ── */}
-      <PlaybookCard regimeBand={cls.regimeBand} sizeBand={cls.sizeBand} />
-
-      {/* ── Objective day-type suggestions (one-click) ── */}
+      {/* Suggested day types (one-click) — the objective read → your chips. */}
       {suggestions.length > 0 && (
         <div className="pt-3 border-t border-gray-800">
           <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
-            <span className="text-[11px] uppercase tracking-wide text-gray-500">
-              Objective day-type read
-            </span>
+            <span className="text-[11px] uppercase tracking-wide text-gray-500">Suggested day types</span>
             {toAdd.length > 0 && (
               <button
                 type="button"
                 onClick={() => onSuggest(toAdd)}
                 className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 border border-gray-700 hover:border-gray-600 rounded px-2.5 py-1.5 transition-colors"
-                title="Append these objective day-type chips to today's selection (you can remove any above)"
+                title="Append these day-type chips to today's selection (you can remove any above)"
               >
                 <Plus className="w-3 h-3" />
                 Add {toAdd.length} day type{toAdd.length === 1 ? '' : 's'}
@@ -273,119 +213,37 @@ export default function IbDayTypeOverview({
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One lens block — a left-ruled card with a lens label, today's classification,
- *  and the historical edge underneath. Mirrors the ConditionFilterPanel idiom. */
-function Lens({
-  label, tone, classification, children,
-}: {
-  label: string
-  tone: string
-  classification: React.ReactNode
-  children?: React.ReactNode
-}) {
-  return (
-    <div className={`border-l-2 pl-4 py-1 ${tone}`}>
-      <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">{label}</div>
-      {classification}
-      {children && <div className="mt-2 space-y-1.5">{children}</div>}
-    </div>
-  )
-}
-
-/** Today's classification for a lens: a bold display value + a quiet sub. */
-function ClassLine({ value, sub }: { value: string; sub: string }) {
+/** Today's classification for a read: a bold display value + a quiet detail. */
+function ClassLine({ value, valueTone = 'text-gray-100', sub }: { value: string; valueTone?: string; sub: string }) {
   return (
     <div>
       <div
-        className="text-[19px] font-bold tracking-tight text-gray-100 leading-tight"
+        className={`text-[22px] font-bold tracking-tight leading-tight ${valueTone}`}
         style={{ fontFamily: 'var(--font-display)' }}
       >
         {value}
       </div>
-      <div className="text-[11px] text-gray-500 mt-0.5">{sub}</div>
+      <div className="text-[11px] text-gray-500 mt-0.5 max-w-[60ch]">{sub}</div>
     </div>
   )
 }
 
-/** Placeholder line for a lens whose input hasn't printed yet (or isn't supported). */
+/** The band scale for a read, with today's band emphasized. */
+function ScaleLine({ segments, active }: { segments: Array<{ key: string; label: string }>; active: string | null }) {
+  return (
+    <div className="mt-1.5 text-[11px] text-gray-600 flex flex-wrap gap-x-2">
+      {segments.map((s, i) => (
+        <span key={s.key} className={s.key === active ? 'text-gray-200 font-semibold' : ''}>
+          {s.label}{i < segments.length - 1 ? ' ·' : ''}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** Placeholder for a read whose input hasn't printed yet (or isn't supported). */
 function PendingLine({ text, muted = false }: { text: string; muted?: boolean }) {
   return <div className={`text-sm ${muted ? 'text-gray-600' : 'text-gray-400'} leading-normal max-w-[52ch]`}>{text}</div>
-}
-
-/** The historical edge readout: a signed net-R display numeral + a confidence tag. */
-function EdgeReadout({
-  headline, headlineNote, sub, confidence,
-}: {
-  headline: string
-  headlineNote: string
-  sub: string
-  confidence: Confidence
-}) {
-  const tone = headline.startsWith('+') ? 'text-green-400' : 'text-red-400'
-  return (
-    <div className="flex items-baseline justify-between gap-3 flex-wrap">
-      <div className="flex items-baseline gap-2">
-        <span
-          className={`text-[17px] font-bold tabular-nums ${tone}`}
-          style={{ fontFamily: 'var(--font-display)' }}
-        >
-          {headline}
-        </span>
-        <span className="text-[11px] text-gray-500">{headlineNote}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] text-gray-400">{sub}</span>
-        <ConfidenceTag confidence={confidence} />
-      </div>
-    </div>
-  )
-}
-
-function ConfidenceTag({ confidence }: { confidence: Confidence }) {
-  const cls = confidence === 'verified'
-    ? 'border-green-700/60 text-green-300'
-    : 'border-yellow-700/60 text-yellow-300'
-  return (
-    <span className={`text-[9px] uppercase font-mono border rounded px-1 py-px ${cls}`}>
-      {CONFIDENCE_LABEL[confidence]}
-    </span>
-  )
-}
-
-/** A quiet secondary line under an edge readout (timing, caveats, chip reads). */
-function MetaLine({ text }: { text: string }) {
-  return <p className="text-[11px] text-gray-500 leading-normal max-w-[64ch]">{text}</p>
-}
-
-/** The recommended fade sequence + situational cautions raised by the day-type. */
-function PlaybookCard({
-  regimeBand, sizeBand,
-}: {
-  regimeBand: RegimeBand | null
-  sizeBand: SizeBand | null
-}) {
-  const cautions: string[] = []
-  if (sizeBand === 'large') cautions.push(PLAYBOOK_CAUTIONS.largeIb)
-  if (regimeBand === 'mid' || regimeBand === 'expanded') cautions.push(PLAYBOOK_CAUTIONS.nonChopRegime)
-
-  return (
-    <div className="border-l-2 border-green-700 pl-4 py-1">
-      <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Playbook</div>
-      <p className="text-sm text-gray-200 leading-normal max-w-[66ch]">{PLAYBOOK_A_SETUP}</p>
-      <ol className="mt-2 space-y-1 text-[13px] text-gray-300 list-decimal list-inside max-w-[66ch]">
-        {PLAYBOOK_RULES.map((r, i) => <li key={i} className="leading-normal">{r}</li>)}
-      </ol>
-      {cautions.length > 0 && (
-        <div className="mt-2.5 space-y-1.5">
-          {cautions.map((c, i) => (
-            <p key={i} className="text-[11px] text-yellow-400/90 leading-normal max-w-[66ch]">
-              ⚠ {c}
-            </p>
-          ))}
-        </div>
-      )}
-    </div>
-  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

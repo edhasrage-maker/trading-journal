@@ -1104,13 +1104,12 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           </details>
         </Section>
 
-        {/* IB fade — day type. Classifies today's IB against the fade study on
-            three marginal lenses (session / IB÷ATR regime / IB size) and reads
-            out the verified edge + playbook. The two IB lenses also objectively
-            suggest day-type chips: IB÷ATR → Trend/Range, IB-size → High/Med/Low
-            (validated against the trader's own tagging history). NQ-focused;
-            RTH fully supported, overnight sessions degrade (size muted). */}
-        <Section title="IB fade — day type" sub="today’s IB, classified against the fade study">
+        {/* IB day type — reads today's IB to characterize the day: choppy /
+            normal / extended (IB÷ATR) + small / normal / large (IB vs 10-day).
+            Objectively suggests day-type chips — IB÷ATR → Trend/Range, IB-size →
+            High/Med/Low — validated against the trader's own tagging history.
+            NQ-focused; RTH fully supported, overnight keeps regime, mutes size. */}
+        <Section title="IB day type" sub="is today choppy, normal, or extended?">
           <IbDayTypeOverview
             session={session}
             stats={contextStats}
