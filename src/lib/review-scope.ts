@@ -21,9 +21,16 @@ export interface ReviewScope {
 
 /**
  * A session is "awaiting completion" when the trader traded today but hasn't
- * closed the loop on it — no realised P&L recorded and no debrief written. That
- * is the one state where Review should open straight to Today rather than the
- * monthly findings, because it's exactly where the Prep commitment resolves.
+ * closed the loop on it. "Closed the loop" is ANY real review signal, because
+ * traders finish a session different ways and the banner must not nag someone
+ * who has already reviewed:
+ *   - session_ended_at set  — they manually ended the session (Pt 13)
+ *   - eod_ai_analysis_json  — they ran Analyze Session (the EOD debrief)
+ *   - eod_pnl               — they recorded a realised P&L
+ *   - eod_notes             — they wrote a debrief note
+ * Any one of those means done. (An earlier version only checked the last two,
+ * so a trader who ran the analysis and ended the session was still told the day
+ * wasn't reviewed.)
  */
 export async function resolveReviewScope(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Supabase server client is intentionally loose here, matching the route pages
@@ -35,13 +42,25 @@ export async function resolveReviewScope(
   try {
     const { data: day } = await supabase
       .from('trading_days')
-      .select('id, eod_pnl, eod_notes')
+      .select('id, eod_pnl, eod_notes, session_ended_at, eod_ai_analysis_json')
       .eq('date', today)
-      .maybeSingle() as { data: { id: string; eod_pnl: number | null; eod_notes: string | null } | null }
+      .maybeSingle() as {
+        data: {
+          id: string
+          eod_pnl: number | null
+          eod_notes: string | null
+          session_ended_at: string | null
+          eod_ai_analysis_json: Record<string, unknown> | null
+        } | null
+      }
 
     if (!day) return scope
 
-    const reviewed = day.eod_pnl != null || !!day.eod_notes?.trim()
+    const reviewed =
+      !!day.session_ended_at ||
+      (day.eod_ai_analysis_json != null && Object.keys(day.eod_ai_analysis_json).length > 0) ||
+      day.eod_pnl != null ||
+      !!day.eod_notes?.trim()
     if (reviewed) return scope
 
     const { count } = await supabase
