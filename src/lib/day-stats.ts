@@ -81,7 +81,12 @@ export interface DayStatsRollup {
  * read path treats any row whose `stats_version` != this constant as dirty and
  * recomputes it, so a formula change invalidates every cached row at once.
  */
-export const STATS_VERSION = 1
+// v2 (2026-07-23): TapeScore amendment 6 changed the derived score's formula
+// and its components ({rules,execution,prep} → {risk,entry,capture}). The
+// rollup caches that derived result, so every row must recompute — otherwise
+// the Review · Month ring + decision-quality list read the stale old-shape
+// components as null (0/0/0) and the cached scores stay on the old formula.
+export const STATS_VERSION = 2
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
