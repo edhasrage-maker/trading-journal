@@ -187,7 +187,13 @@ export default function BrowserRecap({ trades, date }: Props) {
     // Dispose any previous grabber before replacing it.
     setGrabber(prev => { prev?.dispose(); return null })
 
-    const g = new VideoFrameGrabber(picked)
+    // These frames don't just feed the AI — /api/video/commentary auto-fills a
+    // missing trade screenshot with the entry frame, so whatever resolution we
+    // grab at IS the stored screenshot. The grabber's 1280 default was quietly
+    // saving 1280x536 stills off a 3440x1440 capture (2.7x downscale), which is
+    // unreadable the moment you zoom in; pasted screenshots land at ~3420 wide.
+    // grab() only ever downscales, so this cap is a no-op on smaller sources.
+    const g = new VideoFrameGrabber(picked, { maxWidth: 2560, quality: 0.9 })
     try {
       await g.ready
     } catch (e) {
