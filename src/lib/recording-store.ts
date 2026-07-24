@@ -109,9 +109,12 @@ async function loadHandle(): Promise<FsFileHandle | null> {
 async function ingest(file: File): Promise<void> {
   state.grabber?.dispose()
   setState({ status: 'loading', file, name: file.name, grabber: null, error: null })
-  // maxWidth well above a 1440p/ultrawide capture so SAVED frames keep detail
-  // (the grabber's 1280 default was the source of the earlier blur).
-  const g = new VideoFrameGrabber(file, { maxWidth: 2560, quality: 0.92 })
+  // Effectively native: 3840 clears a 3440-wide ultrawide capture, and grab()
+  // only ever downscales, so this never upscales a smaller source — it just
+  // stops throwing away resolution. Adjust-frame saves one frame at a time, so
+  // full-res parity with pasted screenshots costs nothing here. quality 0.95 to
+  // keep Sierra's thin text/lines crisp under JPEG.
+  const g = new VideoFrameGrabber(file, { maxWidth: 3840, quality: 0.95 })
   try {
     await g.ready
   } catch {

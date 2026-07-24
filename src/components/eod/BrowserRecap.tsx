@@ -192,8 +192,11 @@ export default function BrowserRecap({ trades, date }: Props) {
     // grab at IS the stored screenshot. The grabber's 1280 default was quietly
     // saving 1280x536 stills off a 3440x1440 capture (2.7x downscale), which is
     // unreadable the moment you zoom in; pasted screenshots land at ~3420 wide.
-    // grab() only ever downscales, so this cap is a no-op on smaller sources.
-    const g = new VideoFrameGrabber(picked, { maxWidth: 2560, quality: 0.9 })
+    // 3840 clears a 3440 ultrawide so frames save at native res (parity with
+    // pasted shots); grab() only ever downscales, so it's a no-op on smaller
+    // sources. This is the recap BATCH path (entry+exit per trade), so native
+    // res means heavier uploads — acceptable for the crispness it buys.
+    const g = new VideoFrameGrabber(picked, { maxWidth: 3840, quality: 0.95 })
     try {
       await g.ready
     } catch (e) {
