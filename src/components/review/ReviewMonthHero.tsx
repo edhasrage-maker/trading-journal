@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { Carryover } from '@/lib/prep-carryover'
@@ -81,41 +82,75 @@ function CompositionRing({ score, subs, size = 132 }: {
   )
 }
 
-/** The TapeScore, decomposed — the ring + decision-quality list (no header;
- *  DashboardHero supplies the "TapeScore" label + the period picker above it).
- *  Renders a quiet note when no day in the period was scored. */
+/** The axis labels + one-line descriptions the breakdown popover shows. Kept in
+ *  one place so the ⓘ and any future copy stay in sync. */
+const SCORE_AXES = [
+  { key: 'risk' as const, name: 'Risk', desc: 'size and account limits', wt: 50 },
+  { key: 'entry' as const, name: 'Entry', desc: 'setup, timing, stop placement', wt: 30 },
+  { key: 'capture' as const, name: 'Exit', desc: 'how much of the move you kept', wt: 20 },
+]
+
+/** The ⓘ on the TapeScore — the score's makeup moved here (out of the hero) so
+ *  the ring reads clean; the breakdown is one click away. */
+export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [open])
+  if (period.score == null) return null
+  const vals: Record<'risk' | 'entry' | 'capture', number> = {
+    risk: period.risk ?? 0, entry: period.entry ?? 0, capture: period.capture ?? 0,
+  }
+  return (
+    <span className="relative inline-flex" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-label="How this TapeScore breaks down"
+        className={cn('transition-colors', open ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300')}
+      >
+        <Info className="w-3.5 h-3.5" />
+      </button>
+      {open && (
+        <div className="absolute z-50 top-6 left-0 w-72 bg-gray-900 border border-gray-700 rounded-lg p-3 text-left shadow-[0_24px_60px_-30px_rgba(0,0,0,0.9)]">
+          <p className="text-[12.5px] text-gray-400 mb-2.5">Decision quality — a weighted blend across the trade:</p>
+          {SCORE_AXES.map((a, i) => (
+            <div key={a.key} className={cn('flex items-baseline justify-between gap-3 py-1.5', i > 0 && 'border-t border-gray-800')}>
+              <span className="min-w-0">
+                <span className="text-[13px] text-gray-100">{a.name}</span>
+                <span className="text-[11px] text-gray-500 ml-1.5">{a.desc}</span>
+              </span>
+              <span className="flex items-baseline gap-2 flex-shrink-0">
+                <span className="text-[10px] text-gray-500 tabular-nums">{a.wt}%</span>
+                <span className="text-[14px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>{vals[a.key]}</span>
+              </span>
+            </div>
+          ))}
+          {period.scoredDays > 0 && (
+            <p className="text-[11px] text-gray-600 mt-2 pt-2 border-t border-gray-800">
+              Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}. A session that breaks 2+ risk rails caps at 49.
+            </p>
+          )}
+        </div>
+      )}
+    </span>
+  )
+}
+
+/** The TapeScore ring only (the makeup lives behind the ⓘ now). Renders a quiet
+ *  note when no day in the window was scored. */
 function ScoreCluster({ period }: { period: TapeScorePeriod }) {
   if (period.score == null) {
     return <p className="text-[13px] text-gray-500 max-w-[36ch] leading-normal">No graded sessions in this window yet — run Analyze Session on a day to score it.</p>
   }
   const subs = { risk: period.risk ?? 0, entry: period.entry ?? 0, capture: period.capture ?? 0 }
-  const comps = [
-    { name: 'Safety rails kept', score: subs.risk, wt: '50% of score' },
-    { name: 'Entry quality', score: subs.entry, wt: '30% of score' },
-    { name: 'Exit discipline', score: subs.capture, wt: '20% of score' },
-  ]
-  return (
-    <div className="flex items-center gap-6 flex-wrap">
-      <CompositionRing score={period.score} subs={subs} />
-      <div className="min-w-[172px]">
-        <div className="text-[12.5px] text-gray-500 mb-2">Decision quality</div>
-        {comps.map((c, i) => (
-          <div key={c.name} className={cn('py-2', i > 0 && 'border-t border-gray-800')}>
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[13.5px] text-gray-100">{c.name}</span>
-              <span className="text-[15px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
-                {c.score}
-              </span>
-            </div>
-            <div className="text-[11px] text-gray-500">{c.wt}</div>
-          </div>
-        ))}
-        {period.scoredDays > 0 && (
-          <div className="text-[11px] text-gray-600 mt-2">Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}</div>
-        )}
-      </div>
-    </div>
-  )
+  return <CompositionRing score={period.score} subs={subs} size={148} />
 }
 
 // ── Adjustable windows ────────────────────────────────────────────────────
@@ -220,11 +255,12 @@ export function DashboardHero({ periods }: { periods: HeroPeriods }) {
         {/* TapeScore — the score, named and decomposed (left) */}
         <div className="lg:border-r border-gray-800 lg:pr-8 pb-6 lg:pb-0 border-b lg:border-b-0">
           <div className="flex items-center justify-between gap-3 mb-3">
-            <div className="flex items-baseline gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
                 TapeScore
               </span>
               <span className="text-[11px] text-gray-500">· {scoreData.scoreLabel}</span>
+              <ScoreBreakdownInfo period={scoreData.scorePeriod} />
             </div>
             <PeriodPicker value={scoreKey} onChange={setScoreKey} />
           </div>

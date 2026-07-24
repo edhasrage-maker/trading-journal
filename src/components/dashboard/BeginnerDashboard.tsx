@@ -3,9 +3,9 @@
 import type { ReactNode } from 'react'
 import { Target, ChevronRight } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
-import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroParts'
+import { TapeScoreRing } from './TapeScoreHeroParts'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
-import type { HeroPeriodData } from '@/components/review/ReviewMonthHero'
+import { ScoreBreakdownInfo, type HeroPeriodData } from '@/components/review/ReviewMonthHero'
 
 /**
  * Beginner ("Highlights") dashboard — a coach REPORT, not a lighter journal.
@@ -51,7 +51,7 @@ const TONE = {
 export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, hero, days, charts }: Props) {
   const { setMode } = useUiMode()
   const { scorePeriod, carryover } = hero
-  const { score, band, risk, entry, capture, scoredDays } = scorePeriod
+  const { score, band, scoredDays } = scorePeriod
 
   // The verdict + focus come from the finding engine — the same leak Detailed
   // shows, in plain words.
@@ -97,34 +97,9 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
             <span className={`w-2 h-2 rounded-full ${tone.dot}`} />
             <span className={`text-xs font-medium ${tone.text}`}>{tone.label}</span>
             <span className="text-[11px] text-gray-500">· this month</span>
-            <TapeScoreFormulaInfo />
+            <ScoreBreakdownInfo period={scorePeriod} />
           </div>
           <p className="text-lg font-semibold text-white leading-snug">{verdictText}</p>
-          {score != null && (
-            <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
-              {risk != null && (
-                <HeroChip
-                  label={`Risk ${risk}`}
-                  tone={risk >= 70 ? 'good' : risk >= 50 ? 'mid' : 'bad'}
-                  title="Safety-rail score (0-100): how well you kept the five account risk limits. 50% of the TapeScore."
-                />
-              )}
-              {entry != null && (
-                <HeroChip
-                  label={`Entry ${entry}`}
-                  tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
-                  title="Entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor. 30% of the TapeScore."
-                />
-              )}
-              {capture != null && (
-                <HeroChip
-                  label={`Capture ${capture}`}
-                  tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
-                  title="Profit capture (0-100): how much of the favorable move you kept. 20% of the TapeScore."
-                />
-              )}
-            </div>
-          )}
           <div className="mt-3 text-xs text-gray-500">
             {score != null
               ? <>This month · {scoredDays} scored session{scoredDays === 1 ? '' : 's'}</>
