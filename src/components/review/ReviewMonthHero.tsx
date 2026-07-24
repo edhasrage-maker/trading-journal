@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { Carryover } from '@/lib/prep-carryover'
@@ -80,10 +81,13 @@ function CompositionRing({ score, subs, size = 132 }: {
   )
 }
 
-/** The TapeScore, decomposed — the ring + decision-quality list. Renders
- *  nothing when no day in the period was scored (the stat cards still stand). */
+/** The TapeScore, decomposed — the ring + decision-quality list (no header;
+ *  DashboardHero supplies the "TapeScore" label + the period picker above it).
+ *  Renders a quiet note when no day in the period was scored. */
 function ScoreCluster({ period }: { period: TapeScorePeriod }) {
-  if (period.score == null) return null
+  if (period.score == null) {
+    return <p className="text-[13px] text-gray-500 max-w-[36ch] leading-normal">No graded sessions in this window yet — run Analyze Session on a day to score it.</p>
+  }
   const subs = { risk: period.risk ?? 0, entry: period.entry ?? 0, capture: period.capture ?? 0 }
   const comps = [
     { name: 'Safety rails kept', score: subs.risk, wt: '50% of score' },
@@ -91,84 +95,145 @@ function ScoreCluster({ period }: { period: TapeScorePeriod }) {
     { name: 'Exit discipline', score: subs.capture, wt: '20% of score' },
   ]
   return (
-    <div>
-      {/* Name the score — the ring reads "60 / Fair", and this says what 60 is. */}
-      <div className="flex items-baseline gap-2 mb-3">
-        <span className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
-          TapeScore
-        </span>
-        <span className="text-[11px] text-gray-500">· all time</span>
-      </div>
-      <div className="flex items-center gap-6 flex-wrap">
-        <CompositionRing score={period.score} subs={subs} />
-        <div className="min-w-[172px]">
-          <div className="text-[12.5px] text-gray-500 mb-2">Decision quality</div>
-          {comps.map((c, i) => (
-            <div key={c.name} className={cn('py-2', i > 0 && 'border-t border-gray-800')}>
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-[13.5px] text-gray-100">{c.name}</span>
-                <span className="text-[15px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
-                  {c.score}
-                </span>
-              </div>
-              <div className="text-[11px] text-gray-500">{c.wt}</div>
+    <div className="flex items-center gap-6 flex-wrap">
+      <CompositionRing score={period.score} subs={subs} />
+      <div className="min-w-[172px]">
+        <div className="text-[12.5px] text-gray-500 mb-2">Decision quality</div>
+        {comps.map((c, i) => (
+          <div key={c.name} className={cn('py-2', i > 0 && 'border-t border-gray-800')}>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-[13.5px] text-gray-100">{c.name}</span>
+              <span className="text-[15px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+                {c.score}
+              </span>
             </div>
-          ))}
-          {period.scoredDays > 0 && (
-            <div className="text-[11px] text-gray-600 mt-2">Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}</div>
-          )}
-        </div>
+            <div className="text-[11px] text-gray-500">{c.wt}</div>
+          </div>
+        ))}
+        {period.scoredDays > 0 && (
+          <div className="text-[11px] text-gray-600 mt-2">Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}</div>
+        )}
       </div>
     </div>
   )
 }
 
-/** The finding copy — measured facts, never a causal story; honest "no read". */
-function findingCopy(carryover: Carryover | null, tradeCount: number, monthLabel: string) {
+// ── Adjustable windows ────────────────────────────────────────────────────
+export type HeroPeriodKey = 'month' | 'ytd' | 'all'
+export interface HeroPeriodData {
+  scorePeriod: TapeScorePeriod
+  carryover: Carryover | null
+  tradeCount: number
+  /** e.g. "July" / "This year" / "All time" — used in the finding eyebrow. */
+  findingLabel: string
+  /** e.g. "this month" / "this year" / "all time" — the score's period word. */
+  scoreLabel: string
+}
+export type HeroPeriods = Record<HeroPeriodKey, HeroPeriodData>
+
+const PERIOD_ORDER: HeroPeriodKey[] = ['month', 'ytd', 'all']
+const PERIOD_SHORT: Record<HeroPeriodKey, string> = { month: 'Month', ytd: 'Year', all: 'All' }
+
+/** A compact window picker — squared, inset-underline active state, matching
+ *  the locked control language. Persists the choice per surface. */
+function PeriodPicker({ value, onChange }: { value: HeroPeriodKey; onChange: (k: HeroPeriodKey) => void }) {
+  return (
+    <div className="inline-flex border border-gray-700 rounded overflow-hidden text-[11px]">
+      {PERIOD_ORDER.map(k => (
+        <button
+          key={k}
+          type="button"
+          onClick={() => onChange(k)}
+          aria-pressed={value === k}
+          className={cn(
+            'px-2 py-0.5 border-r border-gray-700 last:border-r-0 transition-colors',
+            value === k
+              ? 'bg-gray-800 text-gray-100 shadow-[inset_0_-2px_0_var(--color-accent-deep)]'
+              : 'text-gray-500 hover:text-gray-300',
+          )}
+        >
+          {PERIOD_SHORT[k]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** Window choice that sticks across visits. */
+function usePersistentPeriod(storageKey: string, fallback: HeroPeriodKey): [HeroPeriodKey, (k: HeroPeriodKey) => void] {
+  const [value, setValue] = useState<HeroPeriodKey>(fallback)
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey) as HeroPeriodKey | null
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
+      if (raw && PERIOD_ORDER.includes(raw)) setValue(raw)
+    } catch { /* ignore */ }
+    setHydrated(true)
+  }, [storageKey])
+  const set = (k: HeroPeriodKey) => {
+    setValue(k)
+    if (hydrated) { try { localStorage.setItem(storageKey, k) } catch { /* ignore */ } }
+  }
+  return [value, set]
+}
+
+/** The finding copy — measured facts, never a causal story; honest "no read".
+ *  `label` is the window word ("July" / "This year" / "All time"). */
+function findingCopy(carryover: Carryover | null, tradeCount: number, label: string) {
   const state = carryover == null ? 'none' : carryover.mode === 'protect' ? 'edge' : 'leak'
+  const scope = label.toLowerCase().startsWith('all') ? 'all time' : label.toLowerCase().startsWith('this') ? label.toLowerCase() : 'this period'
   return {
-    eyebrow: `${monthLabel} · ${tradeCount} trade${tradeCount === 1 ? '' : 's'}`,
+    eyebrow: `${label} · ${tradeCount} trade${tradeCount === 1 ? '' : 's'}`,
     fstate: state === 'edge' ? 'Clear edge' : state === 'leak' ? 'Clear leak' : 'No clear read',
     fstateCls: state === 'edge' ? 'text-green-400' : state === 'leak' ? 'text-blue-400' : 'text-gray-500',
-    headline: carryover ? `${carryover.finding}.` : 'Quiet month. Nothing separated itself.',
+    headline: carryover ? `${carryover.finding}.` : 'Nothing separated itself.',
     sub: carryover
       ? `${carryover.metric}.`
-      : 'No setup family or behaviour stood out this month — your numbers sit inside your normal range.',
+      : `No setup family or behaviour stood out over ${scope} — your numbers sit inside your normal range.`,
     next: carryover?.today ?? 'No change to force — keep taking your A setups and let the sample build.',
   }
 }
 
 /**
- * The Dashboard hero — the month's finding and the TapeScore, together. Finding
- * on the left, the composition ring + decision quality on the right, evidence
- * across the bottom.
+ * The Dashboard hero — the TapeScore and the finding, together. The score
+ * cluster (ring + decision quality) leads on the left; the finding is on the
+ * right; evidence runs across the bottom. Each side has its OWN window picker
+ * (This month / This year / All time), so the score and the leak adjust
+ * independently — the score defaults to all time (stable), the leak to this
+ * month (actionable).
  */
-export function DashboardHero({
-  period,
-  carryover,
-  tradeCount,
-  monthLabel,
-}: {
-  period: TapeScorePeriod
-  carryover: Carryover | null
-  tradeCount: number
-  /** e.g. "July". */
-  monthLabel: string
-}) {
-  const c = findingCopy(carryover, tradeCount, monthLabel)
+export function DashboardHero({ periods }: { periods: HeroPeriods }) {
+  const [scoreKey, setScoreKey] = usePersistentPeriod('dashboard-hero-score', 'all')
+  const [findKey, setFindKey] = usePersistentPeriod('dashboard-hero-finding', 'month')
+  const scoreData = periods[scoreKey]
+  const findData = periods[findKey]
+  const c = findingCopy(findData.carryover, findData.tradeCount, findData.findingLabel)
+  const evidence = findData.carryover?.evidence ?? []
+
   return (
     <div>
-      <div className={cn('grid gap-8 items-start', period.score != null && 'lg:grid-cols-[auto_1fr]')}>
+      <div className="grid gap-8 items-start lg:grid-cols-[auto_1fr]">
         {/* TapeScore — the score, named and decomposed (left) */}
-        {period.score != null && (
-          <div className="lg:border-r border-gray-800 lg:pr-8 pb-6 lg:pb-0 border-b lg:border-b-0">
-            <ScoreCluster period={period} />
+        <div className="lg:border-r border-gray-800 lg:pr-8 pb-6 lg:pb-0 border-b lg:border-b-0">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex items-baseline gap-2">
+              <span className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+                TapeScore
+              </span>
+              <span className="text-[11px] text-gray-500">· {scoreData.scoreLabel}</span>
+            </div>
+            <PeriodPicker value={scoreKey} onChange={setScoreKey} />
           </div>
-        )}
+          <ScoreCluster period={scoreData.scorePeriod} />
+        </div>
 
-        {/* Finding — this month's read (right) */}
-        <div className={cn(period.score != null && 'lg:pl-1')}>
-          <div className="font-mono text-[11.5px] tracking-wide text-gray-500 mb-2.5">This month · {c.eyebrow}</div>
+        {/* Finding — the read (right) */}
+        <div className="lg:pl-1">
+          <div className="flex items-center justify-between gap-3 mb-2.5">
+            <span className="font-mono text-[11.5px] tracking-wide text-gray-500">{c.eyebrow}</span>
+            <PeriodPicker value={findKey} onChange={setFindKey} />
+          </div>
           <div className={cn('text-[12.5px] font-semibold mb-2.5 flex items-center gap-2', c.fstateCls)}>
             {c.fstate}
             <span aria-hidden className="text-[11px] opacity-70">▸</span>
@@ -182,7 +247,7 @@ export function DashboardHero({
           <p className="mt-3.5 text-[15px] text-gray-100 max-w-[52ch] leading-normal">{c.sub}</p>
           <div className="mt-4 flex gap-3 items-baseline">
             <span className="text-[13px] font-bold text-blue-400 flex-shrink-0" style={{ fontFamily: 'var(--font-display)' }}>
-              Next month
+              Do next
             </span>
             <span className="text-[15px] font-semibold text-gray-100 leading-snug max-w-[52ch]">{c.next}</span>
           </div>
@@ -190,14 +255,14 @@ export function DashboardHero({
       </div>
 
       {/* Evidence — R per trade, across the bottom */}
-      {carryover && carryover.evidence.length > 0 && (
+      {evidence.length > 0 && (
         <div className="mt-7 pt-5 border-t border-gray-800">
           <div className="flex items-baseline justify-between mb-3 max-w-[560px]">
             <span className="text-[12.5px] text-gray-500">The evidence</span>
             <span className="text-xs text-gray-600">R per trade</span>
           </div>
           <div className="flex flex-col gap-2.5 max-w-[560px]">
-            {carryover.evidence.map(bar => (
+            {evidence.map(bar => (
               <div key={bar.label} className="grid grid-cols-[140px_1fr_auto] gap-3 items-center">
                 <span className="text-[13px] text-gray-400 truncate">{bar.label}</span>
                 <span className="h-1.5 rounded-full bg-gray-800 overflow-hidden">

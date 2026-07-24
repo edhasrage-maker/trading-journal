@@ -18,7 +18,7 @@ import { aggregateTapeScore } from '@/lib/tapescore'
 import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type DayStatsStored } from '@/lib/day-stats'
 import { computeCarryover } from '@/lib/prep-carryover'
 import type { TradeWithExcursion } from '@/lib/analytics'
-import { DashboardHero } from '@/components/review/ReviewMonthHero'
+import { DashboardHero, type HeroPeriods } from '@/components/review/ReviewMonthHero'
 import { resolveReviewScope } from '@/lib/review-scope'
 import Link from 'next/link'
 
@@ -296,28 +296,52 @@ export default async function DashboardPage() {
     tick('read-through write-back', dirtyDays.length)
   }
 
-  // ── Overview score + monthly finding ──────────────────────────────────
-  // The overview leads with the ALL-TIME score cluster (composition ring over
-  // every scored day). The finding section below runs the finding engine over
-  // the CURRENT calendar month — a bounded trade query so it stays cheap.
-  const allTimePeriod = aggregateTapeScore(recentDaysMapped.map(d => d.tapescore))
-
+  // ── Hero: TapeScore + finding, adjustable by window ────────────────────
+  // The trader can switch both the score and the finding across three windows
+  // (this month / this year / all time), so precompute each. The score is cheap
+  // (aggregate the per-day rollups). The finding needs per-trade data, so fetch
+  // the book once (lean fields) and slice it — one all-history read, then all
+  // three findings compute in memory.
   const monthStart = `${today.slice(0, 7)}-01`
-  const monthDayIds = recentDaysBase.filter(d => d.date >= monthStart).map(d => d.id)
-  const monthTrades: Trade[] = []
-  if (monthDayIds.length > 0) {
-    for (let i = 0; i < monthDayIds.length; i += 50) {
-      const slice = monthDayIds.slice(i, i + 50)
+  const yearStart = `${today.slice(0, 4)}-01-01`
+  const dayDateById = new Map(recentDaysBase.map(d => [d.id, d.date]))
+
+  const allDayIds = recentDaysBase.map(d => d.id)
+  const allTrades: Trade[] = []
+  for (let i = 0; i < allDayIds.length; i += 50) {
+    const slice = allDayIds.slice(i, i + 50)
+    for (let p = 0; p < 50; p++) {
       const { data } = await supabase
         .from('trades')
         .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, high_during_position, low_during_position')
         .in('trading_day_id', slice)
-      if (data) monthTrades.push(...(data as Trade[]))
+        .order('id', { ascending: true })
+        .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
+      const batch = (data ?? []) as Trade[]
+      allTrades.push(...batch)
+      if (batch.length < PAGE_SIZE) break
     }
   }
-  tick('month finding trades', monthTrades.length)
+  tick('hero trades (all history)', allTrades.length)
+
   const monthLabel = new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { month: 'long' })
-  const monthCarryover = computeCarryover(monthTrades as unknown as TradeWithExcursion[], `${monthLabel} review`)
+  const HERO_WINDOWS = [
+    { key: 'month' as const, start: monthStart, findingLabel: monthLabel, scoreLabel: 'this month' },
+    { key: 'ytd' as const, start: yearStart, findingLabel: 'This year', scoreLabel: 'this year' },
+    { key: 'all' as const, start: '0000-01-01', findingLabel: 'All time', scoreLabel: 'all time' },
+  ]
+  const heroPeriods = Object.fromEntries(HERO_WINDOWS.map(w => {
+    const days = recentDaysMapped.filter(d => d.date >= w.start)
+    const trades = allTrades.filter(t => (dayDateById.get(t.trading_day_id) ?? '') >= w.start)
+    return [w.key, {
+      scorePeriod: aggregateTapeScore(days.map(d => d.tapescore)),
+      carryover: computeCarryover(trades as unknown as TradeWithExcursion[], w.findingLabel),
+      tradeCount: trades.length,
+      findingLabel: w.findingLabel,
+      scoreLabel: w.scoreLabel,
+    }]
+  })) as HeroPeriods
+  tick('hero periods')
 
   // Pending session → a banner (not a forced redirect to Today). Cheap query;
   // the layout also resolves scope for the nav dot.
@@ -479,14 +503,10 @@ export default async function DashboardPage() {
           />
         }
       >
-        {/* Hero: the month's finding + the TapeScore, together. The ring owns
-            the score, so the period stats below drop their own ring. */}
-        <DashboardHero
-          period={allTimePeriod}
-          carryover={monthCarryover}
-          tradeCount={monthTrades.length}
-          monthLabel={monthLabel}
-        />
+        {/* Hero: the TapeScore + the finding, together, each adjustable across
+            this month / this year / all time. The ring owns the score, so the
+            period stats below drop their own ring. */}
+        <DashboardHero periods={heroPeriods} />
 
         {/* The all-trades overview: period-selectable stats + equity/P&L charts.
             The period is the trader's saved preference (defaults to Last 30
