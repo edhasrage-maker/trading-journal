@@ -33,10 +33,9 @@ export default function ReviewNav({
   const pathname = usePathname()
 
   const scopes = [
+    { href: '/review/overview', label: 'Overview', match: '/review/overview' },
     { href: `/review/today/${todayDate}`, label: 'Today', match: '/review/today' },
     { href: `/review/week/${weekStart}`, label: 'Week', match: '/review/week' },
-    { href: '/review/month', label: 'Month', match: '/review/month' },
-    { href: '/review/all-time', label: 'All time', match: '/review/all-time' },
   ]
 
   return (

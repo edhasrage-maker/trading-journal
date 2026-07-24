@@ -59,10 +59,11 @@ export interface DayStat {
 type MfeUnit = 'pts' | 'dollars' | 'atr'
 const UNIT_KEY = 'dashboard-stat-mfe-unit-v1'
 
-type Period = 'week' | 'month' | '30d' | 'ytd' | 'last_year'
+type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year'
 const PERIOD_KEY = 'dashboard-stat-period-v1'
 
 const PERIOD_LABELS: Record<Period, string> = {
+  all: 'All time',
   week: 'This Week',
   month: 'This Month',
   '30d': 'Last 30 Days',
@@ -76,6 +77,11 @@ function periodBounds(period: Period): { start: string; end: string } {
   const now = new Date()
   const today = ymd(now)
   switch (period) {
+    case 'all': {
+      // Everything the page shipped. The overview widens its server window to
+      // all history, so this bound just has to reach past the earliest day.
+      return { start: '2000-01-01', end: today }
+    }
     case 'week': {
       // Monday → today (matches ISO week start; most traders think Mon-Fri).
       const day = now.getDay() // 0=Sun .. 6=Sat
@@ -121,14 +127,18 @@ function median(nums: number[]): number | null {
 interface Props {
   /** Server-fetched DayStat list spanning start-of-last-year → today. */
   days: DayStat[]
-  /** Drop the internal TapeScore ring hero. Set on Review · Month, where the
-   *  composition-ring hero already owns the score — two rings would be
-   *  redundant. The period stat cards still render. */
+  /** Drop the internal TapeScore ring hero. Set on the Review overview, where
+   *  the composition-ring score cluster already owns the score — two rings
+   *  would be redundant. The period stat cards still render. */
   hideScoreHero?: boolean
+  /** Starting period before the user's saved preference loads. The overview
+   *  passes 'all' so a first visit shows the full-history total, then the
+   *  saved choice (if any) takes over. */
+  defaultPeriod?: Period
 }
 
-export default function DashboardStats({ days, hideScoreHero = false }: Props) {
-  const [period, setPeriod] = useState<Period>('30d')
+export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d' }: Props) {
+  const [period, setPeriod] = useState<Period>(defaultPeriod)
   // Default unit is ATR — it's the user's preferred ATR-normalized reading
   // for the MFE/MAE roll-up. localStorage hydration may overwrite below.
   const [mfeUnit, setMfeUnit] = useState<MfeUnit>('atr')

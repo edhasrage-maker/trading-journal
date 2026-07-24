@@ -186,17 +186,16 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
 
   // `match` is the prefix that lights the item up — kept separate from href so
   // the dated links (/prep/2026-07-25) still match their section.
-  // The locked five. EOD and Dashboard are gone as destinations — both are time
-  // scopes of Review now (docs/REVIEW_EOD_MERGE_SPEC.md), so the loop the
-  // product promises reads straight off the nav: Prep → Trade → Review.
-  // Bare /review resolves its own scope: Today when a session is awaiting
-  // completion, Month otherwise.
+  // EOD, Dashboard and Calendar are gone as destinations: EOD/Dashboard are
+  // time scopes of Review (docs/REVIEW_EOD_MERGE_SPEC.md), and the calendar is
+  // the list/calendar toggle inside the Review overview. So the loop the product
+  // promises reads straight off the nav: Prep → Trade → Review. Bare /review
+  // opens the Overview (all-trades dashboard).
   const navItems = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome', match: '/welcome' }] : []),
     { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
     { href: '/review', label: 'Review', match: '/review' },
-    { href: '/calendar', label: 'Calendar', match: '/calendar' },
     { href: '/analytics', label: 'Patterns', match: '/analytics' },
   ]
 
@@ -207,11 +206,10 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
     { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
     { href: '/review', label: 'Review', match: '/review' },
-    { href: '/calendar', label: 'Calendar', match: '/calendar' },
+    { href: '/analytics', label: 'Patterns', match: '/analytics' },
   ]
   const moreNav = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome' }] : []),
-    { href: '/calendar', label: 'Calendar' },
     { href: '/analytics', label: 'Patterns' },
     { href: '/import', label: 'Import' },
   ]
