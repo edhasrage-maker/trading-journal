@@ -60,7 +60,10 @@ type MfeUnit = 'pts' | 'dollars' | 'atr'
 const UNIT_KEY = 'dashboard-stat-mfe-unit-v1'
 
 type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year'
-const PERIOD_KEY = 'dashboard-stat-period-v1'
+// v2 (Pt 14): reset the saved period once so the Review overview's new
+// all-time default actually shows for existing users — a stale 'v1' = '30d'
+// preference otherwise overrode it and buried the total they asked to see.
+const PERIOD_KEY = 'dashboard-stat-period-v2'
 
 const PERIOD_LABELS: Record<Period, string> = {
   all: 'All time',
