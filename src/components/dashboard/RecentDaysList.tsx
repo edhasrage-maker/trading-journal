@@ -691,14 +691,14 @@ function TapeScorePill({ result, tradeCount }: { result: TapeScoreResult | null;
     : result.band === 'high' ? 'text-green-300 border-green-800/60 bg-green-950/40'
     : result.band === 'mid' ? 'text-amber-300 border-amber-800/60 bg-amber-950/40'
     : 'text-red-300 border-red-800/60 bg-red-950/40'
-  const { passCount, execution, prep } = result.components
+  const { passCount, entry, capture } = result.components
   const tooltip = result.basis === 'legacy'
     ? 'Scored under an earlier rubric (pre-v1.3 single score).'
     : [
         thin ? `Low sample — only ${tradeCount} trade${tradeCount === 1 ? '' : 's'}, read as a rough signal` : null,
         passCount != null ? `Risk limits respected: ${passCount}/5` : null,
-        execution != null ? `Execution ${execution}` : null,
-        prep != null ? `Prep ${prep}` : null,
+        entry != null ? `Entry ${entry}` : null,
+        capture != null ? `Capture ${capture}` : null,
         result.capped ? 'capped at 49 — 2+ rails broke' : null,
       ].filter(Boolean).join(' · ')
   return (

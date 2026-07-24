@@ -329,19 +329,19 @@ export default function DashboardStats({ days }: Props) {
 }
 
 /** The One-TapeScore dashboard hero: 0-100 ring, plain-language verdict, and
- *  the three component chips (Rules kept / Execution / Prep). */
+ *  the three axis chips (Risk kept / Entry / Capture). */
 function TapeScoreHero({ period, periodLabel }: {
   period: ReturnType<typeof aggregateTapeScore>
   periodLabel: string
 }) {
-  const { score, band, scoredDays, verdictDays, compliantDays, execution, prep } = period
+  const { score, band, scoredDays, verdictDays, compliantDays, entry, capture } = period
   const sentence = tapeScorePeriodSentence(period)
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-3 sm:mb-4 flex items-center gap-5 flex-wrap">
       <TapeScoreRing
         score={score}
         band={band}
-        title="TapeScore — one 0-100 score per day: risk limits kept (50%), execution quality (35%), prep (15%). Days that broke 2+ risk rails cap at 49."
+        title="TapeScore — one 0-100 score per day: risk limits kept (50%), entry quality (30%), profit capture (20%). Days that broke 2+ risk rails cap at 49."
       />
       <div className="flex-1 min-w-[240px]">
         {score != null ? (
@@ -361,18 +361,18 @@ function TapeScoreHero({ period, periodLabel }: {
                   title="Sessions that kept at least 4 of the 5 account risk rails, out of sessions with a rails audit. These rails are guardrails, not a measure of trade quality."
                 />
               )}
-              {execution != null && (
+              {entry != null && (
                 <HeroChip
-                  label={`Execution ${execution}`}
-                  tone={execution >= 70 ? 'good' : execution >= 50 ? 'mid' : 'bad'}
-                  title="Average execution quality (0-100): entry/stop/target parameters, move captured, prep adherence, profit factor"
+                  label={`Entry ${entry}`}
+                  tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
+                  title="Average entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — capture is scored separately"
                 />
               )}
-              {prep != null && (
+              {capture != null && (
                 <HeroChip
-                  label={`Prep ${prep}`}
-                  tone={prep >= 70 ? 'good' : prep >= 50 ? 'mid' : 'bad'}
-                  title="Average prep quality score (0-100) from the morning prep analysis"
+                  label={`Capture ${capture}`}
+                  tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
+                  title="Average profit capture (0-100): how much of the favorable move you kept — MFE captured"
                 />
               )}
             </div>

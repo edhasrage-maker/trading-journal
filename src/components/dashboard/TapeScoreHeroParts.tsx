@@ -51,22 +51,22 @@ export function TapeScoreFormulaInfo() {
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
-          <p className="mb-2 text-gray-400">One 0-100 score per session — a weighted blend of three layers:</p>
+          <p className="mb-2 text-gray-400">One 0-100 score per session — a weighted blend across the trade lifecycle:</p>
           <ul className="space-y-1.5 mb-2">
             <li className="flex justify-between gap-3">
               <span><strong className="text-gray-200">Risk limits kept</strong> — of the 5 account guardrails</span>
               <span className="font-mono text-gray-400 shrink-0">50%</span>
             </li>
             <li className="flex justify-between gap-3">
-              <span><strong className="text-gray-200">Execution quality</strong> — entry/stop/target, capture</span>
-              <span className="font-mono text-gray-400 shrink-0">35%</span>
+              <span><strong className="text-gray-200">Entry quality</strong> — entry/stop/target, prep adherence</span>
+              <span className="font-mono text-gray-400 shrink-0">30%</span>
             </li>
             <li className="flex justify-between gap-3">
-              <span><strong className="text-gray-200">Prep quality</strong> — morning plan grade</span>
-              <span className="font-mono text-gray-400 shrink-0">15%</span>
+              <span><strong className="text-gray-200">Profit capture</strong> — how much of the move you kept</span>
+              <span className="font-mono text-gray-400 shrink-0">20%</span>
             </li>
           </ul>
-          <p className="text-gray-500">A session that breaks 2 or more of the 5 risk rails is capped at 49 (can&apos;t read green or amber). Missing a layer re-weights the rest. A period score is the mean of its scored days.</p>
+          <p className="text-gray-500">Manage risk → enter well → exit well. A session that breaks 2 or more of the 5 risk rails is capped at 49 (can&apos;t read green or amber). Missing a layer re-weights the rest. A period score is the mean of its scored days.</p>
         </div>
       )}
     </span>

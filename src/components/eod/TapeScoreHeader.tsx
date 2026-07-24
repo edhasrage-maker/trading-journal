@@ -53,14 +53,14 @@ export default function TapeScoreHeader({
   // New analyses carry an AI-written day headline; legacy rows fall back to
   // the deterministic sentence so every scored day still gets a verdict.
   const sentence = analysis?.headline?.trim() || tapeScoreDaySentence(result)
-  const { passCount, execution, prep } = result.components
+  const { passCount, entry, capture } = result.components
   const pnlCls = pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-4 flex-wrap">
       <div
         className={`relative w-[76px] h-[76px] shrink-0 ${thin ? 'opacity-60' : ''}`}
-        title="TapeScore — one 0-100 score for the day: risk limits kept (50%), execution quality (35%), prep (15%). Days that broke 2+ risk rails cap at 49."
+        title="TapeScore — one 0-100 score for the day: risk limits kept (50%), entry quality (30%), profit capture (20%). Days that broke 2+ risk rails cap at 49."
       >
         <svg width="76" height="76" viewBox="0 0 92 92" className="-rotate-90">
           <circle cx="46" cy="46" r={R} fill="none" stroke="#1f2937" strokeWidth="7" />
@@ -108,18 +108,18 @@ export default function TapeScoreHeader({
                   title="The five account risk rails: daily loss limit, size cap, no size-up after a loss, 90s cooldown, trade cap. These are guardrails, not a measure of trade quality."
                 />
               )}
-              {execution != null && (
+              {entry != null && (
                 <Chip
-                  label={`Execution ${execution}`}
-                  tone={execution >= 70 ? 'good' : execution >= 50 ? 'mid' : 'bad'}
-                  title="Execution quality (0-100): entry/stop/target parameters, move captured, prep adherence, profit factor"
+                  label={`Entry ${entry}`}
+                  tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
+                  title="Entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — capture is scored separately"
                 />
               )}
-              {prep != null && (
+              {capture != null && (
                 <Chip
-                  label={`Prep ${prep}`}
-                  tone={prep >= 70 ? 'good' : prep >= 50 ? 'mid' : 'bad'}
-                  title="Prep quality score (0-100) from the morning prep analysis"
+                  label={`Capture ${capture}`}
+                  tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
+                  title="Profit capture (0-100): how much of the favorable move you kept — MFE captured"
                 />
               )}
             </>

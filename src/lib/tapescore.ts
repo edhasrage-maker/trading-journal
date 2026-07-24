@@ -1,23 +1,33 @@
 import type { EodAiAnalysis, ExecutionScore, ProcessVerdict, RuleStatus } from '@/lib/supabase/types'
 
 /**
- * One TapeScore (Ruleset amendment 5, 2026-07-12).
+ * One TapeScore (Ruleset amendment 6, 2026-07-23).
  *
- * A single 0-100 headline per session, DERIVED from the three existing
- * scoring layers — never produced by the AI, never stored. Deriving at read
- * time means every historical row gets a TapeScore for free and future
- * re-weights can't strand stale stored values.
+ * A single 0-100 headline per session, DERIVED from the existing scoring
+ * layers — never produced by the AI, never stored. Deriving at read time means
+ * every historical row gets a TapeScore for free and re-weights can't strand
+ * stale stored values.
  *
- *   TapeScore = round(0.50·Rules + 0.35·Execution + 0.15·Prep)
+ *   TapeScore = round(0.50·Risk + 0.30·Entry + 0.20·Capture)
  *
- *   Rules     = pass_count/5 × 100 over the five safety rails
- *   Execution = execution.composite × 100 (ran-but-unscoreable → 0)
- *   Prep      = prep quality score (1-10) × 10
+ *   Risk    = pass_count/5 × 100 over the five safety rails (the old "Rules")
+ *   Entry   = the execution composite with MFE-capture REMOVED, renormalized
+ *             (execution parameters 41 / prep adherence 24 / profit factor 11
+ *             → /76), × 100. Ran-but-unscoreable → 0.
+ *   Capture = mfe_capture × 100 — profit capture as its OWN axis.
+ *
+ * AMENDMENT 6 (2026-07-23, founder-directed) — the score now decomposes into
+ * the same three axes the Review composition ring shows, mapping the trade
+ * lifecycle: manage risk → enter well → exit well. Two deliberate changes:
+ *   • Plan-quality (the old "Prep" 15% component) is DROPPED — Capture replaces
+ *     it. A morning plan is an input to a decision, not a graded decision.
+ *   • Capture is pulled OUT of the execution composite so it isn't
+ *     double-counted: Entry is execution WITHOUT capture, Capture stands alone.
+ * Weights moved 50/35/15 → 50/30/20. Risk stays dominant (safety-rail
+ * philosophy). This re-scores history — intended, and the point of the change.
  *
  * Missing components renormalize the remaining weights. Breach sessions
  * (≤3/5 rails) are capped at 49 so they can never render green or amber.
- * The word "Compliance" is retired from user-facing copy — the verdict
- * surfaces as "Rules kept n/5".
  */
 
 export type TapeScoreBand = 'high' | 'mid' | 'low'
@@ -32,9 +42,12 @@ export interface TapeScoreResult {
   /** True when the Breach cap (≤49) lowered the weighted blend. */
   capped: boolean
   components: {
-    rules: number | null
-    execution: number | null
-    prep: number | null
+    /** Safety-rail score, 0-100 (pass_count/5 × 100). The 50% axis. */
+    risk: number | null
+    /** Entry quality, 0-100 — execution composite minus capture. The 30% axis. */
+    entry: number | null
+    /** Profit capture, 0-100 (mfe_capture × 100). The 20% axis. */
+    capture: number | null
     /** Safety rails passed, 0-5. Null on legacy-basis rows. */
     passCount: number | null
     /** Re-derived from passCount ≥ 4 — not the stored verdict, so
@@ -43,9 +56,9 @@ export interface TapeScoreResult {
   }
 }
 
-const W_RULES = 0.5
-const W_EXECUTION = 0.35
-const W_PREP = 0.15
+const W_RISK = 0.5
+const W_ENTRY = 0.3
+const W_CAPTURE = 0.2
 const BREACH_CAP = 49
 
 export function tapeScoreBand(score: number): TapeScoreBand {
@@ -75,26 +88,65 @@ export interface TapeScoreInput {
   execution?: ExecutionScore | null
   /** Pre-v1.3 rows: the single 0-10 `score` field. */
   legacyScore?: number | null
-  /** Prep AI quality score, 1-10 (`ai_analysis_json.score`). */
+  /** @deprecated Amendment 6 dropped plan quality from the score — Capture
+   *  replaced it. Still accepted so existing call sites compile; ignored. */
   prepScore?: number | null
 }
 
+/** Map a profit factor to the 0..1 sub-metric scale the composite uses
+ *  (PF ≥ 2.0 maxes out). Mirrors profitFactorToSubMetric in eod-prompt.ts —
+ *  duplicated here so this module stays free of the heavy AI-prompt deps that
+ *  every server page importing tapescore would otherwise pull in. */
+function pfToSubMetric(pf: number | null): number | null {
+  return pf == null ? null : Math.max(0, Math.min(1, pf / 2))
+}
+
+/** Entry-quality (0..1) — the execution composite with MFE-capture pulled OUT
+ *  (capture is its own axis now, amendment 6). Renormalizes the remaining
+ *  sub-metrics (execution parameters 41 / prep adherence 24 / profit factor 11
+ *  → /76). Null when none are scoreable; falls back to the stored composite for
+ *  legacy rows that carry no sub-metrics. */
+function entryFromExecution(e: ExecutionScore): number | null {
+  const pfScore = pfToSubMetric(e.profit_factor ?? null) ?? (e.planned_vs_realized_rr ?? null)
+  const parts: Array<[number | null, number]> = [
+    [e.execution_parameters, 0.41],
+    [e.prep_adherence, 0.24],
+    [pfScore, 0.11],
+  ]
+  let num = 0, den = 0
+  for (const [v, w] of parts) {
+    if (v == null) continue
+    num += v * w
+    den += w
+  }
+  if (den > 0) return num / den
+  // No sub-metrics stored — a legacy row that only kept the blended composite.
+  // Use it as-is so the row still scores rather than dropping to null.
+  return e.composite ?? null
+}
+
 export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null {
-  const { process, execution, legacyScore, prepScore } = input
+  const { process, execution, legacyScore } = input
 
   const passCount = process?.per_rule ? railPassCount(process) : null
-  const rules = passCount != null ? (passCount / 5) * 100 : null
-  // Execution object present but composite null = the analysis ran and zero
-  // trades were scoreable — that IS a 0, not missing data (matches the
-  // dashboard's overall_grade convention).
-  const exec = execution != null
-    ? (execution.composite != null ? clamp01(execution.composite) * 100 : 0)
-    : null
-  const prep = prepScore != null ? clamp(prepScore, 0, 10) * 10 : null
+  const risk = passCount != null ? (passCount / 5) * 100 : null
 
-  // A prep score alone never makes a TapeScore — the day reads as
-  // unanalyzed until an EOD analysis (or a legacy score) exists.
-  if (rules == null && exec == null) {
+  // Split execution into Entry (composite minus capture) and Capture. An
+  // execution object whose sub-metrics are all null means the analysis ran and
+  // nothing was scoreable — a real 0 on both axes, not missing data (matches
+  // the dashboard's overall_grade convention).
+  let entry: number | null = null
+  let capture: number | null = null
+  if (execution != null) {
+    const e = entryFromExecution(execution)
+    entry = e != null ? clamp01(e) * 100 : null
+    capture = execution.mfe_capture != null ? clamp01(execution.mfe_capture) * 100 : null
+    if (entry == null && capture == null) { entry = 0; capture = 0 }
+  }
+
+  // Rails alone never make a TapeScore without an execution read either — the
+  // day reads as unanalyzed until an EOD analysis (or a legacy score) exists.
+  if (risk == null && entry == null && capture == null) {
     if (legacyScore == null) return null
     const score = Math.round(clamp(legacyScore, 0, 10) * 10)
     return {
@@ -102,15 +154,15 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
       band: tapeScoreBand(score),
       basis: 'legacy',
       capped: false,
-      components: { rules: null, execution: null, prep, passCount: null, verdict: null },
+      components: { risk: null, entry: null, capture: null, passCount: null, verdict: null },
     }
   }
 
   let weighted = 0
   let weightSum = 0
-  if (rules != null) { weighted += W_RULES * rules; weightSum += W_RULES }
-  if (exec != null) { weighted += W_EXECUTION * exec; weightSum += W_EXECUTION }
-  if (prep != null) { weighted += W_PREP * prep; weightSum += W_PREP }
+  if (risk != null) { weighted += W_RISK * risk; weightSum += W_RISK }
+  if (entry != null) { weighted += W_ENTRY * entry; weightSum += W_ENTRY }
+  if (capture != null) { weighted += W_CAPTURE * capture; weightSum += W_CAPTURE }
   let score = Math.round(weighted / weightSum)
 
   const verdict: 'Compliant' | 'Breach' | null =
@@ -127,9 +179,9 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
     basis: 'v15',
     capped,
     components: {
-      rules: rules != null ? Math.round(rules) : null,
-      execution: exec != null ? Math.round(exec) : null,
-      prep: prep != null ? Math.round(prep) : null,
+      risk: risk != null ? Math.round(risk) : null,
+      entry: entry != null ? Math.round(entry) : null,
+      capture: capture != null ? Math.round(capture) : null,
       passCount,
       verdict,
     },
@@ -153,12 +205,12 @@ export function tapeScoreFromAnalyses(
  *  row predates the AI `headline` field. Decision quality, never P&L. */
 export function tapeScoreDaySentence(r: TapeScoreResult): string {
   if (r.basis === 'legacy') return 'Scored under an earlier rubric.'
-  const { passCount, execution } = r.components
+  const { passCount, entry } = r.components
   const execQualifier =
-    execution == null ? '' :
-    execution >= 70 ? ' Execution was sharp.' :
-    execution >= 50 ? ' Execution was mixed.' :
-    ' Execution lagged.'
+    entry == null ? '' :
+    entry >= 70 ? ' Entries were sharp.' :
+    entry >= 50 ? ' Entries were mixed.' :
+    ' Entries lagged.'
   if (passCount == null) return 'Execution-only read — no rules audit on this day.'
   if (passCount === 5) return `Clean tape — all five rules held.${execQualifier}`
   if (passCount === 4) return `One rule slipped — kept 4 of 5.${execQualifier}`
@@ -174,10 +226,10 @@ export interface TapeScorePeriod {
   /** Days with a rails verdict / days of those that were Compliant (≥4/5). */
   verdictDays: number
   compliantDays: number
-  /** Mean component values across days where each was present. */
-  rules: number | null
-  execution: number | null
-  prep: number | null
+  /** Mean axis values across days where each was present. */
+  risk: number | null
+  entry: number | null
+  capture: number | null
 }
 
 export function aggregateTapeScore(days: (TapeScoreResult | null | undefined)[]): TapeScorePeriod {
@@ -190,9 +242,9 @@ export function aggregateTapeScore(days: (TapeScoreResult | null | undefined)[])
     scoredDays: scored.length,
     verdictDays: withVerdict.length,
     compliantDays: withVerdict.filter(d => d.components.verdict === 'Compliant').length,
-    rules: roundedMean(scored.map(d => d.components.rules)),
-    execution: roundedMean(scored.map(d => d.components.execution)),
-    prep: roundedMean(scored.map(d => d.components.prep)),
+    risk: roundedMean(scored.map(d => d.components.risk)),
+    entry: roundedMean(scored.map(d => d.components.entry)),
+    capture: roundedMean(scored.map(d => d.components.capture)),
   }
 }
 
