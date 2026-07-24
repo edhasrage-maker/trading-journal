@@ -94,7 +94,6 @@ export default function TradePlansSection({ plans, onChange, planAssessments }: 
       {plans.map(plan => {
         const isOpen = expanded.has(plan.id)
         const assess = planAssessments?.find(a => a.plan_id === plan.id)
-        const aiAgrees = assess != null && assess.ai_quality >= plan.quality
 
         return (
           <div key={plan.id} className="border border-gray-700 rounded-xl overflow-hidden">
@@ -109,12 +108,13 @@ export default function TradePlansSection({ plans, onChange, planAssessments }: 
                 {plan.setup_name || <span className="text-gray-500 italic">Unnamed Setup</span>}
               </span>
               <div className="flex items-center gap-1.5 shrink-0">
+                {/* The trader's OWN rating, labelled as theirs. The "AI n/5"
+                    badge that used to sit beside it is gone: a score with no
+                    visible rubric is false precision, and it set the app up as
+                    judge of a plan whose reasoning it can't see. The read's
+                    substance survives as the plain gap line in the body. */}
+                <span className="text-[11px] text-gray-500 hidden sm:inline">Your quality</span>
                 <span className={`text-xs font-bold px-1.5 py-0.5 rounded border ${qualityColor(plan.quality)}`}>{plan.quality}/5</span>
-                {assess && (
-                  <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${aiAgrees ? 'bg-green-900/40 border-green-600/60 text-green-400' : 'bg-orange-900/40 border-orange-600/60 text-orange-400'}`}>
-                    AI {assess.ai_quality}/5
-                  </span>
-                )}
                 {isOpen ? <ChevronUp className="w-3.5 h-3.5 text-gray-500" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-500" />}
               </div>
             </div>
@@ -200,15 +200,11 @@ export default function TradePlansSection({ plans, onChange, planAssessments }: 
                     + Add reason
                   </button>
 
-                  {/* AI rating */}
-                  {assess && (
-                    <div className={`mt-3 p-3 rounded-lg border text-xs space-y-1 ${
-                      aiAgrees ? 'bg-green-900/20 border-green-700/50' : 'bg-orange-900/20 border-orange-700/50'
-                    }`}>
-                      <div className={`font-semibold ${aiAgrees ? 'text-green-400' : 'text-orange-400'}`}>
-                        AI Rating: {assess.ai_quality}/5 — {aiAgrees ? '✓ Agrees with your assessment' : '⚠ Disagrees — see note'}
-                      </div>
-                      <p className="text-gray-400 leading-relaxed">{assess.note}</p>
+                  {/* What TapeScore noticed about this plan — the gap, named in
+                      plain words, with no competing score. */}
+                  {assess?.note && (
+                    <div className="mt-3 border-l-2 border-gray-700 pl-3 text-[13px] text-gray-400 leading-relaxed">
+                      {assess.note}
                     </div>
                   )}
                 </div>
