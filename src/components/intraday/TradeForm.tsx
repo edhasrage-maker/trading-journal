@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Loader2, Save, X, ScanLine, Sparkles, Film } from 'lucide-react'
 import PinPlacement, { type PinType, type Pin } from './PinPlacement'
 import FrameNudge from '@/components/FrameNudge'
+import BrowserFrameNudge from '@/components/BrowserFrameNudge'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 // PinType / Pin still used by the legacy pin-position fields kept in FormState
 // so existing trades load + save their saved pin coordinates without loss.
@@ -148,12 +149,14 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   })()
   const recVideoFile = recCommentary?.video_file ?? null
   const recDelta = recCommentary?.screenshot_delta_sec ?? 0
-  // Frame-nudge needs the local OBS recording + ffmpeg (/api/video/frame is
-  // blockIfCloud-gated), so it only works on the owner's local desktop build.
-  // On cloud, migrated trades can still carry a stored recording_commentary.
-  // video_file — gate on LOCAL_FEATURES_ENABLED so cloud never shows a control
-  // that only 404s.
+  // Frame-nudge has two implementations. The LOCAL one shells out to ffmpeg
+  // against the OBS file on disk (/api/video/frame), so it needs the desktop
+  // build AND a stored recording filename. The CLOUD one decodes the clip in
+  // the browser (the trader picks it; nothing but the chosen frame uploads), so
+  // it only needs a saved trade with an entry_time — no server file at all.
   const canNudgeFrame = !!(LOCAL_FEATURES_ENABLED && trade?.id && recVideoFile && trade.entry_time)
+  const canNudgeBrowser = !!(!LOCAL_FEATURES_ENABLED && trade?.id && trade.entry_time)
+  const canNudge = canNudgeFrame || canNudgeBrowser
   // Zoom lightbox state — independent of IntradayClient's lightbox since
   // TradeForm is mounted as a modal/inline form with its own scope.
   const [zoomedScreenshot, setZoomedScreenshot] = useState<string | null>(null)
@@ -416,6 +419,32 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   // null which makes rMultiple use multiplier=1.
   const r = rMultiple(form, trade?.symbol ?? defaultSymbol ?? null)
 
+  /** The frame scrubber for whichever build we're on — ffmpeg-backed locally,
+   *  browser-decoded on the cloud. Same props shape, same onSaved contract, so
+   *  the two call sites below don't care which one they get. */
+  const renderFrameNudge = (onFrameSaved: (url: string) => void) => (
+    canNudgeFrame ? (
+      <FrameNudge
+        videoFile={recVideoFile!}
+        entryTimeIso={trade!.entry_time!}
+        tradeId={trade!.id}
+        initialDelta={recDelta}
+        onSaved={onFrameSaved}
+        onClose={() => setShowFrameNudge(false)}
+      />
+    ) : (
+      <BrowserFrameNudge
+        tradeId={trade!.id}
+        entryTimeIso={trade!.entry_time!}
+        recordingCommentary={trade!.recording_commentary}
+        suggestedFileName={recVideoFile}
+        initialDelta={recDelta}
+        onSaved={onFrameSaved}
+        onClose={() => setShowFrameNudge(false)}
+      />
+    )
+  )
+
   return (
     <div className={compact ? '' : 'bg-gray-900 border border-gray-800 rounded-xl'}>
       {/* Form header — the drawer supplies its own header + close in compact mode. */}
@@ -461,7 +490,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
                   {extracting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScanLine className="w-3 h-3" />}
                   {extracting ? 'Reading...' : 'Read Screenshot'}
                 </button>
-                {canNudgeFrame && (
+                {canNudge && (
                   <button type="button" onClick={() => setShowFrameNudge(v => !v)}
                     className="flex items-center gap-1.5 text-xs text-purple-300 hover:text-purple-200 transition-colors">
                     <Film className="w-3 h-3" />
@@ -478,42 +507,26 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               <p className="text-[11px] text-gray-600">
                 Read from your bracket orders — target and stop identified by P&amp;L sign, not color.
               </p>
-              {canNudgeFrame && showFrameNudge && (
-                <FrameNudge
-                  videoFile={recVideoFile!}
-                  entryTimeIso={trade!.entry_time!}
-                  tradeId={trade!.id}
-                  initialDelta={recDelta}
-                  onSaved={url => {
-                    if (savedScreenshotUrl && savedScreenshotUrl !== url) void deleteBlob(savedScreenshotUrl)
-                    setSavedScreenshotUrl(url)
-                    setForm(f => ({ ...f, screenshot_url: url, pendingFile: null }))
-                    setShotVersion(v => v + 1)
-                    setShowFrameNudge(false)
-                  }}
-                  onClose={() => setShowFrameNudge(false)}
-                />
-              )}
+              {canNudge && showFrameNudge && renderFrameNudge(url => {
+                if (savedScreenshotUrl && savedScreenshotUrl !== url) void deleteBlob(savedScreenshotUrl)
+                setSavedScreenshotUrl(url)
+                setForm(f => ({ ...f, screenshot_url: url, pendingFile: null }))
+                setShotVersion(v => v + 1)
+                setShowFrameNudge(false)
+              })}
             </div>
           ) : (
             <div className="space-y-3">
               {/* When the trade has a recording but no screenshot yet, offer to
                   pull a frame from it — without removing the manual upload. */}
-              {canNudgeFrame && (
+              {canNudge && (
                 showFrameNudge ? (
-                  <FrameNudge
-                    videoFile={recVideoFile!}
-                    entryTimeIso={trade!.entry_time!}
-                    tradeId={trade!.id}
-                    initialDelta={recDelta}
-                    onSaved={url => {
-                      setSavedScreenshotUrl(url)
-                      setForm(f => ({ ...f, screenshot_url: url, pendingFile: null }))
-                      setShotVersion(v => v + 1)
-                      setShowFrameNudge(false)
-                    }}
-                    onClose={() => setShowFrameNudge(false)}
-                  />
+                  renderFrameNudge(url => {
+                    setSavedScreenshotUrl(url)
+                    setForm(f => ({ ...f, screenshot_url: url, pendingFile: null }))
+                    setShotVersion(v => v + 1)
+                    setShowFrameNudge(false)
+                  })
                 ) : (
                   <button type="button" onClick={() => setShowFrameNudge(true)}
                     className="flex items-center gap-1.5 text-xs text-purple-300 hover:text-purple-200 transition-colors">
