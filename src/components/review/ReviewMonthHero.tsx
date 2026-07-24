@@ -158,9 +158,16 @@ export function DashboardHero({
   const c = findingCopy(carryover, tradeCount, monthLabel)
   return (
     <div>
-      <div className="grid gap-8 lg:grid-cols-[1fr_auto] items-start">
-        {/* Finding — this month's read */}
-        <div className="lg:pr-8">
+      <div className={cn('grid gap-8 items-start', period.score != null && 'lg:grid-cols-[auto_1fr]')}>
+        {/* TapeScore — the score, named and decomposed (left) */}
+        {period.score != null && (
+          <div className="lg:border-r border-gray-800 lg:pr-8 pb-6 lg:pb-0 border-b lg:border-b-0">
+            <ScoreCluster period={period} />
+          </div>
+        )}
+
+        {/* Finding — this month's read (right) */}
+        <div className={cn(period.score != null && 'lg:pl-1')}>
           <div className="font-mono text-[11.5px] tracking-wide text-gray-500 mb-2.5">This month · {c.eyebrow}</div>
           <div className={cn('text-[12.5px] font-semibold mb-2.5 flex items-center gap-2', c.fstateCls)}>
             {c.fstate}
@@ -180,13 +187,6 @@ export function DashboardHero({
             <span className="text-[15px] font-semibold text-gray-100 leading-snug max-w-[52ch]">{c.next}</span>
           </div>
         </div>
-
-        {/* TapeScore — the score, named and decomposed */}
-        {period.score != null && (
-          <div className="lg:border-l border-gray-800 lg:pl-8 pt-6 lg:pt-0 border-t lg:border-t-0">
-            <ScoreCluster period={period} />
-          </div>
-        )}
       </div>
 
       {/* Evidence — R per trade, across the bottom */}
