@@ -402,10 +402,6 @@ export default async function DashboardPage() {
   const beginnerGreenDays = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).length
   const beginnerTradedDays = beginner30.length
   const beginnerBestDay = beginner30.length ? Math.max(...beginner30.map(d => d.eod_pnl ?? 0)) : null
-  const greenPnls = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).map(d => d.eod_pnl as number)
-  const redPnls = beginner30.filter(d => (d.eod_pnl ?? 0) < 0).map(d => d.eod_pnl as number)
-  const avgGreenDay = greenPnls.length ? greenPnls.reduce((a, b) => a + b, 0) / greenPnls.length : null
-  const avgRedDay = redPnls.length ? redPnls.reduce((a, b) => a + b, 0) / redPnls.length : null   // negative
   const capVals = recentDays
     .filter(d => d.date >= past30Start && d.avg_capture != null)
     .map(d => d.avg_capture as number)
@@ -421,31 +417,10 @@ export default async function DashboardPage() {
   const beginnerTradesWithPnl = beginnerWinWindow.reduce((a, d) => a + d.trades_with_pnl_count, 0)
   const beginnerWinRate = beginnerTradesWithPnl > 0 ? (beginnerWins / beginnerTradesWithPnl) * 100 : null
   const beginnerCapturePct = avgCap != null ? Math.round(avgCap * 100) : null
-  const beginnerFocus = (() => {
-    if (beginnerTradedDays === 0) return 'Log or import a few sessions and your #1 focus will show up here.'
-    if (avgCap != null && avgCap < 0.5) return `You're exiting winners early — on average you keep about ${Math.round(avgCap * 100)}% of the move you're offered. This week, try holding to your planned target before you take profit.`
-    if (avgCap != null) return `Your exits are solid — you're capturing about ${Math.round(avgCap * 100)}% of the move. Keep that up and put your attention on entry timing.`
-    // No capture data yet (imports without stops/MFE) — coach from win rate + how
-    // your green vs red days size up, so it still says something specific.
-    if (beginnerPnl < 0) {
-      if (avgRedDay != null && avgGreenDay != null && Math.abs(avgRedDay) > avgGreenDay) {
-        return `You're down over the last 30 days, and your red days are bigger than your green ones. The fastest fix isn't more winners — it's cutting losers sooner. Pick a hard daily loss limit and honor it.`
-      }
-      return `You're down over the last 30 days. Get selective — track which setups actually make you money and skip the rest.`
-    }
-    if (beginnerWinRate != null && beginnerWinRate < 50) {
-      return `You're green even at a ${Math.round(beginnerWinRate)}% win rate — your winners are outsizing your losers, which is a real edge. Protect it by keeping every loss small.`
-    }
-    if (beginnerWinRate != null) {
-      return `A ${Math.round(beginnerWinRate)}% win rate and green overall — strong. Your next gain is size discipline: don't hand back a good stretch on one oversized trade.`
-    }
-    return 'Green over the last 30 days. Keep logging every session — the more you tag, the sharper this gets.'
-  })()
-  // Highlights hero: the 30-day One TapeScore aggregate — the SAME object the
-  // Detailed hero renders, so the score reads identically in both modes.
-  const beginnerTape = aggregateTapeScore(
-    recentDays.filter(d => d.date >= past30Start).map(d => d.tapescore),
-  )
+  // Highlights hero (score + leak) now comes from heroPeriods.month — the SAME
+  // this-month TapeScore + finding-engine leak the Detailed view renders — so
+  // the two modes never disagree. The old 30-day aggregate + hand-written
+  // capture focus were removed for exactly that drift.
   // Lean Recent Days table for Highlights (Tape / Trades / Win % / P&L).
   const beginnerDays = recentDaysForTable.slice(0, 8)
 
@@ -496,8 +471,7 @@ export default async function DashboardPage() {
             greenDays={beginnerGreenDays}
             tradedDays={beginnerTradedDays}
             bestDay={beginnerBestDay}
-            focus={beginnerFocus}
-            tape={beginnerTape}
+            hero={heroPeriods.month}
             days={beginnerDays}
             charts={<DashboardCharts days={statsDays} />}
           />

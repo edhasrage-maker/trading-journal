@@ -3,18 +3,23 @@
 import type { ReactNode } from 'react'
 import { Target, ChevronRight } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
-import type { TapeScorePeriod } from '@/lib/tapescore'
 import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroParts'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
+import type { HeroPeriodData } from '@/components/review/ReviewMonthHero'
 
 /**
  * Beginner ("Highlights") dashboard — a coach REPORT, not a lighter journal.
- * Leads with the One TapeScore (the same 0-100 ring + component chips Detailed
- * shows) beside a plain-English verdict sentence, with net P&L demoted to the
- * sub-line. Then the single focus (the prescription), a calm row of clean stat
- * chips, the equity curve, a lean Recent Days table, and a seam into Detailed
- * Tape. Same engine as Pro, translated to plain English — one score everywhere
- * (docs/BEGINNER_PRO_MODES.md, docs highlights-redesign).
+ * Leads with the One TapeScore (the same 0-100 ring + axis chips Detailed shows)
+ * beside a plain-English verdict, then the single focus (the prescription), a
+ * calm row of stat chips, the equity curve, a lean Recent Days table, and a seam
+ * into Detailed Tape.
+ *
+ * CONSISTENCY: the score, the axis chips and the focus all come from the SAME
+ * `hero` object the Detailed view renders — this month's TapeScore + this
+ * month's finding-engine leak. So the two modes never disagree on the score or
+ * the leak (they used to: this view ran a 30-day aggregate and a hand-written
+ * capture line, while Detailed ran the finding engine over a chosen window).
+ * The stat chips below stay a 30-day quick-reference, clearly labelled.
  */
 type Props = {
   pnl: number
@@ -23,9 +28,9 @@ type Props = {
   greenDays: number
   tradedDays: number
   bestDay: number | null
-  focus: string
-  /** 30-day One TapeScore aggregate — same object the Detailed hero renders. */
-  tape: TapeScorePeriod
+  /** This month's TapeScore + finding — the SAME data the Detailed hero shows,
+   *  so the score and the leak match across modes. */
+  hero: HeroPeriodData
   /** Recent day rows for the lean Highlights table (Tape / Trades / Win % / P&L). */
   days: DayRowData[]
   // Performance charts (equity curve), rendered below the stat chips.
@@ -37,38 +42,28 @@ function money(n: number | null): string {
   return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString()}`
 }
 
-// Deterministic period verdict — the one-line "how am I doing + the pattern"
-// read. Derived from the same signals the focus line uses; this is the
-// DIAGNOSIS, the "Your one focus" card carries the PRESCRIPTION, so they
-// complement rather than repeat. No AI call — instant and reproducible.
-function periodVerdict(opts: { pnl: number; capturePct: number | null; winRate: number | null; tradedDays: number }):
-  { tone: 'good' | 'watch' | 'down'; label: string; text: string } {
-  const { pnl, capturePct, winRate, tradedDays } = opts
-  if (tradedDays === 0) return { tone: 'watch', label: 'Getting started', text: 'Log or import a few sessions and your read shows up here.' }
-  if (pnl > 0) {
-    if (capturePct != null && capturePct < 50) return { tone: 'watch', label: 'Strong month, one leak', text: "You're green this month, but you're leaving profit on the table." }
-    if (capturePct != null) return { tone: 'good', label: 'Strong month', text: "Green month — and you're converting your setups well." }
-    if (winRate != null && winRate < 50) return { tone: 'good', label: 'Winners are working', text: 'Green even below a 50% win rate — your winners outsize your losers.' }
-    return { tone: 'good', label: 'Strong month', text: "Green this month — keep doing what's working." }
-  }
-  if (pnl < 0) {
-    if (capturePct != null && capturePct < 50) return { tone: 'down', label: 'Down — exits are the leak', text: "Down this stretch, and you're giving back the moves you catch." }
-    return { tone: 'down', label: 'Down this stretch', text: "Down over the last 30 days — let's tighten one thing at a time." }
-  }
-  return { tone: 'watch', label: 'Around breakeven', text: 'Flat this month — roughly breakeven.' }
-}
+const TONE = {
+  edge: { dot: 'bg-green-400', text: 'text-green-400', label: 'Clear edge' },
+  leak: { dot: 'bg-blue-400', text: 'text-blue-400', label: 'Clear leak' },
+  none: { dot: 'bg-gray-500', text: 'text-gray-400', label: 'No clear read' },
+} as const
 
-const TONE: Record<'good' | 'watch' | 'down', { dot: string; text: string }> = {
-  good: { dot: 'bg-green-400', text: 'text-green-400' },
-  watch: { dot: 'bg-amber-400', text: 'text-amber-400' },
-  down: { dot: 'bg-red-400', text: 'text-red-400' },
-}
-
-export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, focus, tape, days, charts }: Props) {
+export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, hero, days, charts }: Props) {
   const { setMode } = useUiMode()
-  const v = periodVerdict({ pnl, capturePct, winRate, tradedDays })
-  const tone = TONE[v.tone]
-  const { score, band, verdictDays, compliantDays, entry, capture } = tape
+  const { scorePeriod, carryover } = hero
+  const { score, band, risk, entry, capture, scoredDays } = scorePeriod
+
+  // The verdict + focus come from the finding engine — the same leak Detailed
+  // shows, in plain words.
+  const state = carryover == null ? 'none' : carryover.mode === 'protect' ? 'edge' : 'leak'
+  const tone = TONE[state]
+  const verdictText = carryover
+    ? carryover.finding + (carryover.mode === 'protect' ? ' — keep leaning on it.' : '.')
+    : tradedDays === 0
+      ? 'Log or import a few sessions and your read shows up here.'
+      : 'Nothing separated itself this month — your numbers sit inside your normal range.'
+  const focus = carryover?.today
+    ?? 'No change to force — keep taking your A setups and let the sample build.'
 
   // Calm reference row. Conversion only appears when there's capture data (a
   // bare "—" reads as broken). Best day is signed-colored.
@@ -100,38 +95,40 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
         <div className="flex-1 min-w-[240px]">
           <div className="flex items-center gap-2 mb-2">
             <span className={`w-2 h-2 rounded-full ${tone.dot}`} />
-            <span className={`text-xs font-medium ${tone.text}`}>{v.label}</span>
+            <span className={`text-xs font-medium ${tone.text}`}>{tone.label}</span>
+            <span className="text-[11px] text-gray-500">· this month</span>
             <TapeScoreFormulaInfo />
           </div>
-          <p className="text-lg font-semibold text-white leading-snug">{v.text}</p>
+          <p className="text-lg font-semibold text-white leading-snug">{verdictText}</p>
           {score != null && (
             <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
-              {verdictDays > 0 && (
+              {risk != null && (
                 <HeroChip
-                  label={`Risk limits ${compliantDays}/${verdictDays}`}
-                  tone={compliantDays / verdictDays >= 0.85 ? 'good' : compliantDays / verdictDays >= 0.6 ? 'mid' : 'bad'}
-                  title="Sessions that kept at least 4 of the 5 account risk rails, out of sessions with a rails check. These are guardrails, not a measure of trade quality."
+                  label={`Risk ${risk}`}
+                  tone={risk >= 70 ? 'good' : risk >= 50 ? 'mid' : 'bad'}
+                  title="Safety-rail score (0-100): how well you kept the five account risk limits. 50% of the TapeScore."
                 />
               )}
               {entry != null && (
                 <HeroChip
                   label={`Entry ${entry}`}
                   tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
-                  title="Average entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — capture is scored separately"
+                  title="Entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor. 30% of the TapeScore."
                 />
               )}
               {capture != null && (
                 <HeroChip
                   label={`Capture ${capture}`}
                   tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
-                  title="Average profit capture (0-100): how much of the favorable move you kept — MFE captured"
+                  title="Profit capture (0-100): how much of the favorable move you kept. 20% of the TapeScore."
                 />
               )}
             </div>
           )}
           <div className="mt-3 text-xs text-gray-500">
-            <span className={`font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(pnl)}</span>
-            {' '}net P&amp;L · last 30 days · {tradedDays} session{tradedDays === 1 ? '' : 's'}
+            {score != null
+              ? <>This month · {scoredDays} scored session{scoredDays === 1 ? '' : 's'}</>
+              : <>No graded sessions this month yet</>}
           </div>
         </div>
       </div>
@@ -145,14 +142,23 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
         <p className="text-sm text-gray-200 leading-relaxed">{focus}</p>
       </div>
 
-      {/* Clean stat chips — the calm reference row (numbers, not verdicts). */}
-      <div className={`grid grid-cols-2 ${chipCols} gap-3`}>
-        {chips.map(c => (
-          <div key={c.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4" title={c.title}>
-            <div className="text-xs text-gray-500 mb-1">{c.label}</div>
-            <div className={`text-xl font-semibold ${c.valueClass ?? 'text-gray-100'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{c.value}</div>
-          </div>
-        ))}
+      {/* Clean stat chips — the calm reference row (numbers, not verdicts).
+          A 30-day quick-reference, labelled so its window is unmistakably
+          distinct from the month TapeScore above. */}
+      <div>
+        <div className="flex items-baseline gap-2 mb-2">
+          <span className="text-xs text-gray-500">Last 30 days</span>
+          <span className={`text-xs font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(pnl)} net</span>
+          <span className="text-xs text-gray-600">· {tradedDays} session{tradedDays === 1 ? '' : 's'}</span>
+        </div>
+        <div className={`grid grid-cols-2 ${chipCols} gap-3`}>
+          {chips.map(c => (
+            <div key={c.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4" title={c.title}>
+              <div className="text-xs text-gray-500 mb-1">{c.label}</div>
+              <div className={`text-xl font-semibold ${c.valueClass ?? 'text-gray-100'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{c.value}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Equity curve (kept in Highlights — intuitive). */}

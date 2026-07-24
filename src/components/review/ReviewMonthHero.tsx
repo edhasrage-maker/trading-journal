@@ -204,7 +204,10 @@ function findingCopy(carryover: Carryover | null, tradeCount: number, label: str
  * month (actionable).
  */
 export function DashboardHero({ periods }: { periods: HeroPeriods }) {
-  const [scoreKey, setScoreKey] = usePersistentPeriod('dashboard-hero-score', 'all')
+  // Both default to THIS MONTH so the score and the leak read over the same
+  // window out of the box (and match the simpler Highlights view, which shows
+  // this month too). Each picker still adjusts independently.
+  const [scoreKey, setScoreKey] = usePersistentPeriod('dashboard-hero-score', 'month')
   const [findKey, setFindKey] = usePersistentPeriod('dashboard-hero-finding', 'month')
   const scoreData = periods[scoreKey]
   const findData = periods[findKey]
