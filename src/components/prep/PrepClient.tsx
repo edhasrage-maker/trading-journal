@@ -15,6 +15,7 @@ import DiscordCardInputs from './DiscordCardInputs'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
+import IbDayTypeOverview from './IbDayTypeOverview'
 import HighImpactNews from './HighImpactNews'
 import Section, { GhostButton, Segmented, Chip } from '@/components/ui/Section'
 import PrepHero from './PrepHero'
@@ -225,6 +226,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // written into market_context. Kept once non-null so a session-switch fetch
   // returning null doesn't blank the verdict.
   const [atrBaseline, setAtrBaseline] = useState<number | null>(null)
+  // Full bar-derived stats for the active session — feeds the IB-fade Day-Type
+  // Overview (classification + meanHL10-based regime). Distinct from the
+  // fill-blank-once market_context auto-fill below (which only pulls 5 fields).
+  const [contextStats, setContextStats] = useState<DayContextStats | null>(null)
   useEffect(() => {
     if (!chartSymbol || !date) return
     let cancelled = false
@@ -233,7 +238,9 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         const res = await fetch(`/api/bars/market-context?symbol=${encodeURIComponent(chartSymbol)}&date=${date}${session !== 'rth' ? `&session=${session}` : ''}`)
         if (!res.ok) return
         const { stats } = await res.json() as { stats: DayContextStats | null }
-        if (cancelled || !stats) return
+        if (cancelled) return
+        setContextStats(stats)
+        if (!stats) return
         setBarCurrentPrice(stats.current_price ?? null)
         if (stats.atr_10d_avg != null) setAtrBaseline(stats.atr_10d_avg)
         // Only auto-fill the persisted RTH market_context on RTH days. On
@@ -1095,6 +1102,26 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               <MarketContextForm value={context} onChange={setContext} />
             </div>
           </details>
+        </Section>
+
+        {/* IB fade — day type. Classifies today's IB against the fade study on
+            three marginal lenses (session / IB÷ATR regime / IB size) and reads
+            out the verified edge + playbook. The two IB lenses also objectively
+            suggest day-type chips: IB÷ATR → Trend/Range, IB-size → High/Med/Low
+            (validated against the trader's own tagging history). NQ-focused;
+            RTH fully supported, overnight sessions degrade (size muted). */}
+        <Section title="IB fade — day type" sub="today’s IB, classified against the fade study">
+          <IbDayTypeOverview
+            session={session}
+            stats={contextStats}
+            dayTypeOptions={dayTypeOptions}
+            currentDayTypes={dayTypes}
+            onSuggest={labels => setDayTypes(prev => {
+              const next = [...prev]
+              for (const l of labels) if (!next.includes(l)) next.push(l)
+              return next
+            })}
+          />
         </Section>
 
         {/* Morning conditions — where today sits vs the trader's OWN history.

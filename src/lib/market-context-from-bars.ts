@@ -55,6 +55,11 @@ export interface DayContextStats {
   atr_1m: number | null            // Wilder ATR-10 at EOD (12:59 PT)
   rvol_at_ib_close: number | null  // percent vs trailing-10 avg IB volume
   atr_at_ib_close: number | null
+  /** Study-native IB-fade ATR: mean(High−Low of the last 10 IB 1-min bars) for
+   *  the ACTIVE session's IB. NOT Wilder — atr_at_ib_close (Wilder-10) runs ~3%
+   *  smaller. Powers the IB/ATR-regime lens in ib-day-type.ts. Null until the
+   *  IB has printed ≥10 bars. */
+  meanHL10: number | null
   atr_10d_avg: number | null
   rth_open: number | null
   ib_close_price: number | null
@@ -244,10 +249,19 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
  * (single source of truth for the RTH/Asia/London windows). Asia's IB sits on
  * D-1 (17:00–18:00) and its range crosses midnight (17:00 D-1 → 02:00 D); the
  * `addDays`/inWin logic handles the two-date span.
+ *
+ * Also computes the study-native `meanHL10` = mean(High−Low of the last 10 IB
+ * 1-min bars), the ATR the IB-fade study divides the IB range by for its regime
+ * bands. This is a simple mean of the trailing-10 bar ranges (NOT Wilder true
+ * range, and NOT streamed across days) — it matches the study exactly, whereas
+ * `atr_at_ib_close` (Wilder-10) runs ~3% smaller. "Last 10" is by bar time, so
+ * the definitive value is fixed once the IB closes; while the IB is still
+ * printing it reflects the last 10 bars seen so far, and it stays null until at
+ * least 10 IB bars exist.
  */
 function sessionIbAndRange(
   bars: OneMinBar[], date: string, session: SessionKind,
-): { ibSize: number | null; range: number | null; realized: boolean } {
+): { ibSize: number | null; range: number | null; meanHL10: number | null; realized: boolean } {
   const w = sessionWindow(session)
   const ibStart = addDays(date, w.ibStartOffset), ibEnd = addDays(date, w.ibEndOffset)
   const hlStart = addDays(date, w.hlStartOffset), hlEnd = addDays(date, w.hlEndOffset)
@@ -258,18 +272,27 @@ function sessionIbAndRange(
       : d > sd && d < ed
   let ibHi = -Infinity, ibLo = Infinity, ibN = 0
   let rHi = -Infinity, rLo = Infinity, rN = 0
+  // Per-IB-bar (ms, high−low) so we can average the LAST 10 by bar time.
+  const ibBarHL: Array<{ ms: number; hl: number }> = []
   for (const bar of bars) {
     const ms = new Date(bar.ts).getTime()
     if (!Number.isFinite(ms)) continue
     const { date: bd, sec } = utcMsToPtParts(ms)
     if (inWin(bd, sec, ibStart, w.ibStartSec, ibEnd, w.ibEndSec)) {
       if (bar.high > ibHi) ibHi = bar.high; if (bar.low < ibLo) ibLo = bar.low; ibN++
+      ibBarHL.push({ ms, hl: bar.high - bar.low })
     }
     if (inWin(bd, sec, hlStart, w.hlStartSec, hlEnd, w.hlEndSec)) {
       if (bar.high > rHi) rHi = bar.high; if (bar.low < rLo) rLo = bar.low; rN++
     }
   }
-  return { ibSize: ibN ? ibHi - ibLo : null, range: rN ? rHi - rLo : null, realized: ibN > 0 }
+  let meanHL10: number | null = null
+  if (ibBarHL.length >= 10) {
+    ibBarHL.sort((a, b) => a.ms - b.ms)
+    const last10 = ibBarHL.slice(-10)
+    meanHL10 = last10.reduce((s, b) => s + b.hl, 0) / 10
+  }
+  return { ibSize: ibN ? ibHi - ibLo : null, range: rN ? rHi - rLo : null, meanHL10, realized: ibN > 0 }
 }
 
 /**
@@ -303,6 +326,7 @@ export function contextStatsForDate(
       atr_1m: target.atr_1m,
       rvol_at_ib_close: target.rvol_at_ib_close,
       atr_at_ib_close: target.atr_at_ib_close,
+      meanHL10: null, // attached below from the active session's IB
       atr_10d_avg: target.atr_10d_avg,
       rth_open: target.rth_open,
       ib_close_price: target.ib_close_price,
@@ -321,20 +345,26 @@ export function contextStatsForDate(
       realized: false,
       rvol: null, ib_size: null, ib_vs_10d_avg: null,
       adr: last.adr, atr_1m: last.atr_1m,
-      rvol_at_ib_close: null, atr_at_ib_close: null, atr_10d_avg: last.atr_10d_avg,
+      rvol_at_ib_close: null, atr_at_ib_close: null, meanHL10: null, atr_10d_avg: last.atr_10d_avg,
       rth_open: null, ib_close_price: null,
       day_range: null, current_price: null,
     }
   }
 
+  // Study-native meanHL10 for the ACTIVE session's IB — computed for every
+  // session (incl. RTH) so the IB/ATR-regime lens (ib-day-type.ts) always has
+  // its exact denominator. Null until the IB has printed ≥10 bars.
+  const active = sessionIbAndRange(bars, date, session)
+  base.meanHL10 = active.meanHL10
+
   if (session === 'rth') return base
 
-  const s = sessionIbAndRange(bars, date, session)
   return {
     ...base,
-    realized: s.realized,
-    ib_size: s.ibSize,
-    day_range: s.range,
+    realized: active.realized,
+    ib_size: active.ibSize,
+    day_range: active.range,
+    meanHL10: active.meanHL10,
     rvol: null,
     ib_vs_10d_avg: null,
     rvol_at_ib_close: null,
