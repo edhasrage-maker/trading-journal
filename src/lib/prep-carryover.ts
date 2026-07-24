@@ -55,6 +55,19 @@ const MIN_WINDOW_N = 20
 
 export type CarryoverMode = 'protect' | 'correct'
 
+/** One comparison bar for the Review evidence rail — a labelled R-per-trade
+ *  value with its sample count. `pct` is the bar length relative to the row's
+ *  strongest reading; `tone` colours it (pos green / neg red / acc neutral). */
+export interface EvidenceBar {
+  label: string
+  /** Formatted R, e.g. "+0.9R". */
+  value: string
+  n: number
+  /** 0-100 bar length. */
+  pct: number
+  tone: 'pos' | 'neg' | 'acc'
+}
+
 export interface Carryover {
   /** 'protect' = an edge worth keeping; 'correct' = a leak worth avoiding.
    *  The bridge is NOT always a mistake import — protecting what works is
@@ -73,6 +86,9 @@ export interface Carryover {
   key: string
   /** Trades behind the finding — shown as provenance. */
   n: number
+  /** The two-sided comparison behind the finding, for the Review evidence rail.
+   *  Empty for tier-2 execution findings that have no comparison group. */
+  evidence: EvidenceBar[]
 }
 
 // ── Small helpers ───────────────────────────────────────────────────────────
@@ -102,6 +118,20 @@ function fmtR(r: number): string {
 
 function fmtPct(x: number): string {
   return `${Math.round(x * 100)}%`
+}
+
+/** Two comparison bars for the Review evidence rail, scaled to the larger
+ *  magnitude so the stronger reading fills the track. */
+function twoBar(aLabel: string, aR: number, aN: number, bLabel: string, bR: number, bN: number): EvidenceBar[] {
+  const max = Math.max(Math.abs(aR), Math.abs(bR)) || 1
+  const bar = (label: string, r: number, n: number): EvidenceBar => ({
+    label,
+    value: fmtR(r),
+    n,
+    pct: Math.round((Math.abs(r) / max) * 100),
+    tone: r > 0 ? 'pos' : r < 0 ? 'neg' : 'acc',
+  })
+  return [bar(aLabel, aR, aN), bar(bLabel, bR, bN)]
 }
 
 /** Split a set of trades by whether they carry `label` in `category`. */
@@ -158,6 +188,7 @@ function setupCandidates(trades: TradeLike[], source: string): Candidate[] {
         finding: `${label} was your best setup`,
         metric: `${fmtR(a.avg)} per trade across ${a.n} trades · everything else ${fmtR(b.avg)}`,
         today: `Protect it — take the ${label} and let the marginal ones go.`,
+        evidence: twoBar(label, a.avg, a.n, 'Other setups', b.avg, b.n),
       })
     } else if (gap < 0 && a.avg < 0) {
       out.push({
@@ -170,6 +201,7 @@ function setupCandidates(trades: TradeLike[], source: string): Candidate[] {
         finding: `${label} cost you`,
         metric: `${fmtR(a.avg)} per trade across ${a.n} trades · everything else ${fmtR(b.avg)}`,
         today: `Skip the ${label} unless it is textbook.`,
+        evidence: twoBar(label, a.avg, a.n, 'Other setups', b.avg, b.n),
       })
     }
   }
@@ -218,6 +250,7 @@ function taggedCostCandidates(trades: TradeLike[], source: string): Candidate[] 
         finding: `Trades tagged "${label}" went worse`,
         metric: `${fmtR(a.avg)} per trade across ${a.n} trades · the rest ${fmtR(b.avg)}`,
         today: commit(label),
+        evidence: twoBar(`Tagged "${label}"`, a.avg, a.n, 'The rest', b.avg, b.n),
       })
     }
   }
@@ -241,6 +274,7 @@ function executionCandidates(trades: TradeWithExcursion[], source: string): Cand
       finding: 'You kept less than half of the move you were offered',
       metric: `${fmtPct(capture.avg)} captured across ${capture.count} trades`,
       today: 'Hold to your planned target before taking anything off.',
+      evidence: [],
     })
   }
 
@@ -256,6 +290,7 @@ function executionCandidates(trades: TradeWithExcursion[], source: string): Cand
       finding: 'Your average trade sat through most of its planned risk',
       metric: `${fmtPct(heat.avg)} of planned risk across ${heat.count} trades`,
       today: 'Wait for your trigger — do not take the entry early.',
+      evidence: [],
     })
   }
 
@@ -272,6 +307,7 @@ function executionCandidates(trades: TradeWithExcursion[], source: string): Cand
       finding: 'Your exits banked most of what the market offered',
       metric: `${fmtPct(capture.avg)} captured across ${capture.count} trades`,
       today: 'Keep exiting the way you have been — do not start improvising.',
+      evidence: [],
     })
   }
 

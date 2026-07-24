@@ -121,9 +121,13 @@ function median(nums: number[]): number | null {
 interface Props {
   /** Server-fetched DayStat list spanning start-of-last-year → today. */
   days: DayStat[]
+  /** Drop the internal TapeScore ring hero. Set on Review · Month, where the
+   *  composition-ring hero already owns the score — two rings would be
+   *  redundant. The period stat cards still render. */
+  hideScoreHero?: boolean
 }
 
-export default function DashboardStats({ days }: Props) {
+export default function DashboardStats({ days, hideScoreHero = false }: Props) {
   const [period, setPeriod] = useState<Period>('30d')
   // Default unit is ATR — it's the user's preferred ATR-normalized reading
   // for the MFE/MAE roll-up. localStorage hydration may overwrite below.
@@ -254,10 +258,11 @@ export default function DashboardStats({ days }: Props) {
         </div>
       </div>
 
-      {/* One TapeScore hero (Ruleset amendment 5): the report card before the
-          ledger. Score ring + verdict sentence + component chips; P&L lives in
-          the card row below. */}
-      <TapeScoreHero period={stats.tapePeriod} periodLabel={PERIOD_LABELS[period]} />
+      {/* One TapeScore hero (Ruleset amendment 6): the report card before the
+          ledger. Score ring + verdict sentence + axis chips; P&L lives in the
+          card row below. Suppressed on Review · Month, where the composition
+          ring already owns the score. */}
+      {!hideScoreHero && <TapeScoreHero period={stats.tapePeriod} periodLabel={PERIOD_LABELS[period]} />}
 
       {/* Stat cards. Order: P&L → Day Win % → Trade Win % → Avg MFE/MAE.
           The old Execution / Compliance card folded into the hero chips. */}

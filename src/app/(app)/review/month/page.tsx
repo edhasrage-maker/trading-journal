@@ -13,9 +13,12 @@ import { formatCapturePct } from '@/lib/analytics'
 // ATR from `ohlcv_bars` on every request. That path was retired in favor of
 // reading the pre-backfilled `trades.entry_atr_1m` column. Imports kept off
 // the file so the bundle doesn't carry unused code.
-import type { TradingDay } from '@/lib/supabase/types'
+import type { TradingDay, Trade } from '@/lib/supabase/types'
 import { aggregateTapeScore } from '@/lib/tapescore'
 import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type DayStatsStored } from '@/lib/day-stats'
+import { computeCarryover } from '@/lib/prep-carryover'
+import type { TradeWithExcursion } from '@/lib/analytics'
+import ReviewMonthHero, { type LedgerRow } from '@/components/review/ReviewMonthHero'
 
 const PAGE_SIZE = 1000
 
@@ -289,6 +292,64 @@ export default async function DashboardPage() {
     tick('read-through write-back', dirtyDays.length)
   }
 
+  // ── Review · Month hero (the locked dashboard) ─────────────────────────
+  // The finding-first hero runs over the CURRENT calendar month: the finding
+  // engine on the month's trades, the composition ring on the month's scored
+  // days, and a short session ledger. Scoped tight so it stays cheap.
+  const monthStart = `${today.slice(0, 7)}-01`
+  const monthDayRows = recentDaysBase.filter(d => d.date >= monthStart)
+  const monthDayIds = monthDayRows.map(d => d.id)
+
+  const monthTrades: Trade[] = []
+  if (monthDayIds.length > 0) {
+    for (let i = 0; i < monthDayIds.length; i += 50) {
+      const slice = monthDayIds.slice(i, i + 50)
+      const { data } = await supabase
+        .from('trades')
+        .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, high_during_position, low_during_position')
+        .in('trading_day_id', slice)
+      if (data) monthTrades.push(...(data as Trade[]))
+    }
+  }
+  tick('month hero trades', monthTrades.length)
+
+  const monthLabel = new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { month: 'long' })
+  const monthCarryover = computeCarryover(monthTrades as unknown as TradeWithExcursion[], `${monthLabel} review`)
+  const monthPeriod = aggregateTapeScore(
+    recentDaysMapped.filter(d => d.date >= monthStart).map(d => d.tapescore),
+  )
+  // The rollup doesn't persist a per-day symbol, so derive the dominant one from
+  // the month trades we already have (bare root, e.g. NQU6.CME → NQ).
+  const symbolByDayId = new Map<string, string>()
+  {
+    const counts = new Map<string, Map<string, number>>()
+    for (const t of monthTrades) {
+      if (!t.symbol) continue
+      const root = /^([A-Z]+)/.exec(t.symbol)?.[1] ?? t.symbol
+      const perDay = counts.get(t.trading_day_id) ?? new Map<string, number>()
+      perDay.set(root, (perDay.get(root) ?? 0) + 1)
+      counts.set(t.trading_day_id, perDay)
+    }
+    for (const [dayId, perDay] of counts) {
+      let best = '', n = 0
+      for (const [sym, c] of perDay) if (c > n) { best = sym; n = c }
+      symbolByDayId.set(dayId, best)
+    }
+  }
+  // Ledger: most recent scored month sessions, newest first (recentDaysMapped is
+  // already date-descending). Reason = the day's top setup tag (their own).
+  const monthLedger: LedgerRow[] = recentDaysMapped
+    .filter(d => d.date >= monthStart && (d.trade_count > 0 || d.eod_pnl != null))
+    .slice(0, 6)
+    .map(d => ({
+      date: format(new Date(`${d.date}T12:00:00`), 'MMM d'),
+      market: symbolByDayId.get(d.id) ?? '—',
+      reason: d.setups[0] ?? '',
+      score: d.tapescore?.score ?? null,
+      band: d.tapescore?.band ?? null,
+      pnl: d.eod_pnl,
+    }))
+
   // Drop BLANK days: an empty `trading_days` row (e.g. prep opened for a date
   // but no trades logged and no eod_pnl override saved) carries no result and
   // renders as a meaningless empty row in the Recent Days table / calendar and
@@ -397,39 +458,20 @@ export default async function DashboardPage() {
   const isEmptyAccount = recentDaysBase.length === 0
 
   if (isEmptyAccount) {
-    return (
-      <div>
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-gray-400 text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
-        </div>
-
-        <EmptyStateImport today={today} />
-      </div>
-    )
+    return <EmptyStateImport today={today} />
   }
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-gray-400 text-sm mt-1">{format(new Date(`${today}T12:00:00`), 'EEEE, MMMM d, yyyy')}</p>
-        </div>
-      </div>
-
       {/* Post-import retroactive recap (item 22): self-gates on the write-once
           first_read flag, so it only shows for a tester right after their first
           import and stays until dismissed. */}
       <FirstReadCards variant="dashboard" />
 
       {/* Beginner (default) = plain summary + one focus + simple session list.
-          Pro = the full instrument (period stats grid + Recent Days table).
-
-          Both modes put the headline boxes FIRST, then the charts (cumulative
-          equity curve + per-day net P&L bars): in Beginner the charts render
-          below the plain summary boxes (passed into BeginnerDashboard as a
-          slot); in Pro they render below the period stat cards. */}
+          Pro (Detailed Tape) = the locked finding-first hero + the full
+          instrument (period stats, charts, Recent Days). The composition-ring
+          hero is the Detailed signature; Highlights keeps the plainer summary. */}
       <DashboardModeSwitch
         beginner={
           <BeginnerDashboard
@@ -446,15 +488,28 @@ export default async function DashboardPage() {
           />
         }
       >
-        {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE,
-            Median Process. Filters by Week / Month / 30d / YTD / Last Year. */}
-        <DashboardStats days={statsDays} />
+        {/* The finding-first hero: composition ring + decision quality +
+            evidence + session ledger. This owns the score, so the period
+            stats below drop their own ring (hideScoreHero). */}
+        <ReviewMonthHero
+          period={monthPeriod}
+          carryover={monthCarryover}
+          tradeCount={monthTrades.length}
+          monthLabel={monthLabel}
+          ledger={monthLedger}
+        />
+
+        {/* Period-selectable stats: P&L, Day Win %, Trade Win %, Avg MFE/MAE.
+            Filters by Week / Month / 30d / YTD / Last Year. */}
+        <div className="mt-8 pt-5 border-t border-gray-700">
+          <DashboardStats days={statsDays} hideScoreHero />
+        </div>
 
         {/* Performance charts, now below the stat cards. */}
         <DashboardCharts days={statsDays} />
 
         {/* Recent days */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mt-6">
+        <div className="mt-8 pt-5 border-t border-gray-700">
           <RecentDaysSection
             initialDays={recentDaysForTable}
             allSetups={allSetups}
