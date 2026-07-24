@@ -252,7 +252,7 @@ function DayCardView({ card }: { card: DayCard }) {
   const date = parseISO(card.date)
   const isEmpty = card.trade_count === 0 && card.eod_pnl == null
   return (
-    <Link href={`/eod/${card.date}`} className={`block bg-gray-900 border ${isEmpty ? 'border-gray-800/50 opacity-60' : 'border-gray-800 hover:border-gray-700'} rounded-xl p-3 transition-colors`}>
+    <Link href={`/review/today/${card.date}`} className={`block bg-gray-900 border ${isEmpty ? 'border-gray-800/50 opacity-60' : 'border-gray-800 hover:border-gray-700'} rounded-xl p-3 transition-colors`}>
       <div className="text-[10px] uppercase tracking-wider text-gray-500">{format(date, 'EEE')}</div>
       <div className="text-sm font-medium text-white">{format(date, 'MMM d')}</div>
       {card.day_types.length > 0 && (

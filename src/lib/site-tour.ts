@@ -18,7 +18,7 @@ export const TOUR_VERSION = 1
 
 export interface TourStep {
   /** Route this step belongs to. Dated routes match by prefix, so '/prep'
-   *  covers '/prep/2026-07-04'. '/review/overview' matches exactly. */
+   *  covers '/prep/2026-07-04'. '/dashboard' matches exactly. */
   route: string
   /** data-tour anchor name — resolved to the visible element at drive time. */
   anchor?: string
@@ -33,18 +33,18 @@ export interface TourStep {
 /** The sequence of routes the tour walks. The engine navigates from one to the
  *  next populated route when a chapter finishes. Dated routes are bare prefixes
  *  here; the engine appends the actual date (todayPT) when navigating. */
-export const TOUR_ROUTE_ORDER = ['/review/overview', '/prep', '/review/today', '/analytics'] as const
+export const TOUR_ROUTE_ORDER = ['/dashboard', '/prep', '/review/today', '/analytics'] as const
 
 export const TOUR_STEPS: TourStep[] = [
   // ---------------------------------------------------------------- Dashboard
   {
-    route: '/review/overview',
+    route: '/dashboard',
     title: 'Welcome to TapeScore 👋',
     description:
       "A 30-second walk through where everything lives and what it does. You can leave any time with “Skip tour”.",
   },
   {
-    route: '/review/overview',
+    route: '/dashboard',
     anchor: 'dash-import',
     title: 'Start with your trades',
     description:
@@ -53,7 +53,7 @@ export const TOUR_STEPS: TourStep[] = [
     align: 'center',
   },
   {
-    route: '/review/overview',
+    route: '/dashboard',
     // Target the actual FAB button, not the #coach-fab-root wrapper: the wrapper's
     // only child is position:fixed, so the wrapper itself collapses to a 0-height
     // strip in normal flow — driver.js would spotlight that (invisible) and drop
@@ -68,7 +68,7 @@ export const TOUR_STEPS: TourStep[] = [
     align: 'end',
   },
   {
-    route: '/review/overview',
+    route: '/dashboard',
     anchor: 'nav-prep',
     title: 'Next: plan your day',
     description:
@@ -148,9 +148,9 @@ export const TOUR_STEPS: TourStep[] = [
 ]
 
 /** True when a step's route covers the current pathname. Dated routes match by
- *  prefix ('/prep' → '/prep/2026-07-04'); '/review/overview' matches exactly. */
+ *  prefix ('/prep' → '/prep/2026-07-04'); '/dashboard' matches exactly. */
 export function stepRouteMatches(stepRoute: string, pathname: string): boolean {
-  if (stepRoute === '/review/overview') return pathname === '/review/overview'
+  if (stepRoute === '/dashboard') return pathname === '/dashboard'
   return pathname === stepRoute || pathname.startsWith(stepRoute + '/')
 }
 

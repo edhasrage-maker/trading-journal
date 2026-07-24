@@ -51,7 +51,7 @@ export default function OnboardingGate() {
       // --- Setup banner (onboarding not completed) ---
       if (status !== 'completed') {
         // Brand-new + empty → auto-open the wizard, but only from the dashboard.
-        if (!status && pathname === '/review') {
+        if (!status && pathname === '/dashboard') {
           const nav = await fetch('/api/nav-anchor').then(r => r.json()).catch(() => null)
           if (cancelled) return
           if (nav && nav.lastTradeDate == null) { router.replace('/welcome/setup'); return }

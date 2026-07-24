@@ -28,9 +28,10 @@ import { useUiMode } from '@/lib/ui-mode'
 // data-tour anchors for the first-login SiteTour (src/lib/site-tour.ts targets
 // nav-prep / nav-eod / nav-analytics). Matched by href prefix so the dated Prep
 // link resolves. Applied to both the masthead link and the mobile tab — the
-// tour's viewport-aware resolver targets whichever is visible. 'nav-eod' now
-// points at Review, which is where the session debrief lives.
+// tour's viewport-aware resolver targets whichever is visible. 'nav-eod' points
+// at Review (the session debrief); 'nav-dashboard' at the home overview.
 function navTourAnchor(href: string): string | undefined {
+  if (href === '/dashboard') return 'nav-dashboard'
   if (href.startsWith('/prep')) return 'nav-prep'
   if (href.startsWith('/review')) return 'nav-eod'
   if (href === '/analytics') return 'nav-analytics'
@@ -54,7 +55,7 @@ const settingsItems = [
 /** Brand lockup — film-frame mark + Tape(light)/Score(bold) wordmark. */
 function Brand({ className }: { className?: string }) {
   return (
-    <Link href="/review" className={cn('flex items-center gap-2.5 flex-shrink-0', className)}>
+    <Link href="/dashboard" className={cn('flex items-center gap-2.5 flex-shrink-0', className)}>
       {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
       <img src="/brand/tapescore-favicon.svg" alt="" aria-hidden className="w-7 h-7" />
       <span
@@ -186,13 +187,14 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
 
   // `match` is the prefix that lights the item up — kept separate from href so
   // the dated links (/prep/2026-07-25) still match their section.
-  // EOD, Dashboard and Calendar are gone as destinations: EOD/Dashboard are
-  // time scopes of Review (docs/REVIEW_EOD_MERGE_SPEC.md), and the calendar is
-  // the list/calendar toggle inside the Review overview. So the loop the product
-  // promises reads straight off the nav: Prep → Trade → Review. Bare /review
-  // opens the Overview (all-trades dashboard).
+  // Dashboard is the home — the all-trades overview, front and centre, the first
+  // thing everyone sees (it's also the signed-in landing). Then the daily loop:
+  // Prep → Trade → Review (per-session debrief; EOD folds into Review·Today).
+  // Calendar is gone as a destination — it's the Dashboard's list/calendar
+  // toggle now.
   const navItems = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome', match: '/welcome' }] : []),
+    { href: '/dashboard', label: 'Dashboard', match: '/dashboard' },
     { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
     { href: '/review', label: 'Review', match: '/review' },
@@ -201,12 +203,13 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
 
   // Mobile bottom bar. Text-only, matching the masthead — the lucide icon set
   // is exactly what made the old rail read generic, and short labels are
-  // legible at this size.
+  // legible at this size. Patterns lives in the More sheet to keep four primary
+  // tabs.
   const mobileTabs = [
+    { href: '/dashboard', label: 'Home', match: '/dashboard' },
     { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
     { href: '/review', label: 'Review', match: '/review' },
-    { href: '/analytics', label: 'Patterns', match: '/analytics' },
   ]
   const moreNav = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome' }] : []),

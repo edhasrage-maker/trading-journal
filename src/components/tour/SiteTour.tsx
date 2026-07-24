@@ -22,7 +22,7 @@ import {
  * route's steps, then navigates to the next populated route and resumes there.
  *
  * Cloud-only (the owner's local build never sees it). Auto-starts once on the
- * first /review/overview visit when the user has no tour_status yet, and persists
+ * first /dashboard visit when the user has no tour_status yet, and persists
  * done/skipped to trader_profile.onboarding_json so it never nags again. Also
  * listens for a 'tapescore:start-tour' window event so a "?" button can re-run
  * it on demand.
@@ -161,11 +161,11 @@ export default function SiteTour() {
     d.drive()
   }, [endChapter, finish])
 
-  // Auto-start: once, on the first /review/overview visit, if no tour_status yet.
+  // Auto-start: once, on the first /dashboard visit, if no tour_status yet.
   useEffect(() => {
     if (LOCAL_FEATURES_ENABLED) return
     if (startAttemptedRef.current) return
-    if (!pathname || pathname !== '/review/overview') return
+    if (!pathname || pathname !== '/dashboard') return
     startAttemptedRef.current = true
     let cancelled = false
     ;(async () => {

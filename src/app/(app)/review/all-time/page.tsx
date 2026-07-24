@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 
-/** All-time is the Overview now (all-trades stats + equity + list/calendar). */
+/** The all-trades overview is the Dashboard now. */
 export default function ReviewAllTimeRedirect() {
-  redirect('/review/overview')
+  redirect('/dashboard')
 }

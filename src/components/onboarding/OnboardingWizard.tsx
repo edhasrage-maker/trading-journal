@@ -73,11 +73,11 @@ export default function OnboardingWizard() {
   }
   const finish = () => {
     patch({ status: 'completed', completed_at: new Date().toISOString() })
-    router.push('/review')
+    router.push('/dashboard')
   }
   const skipAll = () => {
     patch({ status: 'skipped' })
-    router.push('/review')
+    router.push('/dashboard')
   }
 
   if (phase === 'fork') {
