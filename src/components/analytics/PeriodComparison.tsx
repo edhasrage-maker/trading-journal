@@ -269,7 +269,7 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
   }
 
   return (
-    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+    <section className="border-t border-gray-700 pt-5 space-y-3">
       {/* Header row: collapse-button + title on the left, granularity toggle
           on the right. They're SIBLINGS — earlier they were nested (the
           granularity buttons lived inside the collapse <button>), which is
@@ -282,7 +282,7 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
         >
           <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
           <div>
-            <h2 className="font-semibold text-white">Period Comparison</h2>
+            <h2 className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Period Comparison</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               Side-by-side P&L, win rates, and process scores. Delta chips show
               change vs. the next-older period.

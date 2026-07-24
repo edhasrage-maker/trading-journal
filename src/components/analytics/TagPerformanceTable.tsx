@@ -108,11 +108,19 @@ export default function TagPerformanceTable({
       : 'bg-gray-800 border-gray-700 text-gray-200'
 
   return (
-    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left">
-        <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+    /* Hairline rule, not a rounded card. Nine of these stacked was the exact
+       "generic stack of rounded AI-dashboard cards" the identity lock rules
+       out — the divider and the type hierarchy carry the separation instead. */
+    <section className="border-t border-gray-700 pt-5">
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left group">
+        <ChevronDown className={`w-4 h-4 text-gray-500 group-hover:text-gray-300 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
         <div>
-          <h2 className="font-semibold text-white">{title}</h2>
+          <h2
+            className="text-base font-bold tracking-tight text-gray-100"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            {title}
+          </h2>
           {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
         </div>
       </button>

@@ -11,10 +11,10 @@ import { Sparkles, Construction } from 'lucide-react'
  */
 export default function JournalThemes() {
   return (
-    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+    <section className="border-t border-gray-700 pt-5 space-y-3">
       <div className="flex items-center gap-2">
         <Sparkles className="w-4 h-4 text-purple-400" />
-        <h2 className="font-semibold text-white">Journal Themes</h2>
+        <h2 className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Journal Themes</h2>
         <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-amber-300 bg-amber-950/40 border border-amber-900 rounded px-1.5 py-0.5">
           <Construction className="w-3 h-3" />
           Under Construction

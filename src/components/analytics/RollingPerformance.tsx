@@ -20,7 +20,7 @@ export default function RollingPerformance({ trades }: Props) {
 
   if (baseline.length === 0) {
     return (
-      <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <section className="border-t border-gray-700 pt-5">
         <h2 className="font-semibold text-white mb-2">Rolling Performance</h2>
         <p className="text-center text-xs text-gray-600 italic py-6">
           No trades with both entry_time and pnl in this window.
@@ -49,11 +49,11 @@ export default function RollingPerformance({ trades }: Props) {
   const dd = maxDrawdown(baseline)
 
   return (
-    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-6">
+    <section className="border-t border-gray-700 pt-5 space-y-6">
       <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left">
         <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
         <div>
-          <h2 className="font-semibold text-white">Rolling Performance</h2>
+          <h2 className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Rolling Performance</h2>
           <p className="text-xs text-gray-500 mt-0.5">
             Equity curve and rolling stats over the last {trades.length} trades.
           </p>

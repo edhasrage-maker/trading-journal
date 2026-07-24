@@ -110,11 +110,11 @@ export default function ConditionBuckets({ trades }: Props) {
     // Wrapped in the same card styling as every other analytics section
     // (bg-gray-900 / border / rounded-xl / p-5) so this section stops
     // visually orphaning at the bottom of the page.
-    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+    <section className="border-t border-gray-700 pt-5">
       <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-2 text-left">
         <ChevronDown className={`w-4 h-4 text-gray-400 mt-0.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
         <div>
-          <h2 className="font-semibold text-white">Performance by Market Condition</h2>
+          <h2 className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Performance by Market Condition</h2>
           <p className="text-xs text-gray-500 mt-0.5">
             How your trades performed across different market regimes — {scopedTrades.length} trade{scopedTrades.length === 1 ? '' : 's'} in window
             {excluded > 0 && (
@@ -158,7 +158,7 @@ function ConditionCard({ cond, trades }: { cond: ConditionDef; trades: TradeWith
 
   if (visible.every(b => b.trades.length === 0)) {
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <div className="border-t border-gray-700 pt-5">
         <h3 className="font-medium text-white text-sm">{cond.title}</h3>
         <p className="text-xs text-gray-500 mt-0.5">{cond.description}</p>
         <p className="text-center text-xs text-gray-600 italic py-6">No data — populate market context for trading days first.</p>
@@ -167,7 +167,7 @@ function ConditionCard({ cond, trades }: { cond: ConditionDef; trades: TradeWith
   }
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+    <div className="border-t border-gray-700 pt-5 space-y-4">
       <div>
         <h3 className="font-medium text-white text-sm">{cond.title}</h3>
         <p className="text-xs text-gray-500 mt-0.5">{cond.description}</p>
