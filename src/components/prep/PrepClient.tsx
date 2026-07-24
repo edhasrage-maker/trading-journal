@@ -1097,26 +1097,34 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           </details>
         </PrepSection>
 
-        {/* Morning conditions — where today sits vs the trader's own history.
+        {/* Morning conditions — where today sits vs the trader's OWN history.
+            Un-gated in Pt 14. It was admin-only because condition_lookup was
+            once a SHARED table, so showing it would have leaked the owner's
+            numbers to every user; the same-day 20260703 migration made it
+            per-user (PK (user_id, condition_id) + owner RLS, rebuilt nightly
+            for every user with history) and the gate was simply never lifted.
+            Sample-size honesty is enforced upstream: buckets under n>=10 /
+            5 sessions come back INSUFFICIENT_DATA, and the panel suppresses
+            stats below MIN_SAMPLE rather than showing a confident number off
+            six trades.
+
             dr_adr is reactive: compute from live context first so screenshot
             re-extraction updates it immediately; drAdrAuto is the fallback. */}
-        {isAdmin && (
-          <PrepSection title="Morning conditions" sub="where today sits vs your history">
-            <ConditionFilterPanel
-              date={date}
-              beginner={!pro}
-              marketContext={{
-                rvol: context.rvol ?? null,
-                ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
-                atr_1m: context.atr_1m ?? null,
-                dr_adr:
-                  context.day_range != null && context.adr != null && context.adr > 0
-                    ? Math.round((context.day_range / context.adr) * 100) / 100
-                    : drAdrAuto,
-              }}
-            />
-          </PrepSection>
-        )}
+        <PrepSection title="Morning conditions" sub="where today sits vs your history">
+          <ConditionFilterPanel
+            date={date}
+            beginner={!pro}
+            marketContext={{
+              rvol: context.rvol ?? null,
+              ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
+              atr_1m: context.atr_1m ?? null,
+              dr_adr:
+                context.day_range != null && context.adr != null && context.adr > 0
+                  ? Math.round((context.day_range / context.adr) * 100) / 100
+                  : drAdrAuto,
+            }}
+          />
+        </PrepSection>
 
         {/* The owner's methodology fields, dropped well below the read. */}
         {isAdmin && (

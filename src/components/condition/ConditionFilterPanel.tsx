@@ -2,11 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatDistanceToNowStrict } from 'date-fns'
-import { Save, Loader2, AlertTriangle, Info, Activity, Clock, Check } from 'lucide-react'
+import { Loader2, AlertTriangle } from 'lucide-react'
 import {
   VERDICT_LABELS,
   VERDICT_DISPLAY,
-  VERDICT_EMOJI,
   VERDICT_TONE,
   type LookupOutcome,
   type MatchResult,
@@ -266,42 +265,53 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
     : null
   const vintageStale = vintageAge != null && vintageAge > 60
 
+  // Nothing to look up: this day has none of the market-state metrics the
+  // buckets are keyed on. That is the normal state for a trader who imports
+  // trades but has never captured conditions (no bar feed / no prep auto-fill),
+  // so it gets a real explanation rather than a dead panel.
+  const hasAnyMetric = !!(
+    effectiveInputs.rvol || effectiveInputs.dr_adr || effectiveInputs.ib || effectiveInputs.atr_730
+  )
+
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-blue-400" />
-          <h2 className="font-semibold text-white">Morning Conditions</h2>
-          <button
-            onClick={() => setShowInfo(true)}
-            className="text-gray-500 hover:text-blue-400 transition-colors"
-            title="How this works"
+    <div className="space-y-5">
+      {/* Provenance — no card chrome; the enclosing section owns the heading. */}
+      <div className="flex items-center gap-3 text-xs flex-wrap -mt-1">
+        <button
+          onClick={() => setShowInfo(true)}
+          className="text-blue-400 hover:text-blue-300 transition-colors"
+        >
+          How this works
+        </button>
+        {vintage?.refreshed_at && (
+          <span
+            className={`font-mono ${vintageStale ? 'text-yellow-400' : 'text-gray-500'}`}
+            title={vintage.refreshed_at}
           >
-            <Info className="w-3.5 h-3.5" />
-          </button>
-        </div>
-        <div className="flex items-center gap-3 text-xs">
-          {vintage?.refreshed_at && (
-            <span
-              className={`flex items-center gap-1 ${vintageStale ? 'text-yellow-400' : 'text-gray-500'}`}
-              title={vintage.refreshed_at}
-            >
-              <Clock className="w-3 h-3" />
-              {vintageAge === 0 ? 'today' : `${vintageAge}d old`}
-              {vintageStale && ' · stale'}
-            </span>
-          )}
-          {lastSavedAt && saveStatus === 'saved' && (
-            <span className="flex items-center gap-1 text-gray-500" title={new Date(lastSavedAt).toLocaleString()}>
-              <Check className="w-3 h-3 text-green-500" />
-              Saved {formatDistanceToNowStrict(new Date(lastSavedAt))} ago
-            </span>
-          )}
-        </div>
+            · lookup {vintageAge === 0 ? 'refreshed today' : `${vintageAge}d old`}
+            {vintageStale && ' · stale'}
+          </span>
+        )}
+        {lastSavedAt && saveStatus === 'saved' && (
+          <span className="text-gray-500" title={new Date(lastSavedAt).toLocaleString()}>
+            · snapshot saved
+          </span>
+        )}
       </div>
 
-      <div className="p-5 space-y-5">
+      <div className="space-y-5">
+        {!hasAnyMetric && !lookingUp && (
+          <div className="border-l-2 border-gray-700 pl-4 py-1 max-w-[64ch]">
+            <p className="text-sm text-gray-300 leading-normal">
+              No conditions captured for this day yet, so there is nothing to compare against.
+            </p>
+            <p className="text-xs text-gray-500 mt-1.5 leading-normal">
+              This read is keyed on the morning market state — relative volume, range used, opening
+              range and bar volatility. Those fill in automatically once the day&apos;s bars are
+              available, or you can enter them in Market context above.
+            </p>
+          </div>
+        )}
         {/* Migration warning */}
         {migrationNeeded && (
           <div className="bg-yellow-950/30 border border-yellow-800/50 rounded-lg px-3 py-2 flex items-start gap-2 text-xs text-yellow-200">
@@ -388,14 +398,14 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
         )}
 
         {/* Notes + Save */}
-        <div className="space-y-2 pt-2 border-t border-gray-800">
+        <div className="space-y-2 pt-3 border-t border-gray-800">
           <label className="block text-xs text-gray-500">Notes (optional)</label>
           <textarea
             rows={2}
             value={notes}
             onChange={e => setNotes(e.target.value)}
             placeholder="What you're watching, plan deviations, etc."
-            className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-blue-500 resize-none"
+            className="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-600 resize-none"
           />
           <div className="flex items-center justify-end gap-3">
             {saveStatus === 'error' && (
@@ -404,9 +414,9 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
             <button
               onClick={save}
               disabled={saving}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 border border-gray-700 hover:border-gray-600 rounded px-2.5 py-1.5 transition-colors disabled:opacity-60"
             >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving && <Loader2 className="w-3 h-3 animate-spin" />}
               {saving ? 'Saving…' : 'Save snapshot'}
             </button>
           </div>
@@ -444,19 +454,22 @@ function ConsolidatedVerdict({
   isOverridden: boolean
 }) {
   const tone = VERDICT_TONE[verdict]
-  const bg = tone === 'good'
-    ? 'bg-green-950/40 border-green-800'
+  // Colour carries trading meaning only — the verdict word is tinted, the
+  // surface is not. The old washed panel + emoji was the loudest remaining
+  // "AI dashboard" tell on the prep page.
+  const rule = tone === 'good'
+    ? 'border-green-700'
     : tone === 'bad'
-      ? 'bg-red-950/40 border-red-800'
+      ? 'border-red-700'
       : tone === 'neutral'
-        ? 'bg-yellow-950/40 border-yellow-800'
-        : 'bg-gray-950 border-gray-700'
+        ? 'border-yellow-700'
+        : 'border-gray-700'
   const verdictColor = tone === 'good'
-    ? 'text-green-300'
+    ? 'text-green-400'
     : tone === 'bad'
-      ? 'text-red-300'
+      ? 'text-red-400'
       : tone === 'neutral'
-        ? 'text-yellow-300'
+        ? 'text-yellow-400'
         : 'text-gray-300'
   // Show a per-view explanation when overridden so the user understands why
   // the verdict changed when they toggled.
@@ -464,14 +477,16 @@ function ConsolidatedVerdict({
     ? `${effectivePick === 'tertile' ? 'Specific' : 'Broad'} match (manual override)`
     : outcome.consolidated.explanation
   return (
-    <div className={`border rounded-xl px-5 py-4 ${bg}`}>
+    <div className={`border-l-2 pl-4 py-1 ${rule}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
-        <div className="flex items-baseline gap-3">
-          <span className="text-3xl">{VERDICT_EMOJI[verdict]}</span>
-          <div>
-            <div className={`text-2xl font-bold ${verdictColor}`}>{VERDICT_LABELS[verdict]}</div>
-            <div className="text-xs text-gray-400 mt-0.5" title={`Internal code: ${verdict}`}>{VERDICT_DISPLAY[verdict]}</div>
+        <div>
+          <div
+            className={`text-[26px] font-bold tracking-[-0.02em] leading-tight ${verdictColor}`}
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            {VERDICT_LABELS[verdict]}
           </div>
+          <div className="text-xs text-gray-400 mt-0.5" title={`Internal code: ${verdict}`}>{VERDICT_DISPLAY[verdict]}</div>
         </div>
         <div className="text-left sm:text-right text-xs text-gray-500 space-y-1.5">
           <div className="font-mono">{explanation}</div>
@@ -512,10 +527,11 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
     return (
       <div>
         <SampleHeader n={n} thin />
-        <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-xs text-gray-500">
+        <p className="text-xs text-gray-500 max-w-[62ch] leading-normal border-t border-gray-800 pt-2">
           <span className="font-mono text-gray-400">{tooFewToJudge(n)}</span>
-          {' — '}not enough trades in similar conditions yet. Stats appear at {MIN_SAMPLE}+.
-        </div>
+          {' — '}not enough trades in conditions like today to say anything honest yet.
+          Numbers appear at {MIN_SAMPLE}+.
+        </p>
       </div>
     )
   }
@@ -533,17 +549,13 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
   return (
     <div>
       <SampleHeader n={n} />
-      <div className={`grid gap-3 ${showEv ? 'grid-cols-3' : 'grid-cols-2'}`}>
-      <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Win rate</div>
-        <div className="font-mono text-2xl font-bold text-white">{wr}</div>
-        <div className="text-[11px] text-gray-500 mt-0.5">in conditions like today</div>
-      </div>
+      {/* Hairline rows, not a KPI card row — the boxed three-stat grid is the
+          single most recognisable AI-dashboard move, and the locked language
+          reads numbers as tabular display numerals on rules instead. */}
+      <div className="grid gap-x-10 md:grid-cols-2">
+      <StatRow label="Win rate" value={wr} note="in conditions like today" />
       {showEv && (
-        <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
-          <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">EV / trade</div>
-          <div className={`font-mono text-2xl font-bold ${evTone}`}>{ev}</div>
-          <div className="text-[11px] text-gray-500 mt-0.5">avg $ in conditions like today</div>
+        <StatRow label="EV / trade" value={ev} valueTone={evTone} note="avg $ in conditions like today">
           {/* EV vs the trader's OWN baseline EV — flags whether THIS environment
               runs above/below your average. Bold when the bucket's EV CI clears
               the baseline entirely (statistically distinct), faint otherwise. */}
@@ -564,14 +576,36 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
               </div>
             )
           })()}
-        </div>
+        </StatRow>
       )}
-      <div className="bg-gray-950 border border-gray-800 rounded-lg px-4 py-3">
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Profit factor</div>
-        <div className={`font-mono text-2xl font-bold ${pfTone}`}>{pf}</div>
-        <div className="text-[11px] text-gray-500 mt-0.5">in conditions like today</div>
+      <StatRow label="Profit factor" value={pf} valueTone={pfTone} note="in conditions like today" />
       </div>
-      </div>
+    </div>
+  )
+}
+
+/** One hairline stat row: label · display numeral · quiet note. Matches the
+ *  market-context ledger so the two dense reads on Prep share a language. */
+function StatRow({
+  label, value, valueTone = 'text-gray-100', note, children,
+}: {
+  label: string
+  value: string
+  valueTone?: string
+  note: string
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="grid grid-cols-[1fr_auto] gap-x-4 items-baseline py-2 border-t border-gray-800">
+      <span className="text-[13px] text-gray-400">{label}</span>
+      <span
+        className={`text-[17px] font-bold tabular-nums text-right ${valueTone}`}
+        style={{ fontFamily: 'var(--font-display)' }}
+      >
+        {value}
+      </span>
+      <span className="text-[11px] text-gray-500 col-span-2">{note}</span>
+      {children && <div className="col-span-2">{children}</div>}
     </div>
   )
 }
@@ -579,11 +613,11 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
 /** "You, on days like this" header + the n= badge every aggregate must carry. */
 function SampleHeader({ n, thin = false }: { n: number; thin?: boolean }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 mb-2">
-      <div className="text-[10px] text-gray-500 uppercase tracking-wider">You, on days like this</div>
+    <div className="flex items-baseline justify-between gap-3 mb-1">
+      <div className="text-[11px] text-gray-500">You, on days like this</div>
       {!thin && (
-        <span className="font-mono text-[10px] text-gray-500 border border-gray-800 rounded px-1.5 py-px">
-          Based on {n} trades on days like this
+        <span className="font-mono text-[10px] text-gray-500">
+          n={n} trades
         </span>
       )}
     </div>
