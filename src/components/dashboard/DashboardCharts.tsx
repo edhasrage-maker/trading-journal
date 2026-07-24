@@ -24,10 +24,9 @@ import type { DayStat } from './DashboardStats'
  */
 
 type Period = 'month' | '30d' | 'ytd' | 'last_year' | 'all'
-// v2 (Pt 14): reset the saved chart range once so the Dashboard's all-time
-// default takes effect for existing users, matching the all-time stat total
-// above the charts (a stale 'ytd'/'30d' otherwise contradicted it).
-const PERIOD_KEY = 'dashboard-charts-period-v2'
+// The trader's saved chart range sticks across visits (reverted a v2 bump that
+// force-reset it — persisting a preference means keeping it).
+const PERIOD_KEY = 'dashboard-charts-period-v1'
 const PERIOD_LABELS: Record<Period, string> = {
   month: 'This Month',
   '30d': 'Last 30 Days',

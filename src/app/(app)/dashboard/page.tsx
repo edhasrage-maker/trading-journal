@@ -485,12 +485,14 @@ export default async function DashboardPage() {
           <ScoreCluster period={allTimePeriod} periodLabel="all time" />
         </div>
 
-        {/* The all-trades overview: period-selectable stats (default All time),
-            then equity + P&L charts. */}
+        {/* The all-trades overview: period-selectable stats + equity/P&L charts.
+            The period is the trader's saved preference (defaults to Last 30
+            Days / YtD); the all-time total is a dropdown away, and the score
+            ring above is always all-time regardless. */}
         <div className="mt-6 pt-5 border-t border-gray-800">
-          <DashboardStats days={statsDays} hideScoreHero defaultPeriod="all" />
+          <DashboardStats days={statsDays} hideScoreHero />
         </div>
-        <DashboardCharts days={statsDays} defaultPeriod="all" />
+        <DashboardCharts days={statsDays} />
 
         {/* Every session — toggle between the list and the calendar. */}
         <div className="mt-8 pt-5 border-t border-gray-700">
