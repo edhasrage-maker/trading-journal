@@ -82,7 +82,7 @@ export default function EodClient({
   initialDay,
   initialTrades,
   initialMarketContext,
-  allTags,
+  allTags: initialAllTags,
   liveAtrByTradeId,
   postExitByTradeId,
   pnlHistory,
@@ -94,6 +94,11 @@ export default function EodClient({
   // Recap edit-in-place drawer (Session-merge Pt 13 step 2): the id of the trade
   // being quick-edited, or null when the drawer is closed.
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null)
+  // Tags are local so a label created inline from the drawer's TagSelector
+  // shows up immediately instead of waiting for a page reload.
+  const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
+  const addTag = (tag: TradeTag) =>
+    setAllTags(prev => (prev.some(t => t.id === tag.id) ? prev : [...prev, tag]))
   // Time-aware seam (Pt 13 step 3). `endedAt` = the manual end-session stamp.
   // The recap is still "live" only when it's today, before the RTH close, and
   // the trader hasn't ended by choice — then judgment is premature and we point
@@ -1208,6 +1213,7 @@ export default function EodClient({
             }}
             onClose={() => setEditingTradeId(null)}
             onOpenFullLog={id => router.push(`/intraday/${date}?trade=${id}`)}
+            onTagCreated={addTag}
           />
         )
       })()}

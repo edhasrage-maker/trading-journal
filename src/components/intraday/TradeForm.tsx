@@ -541,6 +541,24 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           )}
         </div>}
 
+        {/* Compact: the screenshot is READ-ONLY chart context for the recap —
+            same PinPlacement (so entry/stop/TP1 pins show) and same zoom
+            lightbox as the full form, but no upload / re-read / frame-nudge.
+            Re-shooting or re-extracting levels is a full-log job, which is what
+            the drawer's "Open full log" button is for. */}
+        {compact && form.screenshot_url && (
+          <div>
+            <PinPlacement
+              imageUrl={form.screenshot_url}
+              pins={pins}
+              onZoom={() => setZoomedScreenshot(form.screenshot_url)}
+            />
+            <p className="text-[10px] text-gray-600 mt-1.5">
+              Click to zoom. Replace the shot or re-read levels in the full log.
+            </p>
+          </div>
+        )}
+
         {/* Trade details. Compact (drawer) shows only the numeric levels + qty;
             the full form also carries instrument, entry time, and P&L. */}
         <div>
@@ -571,6 +589,24 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           </div>
         </div>
 
+        {/* Tags (compact) — the same TagSelector the full form uses, so every
+            category (setup, order flow, mistakes, emotions…) is fixable during
+            review, which is what the recap is actually for. The full form's
+            extras — AI "Suggest from notes" and "Copy tags from…" — stay behind
+            the full log to keep the drawer a quick-correction surface. */}
+        {compact && (
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Tags</label>
+            <TagSelector
+              tags={allTags}
+              selected={form.tags}
+              suggested={form.suggestedTags}
+              onChange={t => set('tags', t)}
+              onTagCreated={onTagCreated}
+            />
+          </div>
+        )}
+
         {/* Notes */}
         <div>
           <label className="block text-xs text-gray-400 mb-1">Notes</label>
@@ -580,32 +616,6 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
           />
         </div>
-
-        {/* Setup — the drawer swaps the full tag editor for a single setup
-            dropdown (the field the recap most often needs corrected). Reuses
-            form.tags; other tag categories are preserved untouched on save.
-            Full tag editing stays behind "Open full log". */}
-        {compact && (() => {
-          const setupLabels = allTags.filter(t => t.category === 'setups').map(t => t.label)
-          const current = form.tags.setups?.[0]
-          if (current && !setupLabels.includes(current)) setupLabels.unshift(current)
-          return (
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Setup</label>
-              <select
-                value={current ?? ''}
-                onChange={e => {
-                  const v = e.target.value
-                  set('tags', { ...form.tags, setups: v ? [v] : [] })
-                }}
-                className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
-              >
-                <option value="">— No setup —</option>
-                {setupLabels.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-          )
-        })()}
 
         {/* Tags — render even when allTags is empty so the user can add the
             first one inline. TagSelector itself handles the empty-category
@@ -690,10 +700,10 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
 
       </div>
 
-      {/* Edit-form zoom lightbox — fires when the screenshot's PinPlacement
-          is clicked. Mounted at TradeForm's root so it overlays the form.
-          No screenshot in compact mode, so no lightbox. */}
-      {!compact && <ScreenshotLightbox src={zoomedScreenshot} onClose={() => setZoomedScreenshot(null)} />}
+      {/* Edit-form zoom lightbox — fires when the screenshot's PinPlacement is
+          clicked, in BOTH layouts (compact shows a read-only thumbnail that
+          zooms). Renders null when nothing is zoomed. */}
+      <ScreenshotLightbox src={zoomedScreenshot} onClose={() => setZoomedScreenshot(null)} />
     </div>
   )
 }
