@@ -2,12 +2,21 @@
 // serves stale app code (the #1 way a naive SW breaks a Next.js app).
 //
 // Strategy:
-//   - Immutable, content-hashed assets (/_next/static, /icons, /brand) →
-//     cache-first (safe: the filename changes when the content does).
+//   - Content-hashed assets (/_next/static) → cache-first. Safe: the filename
+//     changes when the content does, so a cached copy is never stale.
+//   - STABLE-named static assets (/brand, /icons) → stale-while-revalidate.
+//     These keep the SAME filename across a rebrand (tapescore-favicon.svg,
+//     apple-touch-icon.png…), so cache-first would pin the OLD logo forever
+//     (the exact bug that left mobile on the pre-film-frame mark). SWR serves
+//     the cached copy fast but refreshes in the background, so a changed asset
+//     shows up on the next load instead of being frozen.
 //   - Everything else (HTML navigations, RSC payloads) → network-first, with a
 //     cached fallback only when offline. Never serve stale HTML from cache.
 //   - /api/* → pass straight through (never cached).
-const CACHE = 'tapescore-v1'
+//
+// Bump CACHE on any change to this file / caching strategy so `activate` purges
+// every prior cache (this is what evicts already-pinned stale brand assets).
+const CACHE = 'tapescore-v2'
 
 self.addEventListener('install', () => {
   self.skipWaiting()
@@ -31,12 +40,8 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return
   if (url.pathname.startsWith('/api/')) return // never cache API
 
-  const immutable =
-    url.pathname.startsWith('/_next/static/') ||
-    url.pathname.startsWith('/icons/') ||
-    url.pathname.startsWith('/brand/')
-
-  if (immutable) {
+  // Content-hashed → cache-first (filename changes with content).
+  if (url.pathname.startsWith('/_next/static/')) {
     event.respondWith(
       (async () => {
         const cached = await caches.match(req)
@@ -45,6 +50,28 @@ self.addEventListener('fetch', (event) => {
         const cache = await caches.open(CACHE)
         cache.put(req, res.clone())
         return res
+      })(),
+    )
+    return
+  }
+
+  // Stable-named static (may change under the same filename) → stale-while-
+  // revalidate: fast from cache, but always refresh in the background so a
+  // rebrand/icon change lands on the next load and is never pinned.
+  if (url.pathname.startsWith('/brand/') || url.pathname.startsWith('/icons/')) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(CACHE)
+        const cached = await cache.match(req)
+        const fetching = fetch(req).then((res) => {
+          cache.put(req, res.clone())
+          return res
+        })
+        if (cached) {
+          event.waitUntil(fetching.catch(() => {})) // refresh in background
+          return cached
+        }
+        return fetching
       })(),
     )
     return
