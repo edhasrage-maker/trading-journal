@@ -16,6 +16,7 @@ import { computeBehavioralProxies } from './behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from './journal-language-heatmap'
 import { fetchOpenThread, coachingThreadPromptBlock } from './coaching-thread'
 import { getGiveBackAtr } from './atr-config-server'
+import { tagKey } from './tradezella-import'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -62,6 +63,173 @@ interface TradeContextRow {
   notes: string | null                 // trader's per-trade free text — fuels the journal heatmap
 }
 
+/**
+ * A trade the coach aggregates over, from EITHER source. Native trades carry the
+ * full field set (excursion, structure, market-context via trading_day_id);
+ * historical (Tradezella-imported) trades carry only what the CSV had — so they
+ * feed the counting/tag/PnL aggregations but are skipped by the excursion,
+ * regime, and behavioral-proxy blocks (guarded on `_source`). `_date` is the PT
+ * session date and `_dayTypes` the day-type labels, unified across both sources
+ * so month/day-type bucketing and the recent list don't care where a row came from.
+ */
+type UnifiedTrade = TradeContextRow & {
+  _source: 'native' | 'historical'
+  _date: string
+  _dayTypes: string[]
+}
+
+/** Strip a leading ordinal prefix like "1. " that Tradezella day-types carry
+ *  ("1. High Action Market" → "High Action Market") so they merge with native. */
+function stripNumPrefix(s: string): string {
+  return s.replace(/^\s*\d+\.\s*/, '').trim()
+}
+
+/** Canonical bucket key for a tag label — folds case, `&`→`and`, punctuation,
+ *  and any ordinal prefix, so historical (lowercase) and native (title-case)
+ *  labels for the same tag collapse into one bucket. */
+function tagKeyOf(s: string): string {
+  return tagKey(stripNumPrefix(s))
+}
+
+const DISCRETIONARY_KEY = tagKey('discretionary trade')
+
+/** Day-type labels from a historical row's tags_json.day_type (string or array). */
+function normDayTypes(dt: unknown): string[] {
+  if (Array.isArray(dt)) return dt.map(s => stripNumPrefix(String(s))).filter(Boolean)
+  if (typeof dt === 'string' && dt.trim()) return [stripNumPrefix(dt)]
+  return []
+}
+
+/** True when a trade carries at least one REAL setup — a named setup other than
+ *  "discretionary trade" (a discretionary trade is not a setup). Matches how the
+ *  trader counts "trades with a setup". */
+function hasRealSetup(tags: unknown): boolean {
+  const setups = (tags as { setups?: unknown } | null)?.setups
+  if (!Array.isArray(setups)) return false
+  return setups.some(s => {
+    const k = tagKeyOf(String(s))
+    return k.length > 0 && k !== DISCRETIONARY_KEY
+  })
+}
+
+/** Map a historical_trades row into the unified shape (excursion fields null —
+ *  those blocks are native-only). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapHistorical(h: any): UnifiedTrade {
+  const pnl = typeof h.net_pnl === 'number' ? h.net_pnl : (h.net_pnl != null ? Number(h.net_pnl) : null)
+  const date: string = h.trade_date ?? String(h.open_at ?? '').slice(0, 10)
+  return {
+    id: h.id,
+    trading_day_id: '',
+    entry_time: h.open_at ?? h.trade_date ?? null,
+    exit_time: h.close_at ?? null,
+    direction: h.side === 'long' || h.side === 'short' ? h.side : null,
+    pnl: Number.isFinite(pnl as number) ? (pnl as number) : null,
+    entry_price: h.entry_price ?? null,
+    stop_price: null,
+    high_during_position: null,
+    low_during_position: null,
+    mfe_dollars_per_leg: null,
+    entry_atr_1m: null,
+    quantity: h.quantity ?? null,
+    symbol: h.symbol ?? null,
+    tags_json: h.tags_json ?? {},
+    structure_5m_alignment: null,
+    notes: null,
+    _source: 'historical',
+    _date: date,
+    _dayTypes: normDayTypes(h.tags_json?.day_type),
+  }
+}
+
+/** Last Tradezella (historical) date for the trader — the prefer-historical
+ *  handoff. Native trades on/before it are untagged Sierra re-imports of the
+ *  tagged historical rows, so they're dropped in favor of historical. Null when
+ *  the trader has no historical import (→ no-op; behaves as before). */
+async function fetchHandoffDate(supabase: AnyClient): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('historical_trades')
+    .select('trade_date')
+    .order('trade_date', { ascending: false })
+    .limit(1)
+  if (error || !data || data.length === 0) return null
+  return data[0].trade_date ?? null
+}
+
+/** Historical (Tradezella) trades in [startDate, endDate] by trade_date, mapped
+ *  to the unified shape. Best-effort: a missing table disables the union. */
+async function fetchHistoricalInWindow(supabase: AnyClient, startDate: string, endDate: string): Promise<UnifiedTrade[]> {
+  const PAGE = 1000
+  const out: UnifiedTrade[] = []
+  for (let p = 0; p < 10; p++) {
+    const { data, error } = await supabase
+      .from('historical_trades')
+      .select('id, side, net_pnl, entry_price, quantity, symbol, tags_json, open_at, close_at, trade_date')
+      .gte('trade_date', startDate)
+      .lte('trade_date', endDate)
+      .order('trade_date', { ascending: false })
+      .order('id', { ascending: false })
+      .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (error || !data || data.length === 0) break
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const h of data as any[]) out.push(mapHistorical(h))
+    if (data.length < PAGE) break
+  }
+  return out
+}
+
+/**
+ * All-time tagging totals across the trader's FULL history (native + historical,
+ * deduped by the prefer-historical handoff). Counts total trades and trades with
+ * a REAL setup (excluding pure "discretionary trade"). Best-effort — returns null
+ * on error so the block is simply omitted. Native date uses entry_time (UTC slice)
+ * for the handoff cut; a boundary trade or two may land on the wrong side, which
+ * is immaterial to an all-time headline count.
+ */
+async function fetchAllTimeTagStats(
+  supabase: AnyClient, handoffDate: string | null,
+): Promise<{ total: number; realSetup: number } | null> {
+  const PAGE = 1000
+  let total = 0, realSetup = 0
+  try {
+    // Historical: all rows.
+    for (let p = 0; p < 10; p++) {
+      const { data, error } = await supabase
+        .from('historical_trades')
+        .select('id, tags_json')
+        .order('id', { ascending: true })
+        .range(p * PAGE, p * PAGE + PAGE - 1)
+      if (error) return null
+      if (!data || data.length === 0) break
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const r of data as any[]) { total++; if (hasRealSetup(r.tags_json)) realSetup++ }
+      if (data.length < PAGE) break
+    }
+    // Native: all rows AFTER the handoff (before it = untagged Sierra dupes).
+    for (let p = 0; p < 20; p++) {
+      const { data, error } = await supabase
+        .from('trades')
+        .select('id, entry_time, tags_json')
+        .order('entry_time', { ascending: true })
+        .order('id', { ascending: true })
+        .range(p * PAGE, p * PAGE + PAGE - 1)
+      if (error) return null
+      if (!data || data.length === 0) break
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const r of data as any[]) {
+        const d = String(r.entry_time ?? '').slice(0, 10)
+        if (handoffDate && d && d <= handoffDate) continue
+        total++
+        if (hasRealSetup(r.tags_json)) realSetup++
+      }
+      if (data.length < PAGE) break
+    }
+  } catch {
+    return null
+  }
+  return { total, realSetup }
+}
+
 export async function buildCoachContext(supabase: AnyClient, opts: CoachContextOptions): Promise<string> {
   const { startDate, endDate, windowLabel, includeWeekOverWeek = false, recentTradesLimit = 50 } = opts
 
@@ -96,27 +264,48 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
     }
   }
 
-  // Paginate trades within the window.
+  // Paginate trades within the window, UNIONing native + historical (Tradezella).
   const PAGE = 1000
-  const trades: TradeContextRow[] = []
   const dayIds = Array.from(dayDateById.keys())
-  if (dayIds.length === 0) {
+
+  // Prefer-historical handoff: the last Tradezella date. Native trades on/before
+  // it are untagged Sierra re-imports of the tagged historical rows, so they're
+  // dropped here and historical is the source of truth for that period (no
+  // double-count). Null when the trader never imported Tradezella → no-op.
+  const handoffDate = await fetchHandoffDate(supabase)
+
+  // Historical (Tradezella) trades in-window, already normalized to the unified shape.
+  const trades: UnifiedTrade[] = await fetchHistoricalInWindow(supabase, startDate, endDate)
+
+  // Native trades in-window, excluding those at/before the handoff.
+  if (dayIds.length > 0) {
+    for (let p = 0; p < 10; p++) {
+      const { data } = await supabase
+        .from('trades')
+        .select('id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, notes')
+        .in('trading_day_id', dayIds)
+        .order('entry_time', { ascending: false })
+        .order('id', { ascending: false })   // repo-convention tiebreaker → deterministic paging past 1000 rows
+        .range(p * PAGE, p * PAGE + PAGE - 1)
+      if (!data || data.length === 0) break
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const r of data as any[]) {
+        const d: string = dayDateById.get(r.trading_day_id) ?? String(r.entry_time ?? '').slice(0, 10)
+        if (handoffDate && d && d <= handoffDate) continue // prefer historical for its period
+        trades.push({ ...r, _source: 'native', _date: d, _dayTypes: dayTypesById.get(r.trading_day_id) ?? [] })
+      }
+      if (data.length < PAGE) break
+    }
+  }
+
+  // Newest-first for the recent-trades list (native May+ sorts above historical).
+  trades.sort((a, b) => b._date.localeCompare(a._date) || String(b.entry_time ?? '').localeCompare(String(a.entry_time ?? '')))
+
+  if (trades.length === 0) {
     return `═══ TRADER DATA SUMMARY ═══
 Window: ${windowLabel} (${startDate} → ${endDate}).
-NO TRADE DATA — no trading days in this window.
+NO TRADE DATA — the trader logged no trades in this window.
 ═══ END TRADER DATA ═══`
-  }
-  for (let p = 0; p < 10; p++) {
-    const { data } = await supabase
-      .from('trades')
-      .select('id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, notes')
-      .in('trading_day_id', dayIds)
-      .order('entry_time', { ascending: false })
-      .order('id', { ascending: false })   // repo-convention tiebreaker → deterministic paging past 1000 rows
-      .range(p * PAGE, p * PAGE + PAGE - 1)
-    if (!data || data.length === 0) break
-    trades.push(...data)
-    if (data.length < PAGE) break
   }
 
   // Day conditions (#2c) — RVOL/ATR regime per day so the coach can judge
@@ -191,10 +380,13 @@ NO TRADE DATA — the trader logged no trades in this window.
   const sumL = trades.filter(t => (t.pnl ?? 0) < 0).reduce((s, t) => s + Math.abs(t.pnl ?? 0), 0)
   const profitFactor = sumL > 0 ? sumW / sumL : (sumW > 0 ? Infinity : 0)
 
-  const setupBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number; rs: number[]; capPcts: number[]; lefts: number[] }>()
-  const mistakeCounts = new Map<string, { count: number; pnl: number }>()
-  const dayTypeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
-  const ofBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
+  // Tag buckets are keyed by tagKey (folds case / `&`→`and` / ordinal prefix) so
+  // historical (lowercase) and native (title-case) labels for the same tag merge;
+  // `display` holds the label shown (native wins, since it sorts first).
+  const setupBuckets = new Map<string, { display: string; count: number; wins: number; losers: number; pnl: number; rs: number[]; capPcts: number[]; lefts: number[] }>()
+  const mistakeCounts = new Map<string, { display: string; count: number; pnl: number }>()
+  const dayTypeBuckets = new Map<string, { display: string; count: number; wins: number; losers: number; pnl: number }>()
+  const ofBuckets = new Map<string, { display: string; count: number; wins: number; losers: number; pnl: number }>()
   const structureBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
   const monthBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
   // Day-condition regime buckets (#2c) — trades bucketed by their day's RVOL/ATR
@@ -247,111 +439,129 @@ NO TRADE DATA — the trader logged no trades in this window.
 
   for (const t of trades) {
     const pnl = t.pnl ?? 0
-    // All per-trade MFE/MAE interpretation lives in the shared helper so the
-    // coach, the weekly recap, and the video-recap commentary can't drift.
-    const { isWin, r, mfeUsd, capPct, leftUsd, mfeR, maePts, maePct, mfeAtr, maeAtr, roundTripMeasurable, roundTripped, roundTripGiveBackUsd } = interpretExcursion(t, giveBackAtr)
+    const isWin = pnl > 0   // isWin is simply pnl > 0 (same across both sources)
 
-    // Round-trip accumulation (window-level — invisible in the UI, coach-only).
-    if (roundTripMeasurable) rt.measurable++
-    if (roundTripped) { rt.n++; rt.giveBackUsd += roundTripGiveBackUsd ?? 0 }
+    // Excursion / MFE / MAE / round-trip / ×ATR — NATIVE ONLY. Historical
+    // (Tradezella) rows lack the logged stop + tick-precise in-trade extremes
+    // these need, so they feed only the counting/tag/PnL aggregations below.
+    // `r` / `capPct` / `mfeUsd` stay null for historical → their setup-bucket
+    // avgR/capture just skip those rows.
+    let r: number | null = null
+    let capPct: number | null = null
+    let mfeUsd: number | null = null
+    if (t._source === 'native') {
+      const ex = interpretExcursion(t, giveBackAtr)
+      r = ex.r; capPct = ex.capPct; mfeUsd = ex.mfeUsd
+      const { leftUsd, mfeR, maePts, maePct, mfeAtr, maeAtr, roundTripMeasurable, roundTripped, roundTripGiveBackUsd } = ex
 
-    // ×ATR accumulation (volatility-normalized excursion).
-    if (mfeAtr != null) { atrAgg.mfeAll.n++; atrAgg.mfeAll.sum += mfeAtr; if (isWin) { atrAgg.mfeWin.n++; atrAgg.mfeWin.sum += mfeAtr } }
-    if (maeAtr != null) { if (isWin) { atrAgg.maeWin.n++; atrAgg.maeWin.sum += maeAtr } else if ((t.pnl ?? 0) < 0) { atrAgg.maeLoss.n++; atrAgg.maeLoss.sum += maeAtr } }
+      // Round-trip accumulation (window-level — invisible in the UI, coach-only).
+      if (roundTripMeasurable) rt.measurable++
+      if (roundTripped) { rt.n++; rt.giveBackUsd += roundTripGiveBackUsd ?? 0 }
 
-    // Exit-efficiency $ aggregation — winners only (capPct is set exactly when
-    // the trade won and had a positive best-case $).
-    if (capPct != null && mfeUsd != null) {
-      const dl = exitEff.dollar
-      dl.n++; dl.sumCapPct += capPct; dl.sumLeft += leftUsd ?? 0; dl.sumRealized += pnl; dl.sumMfe += mfeUsd
-    }
+      // ×ATR accumulation (volatility-normalized excursion).
+      if (mfeAtr != null) { atrAgg.mfeAll.n++; atrAgg.mfeAll.sum += mfeAtr; if (isWin) { atrAgg.mfeWin.n++; atrAgg.mfeWin.sum += mfeAtr } }
+      if (maeAtr != null) { if (isWin) { atrAgg.maeWin.n++; atrAgg.maeWin.sum += maeAtr } else if (pnl < 0) { atrAgg.maeLoss.n++; atrAgg.maeLoss.sum += maeAtr } }
 
-    // TP2 reachability aggregation — trades with a logged stop.
-    if (mfeR != null) {
-      const rb = exitEff.r
-      rb.withStop++; if (mfeR >= 2) rb.ge2R++; if (mfeR >= 3) rb.ge3R++
-      if (isWin) { rb.winners++; if (mfeR >= 2) rb.winGe2R++; if (mfeR >= 3) rb.winGe3R++ }
-    }
+      // Exit-efficiency $ aggregation — winners only (capPct is set exactly when
+      // the trade won and had a positive best-case $).
+      if (capPct != null && mfeUsd != null) {
+        const dl = exitEff.dollar
+        dl.n++; dl.sumCapPct += capPct; dl.sumLeft += leftUsd ?? 0; dl.sumRealized += pnl; dl.sumMfe += mfeUsd
+      }
 
-    // MAE / heat-taken aggregation — winners-vs-losers heat + the
-    // win-rate-by-heat-taken buckets.
-    if (maePct != null && maePts != null) {
-      const side = isWin ? maeAgg.win : (pnl < 0 ? maeAgg.loss : null)
-      if (side) { side.n++; side.sumPts += maePts; side.sumPct += maePct }
-      for (const [label, test] of MAE_BUCKETS) {
-        if (test(maePct)) {
-          const b = maeBuckets.get(label) ?? { count: 0, wins: 0, losers: 0, pnl: 0, rs: [] }
-          b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
-          if (r != null) b.rs.push(r)
-          maeBuckets.set(label, b)
-          break
+      // TP2 reachability aggregation — trades with a logged stop.
+      if (mfeR != null) {
+        const rb = exitEff.r
+        rb.withStop++; if (mfeR >= 2) rb.ge2R++; if (mfeR >= 3) rb.ge3R++
+        if (isWin) { rb.winners++; if (mfeR >= 2) rb.winGe2R++; if (mfeR >= 3) rb.winGe3R++ }
+      }
+
+      // MAE / heat-taken aggregation — winners-vs-losers heat + the
+      // win-rate-by-heat-taken buckets.
+      if (maePct != null && maePts != null) {
+        const side = isWin ? maeAgg.win : (pnl < 0 ? maeAgg.loss : null)
+        if (side) { side.n++; side.sumPts += maePts; side.sumPct += maePct }
+        for (const [label, test] of MAE_BUCKETS) {
+          if (test(maePct)) {
+            const b = maeBuckets.get(label) ?? { count: 0, wins: 0, losers: 0, pnl: 0, rs: [] }
+            b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+            if (r != null) b.rs.push(r)
+            maeBuckets.set(label, b)
+            break
+          }
         }
       }
+
+      derived.set(t.id, { r, mfeR, capPct, maePct, mfeAtr, maeAtr })
     }
 
-    derived.set(t.id, { r, mfeR, capPct, maePct, mfeAtr, maeAtr })
-
+    // ── Counting / tag aggregations — BOTH sources, tagKey-bucketed ──
     const setups = (t.tags_json?.setups as string[]) ?? []
-    const pushSetup = (key: string) => {
-      const b = setupBuckets.get(key) ?? { count: 0, wins: 0, losers: 0, pnl: 0, rs: [], capPcts: [], lefts: [] }
+    const pushSetup = (raw: string) => {
+      const k = tagKeyOf(raw)
+      if (!k) return
+      const b = setupBuckets.get(k) ?? { display: stripNumPrefix(raw), count: 0, wins: 0, losers: 0, pnl: 0, rs: [] as number[], capPcts: [] as number[], lefts: [] as number[] }
       b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
       if (r != null) b.rs.push(r)
       if (capPct != null) b.capPcts.push(capPct)
       if (isWin && mfeUsd != null && mfeUsd > 0) b.lefts.push(Math.max(0, mfeUsd - pnl))
-      setupBuckets.set(key, b)
+      setupBuckets.set(k, b)
     }
-    if (setups.length === 0) pushSetup('Discretionary/No Setup')
-    else for (const s of setups) pushSetup(s)
+    if (setups.length === 0) {
+      const b = setupBuckets.get('no-setup') ?? { display: 'Discretionary/No Setup', count: 0, wins: 0, losers: 0, pnl: 0, rs: [] as number[], capPcts: [] as number[], lefts: [] as number[] }
+      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+      if (r != null) b.rs.push(r)
+      setupBuckets.set('no-setup', b)
+    } else for (const s of setups) pushSetup(s)
 
     const mistakes = (t.tags_json?.mistakes as string[]) ?? []
     for (const m of mistakes) {
-      const b = mistakeCounts.get(m) ?? { count: 0, pnl: 0 }
+      const k = tagKeyOf(m); if (!k) continue
+      const b = mistakeCounts.get(k) ?? { display: stripNumPrefix(m), count: 0, pnl: 0 }
       b.count++; b.pnl += pnl
-      mistakeCounts.set(m, b)
+      mistakeCounts.set(k, b)
     }
 
-    const dayTypes = dayTypesById.get(t.trading_day_id) ?? []
-    for (const dt of dayTypes) {
-      const b = dayTypeBuckets.get(dt) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+    for (const dt of t._dayTypes) {
+      const k = tagKeyOf(dt); if (!k) continue
+      const b = dayTypeBuckets.get(k) ?? { display: stripNumPrefix(dt), count: 0, wins: 0, losers: 0, pnl: 0 }
       b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
-      dayTypeBuckets.set(dt, b)
+      dayTypeBuckets.set(k, b)
     }
 
     const ofs = (t.tags_json?.order_flow as string[]) ?? []
     for (const o of ofs) {
-      const b = ofBuckets.get(o) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+      const k = tagKeyOf(o); if (!k) continue
+      const b = ofBuckets.get(k) ?? { display: stripNumPrefix(o), count: 0, wins: 0, losers: 0, pnl: 0 }
       b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
-      ofBuckets.set(o, b)
+      ofBuckets.set(k, b)
     }
 
-    if (t.structure_5m_alignment) {
-      const b = structureBuckets.get(t.structure_5m_alignment) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
-      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
-      structureBuckets.set(t.structure_5m_alignment, b)
+    // Structure + day-regime — NATIVE ONLY (historical has no structure_5m_alignment
+    // and no trading_day → no market_context regime).
+    if (t._source === 'native') {
+      if (t.structure_5m_alignment) {
+        const b = structureBuckets.get(t.structure_5m_alignment) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+        b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+        structureBuckets.set(t.structure_5m_alignment, b)
+      }
+      const mc = mcByDay.get(t.trading_day_id)
+      const rvolBand = classifyBand(mc?.rvol ?? null, rvolCut, ['low participation', 'normal', 'high participation'])
+      if (rvolBand) {
+        const b = rvolBuckets.get(rvolBand) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+        b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+        rvolBuckets.set(rvolBand, b)
+      }
+      const atrBand = classifyBand(mc?.atr ?? null, atrCut, ['low volatility', 'normal', 'high volatility'])
+      if (atrBand) {
+        const b = atrRegimeBuckets.get(atrBand) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+        b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+        atrRegimeBuckets.set(atrBand, b)
+      }
     }
 
-    // Bucket the trade under its day's RVOL / ATR tercile band.
-    const mc = mcByDay.get(t.trading_day_id)
-    const rvolBand = classifyBand(mc?.rvol ?? null, rvolCut, ['low participation', 'normal', 'high participation'])
-    if (rvolBand) {
-      const b = rvolBuckets.get(rvolBand) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
-      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
-      rvolBuckets.set(rvolBand, b)
-    }
-    const atrBand = classifyBand(mc?.atr ?? null, atrCut, ['low volatility', 'normal', 'high volatility'])
-    if (atrBand) {
-      const b = atrRegimeBuckets.get(atrBand) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
-      b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
-      atrRegimeBuckets.set(atrBand, b)
-    }
-
-    // Per-calendar-month bucket (key = YYYY-MM) so the coach can answer
-    // month-over-month questions. Keyed off the trade's PT session date
-    // (trading_days.date, already fetched) so months bucket on the app's PT
-    // convention — a late-evening PT trade doesn't slip into the next UTC month
-    // and disagree with the analytics page. Falls back to entry_time only if the
-    // day-date is somehow missing.
-    const ym = (dayDateById.get(t.trading_day_id) ?? (t.entry_time ?? '')).slice(0, 7)
+    // Per-calendar-month bucket (key = YYYY-MM), PT session date (unified `_date`).
+    const ym = (t._date || (t.entry_time ?? '')).slice(0, 7)
     if (ym) {
       const b = monthBuckets.get(ym) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
       b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
@@ -365,6 +575,7 @@ NO TRADE DATA — the trader logged no trades in this window.
   // many sessions is a behavioral leak the coach should surface.
   const tradesByDay = new Map<string, typeof trades>()
   for (const t of trades) {
+    if (t._source !== 'native') continue   // historical lacks the fill sequence these need
     const arr = tradesByDay.get(t.trading_day_id) ?? []
     arr.push(t)
     tradesByDay.set(t.trading_day_id, arr)
@@ -397,8 +608,9 @@ NO TRADE DATA — the trader logged no trades in this window.
 
   // Recent trades (newest first, capped at recentTradesLimit)
   const recent = trades.slice(0, recentTradesLimit).map(t => {
-    const date = dayDateById.get(t.trading_day_id) ?? '?'
+    const date = t._date || '?'
     const dir = t.direction?.[0]?.toUpperCase() ?? '?'
+    const src = t._source === 'historical' ? ' (tz)' : ''
     const setups = ((t.tags_json?.setups as string[]) ?? []).join(',') || '—'
     const mistakes = ((t.tags_json?.mistakes as string[]) ?? []).join(',') || '—'
     const d = derived.get(t.id)
@@ -408,7 +620,7 @@ NO TRADE DATA — the trader logged no trades in this window.
     const mae = d?.maePct ?? null
     const mfeAtr = d?.mfeAtr ?? null
     const maeAtr = d?.maeAtr ?? null
-    return `${date} ${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''}${mfeAtr != null ? ` mfe×ATR=${mfeAtr.toFixed(2)}` : ''}${maeAtr != null ? ` mae×ATR=${maeAtr.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
+    return `${date}${src} ${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''}${mfeAtr != null ? ` mfe×ATR=${mfeAtr.toFixed(2)}` : ''}${maeAtr != null ? ` mae×ATR=${maeAtr.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
   }).join('\n')
 
   // Optional week-over-week comparison — only meaningful for the chatbox's
@@ -420,14 +632,14 @@ NO TRADE DATA — the trader logged no trades in this window.
     const past14 = new Date(endMs - 14 * 24 * 3600 * 1000).toISOString().slice(0, 10)
     // Bucket by PT session date (trading_days.date), not the UTC slice of
     // entry_time, so week boundaries match the app's PT convention.
-    const ptDate = (t: TradeContextRow) => dayDateById.get(t.trading_day_id) ?? (t.entry_time ?? '').slice(0, 10)
+    const ptDate = (t: UnifiedTrade) => t._date || (t.entry_time ?? '').slice(0, 10)
     const tradesThisWeek = trades.filter(t => ptDate(t) >= past7)
     const tradesPriorWeek = trades.filter(t => {
       const d = ptDate(t)
       return d >= past14 && d < past7
     })
-    const wkPnl = (arr: TradeContextRow[]) => arr.reduce((s, t) => s + (t.pnl ?? 0), 0)
-    const wkWR = (arr: TradeContextRow[]) => {
+    const wkPnl = (arr: UnifiedTrade[]) => arr.reduce((s, t) => s + (t.pnl ?? 0), 0)
+    const wkWR = (arr: UnifiedTrade[]) => {
       const w = arr.filter(t => (t.pnl ?? 0) > 0).length
       const l = arr.filter(t => (t.pnl ?? 0) < 0).length
       return (w + l) > 0 ? Math.round((w / (w + l)) * 100) : null
@@ -526,6 +738,15 @@ ${regimeLine(atrRegimeBuckets, ['low volatility', 'normal', 'high volatility']) 
   // present, not buried. Best-effort — empty/no-op until the table exists.
   const coachingThread = coachingThreadPromptBlock(await fetchOpenThread(supabase)).trim()
 
+  // All-time tagging totals across the trader's FULL history (native + Tradezella,
+  // deduped by the prefer-historical handoff) — a separate headline from the
+  // windowed stats so "how many setup trades have I logged, ever" is answerable
+  // and the coach never undercounts by looking at the native table alone.
+  const allTime = await fetchAllTimeTagStats(supabase, handoffDate)
+  const allTimeBlock = allTime
+    ? `  ${allTime.total} trades logged all-time · ${allTime.realSetup} with a real setup (${allTime.total > 0 ? Math.round((allTime.realSetup / allTime.total) * 100) : 0}%). NB: "Discretionary Trade" is NOT counted as a setup here.`
+    : '  (all-time totals unavailable)'
+
   // EOD Process/Execution verdicts (#2b) — cite these, don't re-derive.
   const analyzedDays = compliantDays + breachDays
   const verdictBlock = analyzedDays === 0
@@ -535,8 +756,12 @@ ${regimeLine(atrRegimeBuckets, ['low volatility', 'normal', 'high volatility']) 
 
   return `═══ TRADER DATA SUMMARY ═══
 Window: ${windowLabel} (${startDate} → ${endDate}). Total trades: ${total}.
+Trade sources UNIONED: native TapeScore trades + imported Tradezella history, deduped (for any period the Tradezella import covers, its tagged rows are used and the untagged native re-imports are dropped). Tag/PnL/win-rate/month counts span BOTH; the excursion blocks (MFE capture, MAE heat, round-trip, ×ATR, day-regime, behavioral patterns) are native-only — Tradezella rows lack the fields they need.
 
-OVERALL:
+ALL-TIME TAGGING (full history, both sources, deduped — use this for "how many setup trades do I have", NOT the windowed counts below):
+${allTimeBlock}
+
+OVERALL (within window):
   Win rate: ${winRate.toFixed(0)}% (${winners}W / ${losers}L)
   Total PnL: ${fmt(totalPnl)}
   Profit factor: ${Number.isFinite(profitFactor) ? profitFactor.toFixed(2) : '∞'}${weekOverWeekBlock}
@@ -563,27 +788,27 @@ POST-EXIT — MARKET SENSE / DIRECTIONAL READ (where price went in the 30 min AF
 ${postExitBlock}
 
 SETUP PERFORMANCE (by total PnL, top 10) — avgR realized; captured%/left$ = winners' $ MFE capture (TP2 headroom per setup):
-${sortByPnl(setupBuckets).map(([s, b]) => {
+${sortByPnl(setupBuckets).map(([, b]) => {
     const avgR = b.rs.length > 0 ? (b.rs.reduce((a, r) => a + r, 0) / b.rs.length).toFixed(2) : '—'
     const avgCap = b.capPcts.length > 0 ? Math.round((b.capPcts.reduce((a, c) => a + c, 0) / b.capPcts.length) * 100) : null
     const avgLeft = b.lefts.length > 0 ? b.lefts.reduce((a, x) => a + x, 0) / b.lefts.length : null
-    return `  ${s}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}% · avgR ${avgR}${avgCap != null ? ` · winners captured ${avgCap}%` : ''}${avgLeft != null ? ` · left ${usd(avgLeft)}/win` : ''}`
+    return `  ${b.display}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}% · avgR ${avgR}${avgCap != null ? ` · winners captured ${avgCap}%` : ''}${avgLeft != null ? ` · left ${usd(avgLeft)}/win` : ''}`
   }).join('\n')}
 
 DAY TYPE PERFORMANCE (by total PnL, top 10):
-${sortByPnl(dayTypeBuckets).map(([d, b]) => `  ${d}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no day_types tagged in window)'}
+${sortByPnl(dayTypeBuckets).map(([, b]) => `  ${b.display}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no day_types tagged in window)'}
 
 DAY CONDITIONS — PERFORMANCE BY REGIME (are you selective on the conditions you win in? judge day-type selectivity against this):
 ${conditionsBlock}
 
 TOP MISTAKES (by frequency, top 10):
-${sortByCount(mistakeCounts).map(([m, b]) => `  ${m}: ${b.count} occurrences · ${fmt(b.pnl)} total PnL impact`).join('\n') || '  (no mistakes tagged in window)'}
+${sortByCount(mistakeCounts).map(([, b]) => `  ${b.display}: ${b.count} occurrences · ${fmt(b.pnl)} total PnL impact`).join('\n') || '  (no mistakes tagged in window)'}
 
 BEHAVIORAL PATTERNS ACROSS SESSIONS (derived from the fill sequence — tilt/stacking/pressing/shrinking-hold; a pattern on ONE day is noise, recurrence is a leak):
 ${proxyBlock}
 ${journalBlock ? '\n' + journalBlock + '\n' : ''}
 ORDER FLOW SIGNAL PERFORMANCE (by total PnL, top 10):
-${sortByPnl(ofBuckets).map(([o, b]) => `  ${o}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no orderflow tags logged in window)'}
+${sortByPnl(ofBuckets).map(([, b]) => `  ${b.display}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no orderflow tags logged in window)'}
 
 5M STRUCTURE ALIGNMENT:
 ${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no structure_5m_alignment values yet — backfill pending)'}
