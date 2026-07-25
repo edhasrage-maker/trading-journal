@@ -454,25 +454,33 @@ const captureLeakage: Builder = trades => {
   }
   const c = contrastVsBenchmark(ratios, CAPTURE_BENCHMARK)
   if (!c?.passes || c.effect >= 0) return null // only when BELOW the benchmark
+  // Compare the size of the move they get (median MFE) to how much they keep
+  // (capture %) — the actual scan-and-compare, not a rounded anchor. Falls back
+  // to the plain capture line when no risk unit is available to size the move.
+  const mfe = medianFavorableExcursion(trades)
+  const detail = mfe
+    ? `Your trades run a median ~${mfe.value.toFixed(1)}${mfe.unit} in your favor before turning, but you bank only ${pct(c.meanA)} of that move — taking profits closer to that peak would lift your profit factor.`
+    : `You book ${pct(c.meanA)} of the favorable move on average across ${c.nA} trades — earlier partial exits would lift your profit factor.`
   return {
     key: 'capture_leakage', dimension: 'Exits',
     headline: 'You leave part of the move on the table',
-    detail: `You book ${pct(c.meanA)} of the favorable move on average across ${c.nA} trades — earlier partial exits would lift your profit factor.${targetClause(trades)}`,
+    detail,
     footnote: `${c.nA} trades with a clean read`, tone: 'bad', score: c.score,
   }
 }
 
 /**
- * A concrete "aim for ~X" clause from the MFE distribution — the actionable
- * half of the capture read. Prefers ×ATR: the entry ATR is populated at import
- * time from the front-month bars (import-sc-log / import-trades-csv), so it's
- * present on a fresh fills import — whereas a planned stop (needed for R) usually
- * ISN'T, since fills carry no stop. R is only a fallback for the rare account
- * that has stops but no entry ATR. Returns '' (no fabricated target) when
- * neither unit is available — the capture % alone still stands. Uses the median
- * favorable excursion the trades actually reach, so the target is data-backed.
+ * The median favorable excursion the trades actually reach — the "how far the
+ * move typically runs" half of the capture comparison. Prefers ×ATR: the entry
+ * ATR is populated at import time from the front-month bars (import-sc-log /
+ * import-trades-csv), so it survives a fresh, stop-less import — whereas a
+ * planned stop (needed for R) usually doesn't, since fills carry no stop. R is
+ * a fallback for the rare account with stops but no entry ATR. Returns the RAW
+ * median (1-decimal at the callsite — no coarse rounding-to-anchor), or null
+ * when no risk unit is available or the typical move is too small to be worth
+ * comparing against.
  */
-function targetClause(trades: InsightTrade[]): string {
+function medianFavorableExcursion(trades: InsightTrade[]): { value: number; unit: string } | null {
   const atrMfe: number[] = []
   const rMfe: number[] = []
   for (const t of trades) {
@@ -485,17 +493,15 @@ function targetClause(trades: InsightTrade[]): string {
       if (risk > 0) rMfe.push(pts.mfe / risk)
     }
   }
-  // ATR first — the unit that survives a fresh, stop-less import.
   if (atrMfe.length >= DEFAULT_MIN_N) {
-    const m = Math.round(median(atrMfe) * 2) / 2 // nearest 0.5×ATR
-    if (m >= 0.5) return ` Most trades reach ~${m.toFixed(1)}×ATR in your favor before turning — a target near ${m.toFixed(1)}×ATR would book more of it.`
-    return '' // ATR data exists but the move is too small to target — don't fall through to R
+    const m = median(atrMfe)
+    return m >= 0.5 ? { value: m, unit: '×ATR' } : null // ATR exists but move too small — no R fallback
   }
   if (rMfe.length >= DEFAULT_MIN_N) {
-    const m = Math.round(median(rMfe) * 2) / 2 // nearest 0.5R
-    if (m >= 1) return ` Most trades reach ~${m.toFixed(1)}R in your favor before turning — a target near ${m.toFixed(1)}R would book more of it.`
+    const m = median(rMfe)
+    if (m >= 1) return { value: m, unit: 'R' }
   }
-  return ''
+  return null
 }
 
 /** 7. Hold time — quick exits vs long holds, on win rate. */
