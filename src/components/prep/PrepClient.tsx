@@ -260,6 +260,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         if (session !== 'rth') return
         const map: Record<string, number | null> = {
           rvol: stats.rvol, ib_size: stats.ib_size, adr: stats.adr, atr_1m: stats.atr_1m, day_range: stats.day_range,
+          // ib_vs_10d_avg was omitted originally, so the ledger's "IB vs 10-day
+          // avg" row + the Morning Conditions IB metric (both read the form value)
+          // showed blank on any account that hadn't saved it — the bar feed
+          // computes it, so auto-fill it too (ratio, e.g. 1.22).
+          ib_vs_10d_avg: stats.ib_vs_10d_avg,
         }
         setContext(prev => {
           const next = { ...prev }
