@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { format } from 'date-fns'
 import { Sparkles, ArrowRight, X } from 'lucide-react'
 import type { FirstReadTeaser } from '@/app/api/first-read/route'
+import DataInsights from '@/components/insights/DataInsights'
+import type { RankedInsight } from '@/lib/data-insights'
 
 /**
  * Post-import retroactive recap (alpha-readiness item 22). Picks the tester's
@@ -22,6 +24,7 @@ import type { FirstReadTeaser } from '@/app/api/first-read/route'
 export default function FirstReadCards({ variant }: { variant: 'dashboard' | 'import' }) {
   const [best, setBest] = useState<FirstReadTeaser | null>(null)
   const [worst, setWorst] = useState<FirstReadTeaser | null>(null)
+  const [insights, setInsights] = useState<RankedInsight[]>([])
   const [visible, setVisible] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
@@ -39,6 +42,7 @@ export default function FirstReadCards({ variant }: { variant: 'dashboard' | 'im
         const show = variant === 'import' ? true : (r.armed === true && r.dismissed !== true)
         if (r.best) setBest(r.best)
         if (r.worst) setWorst(r.worst)
+        if (Array.isArray(r.insights)) setInsights(r.insights)
         setVisible(show && r.best != null)
       } catch {
         /* silent — no card rather than an error state */
@@ -89,6 +93,11 @@ export default function FirstReadCards({ variant }: { variant: 'dashboard' | 'im
         <TeaserCard teaser={best} kind="best" />
         {worst && <TeaserCard teaser={worst} kind="worst" />}
       </div>
+
+      {/* Tag-free insights strip (Pt 15) — patterns pulled from the raw fills,
+          so the payoff isn't limited to two days. Renders nothing when the
+          engine has no gated insight to show. */}
+      <DataInsights insights={insights} variant="card" />
     </div>
   )
 }

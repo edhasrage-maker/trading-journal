@@ -20,6 +20,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { avgCaptureRatio, avgMfeMaeRatio, formatCapturePct, type TradeWithExcursion } from '@/lib/analytics'
 import { computeBehavioralProxies, type ProxyTrade } from '@/lib/behavioral-proxies'
+import { computeInsights, type InsightTrade, type RankedInsight } from '@/lib/data-insights'
 import { userConflict } from '@/lib/tenant-conflict'
 
 export const dynamic = 'force-dynamic'
@@ -32,6 +33,7 @@ interface TeaserTrade extends TradeWithExcursion, ProxyTrade {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   exits_json: any
   mfe_dollars_per_leg: number | null
+  entry_atr_1m: number | null
 }
 
 export interface FirstReadTeaser {
@@ -123,7 +125,7 @@ export async function GET(req: Request) {
   // with ?force=1.
   const force = new URL(req.url).searchParams.get('force') === '1'
   if (!force && (!armed || dismissed)) {
-    return NextResponse.json({ armed, dismissed, best: null, worst: null })
+    return NextResponse.json({ armed, dismissed, best: null, worst: null, insights: [] })
   }
 
   // Days + their P&L (eod_pnl override wins; else sum of the day's trade P&L).
@@ -135,12 +137,18 @@ export async function GET(req: Request) {
     )
     trades = await fetchAll<TeaserTrade>(
       () => db.from('trades').select(
-        'id, trading_day_id, pnl, direction, entry_time, exit_time, quantity, entry_price, stop_price, symbol, high_during_position, low_during_position, exits_json, mfe_dollars_per_leg',
+        'id, trading_day_id, pnl, direction, entry_time, exit_time, quantity, entry_price, stop_price, symbol, high_during_position, low_during_position, exits_json, mfe_dollars_per_leg, entry_atr_1m',
       ),
     )
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'query failed' }, { status: 500 })
   }
+
+  // Tag-free insights (Pt 15) over the whole imported history — the same
+  // gated/ranked "what your data already says" read the Patterns page shows,
+  // teased on the first-read card so a brand-new tagless account gets a payoff
+  // beyond just best/worst day. Empty on a thin sample (the engine suppresses).
+  const insights: RankedInsight[] = computeInsights(trades as unknown as InsightTrade[], { limit: 3 })
 
   const byDay = new Map<string, TeaserTrade[]>()
   for (const t of trades) {
@@ -161,7 +169,7 @@ export async function GET(req: Request) {
     .filter((x): x is { date: string; trades: TeaserTrade[]; pnl: number } => x != null)
 
   if (scored.length === 0) {
-    return NextResponse.json({ armed, dismissed, best: null, worst: null })
+    return NextResponse.json({ armed, dismissed, best: null, worst: null, insights })
   }
 
   let bestDay = scored[0]
@@ -177,7 +185,7 @@ export async function GET(req: Request) {
     ? null
     : teaserFor(worstDay.date, worstDay.trades, worstDay.pnl)
 
-  return NextResponse.json({ armed, dismissed, best, worst })
+  return NextResponse.json({ armed, dismissed, best, worst, insights })
 }
 
 export async function POST(req: Request) {

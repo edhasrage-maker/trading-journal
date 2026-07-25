@@ -12,6 +12,8 @@ import JournalThemes from './JournalThemes'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import CsvExportButton from './CsvExportButton'
 import TradeListModal, { type ModalCategory } from './TradeListModal'
+import DataInsights from '@/components/insights/DataInsights'
+import { computeInsights, type InsightTrade } from '@/lib/data-insights'
 import { useUiMode } from '@/lib/ui-mode'
 import { useLongTaskBeacon } from '@/lib/longtask-beacon'
 import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
@@ -170,6 +172,17 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
   }, [dayStats, startDate, endDate])
 
   const overall = useMemo(() => computeStats(filtered), [filtered])
+
+  // Tag-free insights (Pt 15) — patterns derived from the raw fills alone, so a
+  // freshly-imported account (whose Setup table below collapses to a single
+  // Discretionary bucket) still gets a real "what your data already says" read.
+  // Computed over the same `filtered` set every table reads, gated + ranked by
+  // (effect × sample confidence); the engine returns nothing on a thin sample,
+  // and DataInsights renders nothing when the list is empty.
+  const insights = useMemo(
+    () => computeInsights(filtered.map(toInsightTrade), { limit: 5 }),
+    [filtered],
+  )
 
   const setupPerf = useMemo(() => aggregateByTag(filtered, 'setups'), [filtered])
   const confluencePerf = useMemo(() => aggregateByTag(filtered, 'confluences'), [filtered])
@@ -371,6 +384,10 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
         )}
       </div>
 
+      {/* Tag-free insights — leads the analysis section, directly above the
+          Setup table (which is empty/Discretionary-only on a tagless import). */}
+      <DataInsights insights={insights} variant="analytics" />
+
       {/* Tag performance sections — each label click opens TradeListModal
           filtered to that tag (within the active date range). */}
       <TagPerformanceTable
@@ -452,6 +469,33 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
       />
     </div>
   )
+}
+
+/** Project a joined analytics row onto the raw shape the insight engine reads.
+ *  exit_time / exits_json aren't on the shared TradeWithContext type (the
+ *  analytics select fetches exit_time at runtime; exits_json is absent, and
+ *  captureComponents tolerates its absence by falling back to the simple
+ *  peak × full-qty formula), so both are read via a widening cast. */
+function toInsightTrade(t: TradeWithContext): InsightTrade {
+  const x = t as TradeWithContext & { exit_time?: string | null; exits_json?: unknown }
+  return {
+    id: t.id,
+    pnl: t.pnl,
+    direction: t.direction,
+    entry_time: t.entry_time,
+    exit_time: x.exit_time ?? null,
+    symbol: t.symbol,
+    quantity: t.quantity,
+    entry_price: t.entry_price,
+    stop_price: t.stop_price,
+    high_during_position: t.high_during_position,
+    low_during_position: t.low_during_position,
+    entry_atr_1m: t.entry_atr_1m,
+    exits_json: x.exits_json ?? null,
+    mfe_dollars_per_leg: t.mfe_dollars_per_leg,
+    date: t.date,
+    trading_day_id: t.trading_day_id,
+  }
 }
 
 function StatCard({

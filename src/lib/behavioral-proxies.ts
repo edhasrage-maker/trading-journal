@@ -253,6 +253,23 @@ function fmtSignedUsd(n: number): string {
   return `${r >= 0 ? '+' : '−'}$${Math.abs(r)}`
 }
 
+/**
+ * IDs of trades that are quick re-entries after a loss — the same
+ * revenge/tilt pattern proxy #1 flags, exposed as a per-trade set so callers
+ * that work across MANY days (the tag-free insight engine) can bucket "revenge
+ * re-entry" vs "everything else" without re-deriving the gap logic. Pass one
+ * day's trades at a time: the gap-from-previous-exit is only meaningful within
+ * a session (buildRows sorts by entry_time and an overnight gap would never
+ * clear REVENGE_GAP_MIN anyway, but grouping by day keeps the "previous trade"
+ * honest). Returns the ids whose entry landed within REVENGE_GAP_MIN of a
+ * losing exit — a strict subset of the day's trades.
+ */
+export function revengeReentryIds(trades: ProxyTrade[]): string[] {
+  return buildRows(trades)
+    .filter(r => r.prevOutcome === 'loss' && r.gapFromPrevExitMin != null && r.gapFromPrevExitMin < REVENGE_GAP_MIN)
+    .map(r => r.id)
+}
+
 /** Format the proxies as an interpreted context block for an AI prompt. Returns
  *  '' when there are too few trades or no signal, so a clean session adds no
  *  prompt weight. Framed as observations, NOT scoring criteria. */
