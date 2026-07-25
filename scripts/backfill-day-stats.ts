@@ -11,8 +11,9 @@
  * Schema dependency: requires migration 20260718_day_stats_materialization
  * (trading_days.stats_json + stats_version) to be applied FIRST on the target DB.
  *
- * Usage:
- *   node --experimental-strip-types scripts/backfill-day-stats.ts [--apply] [--public] [--force] [--limit=N]
+ * Usage (use tsx, NOT `node --experimental-strip-types` — this script
+ * transitively imports @/-aliased app modules that plain node can't resolve):
+ *   npx tsx scripts/backfill-day-stats.ts [--apply] [--public] [--force] [--limit=N]
  *
  *   (default)  DRY RUN — computes + reports, writes nothing.
  *   --apply    persist stats_json + stats_version.
