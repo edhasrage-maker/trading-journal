@@ -34,6 +34,8 @@ interface TeaserTrade extends TradeWithExcursion, ProxyTrade {
   exits_json: any
   mfe_dollars_per_leg: number | null
   entry_atr_1m: number | null
+  post_exit_favorable_pts: number | null
+  post_exit_against_pts: number | null
 }
 
 export interface FirstReadTeaser {
@@ -137,7 +139,7 @@ export async function GET(req: Request) {
     )
     trades = await fetchAll<TeaserTrade>(
       () => db.from('trades').select(
-        'id, trading_day_id, pnl, direction, entry_time, exit_time, quantity, entry_price, stop_price, symbol, high_during_position, low_during_position, exits_json, mfe_dollars_per_leg, entry_atr_1m',
+        'id, trading_day_id, pnl, direction, entry_time, exit_time, quantity, entry_price, stop_price, symbol, high_during_position, low_during_position, exits_json, mfe_dollars_per_leg, entry_atr_1m, post_exit_favorable_pts, post_exit_against_pts',
       ),
     )
   } catch (e) {

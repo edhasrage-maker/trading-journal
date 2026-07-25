@@ -10,7 +10,9 @@ import type { TradingDay, Trade, MarketContext } from '@/lib/supabase/types'
 type AnyClient = any
 
 type DayRow = Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types' | 'eod_pnl' | 'ai_analysis_json'>
-type ContextRow = Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>
+// atr_at_ib_close exists on market_context but the generated MarketContext type
+// hasn't caught up (same as entry_atr_1m elsewhere), so widen it in here.
+type ContextRow = Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'> & { atr_at_ib_close: number | null }
 
 interface HistRow {
   id: string
@@ -47,7 +49,7 @@ interface HistRow {
  *  a `trading_days` + `market_context` row (either AI-extracted from a prep
  *  screenshot, or backfilled from a 1m CSV) get bucketed correctly instead
  *  of falling into the Unknown bin. */
-type ContextByDate = Map<string, Pick<ContextRow, 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>>
+type ContextByDate = Map<string, Pick<ContextRow, 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m' | 'atr_at_ib_close'>>
 
 /** Per-date day-type lookup pulled from native `trading_days.day_types[]`
  *  (the labels the trader set during prep). Historical Tradezella trades
@@ -113,6 +115,7 @@ function histToContext(h: HistRow, ctxByDate: ContextByDate, dayTypesByDate: Day
     ib_vs_10d_avg: ctx?.ib_vs_10d_avg ?? null,
     adr: ctx?.adr ?? null,
     atr_1m: ctx?.atr_1m ?? null,
+    atr_at_ib_close: ctx?.atr_at_ib_close ?? null,
   }
 }
 
@@ -158,7 +161,7 @@ export default async function AnalyticsPage({
       .select('id, date, day_type, day_types, eod_pnl, ai_analysis_json') as Promise<{ data: DayRow[] | null }>,
     supabase
       .from('market_context')
-      .select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m') as Promise<{ data: ContextRow[] | null }>,
+      .select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m, atr_at_ib_close') as Promise<{ data: ContextRow[] | null }>,
   ])
 
   // Paginate past Supabase's 1000-row cap. The journal has thousands of trades,
@@ -179,7 +182,7 @@ export default async function AnalyticsPage({
   for (let p = 0; p < 50; p++) {
     let q = supabase
       .from('trades')
-      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, exit_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment, structure_5m_regime')
+      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, exit_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment, structure_5m_regime, post_exit_favorable_pts, post_exit_against_pts')
     if (slackStart) q = q.gte('entry_time', slackStart)
     const { data, error } = await q
       .order('entry_time', { ascending: true })

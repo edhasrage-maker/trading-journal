@@ -29,6 +29,11 @@ export interface TradeWithContext extends TradeWithExcursion {
   ib_vs_10d_avg: number | null
   adr: number | null
   atr_1m: number | null
+  // Wilder-10 ATR snapshotted at IB close (07:29 PT) — the calibrated basis for
+  // the IB regime lens (ib-day-type.ts REGIME_CUTS_WILDER). Stored on
+  // market_context; the generated MarketContext type hasn't caught up, so
+  // callers widen it in (same pattern as entry_atr_1m).
+  atr_at_ib_close: number | null
   // Per-trade entry-time snapshots (backfilled by scripts/backfill-entry-metrics.ts).
   // ATR/RVOL at the minute of entry, no afternoon lookahead. ConditionBuckets
   // prefers these when present, falls back to day-level rvol/atr_1m for
@@ -1090,7 +1095,7 @@ export function maxDrawdown(points: { cum_pnl: number }[]): number {
 export function joinTradesWithContext(
   trades: (TradeWithExcursion & { entry_atr_1m?: number | null; entry_rvol?: number | null; mfe_dollars_per_leg?: number | null; structure_5m_regime?: 'bull' | 'bear' | 'neutral' | 'insufficient' | null })[],
   days: Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types'>[],
-  contexts: Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>[],
+  contexts: (Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'> & { atr_at_ib_close?: number | null })[],
 ): TradeWithContext[] {
   const dayById = new Map(days.map(d => [d.id, d]))
   const ctxByDay = new Map(contexts.map(c => [c.trading_day_id, c]))
@@ -1110,6 +1115,7 @@ export function joinTradesWithContext(
       ib_vs_10d_avg: c?.ib_vs_10d_avg ?? null,
       adr: c?.adr ?? null,
       atr_1m: c?.atr_1m ?? null,
+      atr_at_ib_close: c?.atr_at_ib_close ?? null,
       entry_atr_1m: t.entry_atr_1m ?? null,
       entry_rvol: t.entry_rvol ?? null,
       mfe_dollars_per_leg: t.mfe_dollars_per_leg ?? null,

@@ -38,7 +38,8 @@
 import { MIN_SAMPLE } from '@/lib/sample-size'
 import { symbolRoot } from '@/lib/futures-symbols'
 import { revengeReentryIds } from '@/lib/behavioral-proxies'
-import { captureComponents, type TradeWithExcursion } from '@/lib/analytics'
+import { captureComponents, mfeMaePoints, type TradeWithExcursion } from '@/lib/analytics'
+import { classifyIbDayType } from '@/lib/ib-day-type'
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 /** Confidence saturates here: |z| ≥ 3.29 (≈ p .001) → weight 1. */
@@ -77,6 +78,17 @@ export interface InsightTrade {
   /** PT trading-day date (YYYY-MM-DD) when the caller has it (analytics rows). */
   date?: string | null
   trading_day_id?: string | null
+  // Day-level market context (inherited on every trade of the day) — feeds the
+  // IB day-type dimension. Present only where market_context exists (prep or a
+  // bars backfill), so the day-type insights suppress on a fresh fills import.
+  ib_size?: number | null
+  ib_vs_10d_avg?: number | null
+  atr_at_ib_close?: number | null
+  // Direction-relative price movement in the 30m AFTER exit (backfilled from
+  // bars). Feeds the post-exit "fading vs shaken out" read on losing trades;
+  // null on a fresh import that hasn't run the bar backfill.
+  post_exit_favorable_pts?: number | null
+  post_exit_against_pts?: number | null
 }
 
 export type InsightTone = 'good' | 'bad' | 'neutral'
@@ -445,9 +457,40 @@ const captureLeakage: Builder = trades => {
   return {
     key: 'capture_leakage', dimension: 'Exits',
     headline: 'You leave part of the move on the table',
-    detail: `You book ${pct(c.meanA)} of the favorable move on average across ${c.nA} trades — earlier partial exits would lift your profit factor.`,
+    detail: `You book ${pct(c.meanA)} of the favorable move on average across ${c.nA} trades — earlier partial exits would lift your profit factor.${targetClause(trades)}`,
     footnote: `${c.nA} trades with a clean read`, tone: 'bad', score: c.score,
   }
+}
+
+/**
+ * A concrete "aim for ~X" clause from the MFE distribution — the actionable
+ * half of the capture read. Expressed in R when a planned stop exists, else in
+ * ×ATR when the entry ATR is present; both are risk units, so the number means
+ * something. Returns '' (no fabricated target) on a fresh fills-only import that
+ * has neither — the capture % alone still stands. Uses the median favorable
+ * excursion the trades actually reach, so the target is one the data supports.
+ */
+function targetClause(trades: InsightTrade[]): string {
+  const rMfe: number[] = []
+  const atrMfe: number[] = []
+  for (const t of trades) {
+    if (!t.trading_day_id) continue
+    const pts = mfeMaePoints(t as unknown as TradeWithExcursion)
+    if (!pts || pts.mfe <= 0) continue
+    if (t.entry_price != null && t.stop_price != null) {
+      const risk = Math.abs(t.entry_price - t.stop_price)
+      if (risk > 0) rMfe.push(pts.mfe / risk)
+    }
+    if (t.entry_atr_1m != null && t.entry_atr_1m > 0) atrMfe.push(pts.mfe / t.entry_atr_1m)
+  }
+  if (rMfe.length >= DEFAULT_MIN_N) {
+    const m = Math.round(median(rMfe) * 2) / 2 // nearest 0.5R
+    if (m >= 1) return ` Most trades reach ~${m.toFixed(1)}R in your favor before turning — a target near ${m.toFixed(1)}R would book more of it.`
+  } else if (atrMfe.length >= DEFAULT_MIN_N) {
+    const m = Math.round(median(atrMfe) * 2) / 2 // nearest 0.5×ATR
+    if (m >= 0.5) return ` Most trades reach ~${m.toFixed(1)}×ATR in your favor before turning — a nearer target would book more of it.`
+  }
+  return ''
 }
 
 /** 7. Hold time — quick exits vs long holds, on win rate. */
@@ -557,9 +600,132 @@ const dayOfWeek: Builder = trades => {
   }
 }
 
+// ── IB day-type (regime + size) — reuses the prep-page classifier ────────────
+// Needs per-day market_context (ib_size, ib_vs_10d_avg, atr_at_ib_close), so it
+// only fires on days with prep or a bars backfill — silent on a fresh fills
+// import. atrMeanHL10 isn't persisted; the classifier's Wilder basis
+// (REGIME_CUTS_WILDER) is what atr_at_ib_close is calibrated for, so passing it
+// as atrWilder10 is exact, not an approximation.
+const SIZE_BAND_LABEL: Record<string, string> = {
+  small: 'small-IB days', normal: 'normal-IB days', large: 'large-IB days',
+}
+const REGIME_BAND_LABEL: Record<string, string> = {
+  chop: 'chop days', mid: 'mid-range days', expanded: 'trend days',
+}
+
+/** Classify each trading day into its IB size + regime bands (once per day —
+ *  the context is inherited on every trade of the day). */
+function classifyTradeDays(trades: InsightTrade[]): Map<string, { sizeBand: string | null; regimeBand: string | null }> {
+  const byDay = new Map<string, InsightTrade[]>()
+  for (const t of trades) {
+    const k = dayKeyOf(t)
+    if (!k) continue
+    const arr = byDay.get(k) ?? []
+    arr.push(t)
+    byDay.set(k, arr)
+  }
+  const out = new Map<string, { sizeBand: string | null; regimeBand: string | null }>()
+  for (const [k, ts] of byDay) {
+    const ctx = ts.find(t => t.ib_size != null || t.ib_vs_10d_avg != null || t.atr_at_ib_close != null)
+    if (!ctx) { out.set(k, { sizeBand: null, regimeBand: null }); continue }
+    const c = classifyIbDayType({
+      session: 'rth',
+      ibRange: ctx.ib_size ?? null,
+      atrMeanHL10: null,
+      atrWilder10: ctx.atr_at_ib_close ?? null,
+      ibVs10dAvg: ctx.ib_vs_10d_avg ?? null,
+    })
+    out.set(k, { sizeBand: c.sizeBand, regimeBand: c.regimeBand })
+  }
+  return out
+}
+
+/** Strongest "days of band X vs your other days" win-rate contrast across the
+ *  bands a day-type lens produces. Unclassified days are excluded from BOTH
+ *  sides so like is compared with like. */
+function bandVsRestInsight(
+  trades: InsightTrade[],
+  bandOf: (t: InsightTrade) => string | null,
+  opts: { key: string; dimension: string; label: (band: string) => string },
+): RankedInsight | null {
+  const bands = new Map<string, InsightTrade[]>()
+  for (const t of trades) {
+    const b = bandOf(t)
+    if (!b) continue
+    const arr = bands.get(b) ?? []
+    arr.push(t)
+    bands.set(b, arr)
+  }
+  if (bands.size < 2) return null
+  let best: { c: Contrast; band: string } | null = null
+  for (const [band, ts] of bands) {
+    const rest = trades.filter(t => { const b = bandOf(t); return b != null && b !== band })
+    const c = contrastProportion(winFlags(ts), winFlags(rest))
+    if (c?.passes && (!best || c.score > best.c.score)) best = { c, band }
+  }
+  if (!best) return null
+  const { c, band } = best
+  const better = c.effect > 0
+  const label = opts.label(band)
+  return {
+    key: opts.key, dimension: opts.dimension,
+    headline: `${cap(label)} are your ${better ? 'best' : 'worst'} days`,
+    detail: `You win ${pct(c.meanA)} on ${label} vs ${pct(c.meanB)} on your other days.`,
+    footnote: footN(c.nA, c.nB), tone: better ? 'good' : 'bad', score: c.score,
+  }
+}
+
+/** 11. IB size band — small / normal / large IB days. */
+const dayTypeSize: Builder = trades => {
+  const cls = classifyTradeDays(trades)
+  return bandVsRestInsight(
+    trades,
+    t => { const k = dayKeyOf(t); return k ? cls.get(k)?.sizeBand ?? null : null },
+    { key: 'day_type_size', dimension: 'Day type', label: b => SIZE_BAND_LABEL[b] ?? b },
+  )
+}
+
+/** 12. IB regime band — chop / mid / trend days (IB ÷ ATR). */
+const dayTypeRegime: Builder = trades => {
+  const cls = classifyTradeDays(trades)
+  return bandVsRestInsight(
+    trades,
+    t => { const k = dayKeyOf(t); return k ? cls.get(k)?.regimeBand ?? null : null },
+    { key: 'day_type_regime', dimension: 'Day type', label: b => REGIME_BAND_LABEL[b] ?? b },
+  )
+}
+
+/** 13. Post-exit read on LOSING trades — did the loss keep running against you
+ *  (fading the move / wrong side) or reverse right after you were out (stopped
+ *  too tight)? Scale-free per-trade ratio against/(against+favorable), one-sample
+ *  vs 0.5. Needs the post-exit bar backfill; silent on a fresh import. */
+const postExitLoss: Builder = trades => {
+  const ratios: number[] = []
+  for (const t of trades) {
+    if ((t.pnl ?? 0) >= 0) continue // losers only
+    const fav = t.post_exit_favorable_pts, ag = t.post_exit_against_pts
+    if (fav == null || ag == null) continue
+    const denom = fav + ag
+    if (denom <= 0) continue
+    ratios.push(ag / denom) // share of the post-exit move that CONTINUED against the position
+  }
+  const c = contrastVsBenchmark(ratios, 0.5)
+  if (!c?.passes) return null
+  const fading = c.effect > 0
+  return {
+    key: 'post_exit_loss', dimension: 'Exits',
+    headline: fading ? 'Your losers keep running against you' : 'You get shaken out of your losers',
+    detail: fading
+      ? `On losing trades, ${pct(c.meanA)} of the move after you exit keeps going against you — you may be fading the dominant move.`
+      : `On losing trades, ${pct(1 - c.meanA)} of the move after you exit reverses back your way — your stops may be too tight.`,
+    footnote: `${c.nA} losing trades with a post-exit read`, tone: fading ? 'bad' : 'neutral', score: c.score,
+  }
+}
+
 const BUILDERS: Builder[] = [
   timeOfDay, instrument, direction, tradesPerDay, revengeReentry,
   captureLeakage, holdTime, sizeVsOutcome, prevOutcome, dayOfWeek,
+  dayTypeSize, dayTypeRegime, postExitLoss,
 ]
 
 /**
