@@ -205,6 +205,8 @@ insert into trade_tags (category, label, sort_order) values
   ('confluences', 'Volume Node', 8),
   ('confluences', 'Gap Edge', 9),
   ('confluences', 'Round Number', 10),
+  ('confluences', 'Follow LTF structure', 11),
+  ('confluences', 'Fade LTF structure', 12),
   -- Order Flow
   ('order_flow', 'Absorption', 1),
   ('order_flow', 'Exhaustion', 2),
