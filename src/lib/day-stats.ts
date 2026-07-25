@@ -86,7 +86,10 @@ export interface DayStatsRollup {
 // rollup caches that derived result, so every row must recompute — otherwise
 // the Review · Month ring + decision-quality list read the stale old-shape
 // components as null (0/0/0) and the cached scores stay on the old formula.
-export const STATS_VERSION = 2
+// v3 (2026-07-24): TapeScore amendment 7 re-weighted the three axes to equal
+// thirds (was 50/30/20). Same components, new blend — every cached composite
+// must recompute or the ring shows the old risk-dominant number.
+export const STATS_VERSION = 3
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`

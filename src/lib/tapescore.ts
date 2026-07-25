@@ -8,23 +8,29 @@ import type { EodAiAnalysis, ExecutionScore, ProcessVerdict, RuleStatus } from '
  * every historical row gets a TapeScore for free and re-weights can't strand
  * stale stored values.
  *
- *   TapeScore = round(0.50·Risk + 0.30·Entry + 0.20·Capture)
+ *   TapeScore = round((Risk + Entry + Capture) / 3)   — the three axes weighted equally
  *
- *   Risk    = pass_count/5 × 100 over the five safety rails (the old "Rules")
+ *   Risk    = pass_count/5 × 100 over the five safety rails (size + account limits)
  *   Entry   = the execution composite with MFE-capture REMOVED, renormalized
  *             (execution parameters 41 / prep adherence 24 / profit factor 11
  *             → /76), × 100. Ran-but-unscoreable → 0.
- *   Capture = mfe_capture × 100 — profit capture as its OWN axis.
+ *   Capture = mfe_capture × 100 — how much of the move you kept (the "Exit" axis).
  *
- * AMENDMENT 6 (2026-07-23, founder-directed) — the score now decomposes into
- * the same three axes the Review composition ring shows, mapping the trade
+ * AMENDMENT 6 (2026-07-23, founder-directed) — the score decomposes into the
+ * same three axes the Review composition ring shows, mapping the trade
  * lifecycle: manage risk → enter well → exit well. Two deliberate changes:
  *   • Plan-quality (the old "Prep" 15% component) is DROPPED — Capture replaces
  *     it. A morning plan is an input to a decision, not a graded decision.
  *   • Capture is pulled OUT of the execution composite so it isn't
  *     double-counted: Entry is execution WITHOUT capture, Capture stands alone.
- * Weights moved 50/35/15 → 50/30/20. Risk stays dominant (safety-rail
- * philosophy). This re-scores history — intended, and the point of the change.
+ *
+ * AMENDMENT 7 (2026-07-24, founder-directed) — the three axes are now weighted
+ * EQUALLY (⅓ each), retiring the risk-dominant 50/30/20 blend. The axes were
+ * relabelled to read as non-overlapping stages — Risk = size + account limits,
+ * Entry = setup / timing / stop, Exit = how much of the move you kept — so no
+ * single stage owns the score. This re-scores history (weights only; the
+ * per-axis math is unchanged). Risk keeps an outsized FLOOR effect regardless of
+ * the equal weight: the Breach cap still pins a rule-breaking session at 49.
  *
  * Missing components renormalize the remaining weights. Breach sessions
  * (≤3/5 rails) are capped at 49 so they can never render green or amber.
@@ -42,11 +48,11 @@ export interface TapeScoreResult {
   /** True when the Breach cap (≤49) lowered the weighted blend. */
   capped: boolean
   components: {
-    /** Safety-rail score, 0-100 (pass_count/5 × 100). The 50% axis. */
+    /** Safety-rail score, 0-100 (pass_count/5 × 100). One of three equal axes (⅓). */
     risk: number | null
-    /** Entry quality, 0-100 — execution composite minus capture. The 30% axis. */
+    /** Entry quality, 0-100 — execution composite minus capture. One of three equal axes (⅓). */
     entry: number | null
-    /** Profit capture, 0-100 (mfe_capture × 100). The 20% axis. */
+    /** Profit capture, 0-100 (mfe_capture × 100) — the "Exit" axis. One of three equal axes (⅓). */
     capture: number | null
     /** Safety rails passed, 0-5. Null on legacy-basis rows. */
     passCount: number | null
@@ -56,9 +62,12 @@ export interface TapeScoreResult {
   }
 }
 
-const W_RISK = 0.5
-const W_ENTRY = 0.3
-const W_CAPTURE = 0.2
+// Amendment 7: the three axes carry equal weight (⅓ each). Kept as separate
+// named constants so the blend below reads the same and a future re-weight is a
+// one-line change per axis.
+const W_RISK = 1 / 3
+const W_ENTRY = 1 / 3
+const W_CAPTURE = 1 / 3
 const BREACH_CAP = 49
 
 export function tapeScoreBand(score: number): TapeScoreBand {

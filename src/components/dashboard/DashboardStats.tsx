@@ -359,7 +359,7 @@ function TapeScoreHero({ period, periodLabel }: {
       <TapeScoreRing
         score={score}
         band={band}
-        title="TapeScore — one 0-100 score per day: risk limits kept (50%), entry quality (30%), profit capture (20%). Days that broke 2+ risk rails cap at 49."
+        title="TapeScore — one 0-100 score per day: risk, entry and exit, weighted equally. Days that broke 2+ risk rails cap at 49."
       />
       <div className="flex-1 min-w-[240px]">
         {score != null ? (
@@ -388,9 +388,9 @@ function TapeScoreHero({ period, periodLabel }: {
               )}
               {capture != null && (
                 <HeroChip
-                  label={`Capture ${capture}`}
+                  label={`Exit ${capture}`}
                   tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
-                  title="Average profit capture (0-100): how much of the favorable move you kept — MFE captured"
+                  title="Average exit / profit capture (0-100): how much of the favorable move you kept — MFE captured"
                 />
               )}
             </div>

@@ -60,7 +60,7 @@ export default function TapeScoreHeader({
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-4 flex-wrap">
       <div
         className={`relative w-[76px] h-[76px] shrink-0 ${thin ? 'opacity-60' : ''}`}
-        title="TapeScore — one 0-100 score for the day: risk limits kept (50%), entry quality (30%), profit capture (20%). Days that broke 2+ risk rails cap at 49."
+        title="TapeScore — one 0-100 score for the day: risk, entry and exit, weighted equally. Days that broke 2+ risk rails cap at 49."
       >
         <svg width="76" height="76" viewBox="0 0 92 92" className="-rotate-90">
           <circle cx="46" cy="46" r={R} fill="none" stroke="#1f2937" strokeWidth="7" />
@@ -117,9 +117,9 @@ export default function TapeScoreHeader({
               )}
               {capture != null && (
                 <Chip
-                  label={`Capture ${capture}`}
+                  label={`Exit ${capture}`}
                   tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
-                  title="Profit capture (0-100): how much of the favorable move you kept — MFE captured"
+                  title="Exit / profit capture (0-100): how much of the favorable move you kept — MFE captured"
                 />
               )}
             </>
