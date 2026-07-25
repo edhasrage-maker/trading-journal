@@ -436,6 +436,10 @@ NO TRADE DATA — the trader logged no trades in this window.
   // closed ≤ breakeven. `measurable` is the honest denominator (trades where
   // "was up" could be evaluated); `giveBackUsd` = peak-to-exit $ handed back.
   const rt = { n: 0, measurable: 0, giveBackUsd: 0 }
+  // MFE samples (×ATR + best-case $ + realized pnl) collected in the loop, so
+  // give-back is measured against the trader's OWN typical (median) move rather
+  // than a fixed 1×ATR anchor — the median + round-trip are computed after the loop.
+  const mfeSamples: Array<{ atr: number; usd: number | null; pnl: number }> = []
 
   for (const t of trades) {
     const pnl = t.pnl ?? 0
@@ -452,11 +456,11 @@ NO TRADE DATA — the trader logged no trades in this window.
     if (t._source === 'native') {
       const ex = interpretExcursion(t, giveBackAtr)
       r = ex.r; capPct = ex.capPct; mfeUsd = ex.mfeUsd
-      const { leftUsd, mfeR, maePts, maePct, mfeAtr, maeAtr, roundTripMeasurable, roundTripped, roundTripGiveBackUsd } = ex
+      const { leftUsd, mfeR, maePts, maePct, mfeAtr, maeAtr } = ex
 
-      // Round-trip accumulation (window-level — invisible in the UI, coach-only).
-      if (roundTripMeasurable) rt.measurable++
-      if (roundTripped) { rt.n++; rt.giveBackUsd += roundTripGiveBackUsd ?? 0 }
+      // Collect the MFE sample — round-trip/give-back is computed after the loop
+      // against the trader's MEDIAN move, not the fixed 1×ATR anchor.
+      if (mfeAtr != null) mfeSamples.push({ atr: mfeAtr, usd: mfeUsd, pnl })
 
       // ×ATR accumulation (volatility-normalized excursion).
       if (mfeAtr != null) { atrAgg.mfeAll.n++; atrAgg.mfeAll.sum += mfeAtr; if (isWin) { atrAgg.mfeWin.n++; atrAgg.mfeWin.sum += mfeAtr } }
@@ -651,6 +655,31 @@ THIS WEEK vs PRIOR WEEK:
   Prior week (${past14} → ${past7}): ${tradesPriorWeek.length} trades · ${fmt(wkPnl(tradesPriorWeek))} · WR ${wkWR(tradesPriorWeek) ?? '—'}%`
   }
 
+  // ── Median MFE + median-relative give-back ──
+  // The trader's TYPICAL best-case run (median MFE), in ×ATR and $. Give-back is
+  // measured against THIS — "was up a typical move, then handed it back to
+  // breakeven-or-worse" — instead of a fixed 1×ATR anchor, so it self-calibrates
+  // to how far this trader's trades actually run.
+  const median = (arr: number[]): number | null => {
+    if (arr.length === 0) return null
+    const s = [...arr].sort((a, b) => a - b)
+    const m = Math.floor(s.length / 2)
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
+  }
+  const medMfeAtr = median(mfeSamples.map(e => e.atr))
+  const medMfeUsd = median(mfeSamples.map(e => e.usd).filter((v): v is number => v != null && v > 0))
+  // Threshold = median MFE (×ATR); fall back to the configured ATR multiple only
+  // when there aren't enough samples to trust a median.
+  const giveBackBasis: 'median' | 'atr' = mfeSamples.length >= 8 && medMfeAtr != null ? 'median' : 'atr'
+  const giveBackThreshold = giveBackBasis === 'median' ? medMfeAtr! : giveBackAtr
+  for (const e of mfeSamples) {
+    rt.measurable++
+    if (e.atr >= giveBackThreshold && e.pnl <= 0) {
+      rt.n++
+      rt.giveBackUsd += e.usd != null ? e.usd - e.pnl : 0
+    }
+  }
+
   // Exit-efficiency summary. Dollar basis is the headline (covers ~all trades);
   // R basis adds TP2-reachability where a stop was logged.
   const dl = exitEff.dollar
@@ -662,7 +691,8 @@ THIS WEEK vs PRIOR WEEK:
     ? '  (no MFE data on trades in this window)'
     : `  WINNERS scored ($ basis, no stop needed): ${dl.n} of ${winners} winners
   Captured ${pct(dl.sumCapPct, dl.n)}% of the available favorable move on avg · left ${dl.n > 0 ? usd(dl.sumLeft / dl.n) : '—'}/win on the table (avg realized ${dl.n > 0 ? usd(dl.sumRealized / dl.n) : '—'} vs avg peak ${dl.n > 0 ? usd(dl.sumMfe / dl.n) : '—'})
-  MFE size (×ATR, ${atrAgg.mfeAll.n} trades w/ ATR): all ${avgAtr(atrAgg.mfeAll)}×ATR · winners ${avgAtr(atrAgg.mfeWin)}×ATR — ×ATR is SIZE-AGNOSTIC; read it next to the $ above, not instead of it (a big ×ATR move on small size is small $; $ is the goal)
+  TYPICAL MOVE (median MFE, ${mfeSamples.length} trades): ${medMfeAtr != null ? medMfeAtr.toFixed(2) + '×ATR' : '—'}${medMfeUsd != null ? ` ≈ ${usd(medMfeUsd)} best-case` : ''} — what a typical trade OFFERS at its peak; the capture% above is what you KEEP of it. The gap between them is the opportunity — anchor "leaving money on the table" to THIS, not a fixed target.
+  MFE size (×ATR, ${atrAgg.mfeAll.n} trades w/ ATR): all ${avgAtr(atrAgg.mfeAll)}×ATR (mean) · winners ${avgAtr(atrAgg.mfeWin)}×ATR — ×ATR is SIZE-AGNOSTIC; read it next to the $ above, not instead of it (a big ×ATR move on small size is small $; $ is the goal)
   TP2 reachability (R basis, ${rb.withStop} trades w/ a logged stop): any ran ≥2R ${pct(rb.ge2R, rb.withStop)}% · ≥3R ${pct(rb.ge3R, rb.withStop)}% · winners ≥2R ${pct(rb.winGe2R, rb.winners)}% · ≥3R ${pct(rb.winGe3R, rb.winners)}%`
 
   // MAE / heat-taken summary — the adverse twin of exit efficiency. Headline is
@@ -685,12 +715,15 @@ ${MAE_BUCKETS.map(([label]) => {
     return `    ${label}: ${b.count} trades · WR ${wr}% · avgR ${avgR} · ${fmt(b.pnl)}`
   }).join('\n')}`
 
-  // Round-trip / gave-it-back summary — a real winner (up ≥1×ATR / ≥1R) handed
-  // back to breakeven-or-worse. NOT the same as a disciplined early scratch:
-  // here the trade WAS up meaningfully and then round-tripped past BE.
+  // Round-trip / gave-it-back summary — a real winner (up ≥ the trader's TYPICAL
+  // move) handed back to breakeven-or-worse. NOT a disciplined early scratch:
+  // here the trade WAS up a typical amount and then round-tripped past BE.
+  const giveBackRef = giveBackBasis === 'median'
+    ? `your typical move (${medMfeAtr!.toFixed(2)}×ATR median MFE)`
+    : `${giveBackAtr}×ATR`
   const roundTripBlock = rt.n === 0
-    ? '  (no round-trips in this window — no winner was handed back to BE-or-worse)'
-    : `  ${rt.n} of ${rt.measurable} evaluable trades round-tripped (ran ≥${giveBackAtr}×ATR in favor, then closed ≤ breakeven) · gave back ${usd(rt.giveBackUsd)} from peak to exit.`
+    ? `  (no round-trips in this window — no trade ran ≥ ${giveBackRef} then gave it back to BE-or-worse)`
+    : `  ${rt.n} of ${rt.measurable} evaluable trades round-tripped (ran ≥ ${giveBackRef} in favor, then closed ≤ breakeven) · gave back ${usd(rt.giveBackUsd)} from peak to exit.`
 
   // Day-conditions regime performance (#2c) — are they selective on the regimes they win in?
   const regimeLine = (m: Map<string, { count: number; wins: number; losers: number; pnl: number }>, order: string[]) =>
@@ -781,7 +814,7 @@ ${exitEffBlock}
 MAE — HEAT TAKEN (adverse excursion before the trade resolved; "planned" heat = your stop distance, "taken" = the actual move against you. Speaks to entry timing, stop sizing, and risk management — low heat on winners = clean entries; high heat that still won = nearly stopped out):
 ${maeBlock}
 
-ROUND-TRIP — GAVE-IT-BACK (a real winner — ran ≥${giveBackAtr}×ATR (1m Wilder-10) in favor — round-tripped to breakeven-or-worse; this is a management/exit-discipline signal, NOT a disciplined early scratch and NOT a trade that was simply never green):
+ROUND-TRIP — GAVE-IT-BACK (a trade that ran ≥ ${giveBackRef} in favor — i.e. up a TYPICAL move for this trader — then round-tripped to breakeven-or-worse; this is a management/exit-discipline signal, NOT a disciplined early scratch and NOT a trade that was simply never green):
 ${roundTripBlock}
 
 POST-EXIT — MARKET SENSE / DIRECTIONAL READ (where price went in the 30 min AFTER you exited; a read on directional bias, NOT an exit-timing grade):
