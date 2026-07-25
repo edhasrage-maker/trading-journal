@@ -5,10 +5,16 @@ import Link from 'next/link'
 import { Upload, ArrowLeft, CheckCircle2, AlertTriangle, Loader2, Download } from 'lucide-react'
 import { getHandle, setHandle } from '@/lib/file-handle-store'
 import FirstReadCards from '@/components/dashboard/FirstReadCards'
+import SierraAccountPicker from '@/components/import/SierraAccountPicker'
+import { isSierraLogText, sierraAccountsInLog, filterSierraLogByAccounts, type SierraAccount } from '@/lib/sc-accounts'
 
 // Key for the last-imported file handle in the IndexedDB handle store — passed
 // back as showOpenFilePicker({ startIn }) so re-imports reopen at the same folder.
 const LAST_IMPORT_HANDLE = 'import:last-file'
+
+// Under Vercel's ~4.5 MB serverless request-body limit — a larger upload is
+// rejected by the platform before our route runs (a bare, confusing failure).
+const MAX_UPLOAD_BYTES = 4_000_000
 
 // Minimal typing for the File System Access API (not in the TS DOM lib on all
 // targets). Only the bits we use.
@@ -48,6 +54,8 @@ export default function ImportPage() {
   // True after a successful import that populated a previously-empty journal —
   // gates the post-import "first read" recap teaser (item 22).
   const [firstImport, setFirstImport] = useState(false)
+  // A multi-account Sierra log awaiting the account choice before upload.
+  const [pending, setPending] = useState<{ name: string; text: string; accounts: SierraAccount[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // The File System Access API is Chromium-only; only then can we reopen the
@@ -73,7 +81,7 @@ export default function ImportPage() {
         })
         if (!handle) return
         void setHandle(LAST_IMPORT_HANDLE, handle) // remember this folder for next time
-        upload(await handle.getFile())
+        void peekAndUpload(await handle.getFile())
         return
       } catch (e) {
         // AbortError = the user closed the picker; anything else → fall through.
@@ -83,7 +91,35 @@ export default function ImportPage() {
     inputRef.current?.click()
   }
 
+  // Peek at Sierra logs before upload: a copy-trading export carries many
+  // accounts (too big to upload, and N× duplicated), so intercept and let the
+  // trader pick which account to import. Everything else uploads directly.
+  async function peekAndUpload(file: File) {
+    setError(null)
+    try {
+      const text = await file.text()
+      if (isSierraLogText(text)) {
+        const accounts = sierraAccountsInLog(text)
+        if (accounts.length > 1) { setPending({ name: file.name, text, accounts }); return }
+      }
+    } catch { /* fall through to a plain upload */ }
+    void upload(file)
+  }
+
+  function confirmAccounts(selected: Set<string>) {
+    if (!pending) return
+    const filtered = filterSierraLogByAccounts(pending.text, selected)
+    const base = pending.name.replace(/\.txt$/i, '')
+    const file = new File([filtered], `${base}-filtered.txt`, { type: 'text/plain' })
+    setPending(null)
+    void upload(file)
+  }
+
   async function upload(file: File) {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(`That file is ${(file.size / 1e6).toFixed(1)} MB — over the ~4 MB upload limit. For a Sierra log, import a single account; otherwise export a shorter date range.`)
+      return
+    }
     setBusy(true); setError(null); setResult(null); setWarnings([]); setFirstImport(false)
     try {
       // Was the journal empty BEFORE this import? Decides whether this is the
@@ -123,7 +159,7 @@ export default function ImportPage() {
 
   function onPick(files: FileList | null) {
     const file = files?.[0]
-    if (file) upload(file)
+    if (file) void peekAndUpload(file)
   }
 
   function downloadTemplate() {
@@ -179,6 +215,17 @@ export default function ImportPage() {
           onChange={e => onPick(e.target.files)}
         />
       </div>
+
+      {pending && (
+        <div className="mt-4">
+          <SierraAccountPicker
+            accounts={pending.accounts}
+            busy={busy}
+            onCancel={() => setPending(null)}
+            onConfirm={confirmAccounts}
+          />
+        </div>
+      )}
 
       {busy && (
         <div className="mt-4 flex items-center gap-2 text-sm text-gray-400">

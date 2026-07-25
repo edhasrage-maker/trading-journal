@@ -4,6 +4,12 @@ import { useState, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Upload, PencilLine, BarChart2, Loader2, AlertTriangle } from 'lucide-react'
+import SierraAccountPicker from '@/components/import/SierraAccountPicker'
+import { isSierraLogText, sierraAccountsInLog, filterSierraLogByAccounts, type SierraAccount } from '@/lib/sc-accounts'
+
+// Under Vercel's ~4.5 MB serverless request-body limit — over this the platform
+// rejects the upload before our route runs, surfacing only a bare failure.
+const MAX_UPLOAD_BYTES = 4_000_000
 
 /**
  * First-run empty-state card with drag-and-drop import. Dropping (or picking) a
@@ -17,9 +23,15 @@ export default function EmptyStateImport({ today }: { today: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  // A multi-account Sierra log awaiting the account choice before upload.
+  const [pending, setPending] = useState<{ name: string; text: string; accounts: SierraAccount[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  async function upload(file: File) {
+  async function postFile(file: File) {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(`That file is ${(file.size / 1e6).toFixed(1)} MB — over the ~4 MB upload limit. For a Sierra log, import a single account; otherwise export a shorter date range.`)
+      return
+    }
     setBusy(true); setError(null)
     try {
       const fd = new FormData()
@@ -49,9 +61,30 @@ export default function EmptyStateImport({ today }: { today: string }) {
     }
   }
 
-  function onPick(files: FileList | null) {
+  async function onPick(files: FileList | null) {
     const f = files?.[0]
-    if (f) upload(f)
+    if (!f) return
+    setError(null)
+    // Peek at Sierra logs: a copy-trading export carries many accounts, and
+    // uploading it whole is both too big and N× duplicated. Let the user pick an
+    // account and filter to it in the browser before upload.
+    try {
+      const text = await f.text()
+      if (isSierraLogText(text)) {
+        const accounts = sierraAccountsInLog(text)
+        if (accounts.length > 1) { setPending({ name: f.name, text, accounts }); return }
+      }
+    } catch { /* fall through to a plain upload */ }
+    void postFile(f)
+  }
+
+  function confirmAccounts(selected: Set<string>) {
+    if (!pending) return
+    const filtered = filterSierraLogByAccounts(pending.text, selected)
+    const base = pending.name.replace(/\.txt$/i, '')
+    const file = new File([filtered], `${base}-filtered.txt`, { type: 'text/plain' })
+    setPending(null)
+    void postFile(file)
   }
 
   return (
@@ -74,23 +107,38 @@ export default function EmptyStateImport({ today }: { today: string }) {
         import yet? Log one by hand to get started.
       </p>
 
-      <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          disabled={busy}
-          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-60"
-        >
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-          {busy ? 'Importing…' : 'Import trades (CSV)'}
-        </button>
-        <Link
-          href={`/intraday/${today}`}
-          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg border border-gray-700 bg-gray-800 text-gray-200 text-sm font-medium hover:bg-gray-700 transition-colors"
-        >
-          <PencilLine className="w-4 h-4" /> Log a trade manually
-        </Link>
-      </div>
+      {pending ? (
+        <div className="mt-6">
+          <SierraAccountPicker
+            accounts={pending.accounts}
+            busy={busy}
+            onCancel={() => setPending(null)}
+            onConfirm={confirmAccounts}
+          />
+        </div>
+      ) : (
+        <>
+          <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              disabled={busy}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {busy ? 'Importing…' : 'Import trades (CSV)'}
+            </button>
+            <Link
+              href={`/intraday/${today}`}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg border border-gray-700 bg-gray-800 text-gray-200 text-sm font-medium hover:bg-gray-700 transition-colors"
+            >
+              <PencilLine className="w-4 h-4" /> Log a trade manually
+            </Link>
+          </div>
+
+          <p className="text-xs text-gray-500 mt-4">…or drag &amp; drop a CSV / Sierra Chart .txt anywhere on this card</p>
+        </>
+      )}
 
       <input
         ref={inputRef}
@@ -99,8 +147,6 @@ export default function EmptyStateImport({ today }: { today: string }) {
         className="hidden"
         onChange={e => onPick(e.target.files)}
       />
-
-      <p className="text-xs text-gray-500 mt-4">…or drag &amp; drop a CSV / Sierra Chart .txt anywhere on this card</p>
 
       {error && (
         <div className="mt-4 inline-flex items-center gap-2 text-xs text-red-400">
