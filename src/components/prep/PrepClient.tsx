@@ -852,6 +852,19 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // Beginner Highlights day-read one-liner (null until the IB prints). Detailed
   // Tape gets the same signal as the IB-vs-ATR row in the Market Context ledger.
   const ibHeadline = ibDayTypeHeadline(ibDayType)
+
+  // Step to the previous/next calendar day's prep. Saves the current day first
+  // (the per-day localStorage draft is the fallback), then navigates — the
+  // reliable way to browse prior preps, independent of the fiddly native date
+  // input. Noon-UTC anchor dodges DST edges.
+  const goToDay = async (deltaDays: number) => {
+    const dt = new Date(`${date}T12:00:00Z`)
+    dt.setUTCDate(dt.getUTCDate() + deltaDays)
+    const next = dt.toISOString().slice(0, 10)
+    if (next === date) return
+    if (isDirty) { try { await save({ auto: true }) } catch { /* draft preserves edits */ } }
+    router.push(`/prep/${next}`)
+  }
   // Per-day-type consequence — turns the day-type taxonomy from a description
   // into something with a personal stake. Null until the trader has enough
   // scored trades on that day type to say anything honest.
@@ -926,7 +939,27 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           Prep" h1 is gone because the hero headline IS the page's title, and a
           generic screen-name heading was one of the AI-dashboard tells. */}
       <div data-tour="prep-header" className="flex flex-wrap items-center justify-between gap-3 pb-5">
-        <div className="flex items-center gap-3 flex-wrap min-w-0">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => goToDay(-1)}
+              title="Previous day"
+              aria-label="Previous day"
+              className="text-gray-400 hover:text-gray-100 border border-gray-700 hover:border-gray-600 rounded px-2 py-1 text-sm leading-none transition-colors"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              onClick={() => goToDay(1)}
+              title="Next day"
+              aria-label="Next day"
+              className="text-gray-400 hover:text-gray-100 border border-gray-700 hover:border-gray-600 rounded px-2 py-1 text-sm leading-none transition-colors"
+            >
+              ›
+            </button>
+          </div>
           <input
             type="date"
             value={date}

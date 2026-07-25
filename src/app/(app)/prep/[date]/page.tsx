@@ -148,6 +148,11 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
 
   return (
     <PrepClient
+      // Remount on date change so all useState-initialized form data (context,
+      // notes, day_types, …) resets to the new day's props. Without this, a
+      // soft-navigation between /prep/[date] params reuses the instance and the
+      // form keeps the PREVIOUS day's data (looks like the switch "didn't work").
+      key={date}
       date={date}
       initialDay={day}
       initialContext={context}
