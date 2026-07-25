@@ -464,31 +464,36 @@ const captureLeakage: Builder = trades => {
 
 /**
  * A concrete "aim for ~X" clause from the MFE distribution — the actionable
- * half of the capture read. Expressed in R when a planned stop exists, else in
- * ×ATR when the entry ATR is present; both are risk units, so the number means
- * something. Returns '' (no fabricated target) on a fresh fills-only import that
- * has neither — the capture % alone still stands. Uses the median favorable
- * excursion the trades actually reach, so the target is one the data supports.
+ * half of the capture read. Prefers ×ATR: the entry ATR is populated at import
+ * time from the front-month bars (import-sc-log / import-trades-csv), so it's
+ * present on a fresh fills import — whereas a planned stop (needed for R) usually
+ * ISN'T, since fills carry no stop. R is only a fallback for the rare account
+ * that has stops but no entry ATR. Returns '' (no fabricated target) when
+ * neither unit is available — the capture % alone still stands. Uses the median
+ * favorable excursion the trades actually reach, so the target is data-backed.
  */
 function targetClause(trades: InsightTrade[]): string {
-  const rMfe: number[] = []
   const atrMfe: number[] = []
+  const rMfe: number[] = []
   for (const t of trades) {
     if (!t.trading_day_id) continue
     const pts = mfeMaePoints(t as unknown as TradeWithExcursion)
     if (!pts || pts.mfe <= 0) continue
+    if (t.entry_atr_1m != null && t.entry_atr_1m > 0) atrMfe.push(pts.mfe / t.entry_atr_1m)
     if (t.entry_price != null && t.stop_price != null) {
       const risk = Math.abs(t.entry_price - t.stop_price)
       if (risk > 0) rMfe.push(pts.mfe / risk)
     }
-    if (t.entry_atr_1m != null && t.entry_atr_1m > 0) atrMfe.push(pts.mfe / t.entry_atr_1m)
+  }
+  // ATR first — the unit that survives a fresh, stop-less import.
+  if (atrMfe.length >= DEFAULT_MIN_N) {
+    const m = Math.round(median(atrMfe) * 2) / 2 // nearest 0.5×ATR
+    if (m >= 0.5) return ` Most trades reach ~${m.toFixed(1)}×ATR in your favor before turning — a target near ${m.toFixed(1)}×ATR would book more of it.`
+    return '' // ATR data exists but the move is too small to target — don't fall through to R
   }
   if (rMfe.length >= DEFAULT_MIN_N) {
     const m = Math.round(median(rMfe) * 2) / 2 // nearest 0.5R
     if (m >= 1) return ` Most trades reach ~${m.toFixed(1)}R in your favor before turning — a target near ${m.toFixed(1)}R would book more of it.`
-  } else if (atrMfe.length >= DEFAULT_MIN_N) {
-    const m = Math.round(median(atrMfe) * 2) / 2 // nearest 0.5×ATR
-    if (m >= 0.5) return ` Most trades reach ~${m.toFixed(1)}×ATR in your favor before turning — a nearer target would book more of it.`
   }
   return ''
 }
