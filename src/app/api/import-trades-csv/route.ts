@@ -191,6 +191,11 @@ export async function POST(req: Request) {
   const db = supabase as any
 
   let csvText = ''
+  // Pre-reconstructed trade rows sent as JSON (the "combine all accounts" path:
+  // a multi-account Sierra log is reconstructed + merged in the browser so the
+  // 6.6 MB raw log never uploads — only the small merged result does).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let directTrades: Record<string, any>[] | null = null
   // The browser's IANA timezone, sent by the client. Sierra logs store naive
   // local times with no zone, so we read them in the uploader's timezone rather
   // than the (UTC) server's — otherwise every fill displays hours off.
@@ -208,13 +213,14 @@ export async function POST(req: Request) {
       if (typeof tzv === 'string' && tzv) clientTz = tzv
     } else {
       const body = await req.json().catch(() => ({}))
-      csvText = body.csv ?? ''
+      if (Array.isArray(body.trades)) directTrades = body.trades
+      else csvText = body.csv ?? ''
       if (typeof body.tz === 'string' && body.tz) clientTz = body.tz
     }
   } catch {
     return NextResponse.json({ error: 'Could not read the upload.' }, { status: 400 })
   }
-  if (!csvText.trim()) return NextResponse.json({ error: 'The file is empty.' }, { status: 400 })
+  if (!directTrades && !csvText.trim()) return NextResponse.json({ error: 'The file is empty.' }, { status: 400 })
 
   // --- Parse (auto-detect Sierra Chart fill log vs. trade CSV) ---
   const pending: PendingTrade[] = []
@@ -226,7 +232,34 @@ export async function POST(req: Request) {
   // (per-fill commission) and Tradezella (Net P&L) already include costs.
   let grossSource = false
 
-  if (isSierraLog(csvText)) {
+  if (directTrades) {
+    // Pre-reconstructed + merged in the browser (combine-all-accounts). Sierra
+    // is gross P&L, so the commission setting still applies. Trust only the
+    // trades table's own columns; ignore anything else the client sent.
+    grossSource = true
+    total = directTrades.length
+    for (const t of directTrades) {
+      const trade_date = (typeof t.entry_time === 'string' ? t.entry_time : '').slice(0, 10)
+      if (!trade_date || !t.symbol) { skipped++; continue }
+      pending.push({
+        trade_date,
+        row: {
+          sierra_trade_id: t.sierra_trade_id,
+          symbol: t.symbol,
+          entry_time: t.entry_time,
+          entry_price: t.entry_price ?? null,
+          exit_time: t.exit_time ?? null,
+          exit_price: t.exit_price ?? null,
+          direction: t.direction ?? null,
+          quantity: t.quantity ?? null,
+          pnl: t.pnl ?? null,
+          high_during_position: t.high_during_position ?? null,
+          low_during_position: t.low_during_position ?? null,
+          exits_json: t.exits_json ?? null,
+        },
+      })
+    }
+  } else if (isSierraLog(csvText)) {
     grossSource = true // Sierra exports gross P&L → apply commission setting
     const { rows, parseErrors, skippedFiltered } = parseSierraChartLog(csvText, clientTz)
     skipped = skippedFiltered

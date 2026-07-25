@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { Upload, PencilLine, BarChart2, Loader2, AlertTriangle } from 'lucide-react'
 import SierraAccountPicker from '@/components/import/SierraAccountPicker'
 import { isSierraLogText, sierraAccountsInLog, filterSierraLogByAccounts, type SierraAccount } from '@/lib/sc-accounts'
+import { combineSierraLog } from '@/lib/sc-combine'
 
 // Under Vercel's ~4.5 MB serverless request-body limit — over this the platform
 // rejects the upload before our route runs, surfacing only a bare failure.
@@ -87,6 +88,42 @@ export default function EmptyStateImport({ today }: { today: string }) {
     void postFile(file)
   }
 
+  // Combine every account into one portfolio journal: reconstruct + merge in the
+  // browser (so the big raw log never uploads), then send the small merged rows.
+  async function combineAll() {
+    if (!pending) return
+    setBusy(true); setError(null)
+    // Yield a frame so the spinner paints before the (blocking) reconstruction.
+    await new Promise(r => setTimeout(r, 20))
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+      const { trades } = combineSierraLog(pending.text, tz)
+      if (trades.length === 0) { setError('No trades found to combine.'); return }
+      const res = await fetch('/api/import-trades-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trades, tz }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(json.error || 'Import failed.'); return }
+      if ((json.imported ?? 0) === 0) {
+        setError('No new trades were imported (they may already be in your journal).')
+        return
+      }
+      await fetch('/api/first-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'arm' }),
+      }).catch(() => {})
+      setPending(null)
+      router.refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div
       data-tour="dash-import"
@@ -114,6 +151,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
             busy={busy}
             onCancel={() => setPending(null)}
             onConfirm={confirmAccounts}
+            onCombineAll={combineAll}
           />
         </div>
       ) : (

@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Loader2, Search, Upload, X } from 'lucide-react'
+import { Loader2, Search, Upload, X, Layers } from 'lucide-react'
 import type { SierraAccount } from '@/lib/sc-accounts'
 
 /**
@@ -31,9 +31,12 @@ interface Props {
   busy?: boolean
   onCancel: () => void
   onConfirm: (selected: Set<string>) => void
+  /** Combine ALL accounts into one portfolio journal (merges copy-traded
+   *  decisions, totals size + P&L). When set, offered as the primary action. */
+  onCombineAll?: () => void
 }
 
-export default function SierraAccountPicker({ accounts, busy, onCancel, onConfirm }: Props) {
+export default function SierraAccountPicker({ accounts, busy, onCancel, onConfirm, onCombineAll }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Set<string>>(() => {
     const remembered = loadRemembered().filter(a => accounts.some(x => x.account === a))
@@ -76,7 +79,31 @@ export default function SierraAccountPicker({ accounts, busy, onCancel, onConfir
         </button>
       </div>
 
-      <div className="mt-3 relative">
+      {/* Primary path: one portfolio journal across every account. */}
+      {onCombineAll && (
+        <div className="mt-3 rounded-lg border border-blue-800/60 bg-blue-950/25 p-3 flex items-center gap-3">
+          <Layers className="w-5 h-5 text-blue-400 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-white">Combine all {accounts.length} accounts</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              One journal for your whole portfolio — total size &amp; P&amp;L per decision, full history, no duplicates.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCombineAll}
+            disabled={busy}
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+          >
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Layers className="w-3.5 h-3.5" />}
+            Combine all
+          </button>
+        </div>
+      )}
+
+      <p className="mt-3 text-[11px] font-medium text-gray-500 uppercase tracking-wider">Or import a specific account</p>
+
+      <div className="mt-2 relative">
         <Search className="w-3.5 h-3.5 text-gray-600 absolute left-2.5 top-1/2 -translate-y-1/2" />
         <input
           type="text"

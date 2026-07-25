@@ -7,6 +7,7 @@ import { getHandle, setHandle } from '@/lib/file-handle-store'
 import FirstReadCards from '@/components/dashboard/FirstReadCards'
 import SierraAccountPicker from '@/components/import/SierraAccountPicker'
 import { isSierraLogText, sierraAccountsInLog, filterSierraLogByAccounts, type SierraAccount } from '@/lib/sc-accounts'
+import { combineSierraLog } from '@/lib/sc-combine'
 
 // Key for the last-imported file handle in the IndexedDB handle store — passed
 // back as showOpenFilePicker({ startIn }) so re-imports reopen at the same folder.
@@ -113,6 +114,48 @@ export default function ImportPage() {
     const file = new File([filtered], `${base}-filtered.txt`, { type: 'text/plain' })
     setPending(null)
     void upload(file)
+  }
+
+  // Combine every account into one portfolio journal: reconstruct + merge in the
+  // browser, then send the small merged rows as JSON (the raw log never uploads).
+  async function combineAll() {
+    if (!pending) return
+    setBusy(true); setError(null); setResult(null); setWarnings([]); setFirstImport(false)
+    // Yield a frame so the spinner paints before the (blocking) reconstruction.
+    await new Promise(r => setTimeout(r, 20))
+    try {
+      let wasEmpty = false
+      try {
+        const nav = await fetch('/api/nav-anchor').then(r => r.json())
+        wasEmpty = nav?.lastTradeDate == null
+      } catch { /* best-effort */ }
+
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+      const { trades } = combineSierraLog(pending.text, tz)
+      if (trades.length === 0) { setError('No trades found to combine.'); return }
+      const res = await fetch('/api/import-trades-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trades, tz }),
+      })
+      const json = await res.json()
+      if (Array.isArray(json.warnings)) setWarnings(json.warnings)
+      if (!res.ok) { setError(json.error || 'Import failed.'); return }
+      setResult(json as ImportResult)
+      setPending(null)
+      if (wasEmpty && (json.imported ?? 0) > 0) {
+        await fetch('/api/first-read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'arm' }),
+        }).catch(() => {})
+        setFirstImport(true)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function upload(file: File) {
@@ -223,6 +266,7 @@ export default function ImportPage() {
             busy={busy}
             onCancel={() => setPending(null)}
             onConfirm={confirmAccounts}
+            onCombineAll={combineAll}
           />
         </div>
       )}
