@@ -64,15 +64,20 @@ export default function PrepHero({
   eyebrow,
   isToday,
   maxConditions = 4,
+  beginner = false,
 }: {
   context: Partial<MarketContext>
   atrBaseline: number | null
   prepNotes: PrepNotes
   onPrepNotesChange: (v: PrepNotes) => void
-  /** e.g. "FRI JUL 25 · RTH · NQ" */
+  /** e.g. "FRI JUL 25 · NQ" */
   eyebrow: string
   isToday: boolean
   maxConditions?: number
+  /** Highlights (beginner) mode — drop the raw metric sub-line under each
+   *  condition (e.g. "1-min ATR 24.0 pts · 0.7× normal"), leaving just the
+   *  plain verdict word. Detailed Tape keeps the numbers. */
+  beginner?: boolean
 }) {
   const [overriding, setOverriding] = useState(false)
   const [reason, setReason] = useState(prepNotes.day_stance_reason ?? '')
@@ -289,7 +294,12 @@ export default function PrepHero({
                     </span>
                   )}
                 </div>
-                <div className="font-mono text-[11px] text-gray-400 mt-0.5">{c.pill}</div>
+                {/* Raw metric sub-line — hidden in Highlights (beginner) for the
+                    live read; the plain verdict word stands alone. Detailed Tape
+                    and the pre-session "expected" pills keep it. */}
+                {(!beginner || state !== 'set') && (
+                  <div className="font-mono text-[11px] text-gray-400 mt-0.5">{c.pill}</div>
+                )}
               </div>
             ))}
           </div>

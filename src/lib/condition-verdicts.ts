@@ -93,11 +93,17 @@ const BAR_VOL_BANDS: BandDef[] = [
   { max: Infinity, word: 'very high', tone: 'amber' },
 ]
 
+// Overnight range as % of ADR. Anchored to the ACTUAL NQ distribution (461-day
+// sample: median 73%, p25 54%, p75 104%, p90 155%) — the old round-number
+// 30/60/90 cutoffs called the median day "large" and tagged 35% of days "very
+// large". A "normal" overnight on NQ is a big fraction of the RTH range (the
+// overnight session is ~15h vs 6.5h RTH), so the fat middle sits at 50–100% and
+// "large" only fires once overnight has covered a full typical RTH day's range.
 const OVERNIGHT_BANDS: BandDef[] = [
-  { max: 30, word: 'small', tone: 'plain' },
-  { max: 60, word: 'normal', tone: 'plain' },
-  { max: 90, word: 'large', tone: 'amber' },
-  { max: Infinity, word: 'very large', tone: 'red' },
+  { max: 50, word: 'small', tone: 'plain' },        // ~bottom 20%
+  { max: 100, word: 'normal', tone: 'plain' },      // covers the 73% median
+  { max: 150, word: 'large', tone: 'amber' },       // overnight ≥ a full RTH range (~top 25%)
+  { max: Infinity, word: 'very large', tone: 'red' }, // ~top 10%
 ]
 
 const RANGE_USED_BANDS: BandDef[] = [
@@ -204,7 +210,7 @@ export function readConditions(i: ConditionInputs): ConditionRead {
       verdict: onBand.word,
       tone: onBand.tone,
       pill: `${Math.round(onPct)}% of ADR`,
-      title: onPct >= 90
+      title: onPct >= 100
         ? `The overnight session already covered ${Math.round(onPct)}% of a normal day's range — most of the expected move may be spent.`
         : `The overnight session covered ${Math.round(onPct)}% of a normal day's range (ADR).`,
     })
@@ -258,7 +264,7 @@ function buildBanner(
   const volGroup: VolGroup | null = rvol == null ? null : rvol < 70 ? 'quiet' : rvol < 130 ? 'normal' : 'busy'
   const atrGroup: AtrGroup | null = atrRatio == null ? null : atrRatio < 0.85 ? 'low' : atrRatio < 1.25 ? 'normal' : 'high'
 
-  const overnightClause = onPct != null && onPct >= 90
+  const overnightClause = onPct != null && onPct >= 100
     ? ` Overnight already used ${Math.round(onPct)}% of a normal day's range — be careful chasing extension.`
     : ''
 

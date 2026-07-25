@@ -978,6 +978,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         eyebrow={eyebrow}
         isToday={isToday}
         maxConditions={pro ? 5 : 3}
+        beginner={!pro}
       />
 
       {/* ── The commitment: Review diagnoses, Prep prescribes ── */}
