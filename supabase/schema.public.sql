@@ -323,6 +323,8 @@ begin
     (p_user_id, 'confluences', 'Volume Node', 8),
     (p_user_id, 'confluences', 'Gap Edge', 9),
     (p_user_id, 'confluences', 'Round Number', 10),
+    (p_user_id, 'confluences', 'Follow LTF structure', 11),
+    (p_user_id, 'confluences', 'Fade LTF structure', 12),
     -- Order Flow
     (p_user_id, 'order_flow', 'Absorption', 1),
     (p_user_id, 'order_flow', 'Exhaustion', 2),
