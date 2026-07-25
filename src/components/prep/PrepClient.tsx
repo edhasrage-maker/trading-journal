@@ -930,12 +930,20 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           <input
             type="date"
             value={date}
-            onChange={e => {
+            onChange={async e => {
               const next = e.target.value
-              if (next && next !== date) {
-                if (isDirty && !confirm('You have unsaved changes. Switch days anyway?')) return
-                router.push(`/prep/${next}`)
+              if (!next || next === date) return
+              // Save the current day, THEN switch. The old confirm() gate could
+              // stick permanently: a failed/lagging auto-save leaves isDirty
+              // true, and once the browser suppresses the repeated "unsaved
+              // changes" dialog, confirm() returns false → every day-switch was
+              // silently blocked. Saving first (with the per-day localStorage
+              // draft as a fallback) makes switching always work and never lose
+              // edits.
+              if (isDirty) {
+                try { await save({ auto: true }) } catch { /* draft preserves edits */ }
               }
+              router.push(`/prep/${next}`)
             }}
             className="bg-gray-950 border border-gray-700 text-gray-300 text-xs rounded px-2 py-1 font-mono focus:outline-none focus:border-blue-600"
             title="Switch to a different day's prep"
