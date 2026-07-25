@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { readConditions, type VerdictTone } from '@/lib/condition-verdicts'
+import { readConditions, conditionActionHint, type VerdictTone } from '@/lib/condition-verdicts'
 import { cn } from '@/lib/utils'
 import type { MarketContext, PrepNotes } from '@/lib/supabase/types'
 
@@ -192,6 +192,7 @@ export default function PrepHero({
 
       {/* ── Your stance + conditions ── */}
       <div className="flex flex-col sm:flex-row gap-6 sm:gap-8 pb-6 lg:pl-8 lg:border-l border-gray-800 pt-6 lg:pt-0 border-t lg:border-t-0">
+        {!beginner && (
         <div className="flex flex-col justify-center sm:min-w-[150px]">
           <div className="text-[12.5px] text-gray-500 mb-2.5">Your stance</div>
 
@@ -275,6 +276,7 @@ export default function PrepHero({
             </div>
           )}
         </div>
+        )}
 
         {conditions.length > 0 && (
           <div className="flex flex-col sm:min-w-[210px]">
@@ -294,12 +296,14 @@ export default function PrepHero({
                     </span>
                   )}
                 </div>
-                {/* Raw metric sub-line — hidden in Highlights (beginner) for the
-                    live read; the plain verdict word stands alone. Detailed Tape
-                    and the pre-session "expected" pills keep it. */}
-                {(!beginner || state !== 'set') && (
+                {/* Detailed Tape (+ pre-session): the raw metric sub-line. Highlights
+                    (beginner, live read): a short "so what do I do" hint instead of
+                    the numbers, so the condition actually tells you something. */}
+                {(!beginner || state !== 'set') ? (
                   <div className="font-mono text-[11px] text-gray-400 mt-0.5">{c.pill}</div>
-                )}
+                ) : conditionActionHint(c.label, c.verdict) ? (
+                  <div className="text-[11px] text-gray-500 mt-0.5 leading-snug">{conditionActionHint(c.label, c.verdict)}</div>
+                ) : null}
               </div>
             ))}
           </div>

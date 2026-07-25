@@ -152,6 +152,53 @@ const CONSEQUENCES: Record<VolGroup, Record<AtrGroup, string>> = {
   },
 }
 
+// Short "so what do I do" hints per condition, for the beginner Highlights read
+// (Detailed Tape shows the raw numbers instead). Keyed by chip label + verdict
+// word. Behavioral/neutral — what the condition implies for how you trade it,
+// not directional advice.
+const CONDITION_ACTIONS: Record<string, Record<string, string>> = {
+  'Volume pace': {
+    'very quiet': 'thin tape — don’t force trades',
+    'quiet': 'slow — expect little follow-through',
+    'normal': 'no edge from volume either way',
+    'busy': 'real participation — follow-through more likely',
+    'very busy': 'heavy flow — moves can travel',
+  },
+  'Bar volatility': {
+    'very compressed': 'tiny bars — moves grind, be patient',
+    'compressed': 'small bars — wait for your spot',
+    'normal': 'normal-sized bars',
+    'elevated': 'bigger swings — size down',
+    'very high': 'violent bars — size down hard',
+  },
+  'Overnight range': {
+    'small': 'lots of room to run in RTH',
+    'normal': 'typical overnight — room left in RTH',
+    'large': 'much of the day’s range already used',
+    'very large': 'range mostly spent — careful chasing extension',
+  },
+  'Range used': {
+    'compressed': 'range still available',
+    'below normal': 'room left in the day’s range',
+    'normal': 'typical range used',
+    'extended': 'most of the move is spent',
+    'very extended': 'day’s range nearly exhausted',
+  },
+  'Opening range': {
+    'very tight': 'coiled — watch for a break',
+    'tight': 'narrow open — watch for expansion',
+    'normal': 'typical opening range',
+    'wide': 'big open — trend potential',
+    'very wide': 'large open — respect the range',
+  },
+}
+
+/** The short beginner action hint for a condition verdict, or null. */
+export function conditionActionHint(label: string, verdict: string | null): string | null {
+  if (!verdict) return null
+  return CONDITION_ACTIONS[label]?.[verdict] ?? null
+}
+
 const num = (v: number | null | undefined): number | null =>
   v != null && Number.isFinite(v) ? v : null
 
