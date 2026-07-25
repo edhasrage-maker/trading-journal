@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react'
 import { Target, ChevronRight } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
-import { TapeScoreRing } from './TapeScoreHeroParts'
+import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
 import { ScoreBreakdownInfo, type HeroPeriodData } from '@/components/review/ReviewMonthHero'
 
@@ -51,7 +51,7 @@ const TONE = {
 export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, hero, days, charts }: Props) {
   const { setMode } = useUiMode()
   const { scorePeriod, carryover } = hero
-  const { score, band, scoredDays } = scorePeriod
+  const { score, band, risk, entry, capture, scoredDays } = scorePeriod
 
   // The verdict + focus come from the finding engine — the same leak Detailed
   // shows, in plain words.
@@ -100,6 +100,22 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
             <ScoreBreakdownInfo period={scorePeriod} />
           </div>
           <p className="text-lg font-semibold text-white leading-snug">{verdictText}</p>
+          {score != null && (
+            <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+              {risk != null && (
+                <HeroChip label={`Risk ${risk}`} tone={risk >= 70 ? 'good' : risk >= 50 ? 'mid' : 'bad'}
+                  title="Risk (0-100): size and the 5 account guardrails." />
+              )}
+              {entry != null && (
+                <HeroChip label={`Entry ${entry}`} tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
+                  title="Entry (0-100): setup, timing, stop placement." />
+              )}
+              {capture != null && (
+                <HeroChip label={`Exit ${capture}`} tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
+                  title="Exit (0-100): how much of the move you kept." />
+              )}
+            </div>
+          )}
           <div className="mt-3 text-xs text-gray-500">
             {score != null
               ? <>This month · {scoredDays} scored session{scoredDays === 1 ? '' : 's'}</>

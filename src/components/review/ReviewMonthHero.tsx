@@ -143,14 +143,32 @@ export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
   )
 }
 
-/** The TapeScore ring only (the makeup lives behind the ⓘ now). Renders a quiet
- *  note when no day in the window was scored. */
+/** The TapeScore ring + the three axis scores (Risk / Entry / Exit) beside it.
+ *  Scores only — the weighting and the session count live behind the ⓘ so the
+ *  numbers read clean. Renders a quiet note when no day in the window was scored. */
 function ScoreCluster({ period }: { period: TapeScorePeriod }) {
   if (period.score == null) {
     return <p className="text-[13px] text-gray-500 max-w-[36ch] leading-normal">No graded sessions in this window yet — run Analyze Session on a day to score it.</p>
   }
   const subs = { risk: period.risk ?? 0, entry: period.entry ?? 0, capture: period.capture ?? 0 }
-  return <CompositionRing score={period.score} subs={subs} size={148} />
+  const comps: Array<{ name: string; score: number }> = [
+    { name: 'Risk', score: subs.risk },
+    { name: 'Entry', score: subs.entry },
+    { name: 'Exit', score: subs.capture },
+  ]
+  return (
+    <div className="flex items-center gap-6 flex-wrap">
+      <CompositionRing score={period.score} subs={subs} size={148} />
+      <div className="min-w-[150px]">
+        {comps.map((c, i) => (
+          <div key={c.name} className={cn('flex items-baseline justify-between gap-4 py-2', i > 0 && 'border-t border-gray-800')}>
+            <span className="text-[13.5px] text-gray-200">{c.name}</span>
+            <span className="text-[16px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>{c.score}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 // ── Adjustable windows ────────────────────────────────────────────────────
