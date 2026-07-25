@@ -3,6 +3,14 @@
 import { readConditions, type VerdictTone } from '@/lib/condition-verdicts'
 import { cn } from '@/lib/utils'
 import type { MarketContext } from '@/lib/supabase/types'
+import type { IbDayType, RegimeBand } from '@/lib/ib-day-type'
+
+/** IB÷ATR regime → the day-character verdict word + tone shown in the ledger. */
+const IB_CHARACTER: Record<RegimeBand, { word: string; tone: VerdictTone }> = {
+  chop: { word: 'Choppy', tone: 'amber' },
+  mid: { word: 'Normal', tone: 'dim' },
+  expanded: { word: 'Extended', tone: 'plain' },
+}
 
 /**
  * Market context as a reference LEDGER, not a form.
@@ -98,12 +106,17 @@ export default function PrepLedger({
   context,
   atrBaseline,
   drAdrAuto,
+  ibDayType,
 }: {
   context: Partial<MarketContext>
   atrBaseline: number | null
   /** Server-computed DR/ADR fallback for days whose day_range hasn't been read
    *  off a screenshot yet. */
   drAdrAuto: number | null
+  /** IB day-character classification (choppy/normal/extended via IB÷ATR). Shown
+   *  as one compact row in the Initial Balance group — the standalone panel it
+   *  replaced was too sparse. Null until the bars/IB print. */
+  ibDayType?: IbDayType | null
 }) {
   const pdh = numOr(context.pdh), pdl = numOr(context.pdl)
   const onh = numOr(context.onh), onl = numOr(context.onl)
@@ -171,6 +184,22 @@ export default function PrepLedger({
           chip={openingRange?.verdict ?? 'pending'}
           chipTone={openingRange?.tone ?? 'dim'}
         />
+        {/* Day character — IB÷ATR (choppy / normal / extended). The size verdict
+            is the row above; this is the shape read the standalone panel used to
+            carry, now one compact line. */}
+        {(() => {
+          const rb = ibDayType?.regimeBand ?? null
+          const rr = ibDayType?.regimeRatio ?? null
+          const c = rb ? IB_CHARACTER[rb] : null
+          return (
+            <Row
+              label="IB vs ATR (character)"
+              value={rr != null ? `${rr.toFixed(1)}×` : null}
+              chip={c?.word ?? 'pending'}
+              chipTone={c?.tone ?? 'dim'}
+            />
+          )
+        })()}
       </Group>
 
       <Group

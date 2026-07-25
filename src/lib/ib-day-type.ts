@@ -183,3 +183,83 @@ export function classifyIbDayType(inputs: IbDayTypeInputs): IbDayType {
     read,
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day-type mapping + presentation — the classification → the trader's day-type
+// chips, validated against tagging history: IB size (magnitude) → the action
+// level, IB÷ATR regime (directionality) → the structural read.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** IB size band → action-level day-type chip. Labels mirror the trader's
+ *  library; callers guard against their own dayTypeOptions before offering one. */
+export const IB_SIZE_TO_CHIP: Record<SizeBand, string> = {
+  small: 'Low Participation/Compressed',
+  normal: 'Medium Mush Market (Indecisive)',
+  large: 'High Action Market',
+}
+/** IB÷ATR regime → structural day-type chip. Mid is deliberately absent (the
+ *  ambiguous middle makes no clean Trend/Range call). */
+export const IB_REGIME_TO_CHIP: Partial<Record<RegimeBand, string>> = {
+  chop: 'Range Day',
+  expanded: 'Trend Day',
+}
+
+/** The day-type chips implied by a classification (action from size, structure
+ *  from regime). Undefined when that lens isn't classifiable / has no clean call. */
+export function ibDayTypeChips(c: IbDayType): { action?: string; structure?: string } {
+  return {
+    action: c.sizeBand ? IB_SIZE_TO_CHIP[c.sizeBand] : undefined,
+    structure: c.regimeBand ? IB_REGIME_TO_CHIP[c.regimeBand] : undefined,
+  }
+}
+
+/** Structured IB read handed to the AI day-type predictor as a strong prior. */
+export interface IbAiRead {
+  character: string                 // Choppy | Normal | Extended
+  regimeRatio: number | null
+  regimeBasis: RegimeBasis | null
+  size: string | null              // Small | Normal | Large (null overnight / pre-IB)
+  sizeRatio: number | null
+  impliedStructure: string | null  // Trend Day | Range Day
+  impliedAction: string | null     // the action-level chip
+}
+
+const REGIME_TITLE: Record<RegimeBand, string> = { chop: 'Choppy', mid: 'Normal', expanded: 'Extended' }
+const SIZE_TITLE: Record<SizeBand, string> = { small: 'Small', normal: 'Normal', large: 'Large' }
+
+/** The structured IB read for the AI predictor — null until the IB has printed
+ *  (nothing to hand the model yet). */
+export function ibDayTypeAiRead(c: IbDayType): IbAiRead | null {
+  if (!c.regimeBand) return null
+  const chips = ibDayTypeChips(c)
+  return {
+    character: REGIME_TITLE[c.regimeBand],
+    regimeRatio: c.regimeRatio,
+    regimeBasis: c.regimeBasis,
+    size: c.sizeBand ? SIZE_TITLE[c.sizeBand] : null,
+    sizeRatio: c.sizeRatio,
+    impliedStructure: chips.structure ?? null,
+    impliedAction: chips.action ?? null,
+  }
+}
+
+const REGIME_CHARACTER: Record<RegimeBand, string> = { chop: 'choppy', mid: 'balanced', expanded: 'extended' }
+const SIZE_WORD: Record<SizeBand, string> = { small: 'compressed', normal: 'normal-sized', large: 'large' }
+const REGIME_LEAN: Partial<Record<RegimeBand, string>> = { chop: 'range', expanded: 'trend' }
+const SIZE_LEAN: Record<SizeBand, string> = { small: 'low-participation', normal: 'medium/mush', large: 'high-action' }
+
+/**
+ * Beginner one-liner describing today's IB in plain language, e.g.
+ * "Today's IB is normal-sized and balanced — leans a medium/mush day."
+ * Returns null before the IB has printed (nothing to say yet).
+ */
+export function ibDayTypeHeadline(c: IbDayType): string | null {
+  if (!c.regimeBand) return null
+  const character = REGIME_CHARACTER[c.regimeBand]
+  const sizeWord = c.sizeBand ? SIZE_WORD[c.sizeBand] : null
+  const leans = [c.regimeBand ? REGIME_LEAN[c.regimeBand] : undefined, c.sizeBand ? SIZE_LEAN[c.sizeBand] : undefined]
+    .filter((x): x is string => !!x)
+  const desc = sizeWord ? `${sizeWord} and ${character}` : character
+  const lean = leans.length ? ` — leans a ${leans.join(', ')} day` : ''
+  return `Today's IB is ${desc}${lean}.`
+}

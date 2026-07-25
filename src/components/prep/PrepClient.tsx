@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 import { todayPT } from '@/lib/pt-time'
@@ -15,7 +15,7 @@ import DiscordCardInputs from './DiscordCardInputs'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
-import IbDayTypeOverview from './IbDayTypeOverview'
+import { classifyIbDayType, ibDayTypeHeadline, ibDayTypeAiRead } from '@/lib/ib-day-type'
 import HighImpactNews from './HighImpactNews'
 import Section, { GhostButton, Segmented, Chip } from '@/components/ui/Section'
 import PrepHero from './PrepHero'
@@ -226,10 +226,20 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // written into market_context. Kept once non-null so a session-switch fetch
   // returning null doesn't blank the verdict.
   const [atrBaseline, setAtrBaseline] = useState<number | null>(null)
-  // Full bar-derived stats for the active session — feeds the IB-fade Day-Type
-  // Overview (classification + meanHL10-based regime). Distinct from the
+  // Full bar-derived stats for the active session — feeds the IB day-type
+  // classification (choppy/normal/extended via meanHL10). Distinct from the
   // fill-blank-once market_context auto-fill below (which only pulls 5 fields).
   const [contextStats, setContextStats] = useState<DayContextStats | null>(null)
+  // IB day-type classification (choppy/normal/extended via IB÷ATR + small/normal/
+  // large size) from the bar stats — folded into the Market Context ledger (pro),
+  // surfaced as a Highlights one-liner (beginner), and fed to the AI predictor.
+  const ibDayType = useMemo(() => classifyIbDayType({
+    session,
+    ibRange: contextStats?.ib_size ?? null,
+    atrMeanHL10: contextStats?.meanHL10 ?? null,
+    atrWilder10: contextStats?.atr_at_ib_close ?? null,
+    ibVs10dAvg: contextStats?.ib_vs_10d_avg ?? null,
+  }), [session, contextStats])
   useEffect(() => {
     if (!chartSymbol || !date) return
     let cancelled = false
@@ -834,6 +844,9 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   }
 
   const pro = mode === 'pro'
+  // Beginner Highlights day-read one-liner (null until the IB prints). Detailed
+  // Tape gets the same signal as the IB-vs-ATR row in the Market Context ledger.
+  const ibHeadline = ibDayTypeHeadline(ibDayType)
   // Per-day-type consequence — turns the day-type taxonomy from a description
   // into something with a personal stake. Null until the trader has enough
   // scored trades on that day type to say anything honest.
@@ -1022,6 +1035,13 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           all live in Detailed Tape. */}
       {!pro && (
         <Section title="Watch / Keep" control={analyzeButton}>
+          {/* Beginner day-read: one plain-language line calling out today's IB
+              character (Detailed Tape shows this in the Market Context ledger). */}
+          {ibHeadline && (
+            <p className="text-sm text-gray-300 leading-normal max-w-[64ch] mb-3 pb-3 border-b border-gray-800">
+              <span className="text-gray-500">Day read: </span>{ibHeadline}
+            </p>
+          )}
           <WatchKeep analysis={aiAnalysis} />
         </Section>
       )}
@@ -1059,6 +1079,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           <DayTypePredictor
             date={date}
             currentDayTypes={dayTypes}
+            ibRead={ibDayTypeAiRead(ibDayType)}
             // Multi-axis predictor returns an array — dedupe-append to the
             // multi-select so structural + regime + flags all land in one click.
             onAccept={labels => setDayTypes(prev => {
@@ -1092,6 +1113,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             context={context as Partial<MarketContext>}
             atrBaseline={atrBaseline}
             drAdrAuto={drAdrAuto}
+            ibDayType={ibDayType}
           />
           <details className="mt-3 group">
             <summary className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer inline-block list-none marker:content-none">
@@ -1102,25 +1124,6 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               <MarketContextForm value={context} onChange={setContext} />
             </div>
           </details>
-        </Section>
-
-        {/* IB day type — reads today's IB to characterize the day: choppy /
-            normal / extended (IB÷ATR) + small / normal / large (IB vs 10-day).
-            Objectively suggests day-type chips — IB÷ATR → Trend/Range, IB-size →
-            High/Med/Low — validated against the trader's own tagging history.
-            NQ-focused; RTH fully supported, overnight keeps regime, mutes size. */}
-        <Section title="IB day type" sub="is today choppy, normal, or extended?">
-          <IbDayTypeOverview
-            session={session}
-            stats={contextStats}
-            dayTypeOptions={dayTypeOptions}
-            currentDayTypes={dayTypes}
-            onSuggest={labels => setDayTypes(prev => {
-              const next = [...prev]
-              for (const l of labels) if (!next.includes(l)) next.push(l)
-              return next
-            })}
-          />
         </Section>
 
         {/* Morning conditions — where today sits vs the trader's OWN history.

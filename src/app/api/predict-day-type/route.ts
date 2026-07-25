@@ -12,8 +12,21 @@ const client = new Anthropic()
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
+interface IbAiRead {
+  character: string
+  regimeRatio: number | null
+  regimeBasis: string | null
+  size: string | null
+  sizeRatio: number | null
+  impliedStructure: string | null
+  impliedAction: string | null
+}
+
 interface ReqBody {
   date: string  // YYYY-MM-DD
+  /** Deterministic IB read (bar-derived, validated on tagging history) passed
+   *  from the prep client as a strong prior. Optional / null pre-IB. */
+  ibRead?: IbAiRead | null
 }
 
 interface DayTypeDef {
@@ -95,7 +108,7 @@ async function handle(req: Request) {
   }
 
   const body = (await req.json()) as ReqBody
-  const { date } = body
+  const { date, ibRead } = body
   if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'date must be YYYY-MM-DD' }, { status: 400 })
   }
@@ -164,7 +177,7 @@ async function handle(req: Request) {
   }
 
   const traderProfile = await getTraderProfile()
-  const prompt = profileContextBlock(traderProfile) + buildPrompt(date, ctx, notes, dayTypeDefs)
+  const prompt = profileContextBlock(traderProfile) + buildPrompt(date, ctx, notes, dayTypeDefs, ibRead ?? null)
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -230,7 +243,21 @@ async function handle(req: Request) {
   })
 }
 
-function buildPrompt(date: string, ctx: MarketContext | null, notes: PrepNotes, dayTypeDefs: DayTypeDef[]): string {
+function buildPrompt(date: string, ctx: MarketContext | null, notes: PrepNotes, dayTypeDefs: DayTypeDef[], ibRead: IbAiRead | null): string {
+  // Bar-derived IB read, handed to the model as a STRONG prior. It's computed
+  // deterministically (IB range ÷ study-ATR for character; IB ÷ 10-day avg for
+  // size) and the label mapping below was validated against the trader's own
+  // tagging history — so it should anchor the regime + structural picks unless
+  // the notes/context clearly contradict it.
+  const ibBlock = ibRead
+    ? `Bar-derived IB read (STRONG PRIOR — computed from today's bars, mapping validated on the trader's tagging history):
+- Day character (IB range ÷ ATR): ${ibRead.character}${ibRead.regimeRatio != null ? ` (${ibRead.regimeRatio.toFixed(1)}×${ibRead.regimeBasis === 'wilder' ? ' Wilder-approx' : ''})` : ''}
+- IB size (vs 10-day avg): ${ibRead.size ?? 'n/a'}${ibRead.sizeRatio != null ? ` (${ibRead.sizeRatio.toFixed(2)}×)` : ''}
+- Implied STRUCTURAL read: ${ibRead.impliedStructure ?? 'no clean Trend/Range call (balanced/Normal character)'}
+- Implied REGIME/action read: ${ibRead.impliedAction ?? 'n/a'}
+Weight this heavily for the STRUCTURAL and REGIME axes: IB÷ATR gauges directionality (Choppy→Range, Extended→Trend, Normal→neither), IB size gauges action magnitude (Small→Low Participation, Normal→Medium Mush, Large→High Action). Override it only when the notes/context give a specific contradicting signal (e.g. a GBX reversal), and say so.`
+    : '  (IB read not available yet — the IB has not printed; classify from the context + notes below)'
+
   const ctxLines: string[] = []
   if (ctx) {
     if (ctx.symbol) ctxLines.push(`- Symbol: ${ctx.symbol}`)
@@ -309,6 +336,8 @@ For reference, the full label list (use the EXACT string including capitalizatio
 ${dayTypeListBlock}
 
 ══ INPUTS ══
+
+${ibBlock}
 
 Market context for ${date}:
 ${ctxBlock}

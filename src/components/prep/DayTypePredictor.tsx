@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { Sparkles, Loader2, Check, X, RefreshCw, AlertTriangle } from 'lucide-react'
+import type { IbAiRead } from '@/lib/ib-day-type'
 
 interface Props {
   date: string
@@ -11,6 +12,11 @@ interface Props {
   /** Accept handler — receives the array of labels the user kept. Parent
    *  dedupes and appends to its day_types[] state. */
   onAccept: (labels: string[]) => void
+  /** Deterministic IB read (choppy/normal/extended + size + implied chips),
+   *  computed from bars and validated against tagging history. Passed to the AI
+   *  as a strong prior so its regime/structural picks reflect today's IB. Null
+   *  until the IB prints. */
+  ibRead?: IbAiRead | null
 }
 
 type Confidence = 'high' | 'medium' | 'low'
@@ -45,7 +51,7 @@ const AXIS_TITLES: Record<Axis, string> = {
  * label even when multiple clearly applied (e.g. a Trend Day on a High Action
  * session would surface only "Trend Day", losing the regime signal).
  */
-export default function DayTypePredictor({ date, currentDayTypes, onAccept }: Props) {
+export default function DayTypePredictor({ date, currentDayTypes, onAccept, ibRead }: Props) {
   const [loading, setLoading] = useState(false)
   const [response, setResponse] = useState<PredictResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,7 +68,7 @@ export default function DayTypePredictor({ date, currentDayTypes, onAccept }: Pr
       const res = await fetch('/api/predict-day-type', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date }),
+        body: JSON.stringify({ date, ibRead: ibRead ?? null }),
       })
       const data = await res.json()
       if (!res.ok) {
