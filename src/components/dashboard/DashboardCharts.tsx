@@ -119,6 +119,35 @@ const SCORE_BLUE = '#79B4E6'
  * the overlay's position can't be tuned to manufacture a correlation with the
  * equity line — the one real hazard of drawing two series on one plot.
  */
+/**
+ * Trailing mean of the last `win` scored sessions — the score line's "recent
+ * form", not any single day.
+ *
+ * The claim this chart makes is about REGIME, not days: stretches of good
+ * process should show up as the equity curve climbing, whatever any one session
+ * paid. A raw daily score can't show that — it oscillates too hard to read a
+ * stretch out of, so the eye finds nothing even when the relationship is real.
+ * Smoothing turns it into "how well have I been trading lately", which is the
+ * series that actually belongs beside a cumulative curve.
+ *
+ * Needs 2+ scored sessions in the window: one day is a data point, not form.
+ */
+function rollingScore(scores: (number | null)[], win: number): (number | null)[] {
+  return scores.map((_, i) => {
+    const vals: number[] = []
+    for (let j = Math.max(0, i - win + 1); j <= i; j++) {
+      const s = scores[j]
+      if (s != null) vals.push(s)
+    }
+    return vals.length >= 2 ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+  })
+}
+
+/** Sessions of trailing average behind the score line. Five is roughly a
+ *  trading week — long enough to bury a single bad session, short enough that a
+ *  genuine change in form still moves it. */
+const SCORE_WINDOW = 5
+
 function scoreRuns(
   scores: (number | null)[],
   xAt: (i: number) => number,
@@ -270,9 +299,12 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
               <h2 className="font-semibold text-white text-sm">Equity Curve</h2>
               {/* Legend only when there's actually a score series to explain. */}
               {scores.some(s => s != null) && (
-                <span className="flex items-center gap-1.5 text-[10px] text-gray-500 whitespace-nowrap">
+                <span
+                  className="flex items-center gap-1.5 text-[10px] text-gray-500 whitespace-nowrap"
+                  title="Your TapeScore averaged over the last 5 scored sessions, on a fixed 0-100 scale. Smoothed because the point is the stretch, not the day: when your form holds high, the equity curve should climb — whatever any single session paid."
+                >
                   <span className="inline-block w-3 h-px" style={{ background: SCORE_BLUE }} />
-                  TapeScore 0–100
+                  TapeScore form · 5-session avg
                 </span>
               )}
             </div>
@@ -433,8 +465,9 @@ function EquityChart({ dates, values, scores = [], height }: {
   // make process look more (or less) correlated with money than it is.
   const yScore = (s: number) => (1 - s / 100) * 100
   const hasScores = scores.some(s => s != null)
+  const smoothed = hasScores ? rollingScore(scores, SCORE_WINDOW) : []
   const { paths: scorePaths, dots: scoreDots } = hasScores
-    ? scoreRuns(scores, xAt, yScore)
+    ? scoreRuns(smoothed, xAt, yScore)
     : { paths: [], dots: [] }
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -518,6 +551,9 @@ function EquityChart({ dates, values, scores = [], height }: {
             {scores[hoverIdx] != null && (
               <div className="text-[10px] font-mono" style={{ color: SCORE_BLUE }}>
                 TapeScore {scores[hoverIdx]}
+                {smoothed[hoverIdx] != null && (
+                  <span className="text-gray-500"> · form {Math.round(smoothed[hoverIdx] as number)}</span>
+                )}
               </div>
             )}
           </div>
