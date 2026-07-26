@@ -107,20 +107,23 @@ function excursion(r: Row): { high: number; low: number; mfeLeg: number | null }
   let mfeLeg: number | null = null
   if (legs.length > 1) {
     legs.sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
-    let legStart = r.startMs
     let sum = 0, ok = true
     for (const leg of legs) {
       const legEnd = Date.parse(leg.time)
-      if (!Number.isFinite(legEnd) || legEnd <= legStart) { legStart = legEnd; continue }
+      if (!Number.isFinite(legEnd) || legEnd <= r.startMs) continue
+      // Each leg held from ENTRY to its own exit, so its favorable-$ ceiling is
+      // the peak over [entry, legExit] — NOT [prevLegExit, legExit], which
+      // under-counts a later leg when the peak came early and pushes capture
+      // impossibly past 100%. A leg that exited early is still capped at ITS
+      // exit time, so an earlier leg can't claim a later peak.
       let lt: number[]
-      try { lt = rdr.read(legStart, legEnd + 1000) } catch { ok = false; break }
-      if (lt.length === 0) { legStart = legEnd; continue }
+      try { lt = rdr.read(r.startMs, legEnd + 1000) } catch { ok = false; break }
+      if (lt.length === 0) continue
       // Loop, not Math.max(...lt) — a leg window can hold tens of thousands of
       // ticks and spreading them overflows the call stack.
       let peak = isLong ? -Infinity : Infinity
       for (const p of lt) { if (isLong ? p > peak : p < peak) peak = p }
       sum += favPts(peak) * mult * leg.qty
-      legStart = legEnd
     }
     if (ok && sum > 0) mfeLeg = Math.round(sum * 100) / 100
   } else {
