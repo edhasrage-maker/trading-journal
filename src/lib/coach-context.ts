@@ -816,9 +816,12 @@ PROCESS & EXECUTION (from the trader's own EOD analyses — cite these directly;
 ${verdictBlock}
 
 MONTH-BY-MONTH (WITHIN the ${windowLabel} window only — earlier months are partial/clipped; for complete monthly counts use FULL-HISTORY MONTHLY TRADE COUNTS above. Each month's trade count, PnL, win rate):
-${Array.from(monthBuckets.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([ym, b]) => {
+${Array.from(monthBuckets.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([ym, b], i) => {
     const wr = (b.wins + b.losers) > 0 ? Math.round((b.wins / (b.wins + b.losers)) * 100) : 0
-    return `  ${ym}: ${b.count} trades · ${fmt(b.pnl)} · WR ${wr}%`
+    // The earliest month equals the window's start month, so it's clipped to the
+    // days from startDate onward — flag it so its count isn't read as the month total.
+    const partial = i === 0 && ym === startDate.slice(0, 7)
+    return `  ${ym}: ${b.count} trades${partial ? ` (PARTIAL — window opens ${startDate}; full month total is in FULL-HISTORY MONTHLY above)` : ''} · ${fmt(b.pnl)} · WR ${wr}%`
   }).join('\n') || '  (no trades in window)'}
 
 EXIT EFFICIENCY — MFE CAPTURE (how much of the favorable move you keep; informs whether to hold for a TP2 / runner vs take TP1):
