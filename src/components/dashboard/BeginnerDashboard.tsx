@@ -31,6 +31,16 @@ type Props = {
   /** This month's TapeScore + finding — the SAME data the Detailed hero shows,
    *  so the score and the leak match across modes. */
   hero: HeroPeriodData
+  /** All-time mean day P&L for well-traded (70+) vs poorly-traded (sub-50)
+   *  sessions. Null until both buckets have enough sessions to mean anything —
+   *  Detailed shows the same relationship as the TapeScore line on the equity
+   *  chart; here it's stated in words. */
+  processPayoff: {
+    highAvg: number
+    lowAvg: number
+    highN: number
+    lowN: number
+  } | null
   /** Recent day rows for the lean Highlights table (Tape / Trades / Win % / P&L). */
   days: DayRowData[]
   // Performance charts (equity curve), rendered below the stat chips.
@@ -48,7 +58,7 @@ const TONE = {
   none: { dot: 'bg-gray-500', text: 'text-gray-400', label: 'No clear read' },
 } as const
 
-export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, hero, days, charts }: Props) {
+export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, hero, processPayoff, days, charts }: Props) {
   const { setMode } = useUiMode()
   const { scorePeriod, carryover } = hero
   const { score, band, risk, entry, capture, scoredDays } = scorePeriod
@@ -123,6 +133,19 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
           </div>
         </div>
       </div>
+
+      {/* Does the score pay? The same relationship Detailed draws as a TapeScore
+          line over the equity curve, said in one sentence. All-time, so it's a
+          standing fact rather than a number that flips with a bad week. */}
+      {processPayoff && (
+        <p className="text-[13px] text-gray-400 leading-relaxed">
+          Sessions you scored <span className="text-gray-200 font-semibold">70+</span> averaged{' '}
+          <span className={processPayoff.highAvg >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{money(processPayoff.highAvg)}</span>
+          {' '}a day. Sessions under <span className="text-gray-200 font-semibold">50</span> averaged{' '}
+          <span className={processPayoff.lowAvg >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{money(processPayoff.lowAvg)}</span>.
+          <span className="text-gray-600"> · all time, {processPayoff.highN + processPayoff.lowN} sessions</span>
+        </p>
+      )}
 
       {/* Your one focus — the single action, in plain English. */}
       <div className="rounded-xl border p-4" style={{ background: 'rgba(224,163,60,0.08)', borderColor: 'rgba(224,163,60,0.35)' }}>

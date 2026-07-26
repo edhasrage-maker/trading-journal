@@ -424,6 +424,29 @@ export default async function DashboardPage() {
   // Lean Recent Days table for Highlights (Tape / Trades / Win % / P&L).
   const beginnerDays = recentDaysForTable.slice(0, 8)
 
+  // "Does trading well actually pay?" — the claim the whole product rests on,
+  // stated as a measured fact rather than left for the trader to eyeball.
+  //
+  // Computed over ALL history, deliberately NOT the 30-day window: a dozen
+  // sessions is noise, and a line that flips sign week to week would be worse
+  // than no line. Suppressed entirely until BOTH buckets clear MIN_N, so it
+  // never draws a conclusion off three sessions.
+  const MIN_BUCKET = 5
+  const scoredDaysWithPnl = recentDays.filter(d => d.tapescore?.score != null && d.eod_pnl != null)
+  const wellTradedDays = scoredDaysWithPnl.filter(d => (d.tapescore?.score ?? 0) >= 70)
+  const poorlyTradedDays = scoredDaysWithPnl.filter(d => (d.tapescore?.score ?? 0) < 50)
+  const meanPnl = (rows: typeof scoredDaysWithPnl) =>
+    rows.length > 0 ? rows.reduce((a, d) => a + (d.eod_pnl ?? 0), 0) / rows.length : 0
+  const processPayoff =
+    wellTradedDays.length >= MIN_BUCKET && poorlyTradedDays.length >= MIN_BUCKET
+      ? {
+          highAvg: meanPnl(wellTradedDays),
+          lowAvg: meanPnl(poorlyTradedDays),
+          highN: wellTradedDays.length,
+          lowN: poorlyTradedDays.length,
+        }
+      : null
+
   tick('per-day computation loop')
   console.log('[dashboard perf]', perf.phases.map(p => `${p.name}=${p.ms}ms${p.rows != null ? ` (${p.rows})` : ''}`).join(' | '))
 
@@ -472,6 +495,7 @@ export default async function DashboardPage() {
             tradedDays={beginnerTradedDays}
             bestDay={beginnerBestDay}
             hero={heroPeriods.month}
+            processPayoff={processPayoff}
             days={beginnerDays}
             charts={<DashboardCharts days={statsDays} />}
           />

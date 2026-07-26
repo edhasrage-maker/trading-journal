@@ -102,6 +102,44 @@ function niceScale(min: number, max: number, count = 4): { niceMin: number; nice
 
 const GREEN = '#22c55e'
 const RED = '#ef4444'
+// TapeScore overlay uses the brand accent, never green/red — those are reserved
+// for money. A score is not a P&L, and must never be mistaken for one.
+const SCORE_BLUE = '#4F97CE'
+
+/**
+ * Path runs for the TapeScore overlay, broken at unscored days.
+ *
+ * A gap MUST read as "no analysis on that day" — interpolating across it would
+ * invent a score the trader never earned. Runs of a single scored day return a
+ * dot instead of a path, so an isolated session doesn't silently vanish.
+ *
+ * The caller maps score→y on a FIXED 0-100 scale (never fitted to the data), so
+ * the overlay's position can't be tuned to manufacture a correlation with the
+ * equity line — the one real hazard of drawing two series on one plot.
+ */
+function scoreRuns(
+  scores: (number | null)[],
+  xAt: (i: number) => number,
+  yAt: (s: number) => number,
+): { paths: string[]; dots: [number, number][] } {
+  const paths: string[] = []
+  const dots: [number, number][] = []
+  let cur: [number, number][] = []
+  const flush = () => {
+    if (cur.length === 1) dots.push(cur[0])
+    else if (cur.length >= 2) {
+      paths.push(cur.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(' '))
+    }
+    cur = []
+  }
+  for (let i = 0; i < scores.length; i++) {
+    const s = scores[i]
+    if (s == null) { flush(); continue }
+    cur.push([xAt(i), yAt(s)])
+  }
+  flush()
+  return { paths, dots }
+}
 
 /**
  * Split a cumulative line into maximal same-sign runs so it can be drawn green
@@ -180,7 +218,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
     try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
   }, [period, hydrated])
 
-  const { points, equity, daily } = useMemo(() => {
+  const { points, equity, daily, scores } = useMemo(() => {
     const { start, end } = periodBounds(period)
     const inPeriod = days
       .filter(d => d.eod_pnl != null && d.date >= start && d.date <= end)
@@ -194,7 +232,10 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
     )
     const daily = inPeriod.map(d => ({ date: d.date, pnl: d.eod_pnl ?? 0 }))
     const points = inPeriod.map(d => d.date)
-    return { points, equity, daily }
+    // TapeScore per day, aligned index-for-index with the equity series. Null on
+    // days with no EOD analysis — the overlay breaks rather than interpolating.
+    const scores = inPeriod.map(d => d.tapescore?.score ?? null)
+    return { points, equity, daily, scores }
   }, [days, period])
 
   const hasData = points.length > 0
@@ -222,8 +263,17 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
         {/* Equity Curve (cumulative). Container matches the stat tiles —
             no fill, hairline rule, squared corner. */}
         <div className="border border-gray-800 rounded-[3px] p-5">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="font-semibold text-white text-sm">Equity Curve</h2>
+          <div className="flex items-baseline justify-between mb-3 gap-3">
+            <div className="flex items-baseline gap-2.5 min-w-0">
+              <h2 className="font-semibold text-white text-sm">Equity Curve</h2>
+              {/* Legend only when there's actually a score series to explain. */}
+              {scores.some(s => s != null) && (
+                <span className="flex items-center gap-1.5 text-[10px] text-gray-500 whitespace-nowrap">
+                  <span className="inline-block w-3 h-px" style={{ background: SCORE_BLUE }} />
+                  TapeScore 0–100
+                </span>
+              )}
+            </div>
             {hasData && (
               <span className={`text-xs font-mono ${equity[equity.length - 1] >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {fmtMoney(equity[equity.length - 1], { signed: true })}
@@ -231,7 +281,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
             )}
           </div>
           {hasData ? (
-            <EquityChart dates={points} values={equity} height={210} />
+            <EquityChart dates={points} values={equity} scores={scores} height={210} />
           ) : (
             <div className="text-center text-xs text-gray-600 italic py-16">No closed sessions in this range</div>
           )}
@@ -356,7 +406,13 @@ function Gridlines({ yMin, yMax, yTicks }: { yMin: number; yMax: number; yTicks:
 }
 
 /** Cumulative equity line with hover readout. */
-function EquityChart({ dates, values, height }: { dates: string[]; values: number[]; height: number }) {
+function EquityChart({ dates, values, scores = [], height }: {
+  dates: string[]
+  values: number[]
+  /** TapeScore per day, index-aligned with `values`; null = unscored day. */
+  scores?: (number | null)[]
+  height: number
+}) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
 
   const lo = Math.min(0, ...values)
@@ -369,6 +425,15 @@ function EquityChart({ dates, values, height }: { dates: string[]; values: numbe
   const yAt = (v: number) => (1 - (v - niceMin) / span) * 100
 
   const segments = signedLineSegments(values, xAt, yAt)
+
+  // FIXED 0-100 scale, deliberately not fitted to the observed range: the
+  // overlay's height always means the same thing, so it can't be stretched to
+  // make process look more (or less) correlated with money than it is.
+  const yScore = (s: number) => (1 - s / 100) * 100
+  const hasScores = scores.some(s => s != null)
+  const { paths: scorePaths, dots: scoreDots } = hasScores
+    ? scoreRuns(scores, xAt, yScore)
+    : { paths: [], dots: [] }
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const w = e.currentTarget.clientWidth
@@ -398,6 +463,18 @@ function EquityChart({ dates, values, height }: { dates: string[]; values: numbe
           {segments.map((s, i) => (
             <path key={`a${i}`} d={s.area} fill={s.color === GREEN ? 'url(#eqFillPos)' : 'url(#eqFillNeg)'} stroke="none" />
           ))}
+          {/* TapeScore overlay — under the equity stroke so money stays the
+              dominant read, and thinner/muted so it reads as context. */}
+          {scorePaths.map((d, i) => (
+            <path
+              key={`s${i}`} d={d} fill="none" stroke={SCORE_BLUE}
+              strokeWidth="0.35" strokeOpacity="0.75" strokeLinecap="round" strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+          {scoreDots.map((p, i) => (
+            <circle key={`sd${i}`} cx={p[0]} cy={p[1]} r="0.7" fill={SCORE_BLUE} fillOpacity="0.75" vectorEffect="non-scaling-stroke" />
+          ))}
           {segments.map((s, i) => (
             <path key={i} d={s.d} fill="none" stroke={s.color} strokeWidth="0.6" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           ))}
@@ -411,6 +488,15 @@ function EquityChart({ dates, values, height }: { dates: string[]; values: numbe
             </>
           )}
         </svg>
+
+        {/* The overlay's fixed scale, stated. Without these the blue line has no
+            declared units and the reader can only guess what its height means. */}
+        {hasScores && (
+          <>
+            <span className="absolute right-0 top-0 -translate-y-1/2 text-[9px] font-mono leading-none pointer-events-none" style={{ color: SCORE_BLUE, opacity: 0.65 }}>100</span>
+            <span className="absolute right-0 bottom-0 translate-y-1/2 text-[9px] font-mono leading-none pointer-events-none" style={{ color: SCORE_BLUE, opacity: 0.65 }}>0</span>
+          </>
+        )}
 
         {/* Hover capture + tooltip */}
         <div className="absolute inset-0" onMouseMove={onMove} onMouseLeave={() => setHoverIdx(null)} />
@@ -427,6 +513,11 @@ function EquityChart({ dates, values, height }: { dates: string[]; values: numbe
             <div className={`text-xs font-mono font-semibold ${values[hoverIdx] >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {fmtMoney(values[hoverIdx], { signed: true })}
             </div>
+            {scores[hoverIdx] != null && (
+              <div className="text-[10px] font-mono" style={{ color: SCORE_BLUE }}>
+                TapeScore {scores[hoverIdx]}
+              </div>
+            )}
           </div>
         )}
       </div>
