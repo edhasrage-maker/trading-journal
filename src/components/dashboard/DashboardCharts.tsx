@@ -104,7 +104,9 @@ const GREEN = '#22c55e'
 const RED = '#ef4444'
 // TapeScore overlay uses the brand accent, never green/red — those are reserved
 // for money. A score is not a P&L, and must never be mistaken for one.
-const SCORE_BLUE = '#4F97CE'
+// Deliberately the BRIGHT accent: the overlay sits over the equity fill, and at
+// the deeper #4F97CE it disappeared into the shading.
+const SCORE_BLUE = '#79B4E6'
 
 /**
  * Path runs for the TapeScore overlay, broken at unscored days.
@@ -451,12 +453,12 @@ function EquityChart({ dates, values, scores = [], height }: {
                 and fades toward the axis. The red stops are reversed because a
                 below-zero area hangs downward from the axis. */}
             <linearGradient id="eqFillPos" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor={GREEN} stopOpacity="0.22" />
-              <stop offset="1" stopColor={GREEN} stopOpacity="0.02" />
+              <stop offset="0" stopColor={GREEN} stopOpacity="0.15" />
+              <stop offset="1" stopColor={GREEN} stopOpacity="0.015" />
             </linearGradient>
             <linearGradient id="eqFillNeg" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor={RED} stopOpacity="0.02" />
-              <stop offset="1" stopColor={RED} stopOpacity="0.22" />
+              <stop offset="0" stopColor={RED} stopOpacity="0.015" />
+              <stop offset="1" stopColor={RED} stopOpacity="0.15" />
             </linearGradient>
           </defs>
           <Gridlines yMin={niceMin} yMax={niceMax} yTicks={ticks} />
@@ -468,7 +470,7 @@ function EquityChart({ dates, values, scores = [], height }: {
           {scorePaths.map((d, i) => (
             <path
               key={`s${i}`} d={d} fill="none" stroke={SCORE_BLUE}
-              strokeWidth="0.35" strokeOpacity="0.75" strokeLinecap="round" strokeLinejoin="round"
+              strokeWidth="0.55" strokeLinecap="round" strokeLinejoin="round"
               vectorEffect="non-scaling-stroke"
             />
           ))}
