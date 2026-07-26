@@ -101,15 +101,15 @@ function niceScale(min: number, max: number, count = 4): { niceMin: number; nice
   return { niceMin, niceMax, ticks }
 }
 
-const GREEN = '#22c55e'
-const RED = '#ef4444'
+const GREEN = 'var(--color-pos)'
+const RED = 'var(--color-neg)'
 /** The score that counts as "par" for the process curve. 50 is the midpoint of
  *  the 0-100 scale and the bottom of the amber band — a session at 50 neither
  *  builds nor erodes the curve. */
 const PROC_NEUTRAL = 50
 /** The process curve's colour — brand accent, never green/red. It is a score,
  *  not money, and must never be read as a second P&L. */
-const PROC_BLUE = '#79B4E6'
+const PROC_BLUE = 'var(--ts-proc)'
 
 /**
  * The process curve: cumulative (TapeScore − 50) over the scored sessions.
@@ -146,9 +146,9 @@ function processCurve(scores: (number | null)[]): { values: number[]; firstIdx: 
  *  everywhere it appears. Thresholds come from tapeScoreBand rather than being
  *  re-declared here, so a re-band can't drift between surfaces. */
 const BAND_FILL: Record<'high' | 'mid' | 'low', string> = {
-  high: '#4ade80',
-  mid: '#fbbf24',
-  low: '#f87171',
+  high: 'var(--color-pos)',
+  mid: 'var(--color-warn)',
+  low: 'var(--color-neg)',
 }
 
 /**
@@ -480,13 +480,13 @@ function Gridlines({ yMin, yMax, yTicks }: { yMin: number; yMax: number; yTicks:
         <line
           key={i}
           x1={0} x2={100} y1={yAt(v)} y2={yAt(v)}
-          stroke="#1f2937" strokeWidth="0.15" vectorEffect="non-scaling-stroke"
+          stroke="var(--ts-hair)" strokeWidth="0.15" vectorEffect="non-scaling-stroke"
         />
       ))}
       {yMin < 0 && yMax > 0 && (
         <line
           x1={0} x2={100} y1={yAt(0)} y2={yAt(0)}
-          stroke="#4b5563" strokeWidth="0.25" vectorEffect="non-scaling-stroke" strokeDasharray="0.6 0.6"
+          stroke="var(--ts-line)" strokeWidth="0.25" vectorEffect="non-scaling-stroke" strokeDasharray="0.6 0.6"
         />
       )}
     </>
@@ -580,9 +580,9 @@ function EquityChart({ dates, values, scores = [], height }: {
             <>
               <line
                 x1={xAt(hoverIdx)} x2={xAt(hoverIdx)} y1={0} y2={100}
-                stroke="#6b7280" strokeWidth="0.25" vectorEffect="non-scaling-stroke"
+                stroke="var(--color-gray-500)" strokeWidth="0.25" vectorEffect="non-scaling-stroke"
               />
-              <circle cx={xAt(hoverIdx)} cy={yAt(values[hoverIdx])} r="1.1" fill={values[hoverIdx] >= 0 ? GREEN : RED} stroke="#0b0f17" strokeWidth="0.4" vectorEffect="non-scaling-stroke" />
+              <circle cx={xAt(hoverIdx)} cy={yAt(values[hoverIdx])} r="1.1" fill={values[hoverIdx] >= 0 ? GREEN : RED} stroke="var(--color-gray-950)" strokeWidth="0.4" vectorEffect="non-scaling-stroke" />
             </>
           )}
         </svg>
@@ -667,7 +667,7 @@ function BarsChart({ bars, height }: { bars: { date: string; pnl: number }[]; he
             const y = b.pnl >= 0 ? yAt(b.pnl) : zeroY
             const h = Math.abs(yAt(b.pnl) - zeroY)
             const hovered = i === hoverIdx
-            const fill = b.pnl >= 0 ? (hovered ? '#4ade80' : GREEN) : (hovered ? '#f87171' : RED)
+            const fill = b.pnl >= 0 ? (hovered ? 'var(--color-green-300)' : GREEN) : (hovered ? 'var(--color-red-300)' : RED)
             return <rect key={b.date} x={x} y={y} width={barW} height={Math.max(0.3, h)} fill={fill} />
           })}
         </svg>

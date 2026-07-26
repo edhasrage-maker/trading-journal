@@ -54,7 +54,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       className={`${archivo.variable} ${hanken.variable} ${splineMono.variable} antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        {/*
+          Apply the saved theme BEFORE first paint. Without this, a light-mode
+          user gets a carbon flash on every navigation: the server can't know
+          their choice, and React only runs after hydration. Deliberately inline
+          and blocking — it has to win the race with the first paint.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{if(localStorage.getItem('ts-theme')==='light'){document.documentElement.setAttribute('data-theme','light')}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-gray-950 text-white">
         {children}
         <ServiceWorkerRegister />

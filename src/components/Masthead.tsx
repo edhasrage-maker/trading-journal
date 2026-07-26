@@ -8,6 +8,7 @@ import { todayPT } from '@/lib/pt-time'
 import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
+import ThemeToggle from '@/components/ThemeToggle'
 
 /**
  * The app masthead — top text nav, no left rail.
@@ -263,6 +264,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
             Import
           </Link>
           <ViewToggle />
+          <ThemeToggle />
 
           {/* Account menu — settings, tour, sign out. */}
           <div className="relative" ref={menuRef}>
