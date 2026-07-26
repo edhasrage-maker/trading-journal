@@ -508,35 +508,14 @@ function medianFavorableExcursion(trades: InsightTrade[]): { value: number; unit
   return null
 }
 
-/** 7. Hold time — quick exits vs long holds, on win rate. */
-const holdTime: Builder = trades => {
-  const withHold = trades
-    .map(t => {
-      if (!t.entry_time || !t.exit_time) return null
-      const m = (Date.parse(t.exit_time) - Date.parse(t.entry_time)) / 60000
-      return Number.isFinite(m) && m >= 0 ? { t, m } : null
-    })
-    .filter((x): x is { t: InsightTrade; m: number } => x != null)
-  if (withHold.length < DEFAULT_MIN_N * 2) return null
-  const med = median(withHold.map(x => x.m))
-  const short = withHold.filter(x => x.m < med).map(x => x.t)
-  const long = withHold.filter(x => x.m >= med).map(x => x.t)
-  const c = contrastProportion(winFlags(short), winFlags(long))
-  if (!c?.passes) return null
-  // DESCRIPTIVE only — hold time is partly a FUNCTION of the outcome (winners
-  // get held, losers get cut, or vice-versa), so "hold longer / cut faster"
-  // would be reverse-causality advice. State the pattern, prescribe nothing.
-  const shortBetter = c.effect > 0
-  const label = fmtDuration(med)
-  return {
-    key: 'hold_time', dimension: 'Hold time',
-    headline: shortBetter ? 'Your quick exits are the winners' : 'Your winners are the ones you hold',
-    detail: shortBetter
-      ? `Trades you exit under ${label} win ${pct(c.meanA)} vs ${pct(c.meanB)} on longer holds.`
-      : `Trades held past ${label} win ${pct(c.meanB)} vs ${pct(c.meanA)} on quicker exits.`,
-    footnote: footN(c.nA, c.nB), tone: 'neutral', score: c.score,
-  }
-}
+// NOTE: a hold-time dimension (win rate by hold duration) was intentionally NOT
+// kept. Hold time is largely an OUTCOME of the trade working — winners need time
+// to reach target, losers get stopped/scratched fast — so "trades held longer
+// win more" is nearly tautological and the implied "hold longer" is a trap
+// (holding losers longer just grows the loss). The one useful read — "are you
+// bailing early on trades that would have worked?" — needs MFE context to
+// separate premature exits from legitimate fast stop-outs, so it belongs in the
+// coach, not a context-free one-liner.
 
 /** 8. Size vs outcome — biggest-size tercile vs smallest, on win rate. */
 const sizeVsOutcome: Builder = trades => {
@@ -720,7 +699,7 @@ const dayTypeRegime: Builder = trades => {
 
 const BUILDERS: Builder[] = [
   timeOfDay, instrument, direction, tradesPerDay, revengeReentry,
-  captureLeakage, holdTime, sizeVsOutcome, prevOutcome, dayOfWeek,
+  captureLeakage, sizeVsOutcome, prevOutcome, dayOfWeek,
   dayTypeSize, dayTypeRegime,
 ]
 
@@ -752,11 +731,6 @@ function cmpTime(a: InsightTrade, b: InsightTrade): number {
   const tb = b.entry_time ? Date.parse(b.entry_time) : Infinity
   if (ta !== tb) return ta - tb
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-}
-function fmtDuration(min: number): string {
-  if (min < 1) return `${Math.round(min * 60)}s`
-  if (min < 60) return `${min < 10 ? min.toFixed(1) : Math.round(min)}m`
-  return `${(min / 60).toFixed(1)}h`
 }
 /** Narrow an InsightTrade to the ProxyTrade shape revengeReentryIds wants. */
 function toProxy(t: InsightTrade) {
