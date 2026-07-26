@@ -33,6 +33,9 @@ export interface DayStat {
   avg_mae_pts: number | null
   avg_mfe_dollars: number | null
   avg_mae_dollars: number | null
+  /** Mean MFE capture (0..1) — realized PnL / peak favorable. Positions the
+   *  exit marker on the excursion bar; null hides it. */
+  avg_capture: number | null
   /** Prep-time ATR (market_context.atr_1m) — fallback ATR ref when live bars
    *  are missing for the day. */
   atr_1m: number | null
@@ -223,6 +226,14 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       avgMae = maeAtr.length > 0 ? maeAtr.reduce((a, b) => a + b, 0) / maeAtr.length : null
     }
 
+    // Mean MFE capture across days that have it — positions the exit marker on
+    // the excursion bar. Same [0,1] guard formatCapturePct uses, so a day with
+    // a unit-mismatched ratio can't drag the marker off the scale.
+    const capVals = inPeriod
+      .map(d => d.avg_capture)
+      .filter((v): v is number => v != null && Number.isFinite(v) && v >= 0 && v <= 1.0001)
+    const avgCapture = capVals.length > 0 ? capVals.reduce((a, b) => a + b, 0) / capVals.length : null
+
     // Median Prep (prep AI 1-10) and Median Process (v1.4 verdict-derived
     // 0-10). Two separate medians on the same stat card — see render block.
     // Median preferred over mean to suppress outliers.
@@ -242,6 +253,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       tradeWinRate,
       avgMfe,
       avgMae,
+      avgCapture,
       medianProcess: medianPrep,    // legacy field name preserved for callers
       medianProcessV13,
       tapePeriod,
@@ -324,6 +336,13 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
                   : `+${stats.avgMfe.toFixed(1)} / -${stats.avgMae.toFixed(1)}`
           }
           tone="neutral"
+          // The two numbers describe a range around the entry — draw it, so the
+          // heat/run/give-back story reads at a glance instead of as two figures.
+          chartNode={
+            stats.avgMfe != null && stats.avgMae != null
+              ? <ExcursionBar mfe={stats.avgMfe} mae={stats.avgMae} capture={stats.avgCapture} />
+              : null
+          }
           // Sub becomes the unit selector itself. Compact inline dropdown
           // replaces the static "pts per trade" string so the card surfaces
           // the choice in the same visual slot.
@@ -406,8 +425,56 @@ function TapeScoreHero({ period, periodLabel }: {
   )
 }
 
+/**
+ * The average trade's excursion on one axis — heat, run, and where you left.
+ *
+ * MFE and MAE are a RANGE around the entry, so they're drawn as one: the tick
+ * is the entry, left of it is the heat you sat through (MAE), right of it is
+ * how far the trade ran your way (MFE). The solid fill is what you actually
+ * kept (mean capture); the faint remainder to its right is what you gave back.
+ * Shared scale, so the tick sits at MAE/(MAE+MFE) — the shape itself reads as
+ * "took a lot of heat" or "left most of it on the table" without a legend.
+ *
+ * Unit-agnostic: pts, dollars and ATR all produce the same proportions, so it
+ * tracks whatever unit the card is showing.
+ */
+function ExcursionBar({ mfe, mae, capture }: {
+  mfe: number
+  mae: number
+  /** Mean MFE capture, 0..1. Null hides the exit marker (bar still shows). */
+  capture: number | null
+}) {
+  const span = mfe + mae
+  if (!(span > 0)) return null
+  const entry = (mae / span) * 100
+  const keptWidth = capture != null ? (100 - entry) * Math.max(0, Math.min(1, capture)) : null
+  return (
+    <div className="mt-2.5">
+      <div className="relative h-[7px] rounded-[2px]" style={{ background: 'var(--color-surface-2)' }}>
+        {/* heat (left of entry) */}
+        <span className="absolute top-0 h-[7px] rounded-l-[2px]" style={{ left: 0, width: `${entry}%`, background: 'rgba(224,104,95,0.45)' }} />
+        {/* full favourable run (faint) */}
+        <span className="absolute top-0 h-[7px] rounded-r-[2px]" style={{ left: `${entry}%`, right: 0, background: 'rgba(79,197,142,0.18)' }} />
+        {/* the part you kept (solid) */}
+        {keptWidth != null && (
+          <span className="absolute top-0 h-[7px]" style={{ left: `${entry}%`, width: `${keptWidth}%`, background: 'var(--color-pos)' }} />
+        )}
+        {/* entry tick */}
+        <span className="absolute -top-[3px] h-[13px] w-px bg-gray-300" style={{ left: `${entry}%` }} />
+      </div>
+      <div className="flex items-baseline justify-between mt-1.5 text-[10px] whitespace-nowrap">
+        <span className="text-red-400/80">heat</span>
+        {capture != null && (
+          <span className="text-gray-600">kept <span className="text-gray-300 font-semibold">{Math.round(Math.min(capture, 1) * 100)}%</span></span>
+        )}
+        <span className="text-green-400/80">run</span>
+      </div>
+    </div>
+  )
+}
+
 function StatCard({
-  label, value, tone, sub, subNode, valueClass,
+  label, value, tone, sub, subNode, valueClass, chartNode,
 }: {
   label: string
   value: string
@@ -416,15 +483,22 @@ function StatCard({
   /** Rich subline (e.g. an inline <select>). Wins over `sub` when both set. */
   subNode?: React.ReactNode
   valueClass?: string
+  /** Optional visual under the value (e.g. the excursion bar). */
+  chartNode?: React.ReactNode
 }) {
   const valueColor =
     tone === 'positive' ? 'text-green-400'
     : tone === 'negative' ? 'text-red-400'
     : 'text-gray-300'
+  // Blend-in container: no fill, hairline rule, squared corners. The filled
+  // rounded card read as generic template chrome; dropping the fill lets the
+  // tile sit ON the page instead of floating above it, and the near-square
+  // corner reads instrument rather than app-card.
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+    <div className="border border-gray-800 rounded-[3px] p-[18px]">
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
+      {chartNode}
       {subNode ? <div className="mt-1">{subNode}</div> : sub ? <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">{sub}</p> : null}
     </div>
   )

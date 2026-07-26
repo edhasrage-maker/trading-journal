@@ -379,6 +379,7 @@ export default async function DashboardPage() {
     avg_mae_pts: d.avg_mae_pts,
     avg_mfe_dollars: d.avg_mfe_dollars,
     avg_mae_dollars: d.avg_mae_dollars,
+    avg_capture: d.avg_capture,
     atr_1m: d.atr_1m,
     avg_live_atr_1m: d.avg_live_atr_1m,
     process_score: d.process_score,

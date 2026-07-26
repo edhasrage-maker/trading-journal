@@ -144,7 +144,9 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
         </div>
         <div className={`grid grid-cols-2 ${chipCols} gap-3`}>
           {chips.map(c => (
-            <div key={c.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4" title={c.title}>
+            /* Blend-in container — matches the Detailed tiles (no fill, hairline
+               rule, squared corner) so the same stat reads the same in both modes. */
+            <div key={c.label} className="border border-gray-800 rounded-[3px] p-[18px]" title={c.title}>
               <div className="text-xs text-gray-500 mb-1">{c.label}</div>
               <div className={`text-xl font-semibold ${c.valueClass ?? 'text-gray-100'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{c.value}</div>
             </div>
