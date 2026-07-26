@@ -68,6 +68,10 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
   const [archives, setArchives] = useState<ArchivedConversation[]>([])
   const [openArchiveId, setOpenArchiveId] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])   // data URLs for the next send
+  // Proactive opener (Pt 11): deterministic "what should I work on?" topics,
+  // fetched once when the panel opens on an empty conversation. null = not yet
+  // loaded; [] = loaded but nothing worth surfacing (→ generic greeting).
+  const [suggestedTopics, setSuggestedTopics] = useState<{ id: string; line: string; followUp: string }[] | null>(null)
   // Coach verbosity follows the GLOBAL sidebar View toggle (useUiMode): Highlights
   // (beginner) = short verdict + offer to drill in; Detailed Tape (pro) = full breakdown.
   const { mode: uiMode } = useUiMode()
@@ -284,6 +288,23 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
   useEffect(() => {
     if (open) setTimeout(() => textareaRef.current?.focus(), 50)
   }, [open])
+
+  // Fetch the personalized improvement topics the first time the panel opens on
+  // an empty conversation. Deterministic + best-effort — a failure just leaves
+  // the generic greeting. Skipped for the read-only demo (no per-user data).
+  useEffect(() => {
+    if (!open || isDemo || suggestedTopics !== null || messages.length > 0) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch('/api/coach/suggestions')
+        if (!res.ok) { if (!cancelled) setSuggestedTopics([]); return }
+        const data = await res.json() as { items?: { id: string; line: string; followUp: string }[] }
+        if (!cancelled) setSuggestedTopics(Array.isArray(data.items) ? data.items : [])
+      } catch { if (!cancelled) setSuggestedTopics([]) }
+    })()
+    return () => { cancelled = true }
+  }, [open, isDemo, suggestedTopics, messages.length])
 
   const send = async (override?: string) => {
     const trimmed = (override ?? input).trim()
@@ -627,20 +648,51 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
         {messages.length === 0 && (
           <div className="text-gray-500 text-xs space-y-2">
             <p>Ask me anything about your trading. I have your last 180 days — month-by-month performance, setups, mistakes, day types, orderflow, 5m structure, and your last 150 trades in detail.</p>
-            <p className="text-gray-600">Try:</p>
-            <div className="flex flex-wrap gap-1.5">
-              {SUGGESTIONS.map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => void send(s)}
-                  disabled={sending}
-                  className="text-left text-[11px] text-blue-300 bg-blue-950/30 hover:bg-blue-900/40 border border-blue-900/50 rounded-full px-2.5 py-1 transition-colors disabled:opacity-50"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
+
+            {/* Proactive opener (Pt 11): personalized improvement topics, ranked
+                deterministically from the trader's own data. Each is a real leak
+                with real numbers; click one to dig in. Falls back to the generic
+                starters when there's nothing notable (new/clean account) or the
+                fetch failed. */}
+            {suggestedTopics && suggestedTopics.length > 0 ? (
+              <div className="bg-gray-800/40 border border-gray-700 rounded-lg p-2.5 space-y-2">
+                <p className="text-gray-300">Looking at your last 180 days, here&apos;s what I&apos;d work on:</p>
+                <ul className="space-y-1.5">
+                  {suggestedTopics.map(t => (
+                    <li key={t.id}>
+                      <button
+                        type="button"
+                        onClick={() => void send(t.followUp)}
+                        disabled={sending}
+                        className="text-left text-[11px] text-gray-300 hover:text-blue-200 leading-snug transition-colors disabled:opacity-50 flex gap-1.5"
+                      >
+                        <span className="text-blue-400 shrink-0">→</span>
+                        <span>{t.line}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-gray-600">Click one to dig in — or ask me anything else.</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-gray-600">Try:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {SUGGESTIONS.map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => void send(s)}
+                      disabled={sending}
+                      className="text-left text-[11px] text-blue-300 bg-blue-950/30 hover:bg-blue-900/40 border border-blue-900/50 rounded-full px-2.5 py-1 transition-colors disabled:opacity-50"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
             <p className="text-gray-600 pt-1">Or attach a chart (image button / paste a screenshot) and ask me to read the structure — note I can&apos;t reliably read precise footprint/delta numbers.</p>
           </div>
         )}
