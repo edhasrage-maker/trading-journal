@@ -306,21 +306,20 @@ export default async function DashboardPage() {
   const yearStart = `${today.slice(0, 4)}-01-01`
   const dayDateById = new Map(recentDaysBase.map(d => [d.id, d.date]))
 
-  const allDayIds = recentDaysBase.map(d => d.id)
+  // Fetch the whole trade book ONCE, RLS-scoped to the user, paginated. Was a
+  // nested serial chunk loop (one query per 50 day-ids); at ~1k trades this is a
+  // single query. Trades on days beyond the 1000-day window aren't in
+  // dayDateById, so the in-memory window filter below drops them — same result.
   const allTrades: Trade[] = []
-  for (let i = 0; i < allDayIds.length; i += 50) {
-    const slice = allDayIds.slice(i, i + 50)
-    for (let p = 0; p < 50; p++) {
-      const { data } = await supabase
-        .from('trades')
-        .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, high_during_position, low_during_position')
-        .in('trading_day_id', slice)
-        .order('id', { ascending: true })
-        .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
-      const batch = (data ?? []) as Trade[]
-      allTrades.push(...batch)
-      if (batch.length < PAGE_SIZE) break
-    }
+  for (let p = 0; p < 50; p++) {
+    const { data } = await supabase
+      .from('trades')
+      .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, high_during_position, low_during_position')
+      .order('id', { ascending: true })
+      .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
+    const batch = (data ?? []) as Trade[]
+    allTrades.push(...batch)
+    if (batch.length < PAGE_SIZE) break
   }
   tick('hero trades (all history)', allTrades.length)
 
