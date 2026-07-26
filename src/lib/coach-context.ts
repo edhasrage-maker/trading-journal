@@ -188,21 +188,23 @@ async function fetchHistoricalInWindow(supabase: AnyClient, startDate: string, e
  */
 async function fetchAllTimeTagStats(
   supabase: AnyClient, handoffDate: string | null,
-): Promise<{ total: number; realSetup: number } | null> {
+): Promise<{ total: number; realSetup: number; byMonth: Record<string, number> } | null> {
   const PAGE = 1000
   let total = 0, realSetup = 0
+  const byMonth: Record<string, number> = {}
+  const bumpMonth = (ymd: string) => { const ym = ymd.slice(0, 7); if (ym.length === 7) byMonth[ym] = (byMonth[ym] ?? 0) + 1 }
   try {
     // Historical: all rows.
     for (let p = 0; p < 10; p++) {
       const { data, error } = await supabase
         .from('historical_trades')
-        .select('id, tags_json')
+        .select('id, trade_date, tags_json')
         .order('id', { ascending: true })
         .range(p * PAGE, p * PAGE + PAGE - 1)
       if (error) return null
       if (!data || data.length === 0) break
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const r of data as any[]) { total++; if (hasRealSetup(r.tags_json)) realSetup++ }
+      for (const r of data as any[]) { total++; if (hasRealSetup(r.tags_json)) realSetup++; if (r.trade_date) bumpMonth(String(r.trade_date)) }
       if (data.length < PAGE) break
     }
     // Native: all rows AFTER the handoff (before it = untagged Sierra dupes).
@@ -221,13 +223,14 @@ async function fetchAllTimeTagStats(
         if (handoffDate && d && d <= handoffDate) continue
         total++
         if (hasRealSetup(r.tags_json)) realSetup++
+        if (d) bumpMonth(d)
       }
       if (data.length < PAGE) break
     }
   } catch {
     return null
   }
-  return { total, realSetup }
+  return { total, realSetup, byMonth }
 }
 
 export async function buildCoachContext(supabase: AnyClient, opts: CoachContextOptions): Promise<string> {
@@ -779,6 +782,13 @@ ${regimeLine(atrRegimeBuckets, ['low volatility', 'normal', 'high volatility']) 
   const allTimeBlock = allTime
     ? `  ${allTime.total} trades logged all-time · ${allTime.realSetup} with a real setup (${allTime.total > 0 ? Math.round((allTime.realSetup / allTime.total) * 100) : 0}%). NB: "Discretionary Trade" is NOT counted as a setup here.`
     : '  (all-time totals unavailable)'
+  // Full-history monthly counts (deduped) so month/range questions are answerable
+  // even for months BEFORE the recency window — the windowed MONTH-BY-MONTH block
+  // below clips them (e.g. a today-180d window starts late-January and reports
+  // only Jan 27–31, making January look far too small).
+  const allTimeMonthlyBlock = allTime && Object.keys(allTime.byMonth).length > 0
+    ? Object.entries(allTime.byMonth).sort((a, b) => a[0].localeCompare(b[0])).map(([ym, n]) => `${ym}: ${n}`).join(' · ')
+    : null
 
   // EOD Process/Execution verdicts (#2b) — cite these, don't re-derive.
   const analyzedDays = compliantDays + breachDays
@@ -794,6 +804,9 @@ Trade sources UNIONED: native TapeScore trades + imported Tradezella history, de
 ALL-TIME TAGGING (full history, both sources, deduped — use this for "how many setup trades do I have", NOT the windowed counts below):
 ${allTimeBlock}
 
+FULL-HISTORY MONTHLY TRADE COUNTS (every month across ALL history, both sources, deduped — USE THIS for "how many trades in <month>" and any date-range/count question. The MONTH-BY-MONTH block below is limited to the ${windowLabel} window and CLIPS earlier months, so never use it for historical counts):
+${allTimeMonthlyBlock ? '  ' + allTimeMonthlyBlock : '  (unavailable)'}
+
 OVERALL (within window):
   Win rate: ${winRate.toFixed(0)}% (${winners}W / ${losers}L)
   Total PnL: ${fmt(totalPnl)}
@@ -802,7 +815,7 @@ OVERALL (within window):
 PROCESS & EXECUTION (from the trader's own EOD analyses — cite these directly; Process = did they follow their safety rails, Execution = decision quality, two SEPARATE axes):
 ${verdictBlock}
 
-MONTH-BY-MONTH (chronological — each month's trade count, PnL, win rate, profit factor):
+MONTH-BY-MONTH (WITHIN the ${windowLabel} window only — earlier months are partial/clipped; for complete monthly counts use FULL-HISTORY MONTHLY TRADE COUNTS above. Each month's trade count, PnL, win rate):
 ${Array.from(monthBuckets.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([ym, b]) => {
     const wr = (b.wins + b.losers) > 0 ? Math.round((b.wins / (b.wins + b.losers)) * 100) : 0
     return `  ${ym}: ${b.count} trades · ${fmt(b.pnl)} · WR ${wr}%`
