@@ -164,22 +164,46 @@ const BAND_FILL: Record<'high' | 'mid' | 'low', string> = {
  * Unscored sessions render as a GAP, never a neutral fill: "no analysis" must
  * not be mistakable for "an average day".
  */
-function ScoreStrip({ scores }: { scores: (number | null)[] }) {
+function ScoreStrip({ scores, hoverIdx, onHover }: {
+  scores: (number | null)[]
+  hoverIdx: number | null
+  onHover: (i: number | null) => void
+}) {
   const n = scores.length
   if (n === 0) return null
-  const w = 100 / n
+  // Columns are CENTRED on the curve's own x positions (i/(n-1)), not laid out
+  // as equal slices — otherwise every column sits progressively off from the
+  // session it represents, which defeats the whole point of a shared axis.
+  const barW = Math.min(6, (100 / n) * 0.84)
+  const xc = (i: number) => (n <= 1 ? 50 : (i / (n - 1)) * 100)
+  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const w = e.currentTarget.clientWidth
+    if (w <= 0) return
+    const frac = Math.min(1, Math.max(0, e.nativeEvent.offsetX / w))
+    // Same index maths the plot's hover uses, so hovering the strip and
+    // hovering the curve resolve to the same session.
+    onHover(n <= 1 ? 0 : Math.round(frac * (n - 1)))
+  }
   return (
-    <svg viewBox="0 0 100 1" preserveAspectRatio="none" className="w-full h-full">
-      {scores.map((s, i) => s == null ? null : (
-        <rect
-          key={i}
-          x={i * w + w * 0.08} y={0}
-          width={w * 0.84} height={1}
-          fill={BAND_FILL[tapeScoreBand(s)]}
-          opacity={0.9}
-        />
-      ))}
-    </svg>
+    <div className="w-full h-full cursor-crosshair" onMouseMove={onMove} onMouseLeave={() => onHover(null)}>
+      <svg viewBox="0 0 100 1" preserveAspectRatio="none" className="w-full h-full">
+        {scores.map((s, i) => {
+          if (s == null) return null
+          const x = Math.max(0, Math.min(100 - barW, xc(i) - barW / 2))
+          // Hovering a session dims its neighbours rather than adding chrome —
+          // the readout is the existing tooltip, so no extra legend is needed.
+          const dimmed = hoverIdx != null && hoverIdx !== i
+          return (
+            <rect
+              key={i}
+              x={x} y={0} width={barW} height={1}
+              fill={BAND_FILL[tapeScoreBand(s)]}
+              opacity={dimmed ? 0.3 : 1}
+            />
+          )
+        })}
+      </svg>
+    </div>
   )
 }
 
@@ -519,7 +543,7 @@ function EquityChart({ dates, values, scores = [], height }: {
   return (
     <ChartFrame
       height={height} yMin={niceMin} yMax={niceMax} yTicks={ticks} xLabels={dates}
-      strip={hasScores ? <ScoreStrip scores={scores} /> : undefined}
+      strip={hasScores ? <ScoreStrip scores={scores} hoverIdx={hoverIdx} onHover={setHoverIdx} /> : undefined}
     >
       <div className="relative w-full h-full">
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full" style={{ pointerEvents: 'none' }}>
