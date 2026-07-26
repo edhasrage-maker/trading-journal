@@ -14,62 +14,37 @@ type AnyClient = any
 export default async function EodPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params
   const supabase: AnyClient = await createClient()
-  // The user's chosen ATR measurement (timeframe / method / period) — drives the
-  // ATR@ column and the ATR-unit R fallback. Defaults to 1m Wilder-10.
-  const atrCfg = await getAtrConfig(supabase)
-  // The trader's "was up" multiple for the round-trip / give-back metric (×ATR).
-  // Defaults to 1× until they change it in Settings → ATR measurement.
-  const giveBackAtr = await getGiveBackAtr(supabase)
+  // ── Stage A: config + the day row + all-days aggregates, in parallel ──
+  // atrCfg = the trader's chosen ATR measurement (drives the ATR@ column);
+  // giveBackAtr = their "was up" multiple; tags = the tag library; pnlHistory +
+  // achievements are all-days rollups. All independent → one round-trip stage.
+  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes] = await Promise.all([
+    getAtrConfig(supabase),
+    getGiveBackAtr(supabase),
+    supabase.from('trading_days').select('*').eq('date', date).maybeSingle(),
+    supabase.from('trade_tags').select('*').order('sort_order'),
+    supabase.from('trading_days').select('date, eod_pnl').not('eod_pnl', 'is', null).order('date', { ascending: true }),
+    supabase.from('trading_days').select('achievements_json'),
+  ])
+  const day = dayRes.data as TradingDay | null
+  const tags = tagsRes.data as TradeTag[] | null
+  const pnlHistory = ((dayPnlRes.data ?? []) as { date: string; eod_pnl: number }[]).map(d => ({ date: d.date, pnl: d.eod_pnl }))
+  // achievements_json select errors before its migration/backfill exists — guard
+  // so counts stay undefined (showcase falls back to "First time!").
+  const achRows = achRes.error ? null : (achRes.data as { achievements_json: string[] | null }[] | null)
+  const counts = achRows ? achievementCounts(achRows.map(r => r.achievements_json)) : undefined
 
-  const { data: day } = await supabase
-    .from('trading_days')
-    .select('*')
-    .eq('date', date)
-    .maybeSingle() as { data: TradingDay | null }
-
+  // ── Stage B: day-dependent trades + market context, in parallel ──
   let trades: Trade[] = []
   let marketContext: MarketContext | null = null
   if (day) {
-    const { data: tradesData } = await supabase
-      .from('trades')
-      .select('*')
-      .eq('trading_day_id', day.id)
-      .order('entry_time', { ascending: true }) as { data: Trade[] | null }
-    trades = tradesData ?? []
-
-    const { data: ctxData } = await supabase
-      .from('market_context')
-      .select('*')
-      .eq('trading_day_id', day.id)
-      .maybeSingle() as { data: MarketContext | null }
-    marketContext = ctxData
+    const [tradesRes, ctxRes] = await Promise.all([
+      supabase.from('trades').select('*').eq('trading_day_id', day.id).order('entry_time', { ascending: true }),
+      supabase.from('market_context').select('*').eq('trading_day_id', day.id).maybeSingle(),
+    ])
+    trades = (tradesRes.data ?? []) as Trade[]
+    marketContext = ctxRes.data as MarketContext | null
   }
-
-  const { data: tags } = await supabase
-    .from('trade_tags')
-    .select('*')
-    .order('sort_order') as { data: TradeTag[] | null }
-
-  // Realized session P&L history for achievement badges (Career Day percentile
-  // + Heat Check streak). RLS scopes it to this user. Only days with a set
-  // eod_pnl (real sessions / overrides) — the same source the dashboard plots.
-  const { data: dayPnlRows } = await supabase
-    .from('trading_days')
-    .select('date, eod_pnl')
-    .not('eod_pnl', 'is', null)
-    .order('date', { ascending: true }) as { data: { date: string; eod_pnl: number }[] | null }
-  const pnlHistory = (dayPnlRows ?? []).map(d => ({ date: d.date, pnl: d.eod_pnl }))
-
-  // Lifetime earned-achievement counts (gamification Phase 2) — for the EOD
-  // showcase ×N badges + collection strip. Guarded: before the achievements_json
-  // migration/backfill exists the select errors, and counts stay undefined
-  // (showcase then just reads "First time!" on today's coins). RLS-scoped.
-  const { data: achRows, error: achErr } = await supabase
-    .from('trading_days')
-    .select('achievements_json') as { data: { achievements_json: string[] | null }[] | null; error: unknown }
-  const counts = (!achErr && achRows)
-    ? achievementCounts(achRows.map(r => r.achievements_json))
-    : undefined
 
   // Per-trade LIVE ATR: compute ATR-10 Wilder from 1-min bars at each trade's
   // entry_time and pass to EodClient as a map { tradeId → atrPts }. The trade
@@ -120,8 +95,10 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   // this server boundary so the client renders them. Legacy/public URLs pass
   // through unchanged (local owner build). Runs after the ATR/post-exit loops
   // above, which only read numeric/time fields.
-  await signDayScreenshots(supabase, day)
-  await signTradeScreenshots(supabase, trades)
+  await Promise.all([
+    signDayScreenshots(supabase, day),
+    signTradeScreenshots(supabase, trades),
+  ])
 
   // The Prep commitment for this session, if one was tracked. Review · Today is
   // its one obvious resolution home — that is the whole reason EOD folded in

@@ -178,41 +178,49 @@ export default async function AnalyticsPage({
   // rows near midnight can differ — the slack keeps them in the fetch and the
   // exact post-filter on the joined date (below) trims precisely.
   const slackStart = windowStart ? `${format(subDays(parseISO(windowStart), 2), 'yyyy-MM-dd')}T00:00:00Z` : null
-  const trades: TradeRowWithEntryMetrics[] = []
-  for (let p = 0; p < 50; p++) {
-    let q = supabase
-      .from('trades')
-      .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, exit_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment, structure_5m_regime, post_exit_favorable_pts, post_exit_against_pts')
-    if (slackStart) q = q.gte('entry_time', slackStart)
-    const { data, error } = await q
-      .order('entry_time', { ascending: true })
-      .order('id', { ascending: true })
-      .range(p * PAGE, p * PAGE + PAGE - 1)
-    if (error) { console.error('[analytics] trades page', p, 'failed:', error.message); break }
-    // Runtime shape includes entry_atr_1m + entry_rvol (added to SELECT above);
-    // generated Trade type doesn't know about them yet so we widen via unknown.
-    const rows = (data ?? []) as unknown as TradeRowWithEntryMetrics[]
-    trades.push(...rows)
-    if (rows.length < PAGE) break
-  }
 
-  // Imported historical trades (e.g. Tradezella) — a separate read-only store
-  // merged in for long-term tag analysis. Paginated the same way.
-  const hist: HistRow[] = []
-  for (let p = 0; p < 50; p++) {
-    let q = supabase
-      .from('historical_trades')
-      .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_regime, tags_json')
-    if (windowStart) q = q.gte('trade_date', windowStart).lte('trade_date', windowEnd)
-    const { data, error } = await q
-      .order('trade_date', { ascending: true })
-      .order('id', { ascending: true })
-      .range(p * PAGE, p * PAGE + PAGE - 1)
-    if (error) { console.error('[analytics] historical page', p, 'failed:', error.message); break }
-    const rows = (data ?? []) as HistRow[]
-    hist.push(...rows)
-    if (rows.length < PAGE) break
+  // Native trades + imported historical (Tradezella) are two independent stores;
+  // paginate each internally but fetch the TWO concurrently (was series → the
+  // historical loop only started after the trades loop finished).
+  const fetchTrades = async (): Promise<TradeRowWithEntryMetrics[]> => {
+    const out: TradeRowWithEntryMetrics[] = []
+    for (let p = 0; p < 50; p++) {
+      let q = supabase
+        .from('trades')
+        .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, exit_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment, structure_5m_regime, post_exit_favorable_pts, post_exit_against_pts')
+      if (slackStart) q = q.gte('entry_time', slackStart)
+      const { data, error } = await q
+        .order('entry_time', { ascending: true })
+        .order('id', { ascending: true })
+        .range(p * PAGE, p * PAGE + PAGE - 1)
+      if (error) { console.error('[analytics] trades page', p, 'failed:', error.message); break }
+      // Runtime shape includes entry_atr_1m + entry_rvol (added to SELECT above);
+      // generated Trade type doesn't know about them yet so we widen via unknown.
+      const rows = (data ?? []) as unknown as TradeRowWithEntryMetrics[]
+      out.push(...rows)
+      if (rows.length < PAGE) break
+    }
+    return out
   }
+  const fetchHist = async (): Promise<HistRow[]> => {
+    const out: HistRow[] = []
+    for (let p = 0; p < 50; p++) {
+      let q = supabase
+        .from('historical_trades')
+        .select('id, net_pnl, entry_price, quantity, side, open_at, trade_date, realized_rr, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_regime, tags_json')
+      if (windowStart) q = q.gte('trade_date', windowStart).lte('trade_date', windowEnd)
+      const { data, error } = await q
+        .order('trade_date', { ascending: true })
+        .order('id', { ascending: true })
+        .range(p * PAGE, p * PAGE + PAGE - 1)
+      if (error) { console.error('[analytics] historical page', p, 'failed:', error.message); break }
+      const rows = (data ?? []) as HistRow[]
+      out.push(...rows)
+      if (rows.length < PAGE) break
+    }
+    return out
+  }
+  const [trades, hist] = await Promise.all([fetchTrades(), fetchHist()])
 
   const days = daysRaw ?? []
   const contexts = contextsRaw ?? []

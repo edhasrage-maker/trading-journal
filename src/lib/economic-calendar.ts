@@ -39,7 +39,14 @@ const CACHE_TTL_MS = 60 * 60 * 1000
 async function fetchFeedXml(): Promise<string | null> {
   if (cache && Date.now() - cache.atMs < CACHE_TTL_MS) return cache.xml
   try {
-    const res = await fetch(FEED_URL, { signal: AbortSignal.timeout(8000) })
+    // `next: { revalidate }` puts the response in Next's Data Cache, which is
+    // SHARED across serverless instances — so a cold instance hits the cache
+    // instead of doing a live XML fetch that blocks the page render. Timeout
+    // trimmed 8s→3.5s so even a genuine cache miss can't hang the page long.
+    const res = await fetch(FEED_URL, {
+      signal: AbortSignal.timeout(3500),
+      next: { revalidate: 3600 },
+    })
     if (!res.ok) return cache?.xml ?? null
     const xml = await res.text()
     cache = { atMs: Date.now(), xml }
