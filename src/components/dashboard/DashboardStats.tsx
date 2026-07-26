@@ -327,21 +327,19 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
         <StatCard
           label="Avg MFE / MAE"
           title="Average trade: the +MFE (green) is how far it reached in your favor at its peak — what the move OFFERED, not what you kept. The −MAE (red) is the heat against you. 'Kept' is the share of that favorable move you actually banked, across all trades (favorable moves given back on losers count as 0)."
-          value={
-            stats.avgMfe == null || stats.avgMae == null
-              ? '—'
-              : mfeUnit === 'dollars'
-                ? `+$${Math.round(stats.avgMfe)} / -$${Math.round(stats.avgMae)}`
-                : mfeUnit === 'atr'
-                  ? `+${stats.avgMfe.toFixed(2)}× / -${stats.avgMae.toFixed(2)}×`
-                  : `+${stats.avgMfe.toFixed(1)} / -${stats.avgMae.toFixed(1)}`
-          }
+          // Value line is intentionally blank when there's data: the −MAE / +MFE
+          // numbers sit at the ENDS of the excursion bar below (worst point ↔
+          // best point), so +MFE reads as the range it describes, not a gain.
+          // Falls back to "—" only when there's nothing to draw.
+          value={stats.avgMfe == null || stats.avgMae == null ? '—' : ''}
           tone="neutral"
-          // The two numbers describe a range around the entry — draw it, so the
-          // heat/run/give-back story reads at a glance instead of as two figures.
           chartNode={
             stats.avgMfe != null && stats.avgMae != null
-              ? <ExcursionBar mfe={stats.avgMfe} mae={stats.avgMae} capture={stats.avgCapture} />
+              ? <ExcursionBar
+                  mfe={stats.avgMfe} mae={stats.avgMae} capture={stats.avgCapture}
+                  maeLabel={fmtEx(stats.avgMae, '-', mfeUnit)}
+                  mfeLabel={fmtEx(stats.avgMfe, '+', mfeUnit)}
+                />
               : null
           }
           // Sub becomes the unit selector itself. Compact inline dropdown
@@ -359,7 +357,6 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
               <option value="atr">× ATR per trade</option>
             </select>
           }
-          valueClass="text-base"
         />
       </div>
     </div>
@@ -439,37 +436,50 @@ function TapeScoreHero({ period, periodLabel }: {
  * Unit-agnostic: pts, dollars and ATR all produce the same proportions, so it
  * tracks whatever unit the card is showing.
  */
-function ExcursionBar({ mfe, mae, capture }: {
+/** Format one excursion magnitude with an explicit sign, in the active unit —
+ *  for the bar's worst-point (−MAE) / best-point (+MFE) end-caps. */
+function fmtEx(v: number, sign: '+' | '-', unit: MfeUnit): string {
+  if (unit === 'dollars') return `${sign}$${Math.round(v).toLocaleString()}`
+  if (unit === 'atr') return `${sign}${v.toFixed(2)}×`
+  return `${sign}${v.toFixed(1)}`
+}
+
+function ExcursionBar({ mfe, mae, capture, maeLabel, mfeLabel }: {
   mfe: number
   mae: number
-  /** Mean MFE capture, 0..1. Null hides the exit marker (bar still shows). */
+  /** Mean MFE capture, 0..1. Null hides the kept fill + label (bar still shows). */
   capture: number | null
+  /** Signed worst-point / best-point numbers rendered at the bar's ends. */
+  maeLabel: string
+  mfeLabel: string
 }) {
   const span = mfe + mae
   if (!(span > 0)) return null
   const entry = (mae / span) * 100
   const keptWidth = capture != null ? (100 - entry) * Math.max(0, Math.min(1, capture)) : null
   return (
-    <div className="mt-2.5">
-      <div className="relative h-[7px] rounded-[2px]" style={{ background: 'var(--color-surface-2)' }}>
-        {/* heat (left of entry) */}
-        <span className="absolute top-0 h-[7px] rounded-l-[2px]" style={{ left: 0, width: `${entry}%`, background: 'rgba(224,104,95,0.45)' }} />
-        {/* full favourable run (faint) */}
-        <span className="absolute top-0 h-[7px] rounded-r-[2px]" style={{ left: `${entry}%`, right: 0, background: 'rgba(79,197,142,0.18)' }} />
-        {/* the part you kept (solid) */}
-        {keptWidth != null && (
-          <span className="absolute top-0 h-[7px]" style={{ left: `${entry}%`, width: `${keptWidth}%`, background: 'var(--color-pos)' }} />
-        )}
-        {/* entry tick */}
-        <span className="absolute -top-[3px] h-[13px] w-px bg-gray-300" style={{ left: `${entry}%` }} />
+    <div className="mt-2">
+      {/* worst point ←— bar —→ best point: the numbers sit at the ends they
+          describe, so +MFE reads as the far edge of the run (offered), not a gain. */}
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-medium text-red-400 tabular-nums whitespace-nowrap">{maeLabel}</span>
+        <div className="relative flex-1 h-[7px] rounded-[2px]" style={{ background: 'var(--color-surface-2)' }}>
+          {/* heat (left of entry) */}
+          <span className="absolute top-0 h-[7px] rounded-l-[2px]" style={{ left: 0, width: `${entry}%`, background: 'rgba(224,104,95,0.45)' }} />
+          {/* full favourable run (faint) */}
+          <span className="absolute top-0 h-[7px] rounded-r-[2px]" style={{ left: `${entry}%`, right: 0, background: 'rgba(79,197,142,0.18)' }} />
+          {/* the part you kept (solid) */}
+          {keptWidth != null && (
+            <span className="absolute top-0 h-[7px]" style={{ left: `${entry}%`, width: `${keptWidth}%`, background: 'var(--color-pos)' }} />
+          )}
+          {/* entry tick */}
+          <span className="absolute -top-[3px] h-[13px] w-px bg-gray-300" style={{ left: `${entry}%` }} />
+        </div>
+        <span className="text-[11px] font-medium text-green-400 tabular-nums whitespace-nowrap">{mfeLabel}</span>
       </div>
-      {/* Only the one stat the value line + bar colors don't already convey:
-          kept %. The heat/run word labels were redundant — the red/green bar
-          plus the "+MFE / -MAE" value line above already carry them — so they're
-          dropped to de-clutter the tile. */}
       {capture != null && (
-        <div className="mt-1.5 text-center text-[10px] text-gray-600 whitespace-nowrap">
-          kept <span className="text-gray-300 font-semibold">{Math.round(Math.min(capture, 1) * 100)}%</span> of the move
+        <div className="mt-2 text-center text-[11px] text-gray-400 whitespace-nowrap">
+          kept <span className="text-gray-100 font-semibold">{Math.round(Math.min(capture, 1) * 100)}%</span> of the move
         </div>
       )}
     </div>
@@ -503,7 +513,11 @@ function StatCard({
   return (
     <div className="border border-gray-800 rounded-[3px] p-[18px]" title={title}>
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
-      <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
+      {/* Blank value is intentional (e.g. the MFE tile, whose numbers live at the
+          bar ends) — skip the line entirely so it doesn't leave an empty gap. */}
+      {value !== '' && (
+        <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
+      )}
       {chartNode}
       {subNode ? <div className="mt-1">{subNode}</div> : sub ? <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">{sub}</p> : null}
     </div>
