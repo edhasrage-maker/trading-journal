@@ -326,6 +326,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
         />
         <StatCard
           label="Avg MFE / MAE"
+          title="Average trade: the +MFE (green) is how far it reached in your favor at its peak — what the move OFFERED, not what you kept. The −MAE (red) is the heat against you. 'Kept' is the share of that favorable move you actually banked, across all trades (favorable moves given back on losers count as 0)."
           value={
             stats.avgMfe == null || stats.avgMae == null
               ? '—'
@@ -468,7 +469,7 @@ function ExcursionBar({ mfe, mae, capture }: {
           dropped to de-clutter the tile. */}
       {capture != null && (
         <div className="mt-1.5 text-center text-[10px] text-gray-600 whitespace-nowrap">
-          kept <span className="text-gray-300 font-semibold">{Math.round(Math.min(capture, 1) * 100)}%</span>
+          kept <span className="text-gray-300 font-semibold">{Math.round(Math.min(capture, 1) * 100)}%</span> of the move
         </div>
       )}
     </div>
@@ -476,7 +477,7 @@ function ExcursionBar({ mfe, mae, capture }: {
 }
 
 function StatCard({
-  label, value, tone, sub, subNode, valueClass, chartNode,
+  label, value, tone, sub, subNode, valueClass, chartNode, title,
 }: {
   label: string
   value: string
@@ -487,6 +488,9 @@ function StatCard({
   valueClass?: string
   /** Optional visual under the value (e.g. the excursion bar). */
   chartNode?: React.ReactNode
+  /** Native hover tooltip on the whole tile — used to explain a metric the
+   *  compact label can't (e.g. that MFE is offered, not kept). */
+  title?: string
 }) {
   const valueColor =
     tone === 'positive' ? 'text-green-400'
@@ -497,7 +501,7 @@ function StatCard({
   // tile sit ON the page instead of floating above it, and the near-square
   // corner reads instrument rather than app-card.
   return (
-    <div className="border border-gray-800 rounded-[3px] p-[18px]">
+    <div className="border border-gray-800 rounded-[3px] p-[18px]" title={title}>
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
       {chartNode}
