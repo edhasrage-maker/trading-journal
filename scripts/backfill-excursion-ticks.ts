@@ -29,7 +29,8 @@
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { makeTickReader } from '../src/lib/scid-reader.ts'
-import { avgCaptureRatio } from '../src/lib/analytics.ts'
+import { avgCaptureRatio, type ExitLeg } from '../src/lib/analytics.ts'
+import { symbolToMultiplier } from '../src/lib/futures-symbols.ts'
 
 for (const l of readFileSync('.env.public-feed', 'utf8').split(/\r?\n/)) {
   const m = l.match(/^([A-Z_]+)=(.*)$/); if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
@@ -75,18 +76,61 @@ interface Row {
   [k: string]: any
 }
 
-function excursion(r: Row): { high: number; low: number } | null {
+/**
+ * Tick-true excursion for one trade, all off the SAME NQ tick series so basis
+ * cancels:
+ *  - high/low_during_position: range over [entry, exit], anchored to entry_price.
+ *  - mfeLeg (mfe_dollars_per_leg): the scaling-aware favorable-$ ceiling. For a
+ *    multi-leg trade, each leg's peak is measured in ITS window
+ *    [prevLegExit, legExit] off the entry baseline × that leg's qty (ports
+ *    perLegMaxDollars to ticks). Single-exit / no legs → full-qty × peak.
+ */
+function excursion(r: Row): { high: number; low: number; mfeLeg: number | null } | null {
   if (r.entry_price == null || r.startMs == null || r.endMs == null || r.endMs <= r.startMs) return null
   if (!isNQ(r.symbol)) return null
   const file = contractFor(r.date); if (!file) return null
+  const rdr = reader(file)
   let ticks: number[]
-  try { ticks = reader(file).read(r.startMs, r.endMs + 1000) } catch { return null }
+  try { ticks = rdr.read(r.startMs, r.endMs + 1000) } catch { return null }
   if (ticks.length < 2) return null
   const entryTick = ticks[0]
   let mx = -Infinity, mn = Infinity
   for (const p of ticks) { if (p > mx) mx = p; if (p < mn) mn = p }
-  // Anchor the NQ range onto the trade's own entry_price basis.
-  return { high: r.entry_price + (mx - entryTick), low: r.entry_price + (mn - entryTick) }
+  const high = r.entry_price + (mx - entryTick)
+  const low = r.entry_price + (mn - entryTick)
+
+  // Per-leg scaling-aware $ ceiling. entryTick is the shared NQ baseline.
+  const mult = symbolToMultiplier(r.symbol ?? '')
+  const isLong = r.direction === 'long'
+  const favPts = (peak: number) => Math.max(0, isLong ? (peak - entryTick) : (entryTick - peak))
+  const legs = Array.isArray(r.exits_json) ? (r.exits_json as ExitLeg[]).filter(l => l && l.time && l.qty).slice() : []
+  let mfeLeg: number | null = null
+  if (legs.length > 1) {
+    legs.sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+    let legStart = r.startMs
+    let sum = 0, ok = true
+    for (const leg of legs) {
+      const legEnd = Date.parse(leg.time)
+      if (!Number.isFinite(legEnd) || legEnd <= legStart) { legStart = legEnd; continue }
+      let lt: number[]
+      try { lt = rdr.read(legStart, legEnd + 1000) } catch { ok = false; break }
+      if (lt.length === 0) { legStart = legEnd; continue }
+      // Loop, not Math.max(...lt) — a leg window can hold tens of thousands of
+      // ticks and spreading them overflows the call stack.
+      let peak = isLong ? -Infinity : Infinity
+      for (const p of lt) { if (isLong ? p > peak : p < peak) peak = p }
+      sum += favPts(peak) * mult * leg.qty
+      legStart = legEnd
+    }
+    if (ok && sum > 0) mfeLeg = Math.round(sum * 100) / 100
+  } else {
+    // Single-exit / historical: full-position ceiling from the window peak.
+    const qty = r.quantity ?? (legs[0]?.qty ?? 0)
+    const peak = isLong ? mx : mn
+    const v = favPts(peak) * mult * (qty || 0)
+    if (v > 0) mfeLeg = Math.round(v * 100) / 100
+  }
+  return { high, low, mfeLeg }
 }
 
 async function resolveUserId(email: string): Promise<string | undefined> {
@@ -126,8 +170,8 @@ async function processTable(table: 'historical_trades' | 'trades', uid: string |
   // Build before/after capture over the SAME rows (using the real captureComponents
   // basis: swap only high/low_during_position). Rows we can't recompute keep old.
   const before: Row[] = [], after: Row[] = []
-  let written = 0, recomputed = 0, skipped = 0, deltaSum = 0
-  const updates: { id: string; high: number; low: number }[] = []
+  let written = 0, recomputed = 0, skipped = 0, deltaSum = 0, legFixed = 0
+  const updates: { id: string; high: number; low: number; mfeLeg: number | null }[] = []
   for (const r of rows) {
     if (recomputed + skipped >= LIMIT) break
     const ex = excursion(r)
@@ -135,20 +179,28 @@ async function processTable(table: 'historical_trades' | 'trades', uid: string |
     if (!ex) { skipped++; after.push(r); continue }
     recomputed++
     if (r.high_during_position != null) deltaSum += Math.abs((r.high_during_position) - ex.high)
-    after.push({ ...r, high_during_position: ex.high, low_during_position: ex.low })
-    updates.push({ id: r.id, high: ex.high, low: ex.low })
+    if (ex.mfeLeg != null) legFixed++
+    // The after-row carries the new mfe_dollars_per_leg too, so the before/after
+    // capture reflects BOTH fixes (captureComponents prefers mfe_dollars_per_leg,
+    // clamped to the new high/low ceiling).
+    after.push({ ...r, high_during_position: ex.high, low_during_position: ex.low, mfe_dollars_per_leg: ex.mfeLeg ?? r.mfe_dollars_per_leg })
+    updates.push({ id: r.id, high: ex.high, low: ex.low, mfeLeg: ex.mfeLeg })
   }
 
   const capBefore = avgCaptureRatio(before as never)
   const capAfter = avgCaptureRatio(after as never)
   console.log(`\n[${table}] rows=${rows.length} recomputed=${recomputed} skipped(non-NQ/no-cover)=${skipped}`)
   console.log(`  capture: ${capBefore.avg == null ? 'n/a' : (capBefore.avg * 100).toFixed(1) + '%'} (n=${capBefore.count})  →  ${capAfter.avg == null ? 'n/a' : (capAfter.avg * 100).toFixed(1) + '%'} (n=${capAfter.count})`)
-  console.log(`  avg |old high − new high|: ${recomputed ? (deltaSum / recomputed).toFixed(1) : 'n/a'} pts`)
+  console.log(`  avg |old high − new high|: ${recomputed ? (deltaSum / recomputed).toFixed(1) : 'n/a'} pts | mfe_dollars_per_leg recomputed: ${legFixed}`)
 
   if (COMMIT) {
     for (let i = 0; i < updates.length; i += 200) {
       const batch = updates.slice(i, i + 200)
-      await Promise.all(batch.map(u => sb.from(table).update({ high_during_position: u.high, low_during_position: u.low }).eq('id', u.id)))
+      await Promise.all(batch.map(u => {
+        const patch: Record<string, number> = { high_during_position: u.high, low_during_position: u.low }
+        if (u.mfeLeg != null) patch.mfe_dollars_per_leg = u.mfeLeg
+        return sb.from(table).update(patch).eq('id', u.id)
+      }))
       written += batch.length
       if (written % 1000 === 0) console.log(`    …${written} written`)
     }
