@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx scripts/test-derived-metrics.ts && tsx scripts/test-ai-constraints.ts && tsx scripts/test-coach-suggestions.ts && tsx scripts/test-trading-style.ts",
+    "test": "tsx scripts/test-derived-metrics.ts && tsx scripts/test-ai-constraints.ts && tsx scripts/test-coach-suggestions.ts && tsx scripts/test-trading-style.ts && tsx scripts/test-tilt-cascade.ts",
     "eval": "tsx scripts/eval-ai-output.ts"
   },
   "dependencies": {
