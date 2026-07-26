@@ -339,6 +339,11 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
                   mfe={stats.avgMfe} mae={stats.avgMae} capture={stats.avgCapture}
                   maeLabel={fmtEx(stats.avgMae, '-', mfeUnit)}
                   mfeLabel={fmtEx(stats.avgMfe, '+', mfeUnit)}
+                  // kept amount in the ACTIVE unit = avg MFE × capture (the $/pt/×ATR
+                  // the "kept %" actually represents), matching the end-cap units.
+                  keptLabel={stats.avgCapture != null
+                    ? fmtEx(stats.avgMfe * Math.max(0, Math.min(1, stats.avgCapture)), '', mfeUnit)
+                    : null}
                 />
               : null
           }
@@ -436,19 +441,23 @@ function TapeScoreHero({ period, periodLabel }: {
  * Unit-agnostic: pts, dollars and ATR all produce the same proportions, so it
  * tracks whatever unit the card is showing.
  */
-/** Format one excursion magnitude with an explicit sign, in the active unit —
- *  for the bar's worst-point (−MAE) / best-point (+MFE) end-caps. */
-function fmtEx(v: number, sign: '+' | '-', unit: MfeUnit): string {
+/** Format one excursion magnitude in the active unit, with an optional explicit
+ *  sign — '+'/'-' for the bar's worst-point / best-point end-caps, '' for the
+ *  unsigned "kept" amount. */
+function fmtEx(v: number, sign: '+' | '-' | '', unit: MfeUnit): string {
   if (unit === 'dollars') return `${sign}$${Math.round(v).toLocaleString()}`
   if (unit === 'atr') return `${sign}${v.toFixed(2)}×`
   return `${sign}${v.toFixed(1)}`
 }
 
-function ExcursionBar({ mfe, mae, capture, maeLabel, mfeLabel }: {
+function ExcursionBar({ mfe, mae, capture, keptLabel, maeLabel, mfeLabel }: {
   mfe: number
   mae: number
   /** Mean MFE capture, 0..1. Null hides the kept fill + label (bar still shows). */
   capture: number | null
+  /** The kept amount in the active unit (avg MFE × capture), pre-formatted.
+   *  Null omits the "≈ …" — e.g. no capture, so no amount to show. */
+  keptLabel: string | null
   /** Signed worst-point / best-point numbers rendered at the bar's ends. */
   maeLabel: string
   mfeLabel: string
@@ -456,7 +465,8 @@ function ExcursionBar({ mfe, mae, capture, maeLabel, mfeLabel }: {
   const span = mfe + mae
   if (!(span > 0)) return null
   const entry = (mae / span) * 100
-  const keptWidth = capture != null ? (100 - entry) * Math.max(0, Math.min(1, capture)) : null
+  const cap = capture != null ? Math.max(0, Math.min(1, capture)) : null
+  const keptWidth = cap != null ? (100 - entry) * cap : null
   return (
     <div className="mt-2">
       {/* worst point ←— bar —→ best point: the numbers sit at the ends they
@@ -477,9 +487,12 @@ function ExcursionBar({ mfe, mae, capture, maeLabel, mfeLabel }: {
         </div>
         <span className="text-[11px] font-medium text-green-400 tabular-nums whitespace-nowrap">{mfeLabel}</span>
       </div>
-      {capture != null && (
-        <div className="mt-2 text-center text-[11px] text-gray-400 whitespace-nowrap">
-          kept <span className="text-gray-100 font-semibold">{Math.round(Math.min(capture, 1) * 100)}%</span> of the move
+      {cap != null && (
+        <div className="mt-2 text-center text-[11px] text-gray-400 leading-tight">
+          kept <span className="text-gray-100 font-semibold">{Math.round(cap * 100)}%</span> of the move
+          {keptLabel != null && (
+            <> ≈ <span className="text-gray-100 font-semibold">{keptLabel}</span></>
+          )}
         </div>
       )}
     </div>
