@@ -103,6 +103,44 @@ function niceScale(min: number, max: number, count = 4): { niceMin: number; nice
 
 const GREEN = '#22c55e'
 const RED = '#ef4444'
+/** The score that counts as "par" for the process curve. 50 is the midpoint of
+ *  the 0-100 scale and the bottom of the amber band — a session at 50 neither
+ *  builds nor erodes the curve. */
+const PROC_NEUTRAL = 50
+/** The process curve's colour — brand accent, never green/red. It is a score,
+ *  not money, and must never be read as a second P&L. */
+const PROC_BLUE = '#79B4E6'
+
+/**
+ * The process curve: cumulative (TapeScore − 50) over the scored sessions.
+ *
+ * The equity curve is cumulative, so a DAILY score can never be compared to it
+ * — one trends, the other oscillates, and no smoothing fixes that mismatch.
+ * Compounding the score puts both series in the same form, and then the thing
+ * that matters is the same for both: the SLOPE. Sessions above par build the
+ * curve, sessions below erode it, so a stretch of good decisions shows up as a
+ * climb whatever the money did.
+ *
+ * Unscored sessions carry the value forward (no data, no movement) and the
+ * curve is only drawn from the first scored session, so the flat run before
+ * scoring began can't be misread as "par process".
+ *
+ * Module-level so the running accumulation isn't subject to the React Compiler
+ * immutability rule (same reason as signedLineSegments).
+ */
+function processCurve(scores: (number | null)[]): { values: number[]; firstIdx: number } {
+  let running = 0
+  let firstIdx = -1
+  const values = scores.map((s, i) => {
+    if (s != null) {
+      running += s - PROC_NEUTRAL
+      if (firstIdx < 0) firstIdx = i
+    }
+    return running
+  })
+  return { values, firstIdx }
+}
+
 /** Band fills for the score strip — the SAME green/amber/red the TapeScore ring
  *  and the Recent Days badges use, so one session reads the same colour
  *  everywhere it appears. Thresholds come from tapeScoreBand rather than being
@@ -274,14 +312,10 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
               {scores.some(s => s != null) && (
                 <span
                   className="flex items-center gap-1.5 text-[10px] text-gray-500 whitespace-nowrap"
-                  title="The band under the chart is each session's TapeScore — red under 50, amber 50-69, green 70+ (the same colours the score ring uses). A gap means that session was never analysed. Read it against the curve: the equity should climb through the green stretches."
+                  title="Process curve: each scored session adds its TapeScore minus 50, so sessions above par build the curve and sessions below erode it — an equity curve for your decisions. Compare SLOPES, not heights: when the dashed line climbs, you were trading well, and the money should follow. The band underneath is each session's raw score (red under 50, amber 50-69, green 70+); a gap there means that session was never analysed."
                 >
-                  <span className="flex items-center gap-px">
-                    <span className="inline-block w-1.5 h-2 rounded-[1px]" style={{ background: BAND_FILL.low }} />
-                    <span className="inline-block w-1.5 h-2 rounded-[1px]" style={{ background: BAND_FILL.mid }} />
-                    <span className="inline-block w-1.5 h-2 rounded-[1px]" style={{ background: BAND_FILL.high }} />
-                  </span>
-                  TapeScore per session
+                  <span className="inline-block w-3.5 border-t border-dashed" style={{ borderColor: PROC_BLUE }} />
+                  Process curve
                 </span>
               )}
             </div>
@@ -458,6 +492,23 @@ function EquityChart({ dates, values, scores = [], height }: {
 
   const hasScores = scores.some(s => s != null)
 
+  // Process curve, fitted to the plot box. Fitting is safe here in a way it
+  // wasn't for the daily line: both series are cumulative from zero, so scaling
+  // changes the amplitude but never the DIRECTION of a slope — and direction is
+  // the entire claim ("good process, curve climbs"). No numeric axis is drawn,
+  // because the comparison is of shape, not level; the running value is in the
+  // hover readout instead.
+  const proc = hasScores ? processCurve(scores) : null
+  const procPts = proc && proc.firstIdx >= 0 ? proc.values.slice(proc.firstIdx) : []
+  const procLo = procPts.length ? Math.min(...procPts) : 0
+  const procHi = procPts.length ? Math.max(...procPts) : 0
+  const procSpan = procHi - procLo || 1
+  // Inset 6% top and bottom so the curve can't collide with the plot edges.
+  const yProc = (v: number) => 94 - ((v - procLo) / procSpan) * 88
+  const procPath = procPts.length >= 2
+    ? procPts.map((v, k) => `${k === 0 ? 'M' : 'L'}${xAt(k + (proc?.firstIdx ?? 0)).toFixed(3)},${yProc(v).toFixed(3)}`).join(' ')
+    : null
+
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const w = e.currentTarget.clientWidth
     if (w <= 0 || n === 0) return
@@ -489,6 +540,15 @@ function EquityChart({ dates, values, scores = [], height }: {
           {segments.map((s, i) => (
             <path key={`a${i}`} d={s.area} fill={s.color === GREEN ? 'url(#eqFillPos)' : 'url(#eqFillNeg)'} stroke="none" />
           ))}
+          {/* Process curve — dashed and thinner than the equity stroke so money
+              stays the primary read and the two are never confused. */}
+          {procPath && (
+            <path
+              d={procPath} fill="none" stroke={PROC_BLUE}
+              strokeWidth="0.5" strokeDasharray="2 1.6" strokeLinecap="round" strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
           {segments.map((s, i) => (
             <path key={i} d={s.d} fill="none" stroke={s.color} strokeWidth="0.6" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           ))}
@@ -523,6 +583,13 @@ function EquityChart({ dates, values, scores = [], height }: {
               // and its colour agree wherever the session shows up.
               <div className="text-[10px] font-mono" style={{ color: BAND_FILL[tapeScoreBand(scores[hoverIdx] as number)] }}>
                 TapeScore {scores[hoverIdx]}
+              </div>
+            )}
+            {/* The process curve has no axis, so its running total is given
+                here — otherwise the dashed line's height means nothing. */}
+            {proc && proc.firstIdx >= 0 && hoverIdx >= proc.firstIdx && (
+              <div className="text-[10px] font-mono" style={{ color: PROC_BLUE }}>
+                Process {proc.values[hoverIdx] >= 0 ? '+' : ''}{Math.round(proc.values[hoverIdx])}
               </div>
             )}
           </div>
