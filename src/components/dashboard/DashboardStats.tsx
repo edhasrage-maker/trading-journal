@@ -462,13 +462,15 @@ function ExcursionBar({ mfe, mae, capture }: {
         {/* entry tick */}
         <span className="absolute -top-[3px] h-[13px] w-px bg-gray-300" style={{ left: `${entry}%` }} />
       </div>
-      <div className="flex items-baseline justify-between mt-1.5 text-[10px] whitespace-nowrap">
-        <span className="text-red-400/80">heat</span>
-        {capture != null && (
-          <span className="text-gray-600">kept <span className="text-gray-300 font-semibold">{Math.round(Math.min(capture, 1) * 100)}%</span></span>
-        )}
-        <span className="text-green-400/80">run</span>
-      </div>
+      {/* Only the one stat the value line + bar colors don't already convey:
+          kept %. The heat/run word labels were redundant — the red/green bar
+          plus the "+MFE / -MAE" value line above already carry them — so they're
+          dropped to de-clutter the tile. */}
+      {capture != null && (
+        <div className="mt-1.5 text-center text-[10px] text-gray-600 whitespace-nowrap">
+          kept <span className="text-gray-300 font-semibold">{Math.round(Math.min(capture, 1) * 100)}%</span>
+        </div>
+      )}
     </div>
   )
 }
