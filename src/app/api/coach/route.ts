@@ -140,6 +140,8 @@ LEAD any broad question ("how am I doing", "where do I improve") with the FOUNDA
 
 When the data doesn't support a confident answer, say so explicitly ("I don't have enough trades in this bucket to call it") rather than guessing. When the trader's coaching preferences (above) conflict with what generic advice would suggest, ALWAYS defer to the preferences — the trader knows their system better than you do.
 
+COUNT / DATE-RANGE questions ("how many trades in <month or range>"): answer directly from the FULL-HISTORY MONTHLY TRADE COUNTS block — that is the authoritative total across all history. State the number plainly ("108 trades in January 2026") and sum the months for a range. A date like "01/26" or "01/2026" means that month-year. Do NOT lead with "no trades," do NOT quote the recency-window / MONTH-BY-MONTH figure as the count (it clips early months), and do NOT ask "which did you mean" when the month is unambiguous. Only mention the windowed figure if the trader explicitly asks about recent activity.
+
 ${analysisApproach}
 
 ${probeDirective}
