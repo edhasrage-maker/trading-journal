@@ -119,35 +119,6 @@ const SCORE_BLUE = '#79B4E6'
  * the overlay's position can't be tuned to manufacture a correlation with the
  * equity line — the one real hazard of drawing two series on one plot.
  */
-/**
- * Trailing mean of the last `win` scored sessions — the score line's "recent
- * form", not any single day.
- *
- * The claim this chart makes is about REGIME, not days: stretches of good
- * process should show up as the equity curve climbing, whatever any one session
- * paid. A raw daily score can't show that — it oscillates too hard to read a
- * stretch out of, so the eye finds nothing even when the relationship is real.
- * Smoothing turns it into "how well have I been trading lately", which is the
- * series that actually belongs beside a cumulative curve.
- *
- * Needs 2+ scored sessions in the window: one day is a data point, not form.
- */
-function rollingScore(scores: (number | null)[], win: number): (number | null)[] {
-  return scores.map((_, i) => {
-    const vals: number[] = []
-    for (let j = Math.max(0, i - win + 1); j <= i; j++) {
-      const s = scores[j]
-      if (s != null) vals.push(s)
-    }
-    return vals.length >= 2 ? vals.reduce((a, b) => a + b, 0) / vals.length : null
-  })
-}
-
-/** Sessions of trailing average behind the score line. Five is roughly a
- *  trading week — long enough to bury a single bad session, short enough that a
- *  genuine change in form still moves it. */
-const SCORE_WINDOW = 5
-
 function scoreRuns(
   scores: (number | null)[],
   xAt: (i: number) => number,
@@ -301,10 +272,10 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
               {scores.some(s => s != null) && (
                 <span
                   className="flex items-center gap-1.5 text-[10px] text-gray-500 whitespace-nowrap"
-                  title="Your TapeScore averaged over the last 5 scored sessions, on a fixed 0-100 scale. Smoothed because the point is the stretch, not the day: when your form holds high, the equity curve should climb — whatever any single session paid."
+                  title="Each scored session's TapeScore, on a fixed 0-100 scale (100 at the top of the plot, 0 at the bottom). The scale never stretches to fit, so the line's height always means the same thing."
                 >
                   <span className="inline-block w-3 h-px" style={{ background: SCORE_BLUE }} />
-                  TapeScore form · 5-session avg
+                  TapeScore 0–100
                 </span>
               )}
             </div>
@@ -465,10 +436,14 @@ function EquityChart({ dates, values, scores = [], height }: {
   // make process look more (or less) correlated with money than it is.
   const yScore = (s: number) => (1 - s / 100) * 100
   const hasScores = scores.some(s => s != null)
-  const smoothed = hasScores ? rollingScore(scores, SCORE_WINDOW) : []
-  const { paths: scorePaths, dots: scoreDots } = hasScores
-    ? scoreRuns(smoothed, xAt, yScore)
-    : { paths: [], dots: [] }
+  // Day-by-day, not smoothed: a trailing average flattened into a near-straight
+  // line, because real scores cluster in a narrow band and the axis is fixed.
+  // The daily value at least shows the session-to-session swing that's actually
+  // there. Dots mark the scored sessions so the series reads as discrete days
+  // rather than a continuous line wandering over the equity curve.
+  const { paths: scorePaths } = hasScores
+    ? scoreRuns(scores, xAt, yScore)
+    : { paths: [] }
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const w = e.currentTarget.clientWidth
@@ -503,12 +478,12 @@ function EquityChart({ dates, values, scores = [], height }: {
           {scorePaths.map((d, i) => (
             <path
               key={`s${i}`} d={d} fill="none" stroke={SCORE_BLUE}
-              strokeWidth="0.55" strokeLinecap="round" strokeLinejoin="round"
+              strokeWidth="0.4" strokeOpacity="0.55" strokeLinecap="round" strokeLinejoin="round"
               vectorEffect="non-scaling-stroke"
             />
           ))}
-          {scoreDots.map((p, i) => (
-            <circle key={`sd${i}`} cx={p[0]} cy={p[1]} r="0.7" fill={SCORE_BLUE} fillOpacity="0.75" vectorEffect="non-scaling-stroke" />
+          {scores.map((s, i) => s == null ? null : (
+            <circle key={`sd${i}`} cx={xAt(i)} cy={yScore(s)} r="0.8" fill={SCORE_BLUE} vectorEffect="non-scaling-stroke" />
           ))}
           {segments.map((s, i) => (
             <path key={i} d={s.d} fill="none" stroke={s.color} strokeWidth="0.6" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
@@ -551,9 +526,6 @@ function EquityChart({ dates, values, scores = [], height }: {
             {scores[hoverIdx] != null && (
               <div className="text-[10px] font-mono" style={{ color: SCORE_BLUE }}>
                 TapeScore {scores[hoverIdx]}
-                {smoothed[hoverIdx] != null && (
-                  <span className="text-gray-500"> · form {Math.round(smoothed[hoverIdx] as number)}</span>
-                )}
               </div>
             )}
           </div>
