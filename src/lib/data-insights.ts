@@ -96,11 +96,6 @@ export interface InsightTrade {
   ib_size?: number | null
   ib_vs_10d_avg?: number | null
   atr_at_ib_close?: number | null
-  // Direction-relative price movement in the 30m AFTER exit (backfilled from
-  // bars). Feeds the post-exit "fading vs shaken out" read on losing trades;
-  // null on a fresh import that hasn't run the bar backfill.
-  post_exit_favorable_pts?: number | null
-  post_exit_against_pts?: number | null
 }
 
 export type InsightTone = 'good' | 'bad' | 'neutral'
@@ -715,37 +710,18 @@ const dayTypeRegime: Builder = trades => {
   )
 }
 
-/** 13. Post-exit read on LOSING trades — did the loss keep running against you
- *  (fading the move / wrong side) or reverse right after you were out (stopped
- *  too tight)? Scale-free per-trade ratio against/(against+favorable), one-sample
- *  vs 0.5. Needs the post-exit bar backfill; silent on a fresh import. */
-const postExitLoss: Builder = trades => {
-  const ratios: number[] = []
-  for (const t of trades) {
-    if ((t.pnl ?? 0) >= 0) continue // losers only
-    const fav = t.post_exit_favorable_pts, ag = t.post_exit_against_pts
-    if (fav == null || ag == null) continue
-    const denom = fav + ag
-    if (denom <= 0) continue
-    ratios.push(ag / denom) // share of the post-exit move that CONTINUED against the position
-  }
-  const c = contrastVsBenchmark(ratios, 0.5)
-  if (!c?.passes) return null
-  const fading = c.effect > 0
-  return {
-    key: 'post_exit_loss', dimension: 'Exits',
-    headline: fading ? 'Your losers keep running against you' : 'You get shaken out of your losers',
-    detail: fading
-      ? `On losing trades, ${pct(c.meanA)} of the move after you exit keeps going against you — you may be fading the dominant move.`
-      : `On losing trades, ${pct(1 - c.meanA)} of the move after you exit reverses back your way — your stops may be too tight.`,
-    footnote: `${c.nA} losing trades with a post-exit read`, tone: fading ? 'bad' : 'neutral', score: c.score,
-  }
-}
+// NOTE: a post-exit "fading vs shaken out" read was intentionally NOT added as a
+// static dimension. Whether post-exit continuation is a problem depends on the
+// trader's edge (a deliberate early-exit strategy EXPECTS price to keep going),
+// and a context-free one-liner can't know that — it would mislead. That read
+// lives in the coach (coach-context.ts POST-EXIT block), which carries the
+// "do NOT grade exit timing / early-exit-may-be-an-edge" caveat. Same reason the
+// capture card is hard-gated: exit-QUALITY insights need trader context.
 
 const BUILDERS: Builder[] = [
   timeOfDay, instrument, direction, tradesPerDay, revengeReentry,
   captureLeakage, holdTime, sizeVsOutcome, prevOutcome, dayOfWeek,
-  dayTypeSize, dayTypeRegime, postExitLoss,
+  dayTypeSize, dayTypeRegime,
 ]
 
 /**

@@ -480,8 +480,6 @@ function toInsightTrade(t: TradeWithContext): InsightTrade {
   const x = t as TradeWithContext & {
     exit_time?: string | null
     exits_json?: unknown
-    post_exit_favorable_pts?: number | null
-    post_exit_against_pts?: number | null
   }
   return {
     id: t.id,
@@ -500,12 +498,10 @@ function toInsightTrade(t: TradeWithContext): InsightTrade {
     mfe_dollars_per_leg: t.mfe_dollars_per_leg,
     date: t.date,
     trading_day_id: t.trading_day_id,
-    // Day-type context (inherited from market_context) + post-exit backfill.
+    // Day-type context (inherited from market_context).
     ib_size: t.ib_size,
     ib_vs_10d_avg: t.ib_vs_10d_avg,
     atr_at_ib_close: t.atr_at_ib_close,
-    post_exit_favorable_pts: x.post_exit_favorable_pts ?? null,
-    post_exit_against_pts: x.post_exit_against_pts ?? null,
   }
 }
 

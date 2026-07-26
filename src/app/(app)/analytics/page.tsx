@@ -187,7 +187,7 @@ export default async function AnalyticsPage({
     for (let p = 0; p < 50; p++) {
       let q = supabase
         .from('trades')
-        .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, exit_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment, structure_5m_regime, post_exit_favorable_pts, post_exit_against_pts')
+        .select('id, pnl, entry_price, stop_price, quantity, direction, entry_time, exit_time, tags_json, trading_day_id, symbol, high_during_position, low_during_position, entry_atr_1m, entry_rvol, mfe_dollars_per_leg, structure_5m_alignment, structure_5m_regime')
       if (slackStart) q = q.gte('entry_time', slackStart)
       const { data, error } = await q
         .order('entry_time', { ascending: true })
