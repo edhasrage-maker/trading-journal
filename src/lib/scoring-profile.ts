@@ -40,6 +40,18 @@ export interface ScoringProfile {
     cooldown_min?: number | null
     no_add_to_loser?: boolean | null
   } | null
+  /** Trading style (Pt 11) — inferred from the trader's imported trades and
+   *  confirmed on a single card, so the coach can personalize capture/leak
+   *  analysis (timeframe → which ATR; exit style → whether give-back is a leak;
+   *  stops → the leak-floor cascade). See src/lib/trading-style.ts. All nullable;
+   *  absent → the coach falls back to conservative defaults. */
+  style?: {
+    timeframe?: 'scalp' | 'intraday' | 'swing' | null
+    exit_style?: 'fixed_target' | 'scale_out' | 'trail' | 'let_run' | 'discretionary' | null
+    uses_stops?: 'always' | 'sometimes' | 'never' | null
+    scales_out?: boolean | null
+    edge_style?: 'trend' | 'mean_reversion' | 'breakout' | 'range' | null
+  } | null
 }
 
 /** Owner Ruleset v1.3 defaults — used whenever the profile omits a field. */
