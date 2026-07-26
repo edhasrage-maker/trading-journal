@@ -38,7 +38,7 @@
 import { MIN_SAMPLE } from '@/lib/sample-size'
 import { symbolRoot } from '@/lib/futures-symbols'
 import { revengeReentryIds } from '@/lib/behavioral-proxies'
-import { captureComponents, mfeMaePoints, type TradeWithExcursion } from '@/lib/analytics'
+import { captureComponents, mfeMaeAtr, type TradeWithExcursion } from '@/lib/analytics'
 import { classifyIbDayType } from '@/lib/ib-day-type'
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -55,18 +55,6 @@ const RARE_MIN_N = 6
 /** Capture-leakage benchmark: below this fraction of the favorable move booked,
  *  a low-capture read is worth surfacing. */
 const CAPTURE_BENCHMARK = 0.5
-/**
- * Minimum median favorable excursion (×ATR or R) before the capture card fires.
- * The capture noise floor is 0.5×ATR, so 1.5 is 3× the floor — it guarantees
- * the TYPICAL trade actually developed a move, which is the only case where "you
- * gave it back, tighten your exits" is honest. Below this, low capture is an
- * entry/edge problem (the trades aren't running), not an exit one, and "take
- * profits sooner" would be nonsense (nobody TPs at 0.5×ATR). The nuanced,
- * context-aware version lives in the coach (coach-context.ts EXIT EFFICIENCY
- * block), which self-calibrates to the trader's own median instead of a fixed
- * floor; this static one-liner only earns its place on an unambiguous give-back.
- */
-const BIG_MOVE_MIN = 1.5
 
 // ── Trade shape the engine reads (a superset satisfied by both the analytics
 //    TradeWithContext rows and the first-read TeaserTrade rows). All fields
@@ -442,70 +430,62 @@ const revengeReentry: Builder = trades => {
   }
 }
 
-/** 6. Capture leakage — booking too little of the favorable move offered.
- *  Native trades only (trading_day_id present): imported/historical rows carry a
- *  null symbol → multiplier 1, which puts their capture denominator on a
- *  different unit basis than native trades (the same native-only rule
- *  computeStats uses). Reported as a PERCENTAGE, not an absolute "$ left on the
- *  table" — MFE is the unreachable peak, so summing it across thousands of
- *  trades produces a headline dollar figure that dwarfs real P&L and reads as
- *  broken. The catalog item is "you book X% of the move", and X% is the honest
- *  unit. */
-const captureLeakage: Builder = trades => {
+/** 6. Capture efficiency — how much of the favorable move they keep (MFE side).
+ *  DESCRIPTIVE, not prescriptive: it states the capture % and lets the number
+ *  speak (a self-contained %, so no "is that good?" reference problem and no
+ *  "TP at 0.5×ATR" trap). Fires either way — below half = a leak, well above =
+ *  sharp exits. Native only (trading_day_id): imported/historical rows carry a
+ *  null symbol → multiplier 1, a different capture unit basis (same native-only
+ *  rule computeStats uses). The nuanced "should you hold for a runner vs take
+ *  TP1" coaching lives in the coach, which has the trader's context. */
+const captureEfficiency: Builder = trades => {
   const ratios: number[] = []
   for (const t of trades) {
-    if (!t.trading_day_id) continue // native only — see note above
-    const c = captureComponents(t as unknown as TradeWithExcursion)
-    if (!c) continue
-    ratios.push(Math.max(0, c.pnl / c.mfeDollars))
+    if (!t.trading_day_id) continue // native only — unit-consistent capture
+    const cc = captureComponents(t as unknown as TradeWithExcursion)
+    if (!cc) continue
+    ratios.push(Math.max(0, cc.pnl / cc.mfeDollars))
   }
   const c = contrastVsBenchmark(ratios, CAPTURE_BENCHMARK)
-  if (!c?.passes || c.effect >= 0) return null // only when BELOW the benchmark
-  // Size the typical move (median MFE) so we can compare it to how much they keep
-  // (capture %). Suppress unless the move is genuinely large (see BIG_MOVE_MIN):
-  // a small median MFE + low capture is an entry problem, not an exit one, and a
-  // "take profits sooner" one-liner would mislead. When it IS large, state the
-  // move against the capture — the real scan-and-compare, not a rounded anchor.
-  const mfe = medianFavorableExcursion(trades)
-  if (!mfe || mfe.value < BIG_MOVE_MIN) return null
+  if (!c?.passes) return null
+  const low = c.effect < 0
   return {
-    key: 'capture_leakage', dimension: 'Exits',
-    headline: 'You leave part of the move on the table',
-    detail: `Your trades run a median ~${mfe.value.toFixed(1)}${mfe.unit} in your favor before turning, but you bank only ${pct(c.meanA)} of that move — taking profits closer to that peak would lift your profit factor.`,
-    footnote: `${c.nA} trades with a clean read`, tone: 'bad', score: c.score,
+    key: 'capture_efficiency', dimension: 'Exits',
+    headline: low ? 'You keep less than half the move' : 'Sharp exits — you keep most of the move',
+    detail: low
+      ? `You bank only ~${pct(c.meanA)} of the favorable move your trades offer before it turns.`
+      : `You bank ~${pct(c.meanA)} of the favorable move your trades offer — you hold for most of it.`,
+    footnote: `${c.nA} trades with a clean read`, tone: low ? 'bad' : 'good', score: c.score,
   }
 }
 
-/**
- * The median favorable excursion the trades actually reach — the "how far the
- * move typically runs" half of the capture comparison. Prefers ×ATR: the entry
- * ATR is populated at import time from the front-month bars (import-sc-log /
- * import-trades-csv), so it survives a fresh, stop-less import — whereas a
- * planned stop (needed for R) usually doesn't, since fills carry no stop. R is
- * a fallback for the rare account with stops but no entry ATR. Returns the RAW
- * median (1-decimal at the callsite — no coarse rounding-to-anchor), or null
- * when no risk unit is available or the typical move is too small to be worth
- * comparing against.
- */
-function medianFavorableExcursion(trades: InsightTrade[]): { value: number; unit: string } | null {
-  const atrMfe: number[] = []
-  const rMfe: number[] = []
+/** 7. Heat vs reward — favorable move vs adverse heat, in ×ATR (MAE side). The
+ *  ratio has a built-in 1.0 benchmark (more heat than reward = bad), so it reads
+ *  without outside context — the fix for "is 0.5×ATR good?". It measures the
+ *  trade's PATH (entry location/timing), a real skill, so it's NOT the
+ *  reverse-causality tautology hold-time was. One-sample on (mfeAtr − maeAtr) vs
+ *  0. ATR-normalized, so symbol-agnostic (historical rows welcome). */
+const heatVsReward: Builder = trades => {
+  const diffs: number[] = []
+  let sumMfe = 0, sumMae = 0, n = 0
   for (const t of trades) {
-    if (!t.trading_day_id) continue
-    const pts = mfeMaePoints(t as unknown as TradeWithExcursion)
-    if (!pts || pts.mfe <= 0) continue
-    if (t.entry_atr_1m != null && t.entry_atr_1m > 0) atrMfe.push(pts.mfe / t.entry_atr_1m)
-    if (t.entry_price != null && t.stop_price != null) {
-      const risk = Math.abs(t.entry_price - t.stop_price)
-      if (risk > 0) rMfe.push(pts.mfe / risk)
-    }
+    const x = mfeMaeAtr(t as unknown as (TradeWithExcursion & { entry_atr_1m?: number | null }))
+    if (!x) continue
+    diffs.push(x.mfe - x.mae)
+    sumMfe += x.mfe; sumMae += x.mae; n++
   }
-  // ATR first — the unit that survives a stop-less fresh import. Magnitude is
-  // judged by the caller (BIG_MOVE_MIN); here we only require enough samples to
-  // trust the median. If ATR is present at all, don't fall through to R.
-  if (atrMfe.length >= DEFAULT_MIN_N) return { value: median(atrMfe), unit: '×ATR' }
-  if (rMfe.length >= DEFAULT_MIN_N) return { value: median(rMfe), unit: 'R' }
-  return null
+  const c = contrastVsBenchmark(diffs, 0)
+  if (!c?.passes || n === 0) return null
+  const meanMfe = sumMfe / n, meanMae = sumMae / n
+  const heavy = c.effect < 0 // more heat than reward
+  return {
+    key: 'heat_vs_reward', dimension: 'Trade location',
+    headline: heavy ? 'You take more heat than you get back' : 'Your trades sit in profit more than pain',
+    detail: heavy
+      ? `Your trades sit through about ${meanMae.toFixed(1)}×ATR against you but only reach ${meanMfe.toFixed(1)}×ATR in your favor — entries giving up more than they get.`
+      : `Your trades reach about ${meanMfe.toFixed(1)}×ATR in your favor vs only ${meanMae.toFixed(1)}×ATR of heat against — solid trade location.`,
+    footnote: `${c.nA} trades with excursion data`, tone: heavy ? 'bad' : 'good', score: c.score,
+  }
 }
 
 // NOTE: a hold-time dimension (win rate by hold duration) was intentionally NOT
@@ -699,7 +679,7 @@ const dayTypeRegime: Builder = trades => {
 
 const BUILDERS: Builder[] = [
   timeOfDay, instrument, direction, tradesPerDay, revengeReentry,
-  captureLeakage, sizeVsOutcome, prevOutcome, dayOfWeek,
+  captureEfficiency, heatVsReward, sizeVsOutcome, prevOutcome, dayOfWeek,
   dayTypeSize, dayTypeRegime,
 ]
 
