@@ -55,6 +55,18 @@ const RARE_MIN_N = 6
 /** Capture-leakage benchmark: below this fraction of the favorable move booked,
  *  a low-capture read is worth surfacing. */
 const CAPTURE_BENCHMARK = 0.5
+/**
+ * Minimum median favorable excursion (×ATR or R) before the capture card fires.
+ * The capture noise floor is 0.5×ATR, so 1.5 is 3× the floor — it guarantees
+ * the TYPICAL trade actually developed a move, which is the only case where "you
+ * gave it back, tighten your exits" is honest. Below this, low capture is an
+ * entry/edge problem (the trades aren't running), not an exit one, and "take
+ * profits sooner" would be nonsense (nobody TPs at 0.5×ATR). The nuanced,
+ * context-aware version lives in the coach (coach-context.ts EXIT EFFICIENCY
+ * block), which self-calibrates to the trader's own median instead of a fixed
+ * floor; this static one-liner only earns its place on an unambiguous give-back.
+ */
+const BIG_MOVE_MIN = 1.5
 
 // ── Trade shape the engine reads (a superset satisfied by both the analytics
 //    TradeWithContext rows and the first-read TeaserTrade rows). All fields
@@ -454,17 +466,17 @@ const captureLeakage: Builder = trades => {
   }
   const c = contrastVsBenchmark(ratios, CAPTURE_BENCHMARK)
   if (!c?.passes || c.effect >= 0) return null // only when BELOW the benchmark
-  // Compare the size of the move they get (median MFE) to how much they keep
-  // (capture %) — the actual scan-and-compare, not a rounded anchor. Falls back
-  // to the plain capture line when no risk unit is available to size the move.
+  // Size the typical move (median MFE) so we can compare it to how much they keep
+  // (capture %). Suppress unless the move is genuinely large (see BIG_MOVE_MIN):
+  // a small median MFE + low capture is an entry problem, not an exit one, and a
+  // "take profits sooner" one-liner would mislead. When it IS large, state the
+  // move against the capture — the real scan-and-compare, not a rounded anchor.
   const mfe = medianFavorableExcursion(trades)
-  const detail = mfe
-    ? `Your trades run a median ~${mfe.value.toFixed(1)}${mfe.unit} in your favor before turning, but you bank only ${pct(c.meanA)} of that move — taking profits closer to that peak would lift your profit factor.`
-    : `You book ${pct(c.meanA)} of the favorable move on average across ${c.nA} trades — earlier partial exits would lift your profit factor.`
+  if (!mfe || mfe.value < BIG_MOVE_MIN) return null
   return {
     key: 'capture_leakage', dimension: 'Exits',
     headline: 'You leave part of the move on the table',
-    detail,
+    detail: `Your trades run a median ~${mfe.value.toFixed(1)}${mfe.unit} in your favor before turning, but you bank only ${pct(c.meanA)} of that move — taking profits closer to that peak would lift your profit factor.`,
     footnote: `${c.nA} trades with a clean read`, tone: 'bad', score: c.score,
   }
 }
@@ -493,14 +505,11 @@ function medianFavorableExcursion(trades: InsightTrade[]): { value: number; unit
       if (risk > 0) rMfe.push(pts.mfe / risk)
     }
   }
-  if (atrMfe.length >= DEFAULT_MIN_N) {
-    const m = median(atrMfe)
-    return m >= 0.5 ? { value: m, unit: '×ATR' } : null // ATR exists but move too small — no R fallback
-  }
-  if (rMfe.length >= DEFAULT_MIN_N) {
-    const m = median(rMfe)
-    if (m >= 1) return { value: m, unit: 'R' }
-  }
+  // ATR first — the unit that survives a stop-less fresh import. Magnitude is
+  // judged by the caller (BIG_MOVE_MIN); here we only require enough samples to
+  // trust the median. If ATR is present at all, don't fall through to R.
+  if (atrMfe.length >= DEFAULT_MIN_N) return { value: median(atrMfe), unit: '×ATR' }
+  if (rMfe.length >= DEFAULT_MIN_N) return { value: median(rMfe), unit: 'R' }
   return null
 }
 
