@@ -112,12 +112,16 @@ const RED = '#ef4444'
  * Module-level (not in the component) so its local mutation/accumulation isn't
  * subject to the React Compiler immutability rule. Coordinates are in the SVG's
  * 0-100 viewBox space (xAt/yAt supplied by the caller).
+ *
+ * Each run also returns `area` — the same path closed down to the zero axis, so
+ * the curve can be shaded under (green above zero, red below) without the fill
+ * ever crossing the axis into the wrong colour.
  */
 function signedLineSegments(
   values: number[],
   xAt: (i: number) => number,
   yAt: (v: number) => number,
-): { color: string; d: string }[] {
+): { color: string; d: string; area: string }[] {
   const colorFor = (v: number) => (v >= 0 ? GREEN : RED)
   const runs: { color: string; pts: [number, number][] }[] = []
   let cur: [number, number][] = []
@@ -141,10 +145,16 @@ function signedLineSegments(
     }
   }
   flush()
-  return runs.map(r => ({
-    color: r.color,
-    d: r.pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(' '),
-  }))
+  const zeroY = yAt(0).toFixed(3)
+  return runs.map(r => {
+    const d = r.pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(' ')
+    const first = r.pts[0], last = r.pts[r.pts.length - 1]
+    return {
+      color: r.color,
+      d,
+      area: `${d} L${last[0].toFixed(3)},${zeroY} L${first[0].toFixed(3)},${zeroY} Z`,
+    }
+  })
 }
 
 interface Props {
@@ -209,8 +219,9 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Equity Curve (cumulative) */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        {/* Equity Curve (cumulative). Container matches the stat tiles —
+            no fill, hairline rule, squared corner. */}
+        <div className="border border-gray-800 rounded-[3px] p-5">
           <div className="flex items-baseline justify-between mb-3">
             <h2 className="font-semibold text-white text-sm">Equity Curve</h2>
             {hasData && (
@@ -227,7 +238,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
         </div>
 
         {/* Daily Results (per-day net P&L bars) */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div className="border border-gray-800 rounded-[3px] p-5">
           <div className="flex items-baseline justify-between mb-3">
             <h2 className="font-semibold text-white text-sm">Daily Results</h2>
             {hasData && (
@@ -370,7 +381,23 @@ function EquityChart({ dates, values, height }: { dates: string[]; values: numbe
     <ChartFrame height={height} yMin={niceMin} yMax={niceMax} yTicks={ticks} xLabels={dates}>
       <div className="relative w-full h-full">
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full" style={{ pointerEvents: 'none' }}>
+          <defs>
+            {/* Per-path bounding-box gradients: the fill is densest AT the line
+                and fades toward the axis. The red stops are reversed because a
+                below-zero area hangs downward from the axis. */}
+            <linearGradient id="eqFillPos" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor={GREEN} stopOpacity="0.22" />
+              <stop offset="1" stopColor={GREEN} stopOpacity="0.02" />
+            </linearGradient>
+            <linearGradient id="eqFillNeg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor={RED} stopOpacity="0.02" />
+              <stop offset="1" stopColor={RED} stopOpacity="0.22" />
+            </linearGradient>
+          </defs>
           <Gridlines yMin={niceMin} yMax={niceMax} yTicks={ticks} />
+          {segments.map((s, i) => (
+            <path key={`a${i}`} d={s.area} fill={s.color === GREEN ? 'url(#eqFillPos)' : 'url(#eqFillNeg)'} stroke="none" />
+          ))}
           {segments.map((s, i) => (
             <path key={i} d={s.d} fill="none" stroke={s.color} strokeWidth="0.6" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           ))}
