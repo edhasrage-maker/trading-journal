@@ -20,14 +20,16 @@ export const THEME_KEY = 'ts-theme'
 export type Theme = 'dark' | 'light'
 
 export default function ThemeToggle({ compact = false }: { compact?: boolean }) {
+  // Starts 'dark' on BOTH server and first client render, so there is no
+  // hydration mismatch; the effect below corrects it to whatever the head
+  // script already applied. The control is therefore always painted — an
+  // earlier version withheld the icon until mount and simply looked missing.
   const [theme, setTheme] = useState<Theme>('dark')
-  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
     const current = document.documentElement.getAttribute('data-theme')
     // eslint-disable-next-line react-hooks/set-state-in-effect -- read the value the head script already applied
     if (current === 'light') setTheme('light')
-    setMounted(true)
   }, [])
 
   const apply = (next: Theme) => {
@@ -38,8 +40,6 @@ export default function ThemeToggle({ compact = false }: { compact?: boolean }) 
     try { localStorage.setItem(THEME_KEY, next) } catch { /* ignore */ }
   }
 
-  // Render the icon only after mount: server-rendered markup can't know the
-  // stored theme, and guessing produces a hydration mismatch.
   const next: Theme = theme === 'light' ? 'dark' : 'light'
   const Icon = theme === 'light' ? Moon : Sun
 
@@ -49,13 +49,13 @@ export default function ThemeToggle({ compact = false }: { compact?: boolean }) 
       onClick={() => apply(next)}
       aria-label={`Switch to ${next} mode`}
       title={`Switch to ${next} mode`}
-      className={
-        compact
-          ? 'p-1.5 rounded text-gray-500 hover:text-gray-200 transition-colors'
-          : 'p-1.5 rounded text-gray-500 hover:text-gray-200 transition-colors'
-      }
+      // Matches the sibling masthead links (Import / Account) rather than
+      // sitting a step dimmer, and carries a label on desktop: an unlabelled
+      // 16px glyph in a row of words is easy to miss entirely.
+      className="flex items-center gap-1.5 text-[13px] text-gray-400 hover:text-gray-100 transition-colors"
     >
-      {mounted ? <Icon className="w-4 h-4" /> : <span className="block w-4 h-4" />}
+      <Icon className="w-[15px] h-[15px]" />
+      {!compact && <span>{theme === 'light' ? 'Dark' : 'Light'}</span>}
     </button>
   )
 }

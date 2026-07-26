@@ -336,7 +336,8 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
         {activeLabel && (
           <span className="text-[13px] font-semibold text-gray-100 truncate">{activeLabel}</span>
         )}
-        <div className="ml-auto flex-shrink-0">
+        <div className="ml-auto flex-shrink-0 flex items-center gap-2">
+          <ThemeToggle compact />
           <ViewToggle compact />
         </div>
       </div>
