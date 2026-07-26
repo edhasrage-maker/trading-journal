@@ -1,6 +1,6 @@
 'use client'
 
-import { mfeMaePoints } from '@/lib/analytics'
+import { mfeMaePoints, avgCaptureRatio, type TradeWithExcursion } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { useMfeUnit, formatMfeMae, type MfeUnit } from '@/lib/mfe-unit'
 import type { Trade } from '@/lib/supabase/types'
@@ -85,6 +85,29 @@ export default function AvgMfeMaeCard({ trades, dayAtrRef, variant = 'card', cla
     return { mfe: avg(mfeVals), mae: avg(maeVals), n: mfeVals.length }
   })()
 
+  // "Kept" = Profit Captured (avgCaptureRatio: sum(max(0,pnl)) / sum(mfeDollars),
+  // per-trade floored) — a $-basis RATIO, so it's the same in every display unit;
+  // only the heat/run magnitudes re-scale with the toggle. Reusing it (rather than
+  // a raw average realized) keeps losers from dragging "kept" negative.
+  const capture = avgCaptureRatio(trades as unknown as TradeWithExcursion[]).avg
+
+  // Single-axis bar geometry (worst point → entry → exit → best point) in the
+  // active unit: heat = the MAE span left of entry; run = the MFE span right of
+  // entry (faint); kept = the solid part of the run actually banked (capture ×
+  // run). Mirrors docs/tapescore-mfe-mae-bar.html. Null (no bar) until there's a
+  // real range and a computable capture.
+  const bar = (() => {
+    const { mfe, mae } = stats
+    if (mfe == null || mae == null || capture == null) return null
+    const total = mfe + mae
+    if (!(total > 0)) return null
+    const cap = Math.max(0, Math.min(1, capture))
+    const heatPct = (mae / total) * 100
+    const runPct = (mfe / total) * 100
+    const keptPct = runPct * cap
+    return { heatPct, runPct, keptPct, entryPct: heatPct, exitPct: heatPct + keptPct, keptLabel: Math.round(cap * 100) }
+  })()
+
   const display = (v: number | null): string => formatMfeMae(v, mfeUnit)
 
   const valueBlock = stats.mfe == null || stats.mae == null ? (
@@ -93,7 +116,9 @@ export default function AvgMfeMaeCard({ trades, dayAtrRef, variant = 'card', cla
     <>
       <span className="text-green-400">{display(stats.mfe)}</span>
       <span className="text-gray-600 mx-1">/</span>
-      <span className="text-red-400">{display(stats.mae)}</span>
+      {/* MAE is a positive magnitude internally; render it signed-negative so it
+          reads as an adverse excursion (below entry), consistent with the bar. */}
+      <span className="text-red-400">{display(stats.mae == null ? null : -stats.mae)}</span>
     </>
   )
 
@@ -128,7 +153,27 @@ export default function AvgMfeMaeCard({ trades, dayAtrRef, variant = 'card', cla
     <div className={className ?? 'bg-gray-900 border border-gray-800 rounded-xl p-4'}>
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       <p className="font-bold text-base whitespace-nowrap">{valueBlock}</p>
-      <div className="mt-1">
+
+      {/* One-axis excursion bar: worst point → entry → exit → best point. The
+          solid green is what was kept (Profit Captured); the faint green to its
+          right is the run that was given back. Heat/run aren't word-labeled —
+          the value line + colors already carry them — leaving only the one stat
+          not stated elsewhere: kept %. Card variant only (a bar doesn't belong
+          in the compact inline row). */}
+      {bar && (
+        <div className="mt-2.5">
+          <div className="relative h-[7px] rounded-[2px]" style={{ background: '#14171C' }}>
+            <span className="absolute top-0 h-[7px] rounded-l-[2px]" style={{ left: 0, width: `${bar.heatPct}%`, background: 'rgba(224,104,95,0.45)' }} />
+            <span className="absolute top-0 h-[7px] rounded-r-[2px]" style={{ left: `${bar.entryPct}%`, width: `${bar.runPct}%`, background: 'rgba(79,197,142,0.18)' }} />
+            <span className="absolute top-0 h-[7px] bg-emerald-400" style={{ left: `${bar.entryPct}%`, width: `${bar.keptPct}%` }} />
+            <span className="absolute bg-gray-200" style={{ left: `${bar.entryPct}%`, top: '-3px', height: '13px', width: '1.5px' }} />
+            <span className="absolute bg-gray-200" style={{ left: `${bar.exitPct}%`, top: '-3px', height: '13px', width: '2px' }} />
+          </div>
+          <p className="mt-1.5 text-center text-[10.5px] text-gray-500">kept <b className="text-gray-200 font-semibold">{bar.keptLabel}%</b></p>
+        </div>
+      )}
+
+      <div className="mt-1.5">
         <select
           value={mfeUnit}
           onChange={e => setMfeUnit(e.target.value as MfeUnit)}
