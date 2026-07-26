@@ -16,6 +16,7 @@ import { computeBehavioralProxies } from './behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from './journal-language-heatmap'
 import { fetchOpenThread, coachingThreadPromptBlock } from './coaching-thread'
 import { getGiveBackAtr } from './atr-config-server'
+import { followFade, type Regime } from './market-structure'
 import { tagKey } from './tradezella-import'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,7 +60,8 @@ interface TradeContextRow {
   symbol: string | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tags_json: any
-  structure_5m_alignment: string | null
+  structure_5m_alignment: string | null   // EMA-20 following/fading (native, SC-log only — sparse)
+  structure_5m_regime: string | null      // pivot HH-HL bull/bear/neutral (broadly backfilled — dense)
   notes: string | null                 // trader's per-trade free text — fuels the journal heatmap
 }
 
@@ -135,6 +137,7 @@ function mapHistorical(h: any): UnifiedTrade {
     symbol: h.symbol ?? null,
     tags_json: h.tags_json ?? {},
     structure_5m_alignment: null,
+    structure_5m_regime: h.structure_5m_regime ?? null,
     notes: null,
     _source: 'historical',
     _date: date,
@@ -164,7 +167,7 @@ async function fetchHistoricalInWindow(supabase: AnyClient, startDate: string, e
   for (let p = 0; p < 10; p++) {
     const { data, error } = await supabase
       .from('historical_trades')
-      .select('id, side, net_pnl, entry_price, quantity, symbol, tags_json, open_at, close_at, trade_date')
+      .select('id, side, net_pnl, entry_price, quantity, symbol, tags_json, open_at, close_at, trade_date, structure_5m_regime')
       .gte('trade_date', startDate)
       .lte('trade_date', endDate)
       .order('trade_date', { ascending: false })
@@ -285,7 +288,7 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
     for (let p = 0; p < 10; p++) {
       const { data } = await supabase
         .from('trades')
-        .select('id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, notes')
+        .select('id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes')
         .in('trading_day_id', dayIds)
         .order('entry_time', { ascending: false })
         .order('id', { ascending: false })   // repo-convention tiebreaker → deterministic paging past 1000 rows
@@ -391,6 +394,10 @@ NO TRADE DATA — the trader logged no trades in this window.
   const dayTypeBuckets = new Map<string, { display: string; count: number; wins: number; losers: number; pnl: number }>()
   const ofBuckets = new Map<string, { display: string; count: number; wins: number; losers: number; pnl: number }>()
   const structureBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
+  // Pivot-regime follow/fade (dense — regime is broadly backfilled, unlike the
+  // sparse SC-log-only structure_5m_alignment). Same basis as the "Follow/Fade
+  // LTF structure" tag: followFade(direction, regime). Native + historical.
+  const followFadeBuckets = new Map<'follow' | 'fade', { count: number; wins: number; losers: number; pnl: number }>()
   const monthBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
   // Day-condition regime buckets (#2c) — trades bucketed by their day's RVOL/ATR
   // flag so the coach can see if the trader is selective on the regimes they win in.
@@ -544,8 +551,19 @@ NO TRADE DATA — the trader logged no trades in this window.
       ofBuckets.set(k, b)
     }
 
-    // Structure + day-regime — NATIVE ONLY (historical has no structure_5m_alignment
-    // and no trading_day → no market_context regime).
+    // Pivot-regime follow/fade — BOTH sources (regime is on native + historical).
+    // Dense, and the same read the trader's Follow/Fade LTF structure tag uses.
+    if (t.direction && t.structure_5m_regime) {
+      const ff = followFade(t.direction, t.structure_5m_regime as Regime)
+      if (ff === 'follow' || ff === 'fade') {
+        const b = followFadeBuckets.get(ff) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+        b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+        followFadeBuckets.set(ff, b)
+      }
+    }
+
+    // EMA-20 alignment — NATIVE ONLY (historical has no structure_5m_alignment
+    // and no trading_day → no market_context regime). Sparse; kept as a second read.
     if (t._source === 'native') {
       if (t.structure_5m_alignment) {
         const b = structureBuckets.get(t.structure_5m_alignment) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
@@ -859,8 +877,11 @@ ${journalBlock ? '\n' + journalBlock + '\n' : ''}
 ORDER FLOW SIGNAL PERFORMANCE (by total PnL, top 10):
 ${sortByPnl(ofBuckets).map(([, b]) => `  ${b.display}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no orderflow tags logged in window)'}
 
-5M STRUCTURE ALIGNMENT:
-${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no structure_5m_alignment values yet — backfill pending)'}
+5M STRUCTURE — FOLLOW vs FADE (pivot regime; direction vs 5m HH-HL structure — this is what the trader's "Follow/Fade LTF structure" tag measures):
+${Array.from(followFadeBuckets.entries()).map(([k, b]) => `  ${k === 'follow' ? 'following structure' : 'fading structure'}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no trades with a decided 5m regime in window)'}
+
+5M STRUCTURE ALIGNMENT (EMA-20 read; separate from the pivot follow/fade above — sparser, native SC-log imports only):
+${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no structure_5m_alignment values yet — sparse; use the pivot follow/fade above)'}
 
 RECENT TRADES (newest first, terse format, capped at ${recentTradesLimit}):
 ${recent}

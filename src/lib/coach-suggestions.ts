@@ -8,6 +8,8 @@
 // unit-tested; `gatherCoachSignals` does the lean queries. The /api/coach/
 // suggestions route wires them together for the empty-state opener.
 
+import { followFade, type Regime } from '@/lib/market-structure'
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
@@ -157,13 +159,15 @@ export async function gatherCoachSignals(supabase: AnyClient, opts: { startDate:
   try {
     const { data: trades } = await supabase
       .from('trades')
-      .select('pnl, tags_json, structure_5m_alignment')
+      .select('pnl, direction, tags_json, structure_5m_regime')
       .gte('entry_time', `${startDate}T00:00:00`).lte('entry_time', `${endDate}T23:59:59`)
       .limit(5000)
-    const rows = (trades ?? []) as Array<{ pnl: number | null; tags_json: { mistakes?: string[] } | null; structure_5m_alignment: string | null }>
+    const rows = (trades ?? []) as Array<{ pnl: number | null; direction: 'long' | 'short' | null; tags_json: { mistakes?: string[] } | null; structure_5m_regime: string | null }>
 
     const mistakes = new Map<string, { pnl: number; count: number }>()
-    const align = new Map<'following' | 'fading', { wins: number; n: number }>()
+    // Follow/fade from the DENSE pivot regime + direction (same read as the
+    // Follow/Fade LTF structure tag), not the sparse EMA-20 alignment field.
+    const ff = new Map<'follow' | 'fade', { wins: number; n: number }>()
     for (const t of rows) {
       const pnl = t.pnl ?? 0
       for (const raw of (t.tags_json?.mistakes ?? [])) {
@@ -172,11 +176,13 @@ export async function gatherCoachSignals(supabase: AnyClient, opts: { startDate:
         const b = mistakes.get(label) ?? { pnl: 0, count: 0 }
         b.pnl += pnl; b.count += 1; mistakes.set(label, b)
       }
-      const a = t.structure_5m_alignment
-      if (a === 'following' || a === 'fading') {
-        const b = align.get(a) ?? { wins: 0, n: 0 }
-        if (pnl > 0) b.wins += 1
-        b.n += 1; align.set(a, b)
+      if (t.direction && t.structure_5m_regime) {
+        const side = followFade(t.direction, t.structure_5m_regime as Regime)
+        if (side === 'follow' || side === 'fade') {
+          const b = ff.get(side) ?? { wins: 0, n: 0 }
+          if (pnl > 0) b.wins += 1
+          b.n += 1; ff.set(side, b)
+        }
       }
     }
 
@@ -186,7 +192,7 @@ export async function gatherCoachSignals(supabase: AnyClient, opts: { startDate:
     }
     if (costly) out.costliestMistake = costly
 
-    const fo = align.get('following'), fa = align.get('fading')
+    const fo = ff.get('follow'), fa = ff.get('fade')
     if (fo && fa && fo.n >= 10 && fa.n >= 10) {
       const foWr = (fo.wins / fo.n) * 100, faWr = (fa.wins / fa.n) * 100
       const better = foWr >= faWr ? 'following' : 'fading'
