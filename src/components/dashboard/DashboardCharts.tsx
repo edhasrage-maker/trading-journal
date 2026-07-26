@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronDown } from 'lucide-react'
+import { tapeScoreBand } from '@/lib/tapescore'
 import type { DayStat } from './DashboardStats'
 
 /**
@@ -102,45 +103,46 @@ function niceScale(min: number, max: number, count = 4): { niceMin: number; nice
 
 const GREEN = '#22c55e'
 const RED = '#ef4444'
-// TapeScore overlay uses the brand accent, never green/red — those are reserved
-// for money. A score is not a P&L, and must never be mistaken for one.
-// Deliberately the BRIGHT accent: the overlay sits over the equity fill, and at
-// the deeper #4F97CE it disappeared into the shading.
-const SCORE_BLUE = '#79B4E6'
+/** Band fills for the score strip — the SAME green/amber/red the TapeScore ring
+ *  and the Recent Days badges use, so one session reads the same colour
+ *  everywhere it appears. Thresholds come from tapeScoreBand rather than being
+ *  re-declared here, so a re-band can't drift between surfaces. */
+const BAND_FILL: Record<'high' | 'mid' | 'low', string> = {
+  high: '#4ade80',
+  mid: '#fbbf24',
+  low: '#f87171',
+}
 
 /**
- * Path runs for the TapeScore overlay, broken at unscored days.
+ * Session-by-session TapeScore as a slim band beneath the equity curve.
  *
- * A gap MUST read as "no analysis on that day" — interpolating across it would
- * invent a score the trader never earned. Runs of a single scored day return a
- * dot instead of a path, so an isolated session doesn't silently vanish.
+ * Deliberately NOT a second line on the plot. A score series crossing the curve
+ * was unreadable at every treatment tried (raw = noise, smoothed = a flat dead
+ * line, dots = clutter), and it forced a second scale onto a chart that already
+ * has one. As a strip it answers the question the pairing is actually for —
+ * does the curve climb through well-traded stretches? — by putting process
+ * directly under the money on a shared x-axis, with nothing overlapping.
  *
- * The caller maps score→y on a FIXED 0-100 scale (never fitted to the data), so
- * the overlay's position can't be tuned to manufacture a correlation with the
- * equity line — the one real hazard of drawing two series on one plot.
+ * Unscored sessions render as a GAP, never a neutral fill: "no analysis" must
+ * not be mistakable for "an average day".
  */
-function scoreRuns(
-  scores: (number | null)[],
-  xAt: (i: number) => number,
-  yAt: (s: number) => number,
-): { paths: string[]; dots: [number, number][] } {
-  const paths: string[] = []
-  const dots: [number, number][] = []
-  let cur: [number, number][] = []
-  const flush = () => {
-    if (cur.length === 1) dots.push(cur[0])
-    else if (cur.length >= 2) {
-      paths.push(cur.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(' '))
-    }
-    cur = []
-  }
-  for (let i = 0; i < scores.length; i++) {
-    const s = scores[i]
-    if (s == null) { flush(); continue }
-    cur.push([xAt(i), yAt(s)])
-  }
-  flush()
-  return { paths, dots }
+function ScoreStrip({ scores }: { scores: (number | null)[] }) {
+  const n = scores.length
+  if (n === 0) return null
+  const w = 100 / n
+  return (
+    <svg viewBox="0 0 100 1" preserveAspectRatio="none" className="w-full h-full">
+      {scores.map((s, i) => s == null ? null : (
+        <rect
+          key={i}
+          x={i * w + w * 0.08} y={0}
+          width={w * 0.84} height={1}
+          fill={BAND_FILL[tapeScoreBand(s)]}
+          opacity={0.9}
+        />
+      ))}
+    </svg>
+  )
 }
 
 /**
@@ -272,10 +274,14 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
               {scores.some(s => s != null) && (
                 <span
                   className="flex items-center gap-1.5 text-[10px] text-gray-500 whitespace-nowrap"
-                  title="Each scored session's TapeScore, on a fixed 0-100 scale (100 at the top of the plot, 0 at the bottom). The scale never stretches to fit, so the line's height always means the same thing."
+                  title="The band under the chart is each session's TapeScore — red under 50, amber 50-69, green 70+ (the same colours the score ring uses). A gap means that session was never analysed. Read it against the curve: the equity should climb through the green stretches."
                 >
-                  <span className="inline-block w-3 h-px" style={{ background: SCORE_BLUE }} />
-                  TapeScore 0–100
+                  <span className="flex items-center gap-px">
+                    <span className="inline-block w-1.5 h-2 rounded-[1px]" style={{ background: BAND_FILL.low }} />
+                    <span className="inline-block w-1.5 h-2 rounded-[1px]" style={{ background: BAND_FILL.mid }} />
+                    <span className="inline-block w-1.5 h-2 rounded-[1px]" style={{ background: BAND_FILL.high }} />
+                  </span>
+                  TapeScore per session
                 </span>
               )}
             </div>
@@ -323,18 +329,26 @@ const M = { left: 60, right: 10, top: 8, bottom: 20 }
  * align to the SVG gridlines without distortion.
  */
 function ChartFrame({
-  height, yMin, yMax, yTicks, xLabels, children,
+  height, yMin, yMax, yTicks, xLabels, strip, children,
 }: {
   height: number
   yMin: number
   yMax: number
   yTicks: number[]
   xLabels: string[]
+  /** Optional band rendered between the plot and the X labels, sharing the
+   *  plot's exact horizontal extent (so column i lines up with point i). */
+  strip?: React.ReactNode
   children: React.ReactNode
 }) {
   const span = yMax - yMin || 1
   const fracY = (v: number) => (v - yMin) / span
   const n = xLabels.length
+  // Reserve height only when a strip is present, so the chart without one
+  // (Daily Results) keeps its exact previous geometry.
+  const STRIP_H = 7
+  const STRIP_GAP = 5
+  const bottomTotal = M.bottom + (strip ? STRIP_H + STRIP_GAP : 0)
   // X tick indices: first, middle, last (clean — avoids clutter on dense ranges).
   const xIdx = n <= 1 ? [0] : n === 2 ? [0, n - 1] : [0, Math.floor(n / 2), n - 1]
 
@@ -348,7 +362,7 @@ function ChartFrame({
           style={{
             left: 0,
             width: M.left,
-            top: `calc(${M.top}px + ${(1 - fracY(v)).toFixed(4)} * (100% - ${M.top + M.bottom}px))`,
+            top: `calc(${M.top}px + ${(1 - fracY(v)).toFixed(4)} * (100% - ${M.top + bottomTotal}px))`,
             transform: 'translateY(-50%)',
           }}
         >
@@ -359,10 +373,21 @@ function ChartFrame({
       {/* Plot area */}
       <div
         className="absolute"
-        style={{ left: M.left, right: M.right, top: M.top, bottom: M.bottom }}
+        style={{ left: M.left, right: M.right, top: M.top, bottom: bottomTotal }}
       >
         {children}
       </div>
+
+      {/* Score strip — same left/right insets as the plot, so a column sits
+          directly under the session it belongs to. */}
+      {strip && (
+        <div
+          className="absolute rounded-[1px] overflow-hidden"
+          style={{ left: M.left, right: M.right, bottom: M.bottom + STRIP_GAP - 2, height: STRIP_H }}
+        >
+          {strip}
+        </div>
+      )}
 
       {/* X axis tick labels */}
       <div className="absolute" style={{ left: M.left, right: M.right, bottom: 0, height: M.bottom }}>
@@ -431,19 +456,7 @@ function EquityChart({ dates, values, scores = [], height }: {
 
   const segments = signedLineSegments(values, xAt, yAt)
 
-  // FIXED 0-100 scale, deliberately not fitted to the observed range: the
-  // overlay's height always means the same thing, so it can't be stretched to
-  // make process look more (or less) correlated with money than it is.
-  const yScore = (s: number) => (1 - s / 100) * 100
   const hasScores = scores.some(s => s != null)
-  // Day-by-day, not smoothed: a trailing average flattened into a near-straight
-  // line, because real scores cluster in a narrow band and the axis is fixed.
-  // The daily value at least shows the session-to-session swing that's actually
-  // there. Dots mark the scored sessions so the series reads as discrete days
-  // rather than a continuous line wandering over the equity curve.
-  const { paths: scorePaths } = hasScores
-    ? scoreRuns(scores, xAt, yScore)
-    : { paths: [] }
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const w = e.currentTarget.clientWidth
@@ -453,7 +466,10 @@ function EquityChart({ dates, values, scores = [], height }: {
   }
 
   return (
-    <ChartFrame height={height} yMin={niceMin} yMax={niceMax} yTicks={ticks} xLabels={dates}>
+    <ChartFrame
+      height={height} yMin={niceMin} yMax={niceMax} yTicks={ticks} xLabels={dates}
+      strip={hasScores ? <ScoreStrip scores={scores} /> : undefined}
+    >
       <div className="relative w-full h-full">
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full" style={{ pointerEvents: 'none' }}>
           <defs>
@@ -473,18 +489,6 @@ function EquityChart({ dates, values, scores = [], height }: {
           {segments.map((s, i) => (
             <path key={`a${i}`} d={s.area} fill={s.color === GREEN ? 'url(#eqFillPos)' : 'url(#eqFillNeg)'} stroke="none" />
           ))}
-          {/* TapeScore overlay — under the equity stroke so money stays the
-              dominant read, and thinner/muted so it reads as context. */}
-          {scorePaths.map((d, i) => (
-            <path
-              key={`s${i}`} d={d} fill="none" stroke={SCORE_BLUE}
-              strokeWidth="0.4" strokeOpacity="0.55" strokeLinecap="round" strokeLinejoin="round"
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-          {scores.map((s, i) => s == null ? null : (
-            <circle key={`sd${i}`} cx={xAt(i)} cy={yScore(s)} r="0.8" fill={SCORE_BLUE} vectorEffect="non-scaling-stroke" />
-          ))}
           {segments.map((s, i) => (
             <path key={i} d={s.d} fill="none" stroke={s.color} strokeWidth="0.6" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           ))}
@@ -498,15 +502,6 @@ function EquityChart({ dates, values, scores = [], height }: {
             </>
           )}
         </svg>
-
-        {/* The overlay's fixed scale, stated. Without these the blue line has no
-            declared units and the reader can only guess what its height means. */}
-        {hasScores && (
-          <>
-            <span className="absolute right-0 top-0 -translate-y-1/2 text-[9px] font-mono leading-none pointer-events-none" style={{ color: SCORE_BLUE, opacity: 0.65 }}>100</span>
-            <span className="absolute right-0 bottom-0 translate-y-1/2 text-[9px] font-mono leading-none pointer-events-none" style={{ color: SCORE_BLUE, opacity: 0.65 }}>0</span>
-          </>
-        )}
 
         {/* Hover capture + tooltip */}
         <div className="absolute inset-0" onMouseMove={onMove} onMouseLeave={() => setHoverIdx(null)} />
@@ -524,7 +519,9 @@ function EquityChart({ dates, values, scores = [], height }: {
               {fmtMoney(values[hoverIdx], { signed: true })}
             </div>
             {scores[hoverIdx] != null && (
-              <div className="text-[10px] font-mono" style={{ color: SCORE_BLUE }}>
+              // Banded like the strip below and the score ring, so the number
+              // and its colour agree wherever the session shows up.
+              <div className="text-[10px] font-mono" style={{ color: BAND_FILL[tapeScoreBand(scores[hoverIdx] as number)] }}>
                 TapeScore {scores[hoverIdx]}
               </div>
             )}
