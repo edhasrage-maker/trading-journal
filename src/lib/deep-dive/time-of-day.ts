@@ -69,8 +69,11 @@ function clockLabel(minutes: number): string {
   return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
 }
 
-/** Short zone name ("PDT") taken from the earliest trade, so labels are honest
- *  about DST without depending on the current clock. */
+/** Short zone name ("PDT") taken from the trader's MOST RECENT trade, so labels
+ *  match the offset they're trading in now. A multi-year window straddles DST, so
+ *  some reference instant has to be chosen; the earliest trade was the first pick
+ *  and it labelled a July session "PST" for an account whose history starts in
+ *  winter. Latest is the least-wrong anchor — and never depends on the clock. */
 function zoneAbbrev(iso: string, timeZone: string): string {
   const ms = Date.parse(iso)
   if (!Number.isFinite(ms)) return ''
@@ -92,11 +95,11 @@ export function analyzeTimeOfDay(trades: TimeOfDayTrade[], opts: TimeOfDayOption
   const size = opts.bucketMinutes ?? (scored.length >= HALF_HOUR_AT ? 30 : 60)
 
   const byStart = new Map<number, Bucket>()
-  let earliest: string | null = null
+  let latest: string | null = null
   for (const t of scored) {
     const mins = localMinutes(t.entryTime!, fmt)
     if (mins == null) continue
-    if (earliest == null || Date.parse(t.entryTime!) < Date.parse(earliest)) earliest = t.entryTime!
+    if (latest == null || Date.parse(t.entryTime!) > Date.parse(latest)) latest = t.entryTime!
     const start = Math.floor(mins / size) * size
     let b = byStart.get(start)
     if (!b) { b = { start, label: clockLabel(start), pnls: [], wins: 0, net: 0 }; byStart.set(start, b) }
@@ -106,7 +109,7 @@ export function analyzeTimeOfDay(trades: TimeOfDayTrade[], opts: TimeOfDayOption
   }
   const buckets = [...byStart.values()].sort((a, b) => a.start - b.start)
   if (buckets.length < 2) return null
-  const tz = earliest ? zoneAbbrev(earliest, timeZone) : ''
+  const tz = latest ? zoneAbbrev(latest, timeZone) : ''
   const totalN = buckets.reduce((s, b) => s + b.pnls.length, 0)
   const totalNet = buckets.reduce((s, b) => s + b.net, 0)
 

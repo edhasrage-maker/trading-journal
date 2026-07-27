@@ -60,9 +60,11 @@ export function analyzeTiltCascade(trades: TiltTrade[]): DeepDiveResult | null {
   if (!(wrDrop >= 8 && tiltZonePnl < 0)) return null
 
   const segs: DiveSegment[] = [
-    { label: 'Fresh (0 losses)', value: baseWr, n: b0.n, pnl: b0.pnl, extra: { avgSize: +baseQty.toFixed(1) } },
-    { label: 'After 1 loss', value: wr(b1), n: b1.n, pnl: b1.pnl, extra: { avgSize: +avgQty(b1).toFixed(1) } },
-    { label: 'After 2+ losses', value: tiltWr, n: b2.n, pnl: b2.pnl, extra: { avgSize: +tiltQty.toFixed(1) } },
+    // Round at the source: these are win-rate PERCENTAGES and a raw mean prints
+    // as 39.800995024875625 in any renderer that trusts the value as given.
+    { label: 'Fresh (0 losses)', value: Math.round(baseWr), n: b0.n, pnl: Math.round(b0.pnl), extra: { avgSize: +baseQty.toFixed(1) } },
+    { label: 'After 1 loss', value: Math.round(wr(b1)), n: b1.n, pnl: Math.round(b1.pnl), extra: { avgSize: +avgQty(b1).toFixed(1) } },
+    { label: 'After 2+ losses', value: Math.round(tiltWr), n: b2.n, pnl: Math.round(b2.pnl), extra: { avgSize: +tiltQty.toFixed(1) } },
   ]
 
   const detail = [
