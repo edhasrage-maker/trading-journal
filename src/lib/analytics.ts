@@ -47,6 +47,12 @@ export interface TradeWithContext extends TradeWithExcursion {
   // Pivot market-structure regime at entry (scripts/backfill-structure-regime.ts).
   // follow/fade derives from (direction, regime).
   structure_5m_regime: 'bull' | 'bear' | 'neutral' | 'insufficient' | null
+  // IB day-CHARACTER read, classified at the 07:29 PT IB close and persisted on
+  // market_context by the prep page / scripts/backfill-ib-day-type.ts (Pt 23).
+  // DERIVED — deliberately kept apart from the hand-tagged day_type/day_types
+  // above, which are set with hindsight. Never merge the two.
+  ib_regime: 'chop' | 'mid' | 'expanded' | null
+  ib_size_band: 'small' | 'normal' | 'large' | null
 }
 
 export interface DaySummary {
@@ -943,6 +949,58 @@ export function aggregateByStructureFollowFade(trades: TradeWithContext[]): TagP
     .sort((a, b) => b.stats.total_pnl - a.stats.total_pnl)
 }
 
+/**
+ * Performance by the DERIVED day character (IB / meanHL10 at the IB close):
+ * choppy / balanced / extended. This is the honest-at-07:30 read, unlike the
+ * hand-tagged `day_types` which are applied after the fact — so the two tables
+ * answer different questions and are shown side by side, never merged.
+ *
+ * Labels carry the ratio band so the table reads without a legend, and match
+ * the words the prep panel and the Morning Conditions L/M/H bucket use.
+ */
+const IB_REGIME_LABEL: Record<'chop' | 'mid' | 'expanded', string> = {
+  chop: 'Choppy IB (< 7.7× ATR)',
+  mid: 'Balanced IB (7.7–13× ATR)',
+  expanded: 'Extended IB (≥ 13× ATR)',
+}
+
+export function aggregateByIbRegime(trades: TradeWithContext[]): TagPerf[] {
+  const buckets = new Map<string, TradeLike[]>()
+  for (const t of trades) {
+    if (!t.ib_regime) continue   // unclassified days sit out rather than forming an "Unknown" bar
+    const label = IB_REGIME_LABEL[t.ib_regime]
+    if (!buckets.has(label)) buckets.set(label, [])
+    buckets.get(label)!.push(t)
+  }
+  // Fixed order (choppy → extended) rather than P&L-sorted: this is an ordinal
+  // scale, and re-ordering it by outcome hides whether performance moves
+  // monotonically across the regime.
+  const order = Object.values(IB_REGIME_LABEL)
+  return Array.from(buckets, ([label, ts]) => ({ label, stats: computeStats(ts) }))
+    .sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label))
+}
+
+const IB_SIZE_LABEL: Record<'small' | 'normal' | 'large', string> = {
+  small: 'Small IB (< 0.75× 10-day)',
+  normal: 'Normal IB (0.75–1.25×)',
+  large: 'Large IB (> 1.25× 10-day)',
+}
+
+/** Performance by the derived IB SIZE band — the magnitude lens, independent of
+ *  the regime lens above (they're deliberately marginal, not crossed). */
+export function aggregateByIbSizeBand(trades: TradeWithContext[]): TagPerf[] {
+  const buckets = new Map<string, TradeLike[]>()
+  for (const t of trades) {
+    if (!t.ib_size_band) continue
+    const label = IB_SIZE_LABEL[t.ib_size_band]
+    if (!buckets.has(label)) buckets.set(label, [])
+    buckets.get(label)!.push(t)
+  }
+  const order = Object.values(IB_SIZE_LABEL)
+  return Array.from(buckets, ([label, ts]) => ({ label, stats: computeStats(ts) }))
+    .sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label))
+}
+
 /** Comparison of "trades WITH this tag" vs "trades WITHOUT this tag". */
 export interface TagImpact {
   label: string
@@ -1135,7 +1193,11 @@ export function maxDrawdown(points: { cum_pnl: number }[]): number {
 export function joinTradesWithContext(
   trades: (TradeWithExcursion & { entry_atr_1m?: number | null; entry_rvol?: number | null; mfe_dollars_per_leg?: number | null; structure_5m_regime?: 'bull' | 'bear' | 'neutral' | 'insufficient' | null })[],
   days: Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types'>[],
-  contexts: (Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'> & { atr_at_ib_close?: number | null })[],
+  contexts: (Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'> & {
+    atr_at_ib_close?: number | null
+    ib_regime?: 'chop' | 'mid' | 'expanded' | null
+    ib_size_band?: 'small' | 'normal' | 'large' | null
+  })[],
 ): TradeWithContext[] {
   const dayById = new Map(days.map(d => [d.id, d]))
   const ctxByDay = new Map(contexts.map(c => [c.trading_day_id, c]))
@@ -1156,6 +1218,8 @@ export function joinTradesWithContext(
       adr: c?.adr ?? null,
       atr_1m: c?.atr_1m ?? null,
       atr_at_ib_close: c?.atr_at_ib_close ?? null,
+      ib_regime: c?.ib_regime ?? null,
+      ib_size_band: c?.ib_size_band ?? null,
       entry_atr_1m: t.entry_atr_1m ?? null,
       entry_rvol: t.entry_rvol ?? null,
       mfe_dollars_per_leg: t.mfe_dollars_per_leg ?? null,

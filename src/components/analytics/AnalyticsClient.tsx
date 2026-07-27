@@ -22,6 +22,8 @@ import {
   aggregateByTag,
   aggregateByDayType,
   aggregateByStructureFollowFade,
+  aggregateByIbRegime,
+  aggregateByIbSizeBand,
   tagImpact,
   computeStats,
   formatCapturePct,
@@ -199,6 +201,8 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
   const mgmtPerf = useMemo(() => aggregateByTag(filtered, 'trade_management'), [filtered])
   const dayTypePerf = useMemo(() => aggregateByDayType(filtered), [filtered])
   const structurePerf = useMemo(() => aggregateByStructureFollowFade(filtered), [filtered])
+  const ibRegimePerf = useMemo(() => aggregateByIbRegime(filtered), [filtered])
+  const ibSizePerf = useMemo(() => aggregateByIbSizeBand(filtered), [filtered])
 
   // Drilldown modal state — which (category, label) pair the user clicked
   // on. Click any tag label in any of the five performance tables to open
@@ -440,6 +444,26 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
             data={dayTypePerf}
             onTagClick={openCategory('day_types')}
           />
+          {/* Day CHARACTER — the derived counterpart to Day Type above. Two
+              separate tables on purpose: Day Type is what you tagged after the
+              fact, this is what the Initial Balance actually printed by 07:30.
+              Merging them would make it impossible to tell a hindsight label
+              from a measurement. Renders only once days have been classified
+              (scripts/backfill-ib-day-type.ts). */}
+          {ibRegimePerf.length > 0 && (
+            <TagPerformanceTable
+              title="Day Character (measured at IB close)"
+              description="IB range ÷ its own ATR — how directional the first hour actually was. Derived from bars at 07:30 PT, not tagged by hand."
+              data={ibRegimePerf}
+            />
+          )}
+          {ibSizePerf.length > 0 && (
+            <TagPerformanceTable
+              title="IB Size Band (measured at IB close)"
+              description="IB range vs its trailing 10-day average — how big the first hour was relative to normal."
+              data={ibSizePerf}
+            />
+          )}
           <TagPerformanceTable
             title="Structure (Follow / Fade)"
             description="Pivot 5m market structure at entry — trading with vs against the HH-HL trend"

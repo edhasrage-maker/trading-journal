@@ -49,7 +49,11 @@ const CONDITIONS: ConditionDef[] = [
     key: 'rvol',
     title: 'Relative Volume (at entry)',
     description: '100 = average pace. Cumulative volume from RTH open through the entry minute / 10d avg same window. Trades pre-2025 fall back to full-day RVOL.',
-    breaks: [70, 100, 130, 180],
+    // Re-quintiled 2026-07-27 (Pt 23). The 70/100/130/180 breaks had drifted:
+    // they put 1% of trades above 180 and 8% below 70, so both wings were
+    // effectively empty and the middle two bands carried 74% of the sample.
+    // Current quintiles p20=86 p40=97 p60=109 p80=127.
+    breaks: [85, 95, 110, 130],
     format: n => `${n.toFixed(0)}%`,
     // Prefer per-trade entry-time RVOL; fall back to day-level rvol when null.
     resolve: t => t.entry_rvol ?? t.rvol,
@@ -70,6 +74,14 @@ const CONDITIONS: ConditionDef[] = [
   // dumped 60-70% of trades into the middle bucket, leaving the wings
   // sparse and the visualization useless. These quintile-aligned breaks
   // give roughly 20% of trades per bucket so each band is informative.
+  //
+  // THESE DRIFT. They're absolute point/percent values, so a shift in the
+  // volatility regime slides the whole distribution across fixed cuts.
+  // Re-checked 2026-07-27 (Pt 23): IB size (15/25/24/14/22%), ADR
+  // (20/19/18/18/25%) and IB vs 10d (23/32/22/23%) were still fine, but ATR and
+  // RVOL had gone lopsided and were re-quintiled — see the note on each. Worth
+  // re-running the check whenever the tape changes character: a 41%-in-one-
+  // bucket split means the band has stopped saying anything.
   {
     key: 'ib_size',
     title: 'IB Size (points)',
@@ -88,7 +100,11 @@ const CONDITIONS: ConditionDef[] = [
     key: 'atr_1m',
     title: 'ATR-10 (at entry)',
     description: 'Wilder ATR-10 on 1m bars, snapshotted at the minute of entry. Trades pre-2025 fall back to end-of-RTH ATR.',
-    breaks: [10, 12, 15, 20],
+    // Re-quintiled 2026-07-27 (Pt 23). The 2026-06 breaks assumed p20=10.0 /
+    // p40=12.0 / p60=14.9; the tape quietened and those moved to 7.7 / 9.9 /
+    // 13.4, piling 41% of trades into the bottom bucket — two quintiles
+    // collapsed into one bar. Current quintiles p20=7.7 p40=9.9 p60=13.4 p80=18.9.
+    breaks: [8, 10, 13, 19],
     format: n => n.toFixed(0),
     // Prefer per-trade entry-time ATR; fall back to day-level atr_1m when null.
     resolve: t => t.entry_atr_1m ?? t.atr_1m,

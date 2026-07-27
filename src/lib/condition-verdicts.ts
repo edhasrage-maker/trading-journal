@@ -12,16 +12,13 @@
  *   - bar volatility is atr_1m / atr_10d_avg (both points)
  *   - overnight + day range are % of ADR
  *   - IB is the stored ratio vs its 10-day average
- * RVOL band edges are anchored to the analytics Condition Buckets quintile
- * breaks (70/100/130/180) so the words agree with the tables. Spec approved
- * 2026-07-12 (Pt 12).
- *
- * Every OTHER band is anchored to the metric's own realized distribution rather
+ * Every band is anchored to the metric's own realized distribution rather
  * than to round numbers, using one scheme: a fat middle that spans the median
  * (~p30–p70) with the tails at roughly the outer 10% / 20%. Overnight was
- * re-anchored 2026-07-24; bar volatility, range used and IB followed on
- * 2026-07-27 (Pt 23) — all three had the same failure mode as overnight, where
- * a perfectly ordinary day read as compressed/below-normal. Distributions came
+ * re-anchored 2026-07-24; bar volatility, range used, IB and RVOL followed on
+ * 2026-07-27 (Pt 23) — every one had the same failure mode as overnight, where
+ * a perfectly ordinary day read as compressed/below-normal and the extreme
+ * words almost never fired. Distributions came
  * from the 514-day NQ 1m series (2024-03-21 → 2026-03-19) and were
  * cross-checked against the prod `market_context` rows. Verdict words are
  * display-only, so retuning is safe: nothing is persisted off them.
@@ -87,13 +84,27 @@ function band(value: number, bands: BandDef[]): BandDef {
 
 // ── Band definitions (approved spec) ─────────────────────────────────────────
 
+// RVOL as a percent of the 10-day average. Re-anchored 2026-07-27 (Pt 23) to
+// the trader's own day-level distribution (n=455: p10 73, p25 87, median 102,
+// p75 124, p90 145). The old 40/70/130/180 cuts were inherited from the
+// analytics Condition Buckets breaks — but those had drifted with the tape, and
+// checking them showed "very busy" (>=180%) firing on ~1% of days and "very
+// quiet" (<40%) on essentially none, while "normal" swallowed 72%. The
+// analytics table has since been re-quintiled too, but the two no longer share
+// numbers on purpose: that table wants five equal 20% buckets for comparison,
+// this wants a fat middle that spans the median for judgement. Same data,
+// different jobs.
 const VOLUME_BANDS: BandDef[] = [
-  { max: 40, word: 'very quiet', tone: 'red' },
-  { max: 70, word: 'quiet', tone: 'dim' },
-  { max: 130, word: 'normal', tone: 'plain' },
-  { max: 180, word: 'busy', tone: 'dim' },
-  { max: Infinity, word: 'very busy', tone: 'amber' },
+  { max: 75, word: 'very quiet', tone: 'red' },      // bottom ~11%
+  { max: 90, word: 'quiet', tone: 'dim' },           // ~p11-p29
+  { max: 120, word: 'normal', tone: 'plain' },       // ~p29-p72, spans the 102 median
+  { max: 145, word: 'busy', tone: 'dim' },           // ~p72-p90
+  { max: Infinity, word: 'very busy', tone: 'amber' }, // top ~10%
 ]
+
+/** Volume cuts reused by the banner's 3-way quiet/normal/busy grouping — kept
+ *  in sync with VOLUME_BANDS so the headline can't disagree with the chip. */
+const VOLUME_GROUP_CUTS = { quietMax: 90, normalMax: 120 } as const
 
 // Bar volatility = atr_1m / atr_10d_avg. Anchored to the ACTUAL distribution
 // (514-day NQ 1m series 2024-03 → 2026-03, n=484; cross-checked against 423
@@ -347,7 +358,11 @@ function buildBanner(
   atrBand: BandDef | null,
   onPct: number | null,
 ): { headline: string | null; sentence: string | null } {
-  const volGroup: VolGroup | null = rvol == null ? null : rvol < 70 ? 'quiet' : rvol < 130 ? 'normal' : 'busy'
+  const volGroup: VolGroup | null = rvol == null
+    ? null
+    : rvol < VOLUME_GROUP_CUTS.quietMax ? 'quiet'
+      : rvol < VOLUME_GROUP_CUTS.normalMax ? 'normal'
+        : 'busy'
   const atrGroup: AtrGroup | null = atrRatio == null
     ? null
     : atrRatio < BAR_VOL_GROUP_CUTS.lowMax ? 'low'

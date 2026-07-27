@@ -12,7 +12,12 @@ type AnyClient = any
 type DayRow = Pick<TradingDay, 'id' | 'date' | 'day_type' | 'day_types' | 'eod_pnl' | 'ai_analysis_json'>
 // atr_at_ib_close exists on market_context but the generated MarketContext type
 // hasn't caught up (same as entry_atr_1m elsewhere), so widen it in here.
-type ContextRow = Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'> & { atr_at_ib_close: number | null }
+type ContextRow = Pick<MarketContext, 'trading_day_id' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'> & {
+  atr_at_ib_close: number | null
+  // Derived IB day-character read (Pt 23) — powers the Day Character tables.
+  ib_regime: 'chop' | 'mid' | 'expanded' | null
+  ib_size_band: 'small' | 'normal' | 'large' | null
+}
 
 interface HistRow {
   id: string
@@ -49,7 +54,7 @@ interface HistRow {
  *  a `trading_days` + `market_context` row (either AI-extracted from a prep
  *  screenshot, or backfilled from a 1m CSV) get bucketed correctly instead
  *  of falling into the Unknown bin. */
-type ContextByDate = Map<string, Pick<ContextRow, 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m' | 'atr_at_ib_close'>>
+type ContextByDate = Map<string, Pick<ContextRow, 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m' | 'atr_at_ib_close' | 'ib_regime' | 'ib_size_band'>>
 
 /** Per-date day-type lookup pulled from native `trading_days.day_types[]`
  *  (the labels the trader set during prep). Historical Tradezella trades
@@ -116,6 +121,11 @@ function histToContext(h: HistRow, ctxByDate: ContextByDate, dayTypesByDate: Day
     adr: ctx?.adr ?? null,
     atr_1m: ctx?.atr_1m ?? null,
     atr_at_ib_close: ctx?.atr_at_ib_close ?? null,
+    // Historical (Tradezella) trades inherit the day's derived character the
+    // same way they inherit rvol/adr — the classification is a property of the
+    // SESSION, not of who recorded the trade.
+    ib_regime: ctx?.ib_regime ?? null,
+    ib_size_band: ctx?.ib_size_band ?? null,
   }
 }
 
@@ -161,7 +171,7 @@ export default async function AnalyticsPage({
       .select('id, date, day_type, day_types, eod_pnl, ai_analysis_json') as Promise<{ data: DayRow[] | null }>,
     supabase
       .from('market_context')
-      .select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m, atr_at_ib_close') as Promise<{ data: ContextRow[] | null }>,
+      .select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m, atr_at_ib_close, ib_regime, ib_size_band') as Promise<{ data: ContextRow[] | null }>,
   ])
 
   // Paginate past Supabase's 1000-row cap. The journal has thousands of trades,
