@@ -12,9 +12,19 @@
  *   - bar volatility is atr_1m / atr_10d_avg (both points)
  *   - overnight + day range are % of ADR
  *   - IB is the stored ratio vs its 10-day average
- * Band edges are anchored to the analytics Condition Buckets quintile breaks
- * (RVOL 70/100/130/180) so the words agree with the tables. Spec approved
+ * RVOL band edges are anchored to the analytics Condition Buckets quintile
+ * breaks (70/100/130/180) so the words agree with the tables. Spec approved
  * 2026-07-12 (Pt 12).
+ *
+ * Every OTHER band is anchored to the metric's own realized distribution rather
+ * than to round numbers, using one scheme: a fat middle that spans the median
+ * (~p30–p70) with the tails at roughly the outer 10% / 20%. Overnight was
+ * re-anchored 2026-07-24; bar volatility, range used and IB followed on
+ * 2026-07-27 (Pt 23) — all three had the same failure mode as overnight, where
+ * a perfectly ordinary day read as compressed/below-normal. Distributions came
+ * from the 514-day NQ 1m series (2024-03-21 → 2026-03-19) and were
+ * cross-checked against the prod `market_context` rows. Verdict words are
+ * display-only, so retuning is safe: nothing is persisted off them.
  */
 
 export type VerdictTone = 'red' | 'amber' | 'dim' | 'plain'
@@ -85,13 +95,29 @@ const VOLUME_BANDS: BandDef[] = [
   { max: Infinity, word: 'very busy', tone: 'amber' },
 ]
 
+// Bar volatility = atr_1m / atr_10d_avg. Anchored to the ACTUAL distribution
+// (514-day NQ 1m series 2024-03 → 2026-03, n=484; cross-checked against 423
+// prod market_context rows — median 0.77 vs 0.75, p25 0.61 vs 0.59, p75 1.02 vs
+// 0.98). The old 0.6/0.85/1.25/2.0 cuts called the median day "compressed" (65%
+// of days landed in a compressed band, only 8% ever reached "elevated").
+//
+// NOTE the two sides of this ratio are NOT the same basis: `atr_1m` is the
+// Wilder ATR-10 at the 12:59 PT bar (a full-session average, quiet midday
+// included) while `atr_10d_avg` is the trailing-10 average of the ATR at the
+// 07:29 PT IB close (the busiest hour). A typical day therefore reads ~0.77×,
+// not 1.0×. Bands are anchored to that real ratio so the words are right; a
+// same-basis baseline would be the cleaner long-term fix.
 const BAR_VOL_BANDS: BandDef[] = [
-  { max: 0.6, word: 'very compressed', tone: 'red' },
-  { max: 0.85, word: 'compressed', tone: 'dim' },
-  { max: 1.25, word: 'normal', tone: 'plain' },
-  { max: 2.0, word: 'elevated', tone: 'amber' },
-  { max: Infinity, word: 'very high', tone: 'amber' },
+  { max: 0.5, word: 'very compressed', tone: 'red' },   // bottom ~10%
+  { max: 0.62, word: 'compressed', tone: 'dim' },       // ~p10–p27
+  { max: 0.93, word: 'normal', tone: 'plain' },         // ~p27–p69, spans the 0.77 median
+  { max: 1.3, word: 'elevated', tone: 'amber' },        // ~p69–p90
+  { max: Infinity, word: 'very high', tone: 'amber' },  // top ~10%
 ]
+
+/** Bar-vol cuts reused by the banner's 3-way low/normal/high grouping — kept
+ *  in sync with BAR_VOL_BANDS so the headline can't disagree with the chip. */
+const BAR_VOL_GROUP_CUTS = { lowMax: 0.62, normalMax: 0.93 } as const
 
 // Overnight range as % of ADR. Anchored to the ACTUAL NQ distribution (461-day
 // sample: median 73%, p25 54%, p75 104%, p90 155%) — the old round-number
@@ -106,20 +132,33 @@ const OVERNIGHT_BANDS: BandDef[] = [
   { max: Infinity, word: 'very large', tone: 'red' }, // ~top 10%
 ]
 
+// Day range as % of ADR. Anchored to the real RTH-range ÷ trailing-10-ADR
+// distribution (same 514-day series, n=504: p10 53, p25 69, median 95, p75 127,
+// p90 165). ADR is a trailing MEAN of a right-skewed range distribution, so the
+// median day sits a little under 100% — the old 85/115 "normal" band held only
+// ~22% of days and called a p35 day "below normal". The prod `day_range` column
+// isn't usable for grounding here (n=35, and the older screenshot-extracted
+// values are a full-day range measured against an RTH ADR); bars now fill it
+// RTH-consistently, which is the basis these cuts assume.
 const RANGE_USED_BANDS: BandDef[] = [
-  { max: 60, word: 'compressed', tone: 'dim' },
-  { max: 85, word: 'below normal', tone: 'dim' },
-  { max: 115, word: 'normal', tone: 'plain' },
-  { max: 150, word: 'extended', tone: 'amber' },
-  { max: Infinity, word: 'very extended', tone: 'amber' },
+  { max: 55, word: 'compressed', tone: 'dim' },          // bottom ~12%
+  { max: 75, word: 'below normal', tone: 'dim' },        // ~p12–p31
+  { max: 115, word: 'normal', tone: 'plain' },           // ~p31–p69, spans the 95% median
+  { max: 165, word: 'extended', tone: 'amber' },         // ~p69–p90
+  { max: Infinity, word: 'very extended', tone: 'amber' }, // top ~10%
 ]
 
+// IB vs its 10-day average. Anchored to the real distribution (n=504 bars:
+// p10 0.52, p25 0.70, median 0.93, p75 1.27, p90 1.66; prod market_context
+// n=448 agrees — median 0.95, p25 0.72, p75 1.28). The inner cuts are shared
+// verbatim with `SIZE_CUTS` in ib-day-type.ts so the Opening-range chip and the
+// IB day-type size read can never disagree about what a "small" IB is.
 const IB_BANDS: BandDef[] = [
-  { max: 0.6, word: 'very tight', tone: 'amber' },
-  { max: 0.85, word: 'tight', tone: 'dim' },
-  { max: 1.25, word: 'normal', tone: 'plain' },
-  { max: 1.7, word: 'wide', tone: 'dim' },
-  { max: Infinity, word: 'very wide', tone: 'amber' },
+  { max: 0.55, word: 'very tight', tone: 'amber' },     // bottom ~11%
+  { max: 0.75, word: 'tight', tone: 'dim' },            // ~p11–p31 (= SIZE_CUTS.smallMax)
+  { max: 1.25, word: 'normal', tone: 'plain' },         // ~p31–p74, spans the 0.93 median (= SIZE_CUTS.normalMax)
+  { max: 1.75, word: 'wide', tone: 'dim' },             // ~p74–p91
+  { max: Infinity, word: 'very wide', tone: 'amber' },  // top ~9%
 ]
 
 // ── Headline matrix ───────────────────────────────────────────────────────────
@@ -236,7 +275,7 @@ export function readConditions(i: ConditionInputs): ConditionRead {
         ? `1-min ATR ${atr.toFixed(1)} pts · ${atrRatio.toFixed(1)}× normal`
         : `1-min ATR ${atr.toFixed(1)} pts`,
       title: atrRatio != null
-        ? `Average 1-minute bar range (ATR-10). Today is ${atr.toFixed(1)} pts vs a 10-day typical of ${atrBase!.toFixed(1)} pts — ${atrRatio.toFixed(1)}× normal.`
+        ? `Average 1-minute bar range (ATR-10). Today is ${atr.toFixed(1)} pts against a 10-day first-hour baseline of ${atrBase!.toFixed(1)} pts — ${atrRatio.toFixed(1)}×. A typical day runs about 0.8× that baseline (the full session is quieter than the open), so ~0.6–0.9× is normal.`
         : `Average 1-minute bar range (ATR-10). No 10-day baseline yet, so no verdict — just the raw value.`,
     })
     raw.push({ label: '1-min ATR', value: `${atr.toFixed(2)} pts` })
@@ -275,7 +314,7 @@ export function readConditions(i: ConditionInputs): ConditionRead {
       verdict: drBand.word,
       tone: drBand.tone,
       pill: `${Math.round(drPct)}% of ADR`,
-      title: `Today's range so far is ${Math.round(drPct)}% of a normal day's range (ADR). Past ~100%, the expected daily move is spent — extension gets harder to chase.`,
+      title: `Today's range so far is ${Math.round(drPct)}% of a normal day's range (ADR). A typical day finishes near 95%; past ~115% you're in the top third of days by range and extension gets harder to chase.`,
     })
     raw.push({ label: 'Day range', value: `${dayRange!.toFixed(2)} pts (${Math.round(drPct)}% of ADR)` })
   }
@@ -290,7 +329,7 @@ export function readConditions(i: ConditionInputs): ConditionRead {
       verdict: ibBand.word,
       tone: ibBand.tone,
       pill: `${ibRatio.toFixed(2)}× 10-day avg`,
-      title: `First-hour range (Initial Balance) vs its 10-day average. ${ibRatio.toFixed(2)}× normal.`,
+      title: `First-hour range (Initial Balance) vs its 10-day average. ${ibRatio.toFixed(2)}× normal — a typical open is 0.93×, and 0.75–1.25× covers the middle ~45% of your days.`,
     })
     raw.push({ label: 'IB vs 10-day avg', value: `${ibRatio.toFixed(2)}×` })
   }
@@ -309,7 +348,11 @@ function buildBanner(
   onPct: number | null,
 ): { headline: string | null; sentence: string | null } {
   const volGroup: VolGroup | null = rvol == null ? null : rvol < 70 ? 'quiet' : rvol < 130 ? 'normal' : 'busy'
-  const atrGroup: AtrGroup | null = atrRatio == null ? null : atrRatio < 0.85 ? 'low' : atrRatio < 1.25 ? 'normal' : 'high'
+  const atrGroup: AtrGroup | null = atrRatio == null
+    ? null
+    : atrRatio < BAR_VOL_GROUP_CUTS.lowMax ? 'low'
+      : atrRatio < BAR_VOL_GROUP_CUTS.normalMax ? 'normal'
+        : 'high'
 
   const overnightClause = onPct != null && onPct >= 100
     ? ` Overnight already used ${Math.round(onPct)}% of a normal day's range — be careful chasing extension.`
