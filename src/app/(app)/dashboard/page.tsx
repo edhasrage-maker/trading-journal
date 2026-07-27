@@ -431,6 +431,11 @@ export default async function DashboardPage() {
   // sessions is noise, and a line that flips sign week to week would be worse
   // than no line. Suppressed entirely until BOTH buckets clear MIN_N, so it
   // never draws a conclusion off three sessions.
+  // How many sessions carry a TapeScore at all. Zero — the state a journal is
+  // in right after its first import, since the score comes from the per-session
+  // EOD read — makes Highlights swap its verdict for the step that produces one.
+  const gradedDaysAllTime = recentDays.filter(d => d.tapescore?.score != null).length
+
   const MIN_BUCKET = 5
   const scoredDaysWithPnl = recentDays.filter(d => d.tapescore?.score != null && d.eod_pnl != null)
   const wellTradedDays = scoredDaysWithPnl.filter(d => (d.tapescore?.score ?? 0) >= 70)
@@ -497,6 +502,7 @@ export default async function DashboardPage() {
             hero={heroPeriods.month}
             processPayoff={processPayoff}
             days={beginnerDays}
+            gradedDaysAllTime={gradedDaysAllTime}
             charts={<DashboardCharts days={statsDays} />}
           />
         }

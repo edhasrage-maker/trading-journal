@@ -612,7 +612,7 @@ function DayRowItem({
         const cellNodes: Record<ReorderableColumnId, React.ReactNode> = {
           tapescore: (
             <td key="tapescore" className={`py-2 pr-3 text-center ${cellBg}`}>
-              <TapeScorePill result={day.tapescore} />
+              <TapeScorePill result={day.tapescore} date={day.date} />
             </td>
           ),
           trades: (
@@ -685,9 +685,21 @@ function DayRowItem({
  * the restraint the score exists to reward. Sample-size caveats belong on the
  * statistical read-outs (win rate, expectancy, capture %), not here.
  */
-function TapeScorePill({ result }: { result: TapeScoreResult | null }) {
+function TapeScorePill({ result, date }: { result: TapeScoreResult | null; date: string }) {
+  // An ungraded session used to render a dead grey dash. On a freshly imported
+  // journal that's the ENTIRE column, which reads as "broken" rather than "not
+  // done yet" — so the empty cell carries the action that fills it. Deliberately
+  // understated: a column of loud buttons would drown the scores beside it.
   if (result == null) {
-    return <span className="text-gray-700 font-mono" title="Not scored yet — run Analyze Session on the day's EOD recap.">—</span>
+    return (
+      <Link
+        href={`/review/today/${date}`}
+        className="text-[11px] text-gray-600 hover:text-amber-300 transition-colors"
+        title="Not graded yet — open this session's recap and run Analyze Session."
+      >
+        Grade
+      </Link>
+    )
   }
   const color =
     result.band === 'high' ? 'text-green-300 border-green-800/60 bg-green-950/40'

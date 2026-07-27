@@ -1,6 +1,8 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import Link from 'next/link'
+import { format } from 'date-fns'
 import { Target, ChevronRight } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
 import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
@@ -43,6 +45,9 @@ type Props = {
   } | null
   /** Recent day rows for the lean Highlights table (Tape / Trades / Win % / P&L). */
   days: DayRowData[]
+  /** How many sessions in the whole journal carry a TapeScore. Zero with days
+   *  on the books is the freshly-imported case — see the hero copy below. */
+  gradedDaysAllTime: number
   // Performance charts (equity curve), rendered below the stat chips.
   charts?: ReactNode
 }
@@ -52,26 +57,45 @@ function money(n: number | null): string {
   return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString()}`
 }
 
+/** "2026-07-24" → "Fri, Jul 24". Rendered at noon so the timezone can never
+ *  roll the date back a day. */
+function dayLabel(date: string): string {
+  try { return format(new Date(`${date}T12:00:00`), 'EEE, MMM d') } catch { return date }
+}
+
 const TONE = {
   edge: { dot: 'bg-green-400', text: 'text-green-400', label: 'Clear edge' },
   leak: { dot: 'bg-blue-400', text: 'text-blue-400', label: 'Clear leak' },
   none: { dot: 'bg-gray-500', text: 'text-gray-400', label: 'No clear read' },
+  ungraded: { dot: 'bg-amber-400', text: 'text-amber-400', label: 'Not graded yet' },
 } as const
 
-export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, hero, processPayoff, days, charts }: Props) {
+export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, hero, processPayoff, days, gradedDaysAllTime, charts }: Props) {
   const { setMode } = useUiMode()
   const { scorePeriod, carryover } = hero
   const { score, band, risk, entry, capture, scoredDays } = scorePeriod
 
+  // A freshly-imported journal has sessions but NO TapeScore anywhere: the
+  // score comes from the end-of-day read, which runs per session and on
+  // request. The old copy fell through to "nothing separated itself this
+  // month", which reads as "we looked and found nothing" — the opposite of the
+  // truth, which is that nothing has been graded yet. So call that out and
+  // hand them the one action that fixes it. `days` is date-descending, so the
+  // first row is the session to grade.
+  const ungraded = gradedDaysAllTime === 0 && days.length > 0
+  const gradeDate = days[0]?.date ?? null
+
   // The verdict + focus come from the finding engine — the same leak Detailed
   // shows, in plain words.
-  const state = carryover == null ? 'none' : carryover.mode === 'protect' ? 'edge' : 'leak'
+  const state = ungraded ? 'ungraded' : carryover == null ? 'none' : carryover.mode === 'protect' ? 'edge' : 'leak'
   const tone = TONE[state]
-  const verdictText = carryover
-    ? carryover.finding + (carryover.mode === 'protect' ? ' — keep leaning on it.' : '.')
-    : tradedDays === 0
-      ? 'Log or import a few sessions and your read shows up here.'
-      : 'Nothing separated itself this month — your numbers sit inside your normal range.'
+  const verdictText = ungraded
+    ? 'Your trades are in — none of your sessions are graded yet.'
+    : carryover
+      ? carryover.finding + (carryover.mode === 'protect' ? ' — keep leaning on it.' : '.')
+      : tradedDays === 0
+        ? 'Log or import a few sessions and your read shows up here.'
+        : 'Nothing separated itself this month — your numbers sit inside your normal range.'
   const focus = carryover?.today
     ?? 'No change to force — keep taking your A setups and let the sample build.'
 
@@ -129,7 +153,9 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
           <div className="mt-3 text-xs text-gray-500">
             {score != null
               ? <>This month · {scoredDays} scored session{scoredDays === 1 ? '' : 's'}</>
-              : <>No graded sessions this month yet</>}
+              : ungraded
+                ? <>A TapeScore comes from the end-of-day read on a session — it takes one click.</>
+                : <>No graded sessions this month yet</>}
           </div>
         </div>
       </div>
@@ -147,14 +173,35 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
         </p>
       )}
 
-      {/* Your one focus — the single action, in plain English. */}
-      <div className="rounded-xl border p-4" style={{ background: 'rgba(224,163,60,0.08)', borderColor: 'rgba(224,163,60,0.35)' }}>
-        <div className="flex items-center gap-2 mb-1.5">
-          <Target className="w-4 h-4 text-amber-400" />
-          <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">Your one focus</span>
+      {/* Your one focus — the single action, in plain English. Until a session
+          has been graded there IS no measured focus to give, so the box carries
+          the step that produces one instead of inventing advice. */}
+      {ungraded && gradeDate ? (
+        <div className="rounded-xl border p-4" style={{ background: 'rgba(224,163,60,0.08)', borderColor: 'rgba(224,163,60,0.35)' }}>
+          <div className="flex items-center gap-2 mb-1.5">
+            <Target className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">Start here</span>
+          </div>
+          <p className="text-sm text-gray-200 leading-relaxed">
+            Grade a session and you get its TapeScore, how much of the move you kept, the heat you
+            took, and the one thing to work on. Do your most recent one first.
+          </p>
+          <Link
+            href={`/review/today/${gradeDate}`}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 px-3.5 py-2 text-sm font-semibold text-gray-950 transition-colors"
+          >
+            Grade {dayLabel(gradeDate)} <ChevronRight className="w-4 h-4" />
+          </Link>
         </div>
-        <p className="text-sm text-gray-200 leading-relaxed">{focus}</p>
-      </div>
+      ) : (
+        <div className="rounded-xl border p-4" style={{ background: 'rgba(224,163,60,0.08)', borderColor: 'rgba(224,163,60,0.35)' }}>
+          <div className="flex items-center gap-2 mb-1.5">
+            <Target className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">Your one focus</span>
+          </div>
+          <p className="text-sm text-gray-200 leading-relaxed">{focus}</p>
+        </div>
+      )}
 
       {/* Clean stat chips — the calm reference row (numbers, not verdicts).
           A 30-day quick-reference, labelled so its window is unmistakably
