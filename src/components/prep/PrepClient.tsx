@@ -1060,22 +1060,25 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         </div>
       </Section>
 
-      {/* Your read — bias, observations, how ready you feel. */}
-      <Section
-        title="Your read"
-        sub={pro ? 'the read you are taking in' : 'kept short on purpose'}
-      >
-        <PrepNotesForm
-          part="read"
-          value={prepNotes}
-          onChange={setPrepNotes}
-          ibh={context.ibh as number | null}
-          ibl={context.ibl as number | null}
-          ibSize={context.ib_size as number | null}
-          showAdvanced={isAdmin && pro}
-          beginner={!pro}
-        />
-      </Section>
+      {/* Your read (beginner/Highlights only): kept right under the chart for the
+          quick-read flow — beginner has no market-annotation sections below it to
+          form a read against. Detailed Tape moves this to the very bottom (see
+          the matching block after TapeScore read), so the read is formed AFTER
+          annotating the chart + market, not before. */}
+      {!pro && (
+        <Section title="Your read" sub="kept short on purpose">
+          <PrepNotesForm
+            part="read"
+            value={prepNotes}
+            onChange={setPrepNotes}
+            ibh={context.ibh as number | null}
+            ibl={context.ibl as number | null}
+            ibSize={context.ib_size as number | null}
+            showAdvanced={false}
+            beginner
+          />
+        </Section>
+      )}
 
       {/* Highlights stops here: one thing to watch, one to keep. Day-type
           classification, the full conditions ledger and the long-form AI read
@@ -1228,6 +1231,22 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
         <Section title="TapeScore read" sub="plain read · yours to override" control={analyzeButton}>
           <PrepAiRead analysis={aiAnalysis} />
+        </Section>
+
+        {/* Your read — LAST in Detailed Tape on purpose: you form your bias,
+            observations and mood AFTER annotating the chart, day type and market
+            context above, not before. */}
+        <Section title="Your read" sub="your call, after everything above">
+          <PrepNotesForm
+            part="read"
+            value={prepNotes}
+            onChange={setPrepNotes}
+            ibh={context.ibh as number | null}
+            ibl={context.ibl as number | null}
+            ibSize={context.ib_size as number | null}
+            showAdvanced={isAdmin}
+            beginner={false}
+          />
         </Section>
       </>)}
 
