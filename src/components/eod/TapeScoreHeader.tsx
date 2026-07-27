@@ -5,11 +5,6 @@ import type { EodAiAnalysis } from '@/lib/supabase/types'
 import { tapeScoreFromAnalyses, tapeScoreDaySentence } from '@/lib/tapescore'
 import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
 
-/** Below this many trades a single day's score rides on one or two decisions —
- *  shown muted with a "low sample" note so a precise "92" never reads as a
- *  settled grade on a one-trade day (Pt 20 · Ticket 4c). */
-const THIN_SAMPLE_TRADES = 3
-
 /**
  * EOD hero — the day's One TapeScore (Ruleset amendment 5): 0-100 ring,
  * plain-language verdict sentence, and the component chips (Rules kept /
@@ -41,10 +36,10 @@ export default function TapeScoreHeader({
   )
   if (!result) return null
 
-  const thin = tradeCount > 0 && tradeCount < THIN_SAMPLE_TRADES
-  const colors = thin
-    ? { stroke: '#6b7280', text: 'text-gray-400' }
-    : result.band === 'high' ? { stroke: '#4ade80', text: 'text-green-400' }
+  // No trade-count penalty — see TapeScorePill: the score grades decisions,
+  // which one trade can demonstrate perfectly well.
+  const colors =
+    result.band === 'high' ? { stroke: '#4ade80', text: 'text-green-400' }
     : result.band === 'mid' ? { stroke: '#fbbf24', text: 'text-amber-300' }
     : { stroke: '#f87171', text: 'text-red-400' }
   const R = 40
@@ -59,7 +54,7 @@ export default function TapeScoreHeader({
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-4 flex-wrap">
       <div
-        className={`relative w-[76px] h-[76px] shrink-0 ${thin ? 'opacity-60' : ''}`}
+        className="relative w-[76px] h-[76px] shrink-0"
         title="TapeScore — one 0-100 score for the day: risk, entry and exit, weighted equally. Days that broke 2+ risk rails cap at 49."
       >
         <svg width="76" height="76" viewBox="0 0 92 92" className="-rotate-90">
@@ -82,11 +77,6 @@ export default function TapeScoreHeader({
           <p className="text-white font-semibold text-[15px]">{sentence}</p>
           <TapeScoreFormulaInfo />
         </div>
-        {thin && (
-          <p className="text-[11px] text-gray-500 italic mt-0.5">
-            Low sample — only {tradeCount} trade{tradeCount === 1 ? '' : 's'}. Read this as a rough signal, not a settled grade.
-          </p>
-        )}
         <p className="text-xs text-gray-500 mt-0.5">
           {tradeCount} trade{tradeCount === 1 ? '' : 's'}
           {' · '}
