@@ -22,6 +22,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
 import { getTraderProfile, profileContextBlock, focusContextBlock } from '@/lib/trader-profile'
 import { buildCoachContext } from '@/lib/coach-context'
+import { fetchDiveRows } from '@/lib/deep-dive/gather'
+import { diveContextBlock, matchDiveIds, runDives } from '@/lib/deep-dive/registry'
 import { consumeAiUsage } from '@/lib/ai-usage'
 import { normalizeAnthropicMediaType, type AnthropicMediaType } from '@/lib/anthropic-image'
 import { ANALYSIS_APPROACH } from '@/lib/coach-methodology'
@@ -110,6 +112,25 @@ export async function POST(req: Request) {
   })
   const traderProfile = await getTraderProfile()
 
+  // ── On-ask deep dives ──────────────────────────────────────────────────────
+  // When the question matches an investigation ("is scaling out working?", "do I
+  // tilt after losses?"), run it and hand the model the COMPUTED numbers. This is
+  // the trust layer: the analyzer does the arithmetic over the full book, the
+  // model only narrates. Best-effort — a failure just falls back to the normal
+  // context block. Goes in the per-turn system block below (NOT the cached
+  // prefix), since it changes with every message.
+  let diveBlock = ''
+  const matchedDives = matchDiveIds(body.message)
+  if (matchedDives.length > 0) {
+    try {
+      const rows = await fetchDiveRows(supabase)
+      const results = runDives(rows).filter(r => matchedDives.includes(r.id))
+      diveBlock = diveContextBlock(results)
+    } catch (e) {
+      console.error('[coach] dive context failed:', e)
+    }
+  }
+
   const detailed = body.mode === 'detailed'
   const styleInstruction = detailed
     ? `The trader is in DETAILED (tape) mode — give MORE depth than Highlights, but stay CONCISE and skimmable, NEVER a novel. Lead with the verdict/answer, then only the breakdown that earns its space: the main KPIs and the FEW trades that actually drive the point — not a line for every trade. Use a compact table ONLY when it genuinely aids clarity (a handful of rows, not an exhaustive dump). Do NOT write full multi-section audits unless they explicitly ask for "everything" / "the full breakdown." Every line must carry information — no preamble ("Great question!"), no closing platitudes.`
@@ -150,7 +171,7 @@ ${contextBlock}${focusContextBlock(traderProfile)}`
 
   const systemBlocks: Anthropic.TextBlockParam[] = [
     { type: 'text', text: stableSystemPrompt, cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: `${styleInstruction}${visionNote}` },
+    { type: 'text', text: `${styleInstruction}${visionNote}${diveBlock}` },
   ]
 
   // Build the messages array — trader's prior history + new message. History is
