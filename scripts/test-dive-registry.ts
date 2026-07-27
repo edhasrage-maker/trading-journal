@@ -97,6 +97,20 @@ check('context block forbids recomputing', /Do NOT recompute/.test(block))
 check('context block demands exact quoting', /quote its numbers EXACTLY/.test(block))
 check('no dives ⇒ empty context block', diveContextBlock([]) === '')
 
+// A question that routes to a dive which found NOTHING for this account must be
+// reported as an empty result, not silently dropped — otherwise the model
+// answers from the general context and it reads as though the dive said it.
+const empty = diveContextBlock([], { matched: ['scale-out-ev'], tradeCount: 464 })
+check('an investigation that found nothing is named', empty.includes('Is scaling out paying you?'))
+check('and states it RAN', /RAN over their full book \(464 trades\)/.test(empty))
+check('and forbids answering from other numbers', /Do NOT answer the question from other numbers/.test(empty))
+check('unmatched dives are not mentioned', !empty.includes('The tilt cascade'))
+const mixed = diveContextBlock([scaleOut], { matched: ['scale-out-ev', 'tilt-cascade'], tradeCount: 100 })
+check('a mixed result carries both the finding and the gap',
+  mixed.includes(scaleOut.headline) && mixed.includes('The tilt cascade'))
+check('a matched dive that DID produce a finding is not also listed as empty',
+  !/- Is scaling out paying you\?/.test(mixed))
+
 // A finding with no test (the "you're already doing it right" shape) must render.
 const noTest: DeepDiveResult = {
   id: 'x', title: 'T', headline: 'H', severity: 0.1,

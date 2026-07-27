@@ -125,7 +125,10 @@ export async function POST(req: Request) {
     try {
       const rows = await fetchDiveRows(supabase)
       const results = runDives(rows).filter(r => matchedDives.includes(r.id))
-      diveBlock = diveContextBlock(results)
+      // Pass the matched ids too: an investigation that ran and found nothing
+      // must be REPORTED as such, or the model answers the question from the
+      // general context and it reads like the dive said it.
+      diveBlock = diveContextBlock(results, { matched: matchedDives, tradeCount: rows.length })
     } catch (e) {
       console.error('[coach] dive context failed:', e)
     }

@@ -295,12 +295,38 @@ export function formatDiveForPrompt(r: DeepDiveResult): string {
   return lines.join('\n')
 }
 
-/** The per-turn system block injected when a question routes to a dive. */
-export function diveContextBlock(results: DeepDiveResult[]): string {
-  if (!results.length) return ''
-  return `
+/**
+ * The per-turn system block injected when a question routes to a dive.
+ *
+ * `matched` matters as much as `results`. A question can route to an
+ * investigation that then produces NOTHING for this account — a trader with no
+ * genuine scale-outs asking "is scaling out working?" is the live case. Without
+ * saying so, the block would be empty and the model would answer the question
+ * anyway out of the general context: a confident-sounding reply that is NOT the
+ * investigation the trader asked for. Naming the empty result is the honest
+ * outcome and keeps the trust layer intact in both directions.
+ */
+export function diveContextBlock(
+  results: DeepDiveResult[],
+  opts: { matched?: string[]; tradeCount?: number } = {},
+): string {
+  const empties = (opts.matched ?? [])
+    .filter(id => !results.some(r => r.id === id))
+    .map(id => SERVER_DIVES.find(d => d.id === id))
+    .filter((d): d is DiveRunner => d != null)
+  if (!results.length && !empties.length) return ''
 
-The trader's question matches a deep-dive investigation that has ALREADY BEEN COMPUTED from their own fills. Narrate the finding below — lead with it, quote its numbers EXACTLY as given, and walk them through the breakdown. Do NOT recompute, re-estimate, or substitute numbers from the general context block; if something isn't in this block, say you don't have it. End on the proposed test, framed as something they can try and measure.
+  const parts: string[] = []
+  if (results.length) {
+    parts.push(`The trader's question matches a deep-dive investigation that has ALREADY BEEN COMPUTED from their own fills. Narrate the finding below — lead with it, quote its numbers EXACTLY as given, and walk them through the breakdown. Do NOT recompute, re-estimate, or substitute numbers from the general context block; if something isn't in this block, say you don't have it. End on the proposed test, framed as something they can try and measure.
 
-${results.map(formatDiveForPrompt).join('\n\n')}`
+${results.map(formatDiveForPrompt).join('\n\n')}`)
+  }
+  if (empties.length) {
+    const scope = opts.tradeCount ? ` over their full book (${opts.tradeCount.toLocaleString('en-US')} trades)` : ''
+    parts.push(`These investigations RAN${scope} for this trader and produced NO finding — either the sample is below the floor the analysis requires, or nothing separated itself:
+${empties.map(d => `  - ${d.title}`).join('\n')}
+Say so plainly and briefly ("I ran that and there isn't enough there to call it"). Do NOT answer the question from other numbers in the general context as though it were the investigation, and do NOT estimate what the answer might have been.`)
+  }
+  return `\n\n${parts.join('\n\n')}`
 }
