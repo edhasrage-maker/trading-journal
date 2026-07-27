@@ -60,7 +60,17 @@ export interface DayContextStats {
    *  smaller. Powers the IB/ATR-regime lens in ib-day-type.ts. Null until the
    *  IB has printed ≥10 bars. */
   meanHL10: number | null
+  /** Trailing-10 average of `atr_at_ib_close` — an IB-CLOSE-basis baseline.
+   *  Kept because market_context stores it, but note it is NOT the right
+   *  denominator for `atr_1m` (see atr_eod_10d_avg). */
   atr_10d_avg: number | null
+  /** Trailing-10 average of `atr_at_eod` — the SAME-BASIS baseline for
+   *  `atr_1m`. Both are the Wilder ATR-10 at the 12:59 PT bar, so the ratio is
+   *  a true "vs typical" and a normal day lands near 1.0×. Dividing atr_1m by
+   *  atr_10d_avg instead compares a full-session average against the busiest
+   *  hour's, which reads ~0.77× on an ordinary day. Derived per request, never
+   *  persisted — no schema column. */
+  atr_eod_10d_avg: number | null
   rth_open: number | null
   ib_close_price: number | null
   day_range: number | null         // RTH high-low (matches ADR basis)
@@ -190,6 +200,7 @@ interface DayMetrics {
   rvol_at_ib_close: number | null
   atr_at_ib_close: number | null
   atr_10d_avg: number | null
+  atr_eod_10d_avg: number | null
   rth_open: number | null
   ib_close_price: number | null
   day_range: number | null
@@ -205,7 +216,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
     .sort((a, b) => (a.date < b.date ? -1 : 1))
 
   const trailVol: number[] = [], trailRange: number[] = [], trailIb: number[] = []
-  const trailIbVol: number[] = [], trailAtrIb: number[] = []
+  const trailIbVol: number[] = [], trailAtrIb: number[] = [], trailAtrEod: number[] = []
   const out: DayMetrics[] = []
 
   for (const d of sorted) {
@@ -218,6 +229,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
     const rvolAtIb = (trailIbVol.length >= 10 && trailIbVol.reduce((s, v) => s + v, 0) > 0)
       ? (d.ib_volume / avg(trailIbVol)) * 100 : null
     const atrIb10d = trailAtrIb.length >= 10 ? avg(trailAtrIb) : null
+    const atrEod10d = trailAtrEod.length >= 10 ? avg(trailAtrEod) : null
 
     out.push({
       date: d.date,
@@ -226,6 +238,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
       rvol_at_ib_close: rvolAtIb,
       atr_at_ib_close: d.atr_at_ib_close,
       atr_10d_avg: atrIb10d,
+      atr_eod_10d_avg: atrEod10d,
       rth_open: d.rth_open,
       ib_close_price: d.ib_close_price,
       day_range: Number.isFinite(range) ? range : null,
@@ -238,7 +251,8 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
     if (ibSize != null) trailIb.push(ibSize)
     if (d.ib_volume > 0) trailIbVol.push(d.ib_volume)
     if (d.atr_at_ib_close != null) trailAtrIb.push(d.atr_at_ib_close)
-    for (const a of [trailVol, trailRange, trailIb, trailIbVol, trailAtrIb]) if (a.length > 10) a.shift()
+    if (d.atr_at_eod != null) trailAtrEod.push(d.atr_at_eod)
+    for (const a of [trailVol, trailRange, trailIb, trailIbVol, trailAtrIb, trailAtrEod]) if (a.length > 10) a.shift()
   }
   return out
 }
@@ -328,6 +342,7 @@ export function contextStatsForDate(
       atr_at_ib_close: target.atr_at_ib_close,
       meanHL10: null, // attached below from the active session's IB
       atr_10d_avg: target.atr_10d_avg,
+      atr_eod_10d_avg: target.atr_eod_10d_avg,
       rth_open: target.rth_open,
       ib_close_price: target.ib_close_price,
       day_range: target.day_range,
@@ -345,7 +360,8 @@ export function contextStatsForDate(
       realized: false,
       rvol: null, ib_size: null, ib_vs_10d_avg: null,
       adr: last.adr, atr_1m: last.atr_1m,
-      rvol_at_ib_close: null, atr_at_ib_close: null, meanHL10: null, atr_10d_avg: last.atr_10d_avg,
+      rvol_at_ib_close: null, atr_at_ib_close: null, meanHL10: null,
+      atr_10d_avg: last.atr_10d_avg, atr_eod_10d_avg: last.atr_eod_10d_avg,
       rth_open: null, ib_close_price: null,
       day_range: null, current_price: null,
     }

@@ -9,7 +9,9 @@
  * All bands are relative to the trader's own baselines, so nothing here is
  * instrument-specific:
  *   - rvol is stored as a percent of the 10-day average (100 = normal)
- *   - bar volatility is atr_1m / atr_10d_avg (both points)
+ *   - bar volatility is atr_1m / atr_eod_10d_avg (both points, SAME basis —
+ *     see the note on BAR_VOL_BANDS; the old atr_10d_avg denominator was a
+ *     different measurement and skewed every reading low)
  *   - overnight + day range are % of ADR
  *   - IB is the stored ratio vs its 10-day average
  * Every band is anchored to the metric's own realized distribution rather
@@ -106,29 +108,31 @@ const VOLUME_BANDS: BandDef[] = [
  *  in sync with VOLUME_BANDS so the headline can't disagree with the chip. */
 const VOLUME_GROUP_CUTS = { quietMax: 90, normalMax: 120 } as const
 
-// Bar volatility = atr_1m / atr_10d_avg. Anchored to the ACTUAL distribution
-// (514-day NQ 1m series 2024-03 → 2026-03, n=484; cross-checked against 423
-// prod market_context rows — median 0.77 vs 0.75, p25 0.61 vs 0.59, p75 1.02 vs
-// 0.98). The old 0.6/0.85/1.25/2.0 cuts called the median day "compressed" (65%
-// of days landed in a compressed band, only 8% ever reached "elevated").
+// Bar volatility = today's 1-min Wilder ATR-10 ÷ its own trailing-10 average
+// (`atr_eod_10d_avg`, derived in market-context-from-bars.ts).
 //
-// NOTE the two sides of this ratio are NOT the same basis: `atr_1m` is the
-// Wilder ATR-10 at the 12:59 PT bar (a full-session average, quiet midday
-// included) while `atr_10d_avg` is the trailing-10 average of the ATR at the
-// 07:29 PT IB close (the busiest hour). A typical day therefore reads ~0.77×,
-// not 1.0×. Bands are anchored to that real ratio so the words are right; a
-// same-basis baseline would be the cleaner long-term fix.
+// This ratio was BROKEN until 2026-07-27: it divided `atr_1m` (the ATR at the
+// 12:59 PT bar — a full-session average) by `atr_10d_avg` (the trailing-10 of
+// the ATR at the 07:29 IB close — the busiest hour). Different measurements, so
+// an ordinary day computed to ~0.77× and the chip could read "1.0× normal →
+// elevated". Bands were first re-anchored to that skewed ratio, then the
+// numerator and denominator were put on the same basis, which is the real fix.
+//
+// Now anchored to the same-basis distribution (514-day NQ 1m series 2024-03 →
+// 2026-03, n=484: p10 0.63, p25 0.75, median 0.94, p75 1.19, p90 1.49). A
+// typical day genuinely lands near 1.0×, so the words track the number the way
+// a reader expects: 1.2× is elevated, 1.6× is very high.
 const BAR_VOL_BANDS: BandDef[] = [
-  { max: 0.5, word: 'very compressed', tone: 'red' },   // bottom ~10%
-  { max: 0.62, word: 'compressed', tone: 'dim' },       // ~p10–p27
-  { max: 0.93, word: 'normal', tone: 'plain' },         // ~p27–p69, spans the 0.77 median
-  { max: 1.3, word: 'elevated', tone: 'amber' },        // ~p69–p90
+  { max: 0.65, word: 'very compressed', tone: 'red' },  // bottom ~12%
+  { max: 0.8, word: 'compressed', tone: 'dim' },        // ~p12–p32
+  { max: 1.15, word: 'normal', tone: 'plain' },         // ~p32–p72, spans the 0.94 median
+  { max: 1.5, word: 'elevated', tone: 'amber' },        // ~p72–p90
   { max: Infinity, word: 'very high', tone: 'amber' },  // top ~10%
 ]
 
 /** Bar-vol cuts reused by the banner's 3-way low/normal/high grouping — kept
  *  in sync with BAR_VOL_BANDS so the headline can't disagree with the chip. */
-const BAR_VOL_GROUP_CUTS = { lowMax: 0.62, normalMax: 0.93 } as const
+const BAR_VOL_GROUP_CUTS = { lowMax: 0.8, normalMax: 1.15 } as const
 
 // Overnight range as % of ADR. Anchored to the ACTUAL NQ distribution (461-day
 // sample: median 73%, p25 54%, p75 104%, p90 155%) — the old round-number
@@ -286,7 +290,7 @@ export function readConditions(i: ConditionInputs): ConditionRead {
         ? `1-min ATR ${atr.toFixed(1)} pts · ${atrRatio.toFixed(1)}× normal`
         : `1-min ATR ${atr.toFixed(1)} pts`,
       title: atrRatio != null
-        ? `Average 1-minute bar range (ATR-10). Today is ${atr.toFixed(1)} pts against a 10-day first-hour baseline of ${atrBase!.toFixed(1)} pts — ${atrRatio.toFixed(1)}×. A typical day runs about 0.8× that baseline (the full session is quieter than the open), so ~0.6–0.9× is normal.`
+        ? `Average 1-minute bar range (ATR-10). Today is ${atr.toFixed(1)} pts vs a 10-day typical of ${atrBase!.toFixed(1)} pts — ${atrRatio.toFixed(1)}× normal. Roughly 0.8–1.15× is an ordinary day.`
         : `Average 1-minute bar range (ATR-10). No 10-day baseline yet, so no verdict — just the raw value.`,
     })
     raw.push({ label: '1-min ATR', value: `${atr.toFixed(2)} pts` })

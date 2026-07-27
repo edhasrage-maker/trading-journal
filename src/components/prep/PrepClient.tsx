@@ -225,6 +225,14 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // Today's Tape bar-volatility verdict ("2.7× normal"). Display-only; never
   // written into market_context. Kept once non-null so a session-switch fetch
   // returning null doesn't blank the verdict.
+  //
+  // Uses atr_eod_10d_avg (trailing-10 of the 12:59 PT Wilder ATR-10), which is
+  // the SAME basis as the atr_1m it divides — so an ordinary day reads ~1.0×.
+  // It deliberately does NOT fall back to atr_10d_avg: that one averages the
+  // 07:29 IB-close ATR, and silently swapping bases would shift every verdict
+  // by ~25% with no way for the reader to tell. Both need the same 10 trailing
+  // sessions, so in practice they appear together; if the same-basis one is
+  // missing the chip shows the raw ATR with no verdict, which is honest.
   const [atrBaseline, setAtrBaseline] = useState<number | null>(null)
   // Full bar-derived stats for the active session — feeds the IB day-type
   // classification (choppy/normal/extended via meanHL10). Distinct from the
@@ -252,7 +260,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         setContextStats(stats)
         if (!stats) return
         setBarCurrentPrice(stats.current_price ?? null)
-        if (stats.atr_10d_avg != null) setAtrBaseline(stats.atr_10d_avg)
+        if (stats.atr_eod_10d_avg != null) setAtrBaseline(stats.atr_eod_10d_avg)
         // Only auto-fill the persisted RTH market_context on RTH days. On
         // Asia/London the stats are either session-anchored (IB size/range) or
         // muted (RVOL/ADR/ATR are RTH-baselined) — surfaced read-only in the
