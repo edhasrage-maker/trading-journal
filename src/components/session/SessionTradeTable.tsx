@@ -15,7 +15,7 @@
  * so the EOD render never changes. (Session-merge Pt 13, step 1.)
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil } from 'lucide-react'
@@ -133,6 +133,54 @@ interface Props {
   bars?: BarLike[] | null
 }
 
+/**
+ * One trade's AI-overview / notes line: clamped to 2 lines, with a "more/less"
+ * toggle that appears ONLY when the text actually overflows those 2 lines —
+ * measured against the rendered width. (The old char-count guess showed the
+ * toggle on ~2-line notes where clamping did nothing, so it read as a no-op.)
+ * Owns its own expand state so the table doesn't track a Set of ids.
+ */
+function ClampedNote({ text, italic, title }: { text: string; italic: boolean; title?: string }) {
+  const ref = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Overflow is only measurable while CLAMPED (clientHeight = 2 lines). When
+    // expanded the clamp is off, so clientHeight === scrollHeight — skip
+    // re-measuring then and keep the last value, so "less" never vanishes.
+    const measure = () => {
+      if (expanded) return
+      setOverflows(el.scrollHeight > el.clientHeight + 1)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [text, expanded])
+  return (
+    <div className="flex items-start gap-2 max-w-3xl">
+      <p
+        ref={ref}
+        className={`text-xs font-sans leading-snug whitespace-normal text-gray-400 ${italic ? 'italic' : ''} ${expanded ? '' : 'line-clamp-2'}`}
+        title={title}
+      >
+        {text}
+      </p>
+      {overflows && (
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
+          className="text-[10px] text-gray-600 hover:text-gray-300 shrink-0 mt-0.5"
+        >
+          {expanded ? 'less' : 'more'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function SessionTradeTable({
   config = 'review',
   trades,
@@ -246,8 +294,6 @@ export default function SessionTradeTable({
   const showMfe = isCapture ? false : cols.mfe
   const showMae = isCapture ? false : cols.mae
   const showPostExit = isCapture ? false : cols.postExit
-  // Per-trade "more/less" state for long AI-overview sub-rows (2-line clamp).
-  const [expandedOverviews, setExpandedOverviews] = useState<Set<string>>(new Set())
   // Mixed-instrument day → highlight the per-row symbol chip so an ES entry at
   // 7,5xx isn't sitting unexplained among NQ 29,7xx rows.
   const mixedSymbols = useMemo(
@@ -639,7 +685,6 @@ export default function SessionTradeTable({
               // Capture (live) never mounts the AI sub-row — the data row keeps
               // its own bottom border instead.
               const hasOverviewRow = !isCapture && (overviewText != null || !!summariesLoading)
-              const isExpanded = expandedOverviews.has(t.id)
               const rowBg = isFlashing ? 'bg-blue-700/40'
                 : isEditing ? 'bg-amber-950/20'
                 : isSelected ? 'bg-blue-900/30'
@@ -900,31 +945,11 @@ export default function SessionTradeTable({
                     <td className="pr-2" />
                     <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pb-2 pt-0 pr-2">
                       {overviewText ? (
-                        <div className="flex items-start gap-2 max-w-3xl">
-                          <p
-                            className={`text-xs font-sans leading-snug whitespace-normal text-gray-400 ${overviewIsNotes ? 'italic' : ''} ${isExpanded ? '' : 'line-clamp-2'}`}
-                            title={overviewIsNotes ? "From your own notes on this trade — AI summary not yet generated." : undefined}
-                          >
-                            {overviewText}
-                          </p>
-                          {overviewText.length > 180 && (
-                            <button
-                              type="button"
-                              onClick={e => {
-                                e.stopPropagation()
-                                setExpandedOverviews(prev => {
-                                  const next = new Set(prev)
-                                  if (next.has(t.id)) next.delete(t.id)
-                                  else next.add(t.id)
-                                  return next
-                                })
-                              }}
-                              className="text-[10px] text-gray-600 hover:text-gray-300 shrink-0 mt-0.5"
-                            >
-                              {isExpanded ? 'less' : 'more'}
-                            </button>
-                          )}
-                        </div>
+                        <ClampedNote
+                          text={overviewText}
+                          italic={overviewIsNotes}
+                          title={overviewIsNotes ? 'From your own notes on this trade — AI summary not yet generated.' : undefined}
+                        />
                       ) : (
                         <span className="text-gray-600 text-[11px] inline-flex items-center gap-1">
                           <Loader2 className="w-3 h-3 animate-spin" /> summarizing…
