@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import AutoGrowTextarea from '@/components/AutoGrowTextarea'
+import MicButton from '@/components/voice/MicButton'
 import type { PrepNotes } from '@/lib/supabase/types'
 
 interface Props {
@@ -79,6 +80,14 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
   const [mgiOpen, setMgiOpen] = useState(false)
   const [extsOpen, setExtsOpen] = useState(false)
   const set = (key: keyof PrepNotes, val: unknown) => onChange({ ...value, [key]: val })
+
+  // Voice dictation: append each finalized phrase to a text field. `value` is
+  // current here — the hook refreshes its callback ref post-render, so by the
+  // time a phrase finalizes (a later event tick) this closure holds the latest.
+  const appendDictation = (key: keyof PrepNotes) => (text: string) => {
+    const cur = (value[key] as string | undefined) ?? ''
+    set(key, cur ? `${cur} ${text}` : text)
+  }
 
   // Auto-expand the IB extensions table when Break Timing flips to an active
   // value (Early / Normal / Late), and auto-collapse when it goes back to
@@ -331,9 +340,12 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
           MGI levels the bias is built on. */}
       {showRead && (
       <div>
-        <label className="block text-xs text-gray-400 mb-1">
-          {beginner ? 'Anything on your mind? (optional)' : 'Observations / reasoning'}
-        </label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-xs text-gray-400">
+            {beginner ? 'Anything on your mind? (optional)' : 'Observations / reasoning'}
+          </label>
+          <MicButton onText={appendDictation('bias_notes')} title="Dictate observations" />
+        </div>
         <AutoGrowTextarea rows={beginner ? 1 : 2} spellCheck autoCorrect="on"
           placeholder={beginner ? 'One line — why this bias, or what you’re watching.' : 'What are you seeing? Why this bias, and what would change it?'}
           value={value.bias_notes ?? ''} onChange={e => set('bias_notes', e.target.value)}
@@ -348,7 +360,10 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Mood</h3>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">How are you feeling today?</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs text-gray-400">How are you feeling today?</label>
+              {!beginner && <MicButton onText={appendDictation('mood')} title="Dictate mood" />}
+            </div>
             {beginner ? (
               /* One-tap readiness — single-select, stored in `mood`. Tap the
                  selected chip again to clear. Free-text mood from a prior
@@ -385,7 +400,10 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
           </div>
           {showAdvanced && (
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Does the market feel clear to you?</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs text-gray-400">Does the market feel clear to you?</label>
+              <MicButton onText={appendDictation('market_clarity')} title="Dictate" />
+            </div>
             <AutoGrowTextarea rows={2} spellCheck autoCorrect="on" placeholder="Can you clearly see what the market is doing and what setups to take?"
               value={value.market_clarity ?? ''} onChange={e => set('market_clarity', e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"

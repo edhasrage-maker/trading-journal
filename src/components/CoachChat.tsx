@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { X, Send, Loader2, Brain, Trash2, Download, Archive, ChevronLeft, ImagePlus, Maximize2, Minimize2 } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
 import AiDisclaimer from '@/components/AiDisclaimer'
+import MicButton from '@/components/voice/MicButton'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -766,6 +767,11 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
           >
             <ImagePlus className="w-5 h-5" />
           </button>
+          <MicButton
+            onText={t => setInput(prev => (prev ? `${prev} ${t}` : t))}
+            title="Dictate your message"
+            className="h-[68px] px-1.5 [&_svg]:w-5 [&_svg]:h-5"
+          />
           <textarea
             ref={textareaRef}
             value={input}
