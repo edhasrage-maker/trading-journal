@@ -45,15 +45,20 @@ export default function AchievementShowcase({
                 >
                   <div className="relative shrink-0">
                     <AchievementCoin id={a.id} size={60} ring="double" title={a.label} />
-                    <span className="absolute -top-1.5 -right-2 rounded-full bg-amber-500 text-[11px] font-extrabold text-amber-950 px-1.5 py-px border-2 border-gray-900">
+                    <span
+                      className="absolute -top-1.5 -right-2 rounded-full bg-amber-500 text-[11px] font-extrabold text-amber-950 px-1.5 py-px border-2 border-gray-900"
+                      title={`Earned ${n}× all-time`}
+                    >
                       ×{n}
                     </span>
                   </div>
                   <div>
                     <div className="text-[15px] font-extrabold text-amber-300">{a.label}</div>
                     <div className="text-[11.5px] leading-snug text-gray-400 mt-0.5">{a.blurb}</div>
+                    {/* Once-per-day coin: the trader earned this TODAY; the count is
+                        lifetime, so label it all-time to avoid reading as "twice today". */}
                     <div className="text-[11px] text-gray-500 mt-1.5">
-                      {n > 1 ? <>Earned <b className="text-gray-300 font-bold">{n} times</b></> : <b className="text-gray-300 font-bold">First time!</b>}
+                      Earned today · {n > 1 ? <><b className="text-gray-300 font-bold">{n}×</b> all-time</> : <b className="text-gray-300 font-bold">first time ever</b>}
                     </div>
                   </div>
                 </div>
