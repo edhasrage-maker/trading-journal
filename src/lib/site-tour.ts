@@ -45,10 +45,15 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     route: '/dashboard',
+    // Anchors the empty-state import card when it's on screen; on a populated
+    // dashboard there's no such element and the engine renders this as a
+    // centered card instead (resolveEl → undefined). The copy has to read
+    // correctly BOTH ways — the tour only auto-starts once there are trades,
+    // but a manual re-run can still land on an empty dashboard.
     anchor: 'dash-import',
-    title: 'Start with your trades',
+    title: 'It all starts with your trades',
     description:
-      'Import a CSV or Sierra Chart file — or log one by hand — and your dashboard fills in: P&L, win rate, your best and worst days. Everything else is built from these trades.',
+      'Everything here is built from your fills — P&L, win rate, your best and worst days, every pattern below. Add more any time from Import in the top bar (a CSV from your broker, or a Sierra Chart log), or log a trade by hand.',
     side: 'top',
     align: 'center',
   },

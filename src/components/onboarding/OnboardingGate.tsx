@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { Sparkles, X } from 'lucide-react'
 import SiteTour from '@/components/tour/SiteTour'
@@ -11,16 +11,18 @@ const TAG_NUDGE_MS = 14 * 24 * 3600 * 1000 // re-ask about an empty playbook ~ev
 const PLAYBOOK_CATS = ['setups', 'confluences', 'entry_model', 'order_flow']
 
 /**
- * Puts the setup wizard in front of users without forcing it on people who
- * already have data, and separately nudges anyone whose playbook is still empty:
+ * Offers the setup wizard and the playbook nudge — without either one landing
+ * before the trader has seen the product work.
  *
- *  Setup banner (onboarding not completed):
- *  - Brand-new account (no onboarding status, no trades) landing on /dashboard
- *    → open the wizard once. Only from the dashboard, so deliberate navigation
- *    is never hijacked, and only when empty so existing testers are untouched.
- *  - skipped / in_progress / new-but-has-data → a dismissible banner. After the
- *    first dismissal it stays gone until ~a week later, when it returns exactly
- *    once (the end-of-week reminder), then never again.
+ *  NOTHING SHOWS ON AN EMPTY JOURNAL (Pt 16). Value first, profile second: an
+ *  account with no trades gets the empty-state import card and nothing else.
+ *  Both prompts below wait for `nav-anchor.lastTradeDate`, i.e. the first
+ *  imported or logged trade.
+ *
+ *  Setup banner (onboarding not completed, once there's data):
+ *  - a dismissible banner. After the first dismissal it stays gone until ~a
+ *    week later, when it returns exactly once (the end-of-week reminder), then
+ *    never again.
  *  - completed → no setup banner.
  *
  *  Empty-tags nudge (any user, even completed): while the tag library has ZERO
@@ -35,7 +37,6 @@ const PLAYBOOK_CATS = ['setups', 'confluences', 'entry_model', 'order_flow']
  */
 export default function OnboardingGate() {
   const pathname = usePathname()
-  const router = useRouter()
   const [banner, setBanner] = useState<'none' | 'setup' | 'tags'>('none')
   const [resume, setResume] = useState(false)
 
@@ -48,22 +49,39 @@ export default function OnboardingGate() {
       const o = ob.onboarding ?? {}
       const status = o.status as string | undefined
 
+      // Has the journal got anything in it yet? An empty account has exactly ONE
+      // job — get trades in — and the empty-state import card owns that screen.
+      // Anything we add there is a second CTA competing with it before the
+      // product has shown the trader a single thing. (This used to HARD-REDIRECT
+      // a brand-new empty account into the profile wizard, which inverted the
+      // whole promise: four screens about your setups and risk rails before
+      // you'd seen one number of your own.)
+      //
+      // Checked lazily and only once, right before something is about to show:
+      // this effect runs on every navigation, and the Masthead already fetches
+      // nav-anchor on each one, so an unconditional second call would be a
+      // per-page-view cost paid by every established user for nothing.
+      let trades: boolean | null = null
+      const hasTrades = async (): Promise<boolean> => {
+        if (trades == null) {
+          const nav = await fetch('/api/nav-anchor').then(r => r.json()).catch(() => null)
+          trades = !!nav && nav.lastTradeDate != null
+        }
+        return trades
+      }
+
       // --- Setup banner (onboarding not completed) ---
       if (status !== 'completed') {
-        // Brand-new + empty → auto-open the wizard, but only from the dashboard.
-        if (!status && pathname === '/dashboard') {
-          const nav = await fetch('/api/nav-anchor').then(r => r.json()).catch(() => null)
-          if (cancelled) return
-          if (nav && nav.lastTradeDate == null) { router.replace('/welcome/setup'); return }
-        }
-
-        // Otherwise a dismissible banner, with one end-of-week reminder.
+        // A dismissible banner, with one end-of-week reminder.
         const dismissedAt = o.banner_dismissed_at ? new Date(o.banner_dismissed_at).getTime() : null
         const reminded = o.week_reminder_shown === true
         let visible = false
         if (dismissedAt == null) visible = true
         else if (!reminded && (Date.now() - dismissedAt) >= WEEK_REMINDER_MS) visible = true
-        if (!cancelled && visible) { setBanner('setup'); setResume(status === 'in_progress'); return }
+        if (visible) {
+          if (!(await hasTrades()) || cancelled) return
+          setBanner('setup'); setResume(status === 'in_progress'); return
+        }
       }
 
       // --- Empty-tags nudge (any user, only while the playbook is empty) ---
@@ -75,17 +93,23 @@ export default function OnboardingGate() {
 
       const last = o.tag_nudge_last_at ? new Date(o.tag_nudge_last_at).getTime() : null
       if (last == null) {
-        // First time eligible — start the clock silently (14-day grace), don't nag yet.
+        // First time eligible — start the clock silently (14-day grace), don't
+        // nag yet. Gated on data too, so the grace starts from the trader's
+        // first real session rather than from an empty sign-up.
+        if (!(await hasTrades()) || cancelled) return
         fetch('/api/onboarding', {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ onboarding: { tag_nudge_last_at: new Date().toISOString() } }),
         }).catch(() => {})
         return
       }
-      if ((Date.now() - last) >= TAG_NUDGE_MS && !cancelled) setBanner('tags')
+      if ((Date.now() - last) >= TAG_NUDGE_MS) {
+        if (!(await hasTrades()) || cancelled) return
+        setBanner('tags')
+      }
     })()
     return () => { cancelled = true }
-  }, [pathname, router])
+  }, [pathname])
 
   const patch = (onboarding: Record<string, unknown>) =>
     fetch('/api/onboarding', {

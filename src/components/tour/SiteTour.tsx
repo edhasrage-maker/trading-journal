@@ -161,18 +161,34 @@ export default function SiteTour() {
     d.drive()
   }, [endChapter, finish])
 
-  // Auto-start: once, on the first /dashboard visit, if no tour_status yet.
+  // Auto-start: once, on a /dashboard visit, if no tour_status yet AND the
+  // journal has data.
+  //
+  // The data gate is the point (Pt 16). The tour walks Dashboard → Prep →
+  // Review → Analytics; on a brand-new account every one of those is empty, so
+  // it narrated "every trade you took, with the stats that matter" over blank
+  // screens — right when the trader should have been looking at the one thing
+  // that mattered, the import card. So it now waits for the first trade.
+  //
+  // Deliberately NOT re-armed by the import itself: EmptyStateImport finishes
+  // with router.refresh(), which doesn't change the pathname, so the tour holds
+  // off and the post-import "first read" payoff gets the screen to itself. It
+  // starts on the next visit to the dashboard. `startAttemptedRef` is only
+  // latched once we actually start, so that later visit still gets its chance.
   useEffect(() => {
     if (LOCAL_FEATURES_ENABLED) return
     if (startAttemptedRef.current) return
     if (!pathname || pathname !== '/dashboard') return
-    startAttemptedRef.current = true
     let cancelled = false
     ;(async () => {
       const ob = await fetch('/api/onboarding').then(r => r.json()).catch(() => null)
       if (cancelled || !ob) return
       if (ob.onboarding?.tour_status) return // already done/skipped
       if (TOUR_STEPS.length === 0) return
+      const nav = await fetch('/api/nav-anchor').then(r => r.json()).catch(() => null)
+      if (cancelled) return
+      if (!nav || nav.lastTradeDate == null) return // empty journal — import first
+      startAttemptedRef.current = true
       setActiveBoth(true)
     })()
     return () => { cancelled = true }
