@@ -25,7 +25,7 @@ import type { ConditionMetric, ConditionVerdict, DailyPrep } from '@/lib/supabas
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const METRICS: Array<{
   metric: ConditionMetric
-  field: 'rvol' | 'dr_adr' | 'ib' | 'atr_730' | 'atr_entry'
+  field: 'rvol' | 'dr_adr' | 'ib' | 'atr_730' | 'ib_atr'
   label: string
   placeholder: string
   hint: string
@@ -34,10 +34,11 @@ const METRICS: Array<{
   { metric: 'DR_ADR', field: 'dr_adr', label: 'DR vs ADR', placeholder: '0.60', hint: '(High-Low since 6:30) / 10d avg cash session range' },
   { metric: 'IB', field: 'ib', label: 'IB vs 10d Avg', placeholder: '0.93', hint: '(IBH-IBL) / 10d avg IB range' },
   { metric: 'ATR_730', field: 'atr_730', label: 'ATR-10 (1m)', placeholder: '18.0', hint: '1-min ATR-10 Wilder' },
-  // ATR_entry retired: the live per-trade ATR-10 (added in a9f6161) renders
-  // the manual-entry field obsolete. Kept the lookup-side bucket inert by
-  // dropping the metric from this list — outcome.buckets no longer includes
-  // it, so the pill row doesn't render the empty ATR_ENTRY chip.
+  { metric: 'IB_ATR', field: 'ib_atr', label: 'IB vs ATR (character)', placeholder: '9.3', hint: '(IBH-IBL) / meanHL10 — choppy < 7.7, expanded >= 13' },
+  // ATR_entry was retired here (the live per-trade ATR-10 added in a9f6161 made
+  // the manual field obsolete) and its slot was reused for IB_ATR in Pt 23 —
+  // the metric was never populated, so 105 of every 236 lookup rows constrained
+  // a null. Day character now fills that dimension instead.
 ]
 
 // All four metrics (RVOL, DR_ADR, IB, ATR_730) auto-fill from Market Context
@@ -60,7 +61,7 @@ interface InputState {
   dr_adr: string
   ib: string
   atr_730: string
-  atr_entry: string
+  ib_atr: string
 }
 
 interface MarketContextPrefill {
@@ -70,6 +71,9 @@ interface MarketContextPrefill {
   /** Server-computed DR/ADR from 1-min bars in the 6:30-7:30 PT window.
    *  When present, fills the dr_adr lookup without the user typing. */
   dr_adr?: number | null
+  /** Day character (IB range / meanHL10), persisted by the prep page once the
+   *  IB has printed. Buckets the trader's history by choppy / mid / expanded. */
+  ib_atr_ratio?: number | null
 }
 
 interface Props {
@@ -84,7 +88,7 @@ interface Props {
   beginner?: boolean
 }
 
-const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '', atr_entry: '' }
+const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '', ib_atr: '' }
 
 export default function ConditionFilterPanel({ date, marketContext, beginner = false }: Props) {
   const [inputs, setInputs] = useState<InputState>(EMPTY)
@@ -114,7 +118,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
     dr_adr: inputs.dr_adr || fromContext(marketContext?.dr_adr),
     ib: inputs.ib || fromContext(marketContext?.ib_vs_10d_avg),
     atr_730: inputs.atr_730 || fromContext(marketContext?.atr_1m),
-    atr_entry: inputs.atr_entry,
+    ib_atr: inputs.ib_atr || fromContext(marketContext?.ib_atr_ratio),
   }
   // ── Load existing prep + run initial lookup on mount ──────────────────────
   useEffect(() => {
@@ -133,7 +137,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           dr_adr: p.dr_adr != null ? String(p.dr_adr) : '',
           ib: p.ib != null ? String(p.ib) : '',
           atr_730: p.atr_730 != null ? String(p.atr_730) : '',
-          atr_entry: p.atr_entry != null ? String(p.atr_entry) : '',
+          ib_atr: p.ib_atr != null ? String(p.ib_atr) : '',
         }
         setInputs(next)
         setNotes(p.notes ?? '')
@@ -154,7 +158,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
       dr_adr: parseFloat(state.dr_adr),
       ib: parseFloat(state.ib),
       atr_730: parseFloat(state.atr_730),
-      atr_entry: parseFloat(state.atr_entry),
+      ib_atr: parseFloat(state.ib_atr),
     }
     const anyValid = Object.values(parsed).some(v => Number.isFinite(v))
     if (!anyValid) {
@@ -170,7 +174,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
         dr_adr: Number.isFinite(parsed.dr_adr) ? parsed.dr_adr : null,
         ib: Number.isFinite(parsed.ib) ? parsed.ib : null,
         atr_730: Number.isFinite(parsed.atr_730) ? parsed.atr_730 : null,
-        atr_entry: Number.isFinite(parsed.atr_entry) ? parsed.atr_entry : null,
+        ib_atr: Number.isFinite(parsed.ib_atr) ? parsed.ib_atr : null,
       }
       const res = await fetch('/api/condition-lookup', {
         method: 'POST',
@@ -201,7 +205,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
     // Dep array intentionally tracks the merged values so lookup re-fires when
     // either user input or Market Context changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveInputs.rvol, effectiveInputs.dr_adr, effectiveInputs.ib, effectiveInputs.atr_730, effectiveInputs.atr_entry, runLookup])
+  }, [effectiveInputs.rvol, effectiveInputs.dr_adr, effectiveInputs.ib, effectiveInputs.atr_730, effectiveInputs.ib_atr, runLookup])
 
   // ── Save snapshot ─────────────────────────────────────────────────────────
   const save = async () => {
@@ -217,7 +221,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
         dr_adr: parse(effectiveInputs.dr_adr),
         ib: parse(effectiveInputs.ib),
         atr_730: parse(effectiveInputs.atr_730),
-        atr_entry: parse(effectiveInputs.atr_entry),
+        ib_atr: parse(effectiveInputs.ib_atr),
         matched_median_condition_id: outcome?.best_median?.row.condition_id ?? null,
         matched_tertile_condition_id: outcome?.best_tertile?.row.condition_id ?? null,
         consolidated_verdict: outcome?.consolidated.verdict ?? null,
@@ -654,7 +658,7 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
               <li>Grade C and Grade D mean &quot;the sample says nothing definitive.&quot; Don&apos;t read Grade C as bullish or Grade D as bearish — both mean the CI includes zero, just with a slight positive or negative lean respectively.</li>
               <li>The lookup uses only market-state metrics. It does NOT consider your setup tags, orderflow tags, or psychological state — those sit on top, not in place of.</li>
               <li>The 5 metrics are NOT independent. High RVOL days usually have high IB and high ATR_730 too. The 3-way cells have smaller samples and noisier estimates.</li>
-              <li><span className="text-red-300 font-semibold">Trap pattern:</span> ATR_730_LOW + ATR_entry_HIGH. When the session starts quiet but volatility expands into the entry, the data shows directional losses (n=115, EV -$25). The clearest &quot;avoid&quot; condition.</li>
+              <li>IB vs ATR is the one metric whose L/M/H cuts are fixed rather than derived from your own thirds: L is exactly the study&apos;s choppy band (&lt; 7.7) and H exactly its expanded band (≥ 13), so the bucket matches the word on the prep panel. H is a thin slice — roughly one day in seven.</li>
             </ul>
           </div>
 

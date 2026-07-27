@@ -185,6 +185,48 @@ export function classifyIbDayType(inputs: IbDayTypeInputs): IbDayType {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Persistence (Phase 2) — the classification as market_context columns.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The four `market_context` columns that carry the day-character read. */
+export interface IbDayTypeColumns {
+  ib_meanhl10: number | null
+  ib_atr_ratio: number | null
+  ib_regime: RegimeBand | null
+  ib_size_band: SizeBand | null
+}
+
+/**
+ * The persistable form of a classification, or null when there's nothing
+ * worth storing yet.
+ *
+ * Deliberately strict about what earns a row:
+ *   - RTH only. `ib_vs_10d_avg` is RTH-baselined and `market_context` is an
+ *     RTH-semantic table; an Asia/London classification written here would be
+ *     compared against RTH history by every downstream reader.
+ *   - meanHL10 basis only. The Wilder fallback is a labelled ~3% approximation
+ *     — fine to *show*, wrong to persist as if it were the study-exact regime,
+ *     because the condition_lookup then buckets real trades off it.
+ *
+ * `ib_meanhl10` is passed in rather than read off the classification because
+ * `IbDayType` keeps only the ratio; the denominator is worth storing so a later
+ * cut retune can be re-derived without re-reading bars.
+ */
+export function ibDayTypeColumns(
+  c: IbDayType,
+  meanHL10: number | null,
+): IbDayTypeColumns | null {
+  if (c.session !== 'rth') return null
+  if (c.regimeBasis !== 'meanHL10' || c.regimeRatio == null || c.regimeBand == null) return null
+  return {
+    ib_meanhl10: meanHL10,
+    ib_atr_ratio: c.regimeRatio,
+    ib_regime: c.regimeBand,
+    ib_size_band: c.sizeBand,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Day-type mapping + presentation — the classification → the trader's day-type
 // chips, validated against tagging history: IB size (magnitude) → the action
 // level, IB÷ATR regime (directionality) → the structural read.

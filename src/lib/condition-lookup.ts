@@ -21,7 +21,9 @@ export interface MetricInputs {
   dr_adr: number | null
   ib: number | null
   atr_730: number | null
-  atr_entry: number | null
+  /** Day character: IB range / meanHL10 (ib-day-type.ts's regime ratio).
+   *  Replaced the never-populated ATR_entry in Pt 23. */
+  ib_atr: number | null
 }
 
 export interface BucketAssignment {
@@ -57,7 +59,7 @@ export interface LookupOutcome {
 }
 
 // Ordered metric keys (must match column names on rows)
-const METRIC_KEYS: ConditionMetric[] = ['RVOL', 'DR_ADR', 'IB', 'ATR_730', 'ATR_entry']
+const METRIC_KEYS: ConditionMetric[] = ['RVOL', 'DR_ADR', 'IB', 'ATR_730', 'IB_ATR']
 
 // Map metric → input field name
 const INPUT_FIELD: Record<ConditionMetric, keyof MetricInputs> = {
@@ -65,7 +67,7 @@ const INPUT_FIELD: Record<ConditionMetric, keyof MetricInputs> = {
   DR_ADR: 'dr_adr',
   IB: 'ib',
   ATR_730: 'atr_730',
-  ATR_entry: 'atr_entry',
+  IB_ATR: 'ib_atr',
 }
 
 // Map metric → corresponding bucket column on the lookup row
@@ -74,7 +76,7 @@ const BUCKET_COL: Record<ConditionMetric, keyof ConditionLookupRow> = {
   DR_ADR: 'dr_adr_b',
   IB: 'ib_b',
   ATR_730: 'atr_730_b',
-  ATR_entry: 'atr_entry_b',
+  IB_ATR: 'ib_atr_b',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -60,6 +60,13 @@ export interface Database {
           atr_flag: 'red' | 'yellow' | 'green' | null
           price_in_pd_range: boolean | null
           price_in_gbx_range: boolean | null
+          // IB day-type Phase 2 (Pt 23) — the day-CHARACTER read, classified
+          // honestly at the 07:29 PT IB close. RTH only, and only on the
+          // study-exact meanHL10 basis; see ib-day-type.ts.
+          ib_meanhl10: number | null      // mean(H-L) of the last 10 IB 1m bars
+          ib_atr_ratio: number | null     // ib_size / ib_meanhl10 — the IB_ATR lookup metric
+          ib_regime: 'chop' | 'mid' | 'expanded' | null
+          ib_size_band: 'small' | 'normal' | 'large' | null
           stat_performance_json: StatPerformance
           created_at: string
         }
@@ -539,7 +546,9 @@ export interface ExecutionScore {
 // Condition Lookup feature
 // ============================================================
 
-export type ConditionMetric = 'RVOL' | 'DR_ADR' | 'IB' | 'ATR_730' | 'ATR_entry'
+// IB_ATR replaced the never-populated ATR_entry (Pt 23, 2026-07-27): it is the
+// day-CHARACTER metric, ib_size / meanHL10 — see ib-day-type.ts.
+export type ConditionMetric = 'RVOL' | 'DR_ADR' | 'IB' | 'ATR_730' | 'IB_ATR'
 
 export interface ConditionThreshold {
   metric: ConditionMetric
@@ -575,7 +584,7 @@ export interface ConditionLookupRow {
   dr_adr_b: string
   ib_b: string
   atr_730_b: string
-  atr_entry_b: string
+  ib_atr_b: string
   n_trades: number | null
   n_sessions: number | null
   n_adequate: boolean | null
@@ -601,7 +610,7 @@ export interface DailyPrep {
   dr_adr: number | null
   ib: number | null
   atr_730: number | null
-  atr_entry: number | null
+  ib_atr: number | null
   matched_median_condition_id: string | null
   matched_tertile_condition_id: string | null
   consolidated_verdict: ConditionVerdict | null

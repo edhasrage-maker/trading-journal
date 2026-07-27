@@ -5,6 +5,7 @@ import type {
   ConditionVerdict,
   ConditionComboType,
 } from '@/lib/supabase/types'
+import { REGIME_CUTS_MEANHL10 } from '@/lib/ib-day-type'
 
 // Supabase clients are structurally identical for our purposes (server session
 // client OR service-role client); we only call .from(...).select/insert/delete.
@@ -42,6 +43,7 @@ export interface MarketContextLite {
   day_range: number | null          // for DR_ADR derivation
   atr_at_ib_close: number | null    // → ATR_730 metric (preferred)
   atr_1m: number | null             // → ATR_730 fallback when atr_at_ib_close is null
+  ib_atr_ratio: number | null       // → IB_ATR metric (day character, ib-day-type.ts)
 }
 
 export interface TradeLite {
@@ -56,14 +58,14 @@ export interface MetricRow {
   dr_adr: number | null
   ib: number | null
   atr_730: number | null
-  atr_entry: number | null
+  ib_atr: number | null
 }
 
 /** Derive the 5 prep metrics from a market_context row. RVOL/IB pass through;
  *  DR_ADR is computed from day_range/adr; ATR_730 uses our new IB-close ATR
- *  with EOD ATR fallback; ATR_entry is null (no per-trade ATR captured today). */
+ *  with EOD ATR fallback; IB_ATR is the persisted day-character ratio. */
 export function deriveMetrics(ctx: MarketContextLite | null): MetricRow {
-  if (!ctx) return { rvol: null, dr_adr: null, ib: null, atr_730: null, atr_entry: null }
+  if (!ctx) return { rvol: null, dr_adr: null, ib: null, atr_730: null, ib_atr: null }
   // DR_ADR stored as percent (median ≈ 102 per existing thresholds). day_range
   // and adr are both in points; ratio × 100 gives the percent.
   const dr_adr = (ctx.day_range != null && ctx.adr != null && ctx.adr > 0)
@@ -78,7 +80,10 @@ export function deriveMetrics(ctx: MarketContextLite | null): MetricRow {
     dr_adr,
     ib: ctx.ib_vs_10d_avg,
     atr_730: ctx.atr_at_ib_close ?? ctx.atr_1m,
-    atr_entry: null,  // not captured per-trade today; future enhancement
+    // Day character (IB range / meanHL10). Only days the IB day-type backfill
+    // (or a live prep) has classified carry this; older rows stay null and
+    // simply don't match a non-ANY IB_ATR constraint.
+    ib_atr: ctx.ib_atr_ratio,
   }
 }
 
@@ -92,9 +97,9 @@ function percentile(sortedAsc: number[], p: number): number {
 
 /** Compute median + p33/p67 from non-null values per metric. */
 export function computeThresholds(metricRows: MetricRow[]): ConditionThreshold[] {
-  const keys: ConditionMetric[] = ['RVOL', 'DR_ADR', 'IB', 'ATR_730', 'ATR_entry']
+  const keys: ConditionMetric[] = ['RVOL', 'DR_ADR', 'IB', 'ATR_730', 'IB_ATR']
   const fieldMap: Record<ConditionMetric, keyof MetricRow> = {
-    RVOL: 'rvol', DR_ADR: 'dr_adr', IB: 'ib', ATR_730: 'atr_730', ATR_entry: 'atr_entry',
+    RVOL: 'rvol', DR_ADR: 'dr_adr', IB: 'ib', ATR_730: 'atr_730', IB_ATR: 'ib_atr',
   }
   const out: ConditionThreshold[] = []
   const now = new Date().toISOString()
@@ -103,12 +108,29 @@ export function computeThresholds(metricRows: MetricRow[]): ConditionThreshold[]
       .map(r => r[fieldMap[metric]])
       .filter((v): v is number => v != null && Number.isFinite(v))
       .sort((a, b) => a - b)
-    // For ATR_entry (no data yet) or any metric with too few samples, write
-    // NaN sentinels so the consumer can detect "no thresholds, no buckets".
-    // The schema column is `numeric` so we store 0 as a placeholder — the
-    // bucketing functions short-circuit on null inputs anyway.
+    // For any metric with too few samples, write NaN sentinels so the consumer
+    // can detect "no thresholds, no buckets". The schema column is `numeric` so
+    // we store 0 as a placeholder — the bucketing functions short-circuit on
+    // null inputs anyway. (IB_ATR lands here until the backfill has run.)
     if (vals.length < 10) {
       out.push({ metric, median: 0, tertile_low: 0, tertile_high: 0, updated_at: now })
+      continue
+    }
+    // IB_ATR is the one metric whose tertile cuts are NOT data-derived. Pinning
+    // them to the study cuts makes the lookup's L/M/H bucket literally the prep
+    // panel's chop / mid / expanded, so "am I capturing the choppy-day edge?"
+    // is answered by reading the L row — the two can't drift apart. The median
+    // view stays data-derived (a genuine 50/50 split of the trader's own days).
+    // Trade-off accepted 2026-07-27: 7.7 / 13 sit near p29 / p85 of the NQ
+    // distribution, so the expanded bucket is a thin ~15% of days, not a third.
+    if (metric === 'IB_ATR') {
+      out.push({
+        metric,
+        median: percentile(vals, 0.5),
+        tertile_low: REGIME_CUTS_MEANHL10.chopMax,
+        tertile_high: REGIME_CUTS_MEANHL10.midMax,
+        updated_at: now,
+      })
       continue
     }
     out.push({
@@ -124,9 +146,9 @@ export function computeThresholds(metricRows: MetricRow[]): ConditionThreshold[]
 
 // ─── Bucketing ───────────────────────────────────────────────────────────────
 
-const METRICS: ConditionMetric[] = ['RVOL', 'DR_ADR', 'IB', 'ATR_730', 'ATR_entry']
+const METRICS: ConditionMetric[] = ['RVOL', 'DR_ADR', 'IB', 'ATR_730', 'IB_ATR']
 const FIELD_MAP: Record<ConditionMetric, keyof MetricRow> = {
-  RVOL: 'rvol', DR_ADR: 'dr_adr', IB: 'ib', ATR_730: 'atr_730', ATR_entry: 'atr_entry',
+  RVOL: 'rvol', DR_ADR: 'dr_adr', IB: 'ib', ATR_730: 'atr_730', IB_ATR: 'ib_atr',
 }
 
 interface BucketedTrade {
@@ -354,7 +376,7 @@ function combinations<T>(arr: T[], k: number): T[][] {
 
 /** Generate condition_id string from per-metric bucket values. */
 function makeConditionId(buckets: Record<ConditionMetric, string>): string {
-  return `${buckets.RVOL}_${buckets.DR_ADR}_${buckets.IB}_${buckets.ATR_730}_${buckets.ATR_entry}`
+  return `${buckets.RVOL}_${buckets.DR_ADR}_${buckets.IB}_${buckets.ATR_730}_${buckets.IB_ATR}`
 }
 
 /** Match a bucketed trade against a constraint (mode + per-metric bucket constraints). */
@@ -395,7 +417,7 @@ export function buildLookupRows(
   const rows: ConditionLookupRow[] = []
 
   const baseConstraint: Record<ConditionMetric, string> = {
-    RVOL: 'ANY', DR_ADR: 'ANY', IB: 'ANY', ATR_730: 'ANY', ATR_entry: 'ANY',
+    RVOL: 'ANY', DR_ADR: 'ANY', IB: 'ANY', ATR_730: 'ANY', IB_ATR: 'ANY',
   }
 
   // ─── BASELINE ─────────
@@ -488,7 +510,7 @@ export async function refreshConditionLookup(
 
   // ── 1. market_context + trading_days (id → date) ──
   const [{ data: contextsRaw, error: cErr }, { data: daysRaw, error: dErr }] = await Promise.all([
-    scope(supabase.from('market_context').select('trading_day_id, rvol, rvol_at_ib_close, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_1m')),
+    scope(supabase.from('market_context').select('trading_day_id, rvol, rvol_at_ib_close, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_1m, ib_atr_ratio')),
     scope(supabase.from('trading_days').select('id, date')),
   ]) as [
     { data: MarketContextLite[] | null; error: { message: string } | null },
@@ -625,7 +647,7 @@ function buildRow(
     dr_adr_b: constraint.DR_ADR,
     ib_b: constraint.IB,
     atr_730_b: constraint.ATR_730,
-    atr_entry_b: constraint.ATR_entry,
+    ib_atr_b: constraint.IB_ATR,
     n_trades: stats.n_trades,
     n_sessions: stats.n_sessions,
     n_adequate: v.n_adequate,

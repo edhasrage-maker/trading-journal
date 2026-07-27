@@ -15,7 +15,7 @@ import DiscordCardInputs from './DiscordCardInputs'
 import TradePlansSection from './TradePlansSection'
 import SpellCheckModal from './SpellCheckModal'
 import DayTypePredictor from './DayTypePredictor'
-import { classifyIbDayType, ibDayTypeHeadline, ibDayTypeAiRead } from '@/lib/ib-day-type'
+import { classifyIbDayType, ibDayTypeHeadline, ibDayTypeAiRead, ibDayTypeColumns } from '@/lib/ib-day-type'
 import HighImpactNews from './HighImpactNews'
 import Section, { GhostButton, Segmented, Chip } from '@/components/ui/Section'
 import PrepHero from './PrepHero'
@@ -283,6 +283,35 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     })()
     return () => { cancelled = true }
   }, [chartSymbol, date, barsVersion, session])
+
+  // Persist the day-CHARACTER read (IB day-type Phase 2). Until now the
+  // classification was recomputed on every prep open and thrown away; storing
+  // it on market_context is what lets condition_lookup bucket the trader's
+  // ACTUAL trades by choppy / mid / expanded.
+  //
+  // Deliberately NOT the fill-blank-once discipline the stats auto-fill above
+  // uses: these four are derived and never user-edited, so writing whenever the
+  // classification differs lets a re-classified day (or a retune of the cuts)
+  // self-correct on the next prep open. `ibDayTypeColumns` returns null for
+  // anything that must not be stored — non-RTH sessions, and the ~3%-off Wilder
+  // fallback basis — so nothing lands in the RTH-semantic table that the lookup
+  // would then bucket real trades off.
+  useEffect(() => {
+    const cols = ibDayTypeColumns(ibDayType, contextStats?.meanHL10 ?? null)
+    if (!cols) return
+    setContext(prev => {
+      const next = { ...prev }
+      let changed = false
+      for (const [k, v] of Object.entries(cols)) {
+        if (v == null) continue
+        if ((prev as Record<string, unknown>)[k] === v) continue
+        ;(next as Record<string, unknown>)[k] = v
+        changed = true
+      }
+      if (changed) autoFilledContextRef.current = true // programmatic fill — must not mark the form dirty
+      return changed ? next : prev
+    })
+  }, [ibDayType, contextStats])
 
   // Derive the "Price between PDH/PDL?" and "Price in GBX range?" flags from the
   // bar-native current price + the levels in the form — overwriting the fragile
@@ -1201,6 +1230,12 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
                 context.day_range != null && context.adr != null && context.adr > 0
                   ? Math.round((context.day_range / context.adr) * 100) / 100
                   : drAdrAuto,
+              // Day character — persisted by the effect above once the IB has
+              // printed, so the lookup buckets on the same number the panel shows.
+              // meanHL10 basis only: history is bucketed on that basis, so
+              // feeding today's Wilder fallback would compare unlike metrics.
+              ib_atr_ratio: context.ib_atr_ratio
+                ?? (ibDayType.regimeBasis === 'meanHL10' ? ibDayType.regimeRatio : null),
             }}
           />
         </Section>

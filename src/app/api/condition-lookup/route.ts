@@ -12,7 +12,7 @@ type AnyClient = any
  * Given today's 5 metric values, returns the median-view best match, tertile-view
  * best match, consolidated verdict, conflict flag, and data vintage.
  *
- * Body: { rvol?, dr_adr?, ib?, atr_730?, atr_entry? }  (all optional numbers)
+ * Body: { rvol?, dr_adr?, ib?, atr_730?, ib_atr? }  (all optional numbers)
  *   - missing values restrict that metric to ANY-only rows
  */
 
@@ -21,7 +21,8 @@ interface LookupBody {
   dr_adr?: number | null
   ib?: number | null
   atr_730?: number | null
-  atr_entry?: number | null
+  /** Day character: IB range / meanHL10 (see ib-day-type.ts). */
+  ib_atr?: number | null
 }
 
 export async function POST(req: Request) {
@@ -41,7 +42,7 @@ async function handle(req: Request) {
     dr_adr: body.dr_adr ?? null,
     ib: body.ib ?? null,
     atr_730: body.atr_730 ?? null,
-    atr_entry: body.atr_entry ?? null,
+    ib_atr: body.ib_atr ?? null,
   }
 
   const supabase: AnyClient = await createClient()

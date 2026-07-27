@@ -75,6 +75,15 @@ create table if not exists market_context (
   atr_10d_avg numeric(10,2),      -- trailing-10 avg of atr_at_ib_close
   rth_open numeric(10,2),         -- close of 06:30 PT bar
   ib_close_price numeric(10,2),   -- close of 07:29 PT bar
+  -- IB day-CHARACTER read (Pt 23, migration 20260727_ib_day_type_persist.sql).
+  -- Classified honestly at the IB close by src/lib/ib-day-type.ts. RTH only,
+  -- and only on the study-exact meanHL10 basis (the Wilder fallback is a
+  -- labelled ~3% approximation and is never persisted). ib_atr_ratio is the
+  -- IB_ATR metric condition_lookup buckets trades on.
+  ib_meanhl10 numeric(10,3),      -- mean(High-Low) of the last 10 IB 1m bars
+  ib_atr_ratio numeric(10,3),     -- ib_size / ib_meanhl10
+  ib_regime text,                 -- chop | mid | expanded  (cuts 7.7 / 13)
+  ib_size_band text,              -- small | normal | large (cuts 0.75 / 1.25 on ib_vs_10d_avg)
   stat_performance_json jsonb default '{}',
   -- stat_performance_json shape:
   -- {
@@ -362,7 +371,10 @@ alter table trading_days
 
 -- Per-metric bucket cutpoints. 5 rows total (one per metric).
 create table if not exists condition_thresholds (
-  metric text primary key,                  -- RVOL | DR_ADR | IB | ATR_730 | ATR_entry
+  metric text primary key,                  -- RVOL | DR_ADR | IB | ATR_730 | IB_ATR
+                                            -- IB_ATR replaced the never-populated ATR_entry (Pt 23).
+                                            -- Its tertile cuts are pinned to the study's 7.7 / 13 rather
+                                            -- than derived thirds, so L/M/H == chop/mid/expanded.
   median numeric not null,
   tertile_low numeric not null,
   tertile_high numeric not null,
@@ -380,7 +392,7 @@ create table if not exists condition_lookup (
   dr_adr_b text not null,
   ib_b text not null,
   atr_730_b text not null,
-  atr_entry_b text not null,
+  ib_atr_b text not null,                   -- day character; was atr_entry_b before Pt 23
   n_trades integer,
   n_sessions integer,
   n_adequate boolean,
@@ -404,7 +416,7 @@ create table if not exists condition_lookup (
 create index if not exists condition_lookup_combo_idx
   on condition_lookup(combo_type, specificity desc, verdict_rank asc);
 create index if not exists condition_lookup_buckets_idx
-  on condition_lookup(rvol_b, dr_adr_b, ib_b, atr_730_b, atr_entry_b);
+  on condition_lookup(rvol_b, dr_adr_b, ib_b, atr_730_b, ib_atr_b);
 
 -- Per-day condition prep snapshot. Independent of trading_days — the trader
 -- logs conditions at 7:30 AM regardless of whether they end up trading.
@@ -414,7 +426,7 @@ create table if not exists daily_prep (
   dr_adr numeric,
   ib numeric,
   atr_730 numeric,
-  atr_entry numeric,                        -- optional, may be null if not yet entering
+  ib_atr numeric,                           -- day character (IB / meanHL10); was atr_entry before Pt 23
   matched_median_condition_id text,
   matched_tertile_condition_id text,
   consolidated_verdict text,

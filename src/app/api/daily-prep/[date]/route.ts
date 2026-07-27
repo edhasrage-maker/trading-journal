@@ -13,7 +13,7 @@ interface DailyPrepBody {
   dr_adr?: number | null
   ib?: number | null
   atr_730?: number | null
-  atr_entry?: number | null
+  ib_atr?: number | null
   matched_median_condition_id?: string | null
   matched_tertile_condition_id?: string | null
   consolidated_verdict?: ConditionVerdict | null
@@ -63,7 +63,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
   if (body.dr_adr !== undefined) payload.dr_adr = body.dr_adr
   if (body.ib !== undefined) payload.ib = body.ib
   if (body.atr_730 !== undefined) payload.atr_730 = body.atr_730
-  if (body.atr_entry !== undefined) payload.atr_entry = body.atr_entry
+  if (body.ib_atr !== undefined) payload.ib_atr = body.ib_atr
   if (body.matched_median_condition_id !== undefined) payload.matched_median_condition_id = body.matched_median_condition_id
   if (body.matched_tertile_condition_id !== undefined) payload.matched_tertile_condition_id = body.matched_tertile_condition_id
   if (body.consolidated_verdict !== undefined) payload.consolidated_verdict = body.consolidated_verdict

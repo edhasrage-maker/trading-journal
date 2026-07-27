@@ -25,7 +25,7 @@ type AnyClient = any
 const REQUIRED_THRESHOLD_COLS = ['metric', 'median', 'tertile_low', 'tertile_high']
 const REQUIRED_LOOKUP_COLS = [
   'condition_id', 'combo_type', 'specificity', 'verdict', 'verdict_rank',
-  'rvol_b', 'dr_adr_b', 'ib_b', 'atr_730_b', 'atr_entry_b',
+  'rvol_b', 'dr_adr_b', 'ib_b', 'atr_730_b', 'ib_atr_b',
 ]
 const VALID_VERDICTS: ConditionVerdict[] = [
   'GREEN_ROBUST', 'GREEN_DIRECTIONAL', 'RED_DIRECTIONAL',
@@ -172,7 +172,7 @@ async function handle(req: Request) {
       dr_adr_b: (r.dr_adr_b ?? '').trim() || 'ANY',
       ib_b: (r.ib_b ?? '').trim() || 'ANY',
       atr_730_b: (r.atr_730_b ?? '').trim() || 'ANY',
-      atr_entry_b: (r.atr_entry_b ?? '').trim() || 'ANY',
+      ib_atr_b: (r.ib_atr_b ?? '').trim() || 'ANY',
       n_trades: parseInt32(r.n_trades),
       n_sessions: parseInt32(r.n_sessions),
       n_adequate: parseBool(r.n_adequate),
