@@ -375,12 +375,17 @@ export async function POST(req: Request) {
   }
 
   // Find-or-create a trading_day per distinct date (RLS scopes to this user).
+  // Reuse the OLDEST existing row even if duplicates already exist — .maybeSingle()
+  // errors when >1 row matches, which silently fell through to another insert and
+  // COMPOUNDED duplicates on every re-import. limit(1) is duplicate-tolerant.
   const dates = Array.from(new Set(pending.map(p => p.trade_date)))
   const dayIdByDate = new Map<string, string>()
   for (const date of dates) {
-    const { data: existing } = await db
-      .from('trading_days').select('id').eq('date', date).maybeSingle()
-    if (existing?.id) { dayIdByDate.set(date, existing.id as string); continue }
+    const { data: existingRows } = await db
+      .from('trading_days').select('id').eq('date', date)
+      .order('created_at', { ascending: true }).limit(1)
+    const existingId = existingRows?.[0]?.id
+    if (existingId) { dayIdByDate.set(date, existingId as string); continue }
     const { data: created, error } = await db
       .from('trading_days').insert({ date }).select('id').single()
     if (error || !created) {
