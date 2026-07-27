@@ -19,7 +19,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil } from 'lucide-react'
-import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaePoints, formatCapturePct, type BarLike } from '@/lib/analytics'
+import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaePoints, formatCapturePct, exitedAtExtreme, CAPTURE_AT_EXTREME_TOOLTIP, type BarLike } from '@/lib/analytics'
 import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { postExitVerdict, type VerdictTrade, type VerdictTone } from '@/lib/post-exit-verdict'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
@@ -73,8 +73,11 @@ function loadColPrefs(): Record<ColKey, boolean> {
 function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
   const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
   // Invariant guard: bank-more-than-the-peak is impossible. A ratio past 100+ε
-  // is a data mismatch — show "—", never the raw (e.g. 218%) number.
-  if (r != null) return formatCapturePct(r) ?? '—'
+  // is a data mismatch — show "—", never the raw (e.g. 218%) number. An exit AT
+  // the trade's own extreme gets the wider bound: that trade is PINNED at 100%
+  // by definition, so a point of fill-vs-logged-price rounding was blanking the
+  // best exits in the book.
+  if (r != null) return formatCapturePct(r, { exitedAtExtreme: exitedAtExtreme(t) }) ?? '—'
   // Capture came back null. When we have the inputs to know the trade simply
   // didn't run favorably — a loss/scratch, MFE ≤ 0, or a tiny sub-noise-floor
   // green tag it gave right back — that's a real 0% captured, not unknown. Show
@@ -855,7 +858,13 @@ export default function SessionTradeTable({
                       <>
                         {showMfe && (
                           <td className={`py-1.5 pr-3 text-right ${capCls}`}
-                            title={isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.' : undefined}>
+                            title={
+                              isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.'
+                                // A perfect exit reads 100% only because it's clamped there —
+                                // say so, or it looks like a suspiciously round number.
+                                : exitedAtExtreme(t) ? CAPTURE_AT_EXTREME_TOOLTIP
+                                : undefined
+                            }>
                             {captureDisplay(t, bars ?? undefined) ?? '—'}
                           </td>
                         )}

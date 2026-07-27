@@ -590,8 +590,41 @@ export function captureRatioScaled(
  */
 export const CAPTURE_DISPLAY_EPSILON = 0.02
 
+/**
+ * Wider overshoot tolerated when the exit landed AT the trade's own extreme.
+ *
+ * A perfect exit sits at exactly 100% capture, which puts it one rounding error
+ * from being suppressed as a "data mismatch" — so the tightest guard was hiding
+ * the BEST exits. Live case: short 28125 → exit 28068, which WAS the low of the
+ * position, so MFE == captured; the recorded P&L implies 60 pts against the 57
+ * the stored prices give (true average fill vs logged entry), landing at 105%
+ * and rendering "—". 15% still catches real corruption — the inflated-MFE bug
+ * this guard was built for produced 218%.
+ */
+export const CAPTURE_EXTREME_EPSILON = 0.15
+
 /** The tooltip shown in place of an out-of-bounds capture/conversion value. */
 export const CAPTURE_MISMATCH_TOOLTIP = 'Unavailable — data mismatch'
+
+/** Shown when a perfect exit's capture is clamped to 100%. */
+export const CAPTURE_AT_EXTREME_TOOLTIP =
+  'You exited at the best price this trade reached — capture shown as 100%.'
+
+/**
+ * Did the trade exit at (or within a hair of) its own best price? Widens the
+ * capture display bound — see CAPTURE_EXTREME_EPSILON. Tolerance is a small
+ * fraction of the favorable range, floored at a quarter point (one NQ tick), so
+ * "essentially the extreme" survives rounding without letting a mid-range exit
+ * through.
+ */
+export function exitedAtExtreme(t: TradeWithExcursion & { exit_price?: number | null }): boolean {
+  if (t.direction == null || t.entry_price == null || t.exit_price == null) return false
+  const extreme = t.direction === 'long' ? t.high_during_position : t.low_during_position
+  if (extreme == null) return false
+  const favorableRange = Math.abs(extreme - t.entry_price)
+  if (!(favorableRange > 0)) return false
+  return Math.abs(extreme - t.exit_price) <= Math.max(0.02 * favorableRange, 0.25)
+}
 
 /**
  * Format a capture / conversion RATIO (0..1, where 1 = 100% of the favorable
@@ -606,9 +639,16 @@ export const CAPTURE_MISMATCH_TOOLTIP = 'Unavailable — data mismatch'
  * they distinguish the two by whether the underlying inputs exist (a mismatch
  * has a value, it's just impossible) and attach CAPTURE_MISMATCH_TOOLTIP.
  */
-export function formatCapturePct(ratio: number | null | undefined): string | null {
+export function formatCapturePct(
+  ratio: number | null | undefined,
+  opts?: { exitedAtExtreme?: boolean },
+): string | null {
   if (ratio == null || !Number.isFinite(ratio)) return null
-  if (ratio < 0 || ratio > 1 + CAPTURE_DISPLAY_EPSILON) return null
+  // Per-trade callers pass exitedAtExtreme; AVERAGES must not (a mean can't be
+  // "at the extreme", and widening the bound there would let a corrupt trade
+  // drag an aggregate past 100% unnoticed).
+  const epsilon = opts?.exitedAtExtreme ? CAPTURE_EXTREME_EPSILON : CAPTURE_DISPLAY_EPSILON
+  if (ratio < 0 || ratio > 1 + epsilon) return null
   return `${Math.round(Math.min(ratio, 1) * 100)}%`
 }
 

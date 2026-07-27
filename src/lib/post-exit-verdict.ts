@@ -31,11 +31,21 @@ export type VerdictTrade = TradeWithExcursion & {
   entry_atr_1m?: number | null
 }
 
-/** A single "material move ≥ 0.5R" threshold, expressed in points. Falls back to
- *  1× the entry ATR, then a flat 3 points, when no stop is known. */
+/**
+ * "Was the post-exit move big enough to matter", in points.
+ *
+ * ATR-FIRST, deliberately. This used to lead with 0.5R, which made materiality a
+ * property of the trader's STOP rather than of the market: a live trade with a
+ * 0.58×ATR stop got a 10-pt bar where a normal stop gives ~36, so the same
+ * market wiggle read as "you left money" for the tight-stop trader and "flat
+ * after" for everyone else — for identical market behaviour.
+ *
+ * R survives as the fallback for rows with no stored ATR; a flat 3 points is the
+ * last resort.
+ */
 function materialThresholdPts(riskPts: number | null, atr: number | null): number {
-  if (riskPts != null && riskPts > 0) return riskPts * 0.5
   if (atr != null && atr > 0) return atr
+  if (riskPts != null && riskPts > 0) return riskPts * 0.5
   return 3
 }
 
@@ -63,22 +73,26 @@ export function postExitVerdict(t: VerdictTrade, ext: PostExitData | null | unde
   const contMat = cont >= thresh
   const againstMat = against >= thresh
 
-  // Display helpers: R when a stop is known, else whole points.
+  // Display magnitude: ×ATR first, R only as a fallback, then whole points.
+  //
+  // What happened AFTER the exit is a fact about the market, not about the
+  // trader's risk, so R distorts it: two live trades minutes apart read 8.7R and
+  // 3.3R purely because the first had a tighter stop — 5.0×ATR and 2.4×ATR is
+  // the honest comparison. The dollar figure alongside already answers "what did
+  // it cost me", which frees the normalized unit to describe the move. R stays
+  // where it belongs — the trade's own outcome, and the give-back read below.
   const toR = (pts: number): number | null => (riskPts != null && riskPts > 0 ? pts / riskPts : null)
   const mag = (pts: number): string => {
+    if (atr != null) return `${(pts / atr).toFixed(1)}×ATR`
     const r = toR(pts)
     return r != null ? `${r.toFixed(1)}R` : `${Math.round(pts)}pts`
   }
   const partialNote = ext.full_window ? '' : ' (partial window — bars ran out)'
 
   // A "confident" vindication (exit-right / stop-right) needs either a full
-  // window or a clearly-large move (≥ 1R). On a partial window with only a
-  // marginal (0.5–1R) move, downgrade to flat so we don't over-claim.
-  const confident = (pts: number): boolean => {
-    if (ext.full_window) return true
-    const r = toR(pts)
-    return r != null ? r >= 1 : pts >= 2 * thresh
-  }
+  // window or a clearly-large move — twice the materiality bar. On a partial
+  // window with only a marginal move, downgrade to flat so we don't over-claim.
+  const confident = (pts: number): boolean => ext.full_window || pts >= 2 * thresh
 
   if (win) {
     if (contMat && cont >= against) {
