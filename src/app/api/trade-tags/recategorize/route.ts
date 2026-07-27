@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 import type { TagCategory, TradeTag } from '@/lib/supabase/types'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { clientError } from '@/lib/api-error'
+import { resolveTagCategories } from '@/lib/tag-categories'
+import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -26,11 +28,6 @@ type AnyClient = any
  */
 
 const PAGE = 1000
-
-const VALID_CATEGORIES: TagCategory[] = [
-  'setups', 'confluences', 'order_flow', 'entry_model', 'trade_management',
-  'day_type', 'mistakes', 'emotions',
-]
 
 async function rewriteTable(
   supabase: AnyClient,
@@ -108,9 +105,15 @@ export async function POST(req: Request) {
   if (!tagId) {
     return NextResponse.json({ error: 'tag_id is required' }, { status: 400 })
   }
-  if (!VALID_CATEGORIES.includes(toCategory)) {
+  // Categories are per-trader (Pt 16) — a tag must be movable INTO a custom
+  // axis, so validate against this trader's resolved list, not a fixed union.
+  const categories = resolveTagCategories(
+    await readCategoryPrefs(supabase),
+    await categoryKeysInUse(supabase),
+  )
+  if (!categories.some(c => c.key === toCategory)) {
     return NextResponse.json(
-      { error: `Invalid to_category: ${toCategory}. Must be one of: ${VALID_CATEGORIES.join(', ')}` },
+      { error: `Invalid to_category: ${toCategory}. Must be one of: ${categories.map(c => c.key).join(', ')}` },
       { status: 400 },
     )
   }

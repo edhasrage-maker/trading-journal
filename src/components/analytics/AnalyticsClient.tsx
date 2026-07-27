@@ -16,6 +16,7 @@ import DataInsights from '@/components/insights/DataInsights'
 import { computeInsights, type InsightTrade } from '@/lib/data-insights'
 import { mergeDiveInsights, runDives, toDiveRows, type DiveRow } from '@/lib/deep-dive/registry'
 import { useUiMode } from '@/lib/ui-mode'
+import { useTagCategories } from '@/lib/tag-categories-client'
 import { useLongTaskBeacon } from '@/lib/longtask-beacon'
 import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
 import {
@@ -60,6 +61,18 @@ const RANGE_OPTIONS: { label: string; param: Exclude<AnalyticsRange, 'custom'> }
   { label: 'All', param: 'all' },
 ]
 
+/** Tighter headings for the cross-tab filter dropdown, where the canonical
+ *  category names are too long. Anything unlisted (every custom category)
+ *  uses its own label. */
+const FILTER_SHORT_LABELS: Record<string, string> = {
+  setups: 'Setup',
+  confluences: 'Confluence',
+  order_flow: 'Orderflow',
+  trade_management: 'Trade Mgmt',
+  mistakes: 'Mistake',
+  emotions: 'Emotion',
+}
+
 export default function AnalyticsClient({ trades, dayStats, activeRange, windowStart, windowEnd, usesOrderFlow }: Props) {
   const today = format(new Date(), 'yyyy-MM-dd')
   const router = useRouter()
@@ -88,6 +101,9 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
     return trades.filter(t => t.date >= startDate && t.date <= endDate)
   }, [trades, startDate, endDate])
 
+  // The trader's own tag categories, for the cross-tab filter below.
+  const tagCategories = useTagCategories()
+
   // Cross-tab tag filter: pick a category + label and every aggregation
   // below (setup table, day-type table, period comparison, etc.) re-scopes
   // to just trades carrying that tag. Lets the trader ask things like
@@ -99,17 +115,19 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
   //     'mistakes' / 'emotions' — read from t.tags_json[category]
   //   - 'day_type' — read from t.day_types[] (or legacy t.day_type) — a
   //     trade-level property derived from the day's labels.
-  type FilterCategory = 'setups' | 'confluences' | 'order_flow' | 'trade_management' | 'mistakes' | 'emotions' | 'day_type' | 'structure_5m'
-  const FILTER_CATEGORY_LABELS: Record<FilterCategory, string> = {
-    setups: 'Setup',
-    confluences: 'Confluence',
-    order_flow: 'Orderflow',
-    trade_management: 'Trade Mgmt',
-    mistakes: 'Mistake',
-    emotions: 'Emotion',
-    day_type: 'Day Type',
-    structure_5m: '5m Structure',
-  }
+  //
+  // The tag categories are the TRADER'S OWN (Pt 16) — built-ins they kept plus
+  // any axis they added in Settings → Tags — so a custom category like "4h
+  // Candle Shape" breaks out here exactly like Setup does. The generic branch
+  // below already reads tags_json[category], so nothing else needed widening.
+  // 'structure_5m' is appended as a derived (non-tag) filter.
+  type FilterCategory = string
+  const filterOptions = useMemo(() => [
+    ...tagCategories.map(c => ({ key: c.key, label: FILTER_SHORT_LABELS[c.key] ?? c.label })),
+    { key: 'structure_5m', label: '5m Structure' },
+  ], [tagCategories])
+  const filterLabelFor = (key: string): string =>
+    filterOptions.find(o => o.key === key)?.label ?? key
   const [filterCategory, setFilterCategory] = useState<FilterCategory | ''>('')
   const [filterLabel, setFilterLabel] = useState<string>('')
   // Beginner shows a plain KPI subset + Setup Performance + Journal Themes; Pro
@@ -302,12 +320,12 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
           className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-600"
         >
           <option value="">Category…</option>
-          {(Object.keys(FILTER_CATEGORY_LABELS) as FilterCategory[])
+          {filterOptions
             // Hide Orderflow as a filter category when the trader's profile
             // doesn't use order flow (Pt 17 profile-driven UI).
-            .filter(c => usesOrderFlow || c !== 'order_flow')
-            .map(c => (
-              <option key={c} value={c}>{FILTER_CATEGORY_LABELS[c]}</option>
+            .filter(o => usesOrderFlow || o.key !== 'order_flow')
+            .map(o => (
+              <option key={o.key} value={o.key}>{o.label}</option>
             ))}
         </select>
         <select
@@ -316,7 +334,7 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
           disabled={!filterCategory || availableLabels.length === 0}
           className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded px-2 py-1 min-w-[180px] focus:outline-none focus:border-blue-600 disabled:opacity-40"
         >
-          <option value="">{filterCategory ? `Any ${FILTER_CATEGORY_LABELS[filterCategory]}…` : 'Pick a category first'}</option>
+          <option value="">{filterCategory ? `Any ${filterLabelFor(filterCategory)}…` : 'Pick a category first'}</option>
           {availableLabels.map(label => (
             <option key={label} value={label}>{label}</option>
           ))}
@@ -333,7 +351,7 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
         {filterCategory && filterLabel && (
           <span className="text-xs text-blue-300 ml-auto">
             Showing <span className="font-bold">{filtered.length}</span> of {dateFiltered.length} trades
-            <span className="text-gray-500"> · {FILTER_CATEGORY_LABELS[filterCategory]}: {filterLabel}</span>
+            <span className="text-gray-500"> · {filterLabelFor(filterCategory)}: {filterLabel}</span>
           </span>
         )}
       </div>

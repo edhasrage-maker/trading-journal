@@ -1,18 +1,18 @@
 import { createClient } from '@/lib/supabase/server'
 import TagMergeClient from '@/components/settings/TagMergeClient'
-import { normalizeTagArray, type TagCategory, type TradeTag } from '@/lib/supabase/types'
+import { normalizeTagArray, type TradeTag } from '@/lib/supabase/types'
+import { BUILTIN_TAG_CATEGORIES, resolveTagCategories, type TagCategoryDef } from '@/lib/tag-categories'
+import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
 const PAGE = 1000
-const CATEGORIES: TagCategory[] = [
-  'setups', 'confluences', 'order_flow', 'trade_management', 'day_type', 'mistakes', 'emotions',
-]
 
 async function tallyUsage(
   supabase: AnyClient,
   table: 'trades' | 'historical_trades',
+  categories: readonly string[],
   counts: Map<string, number>,
 ): Promise<void> {
   for (let page = 0; ; page++) {
@@ -25,7 +25,7 @@ async function tallyUsage(
     const rows = (data ?? []) as { tags_json: Record<string, unknown> | null }[]
     for (const r of rows) {
       const tj = r.tags_json ?? {}
-      for (const cat of CATEGORIES) {
+      for (const cat of categories) {
         for (const label of normalizeTagArray(tj[cat])) {
           if (!label) continue
           const key = `${cat}|${label}`
@@ -47,9 +47,18 @@ export default async function TagsSettingsPage() {
     .order('sort_order', { ascending: true }) as { data: TradeTag[] | null }
   const tags = tagsRaw ?? []
 
+  // The category list is the trader's own now (Pt 16): built-ins they haven't
+  // removed, plus any axis they added. Usage is tallied over exactly that list
+  // so a custom category's chips carry real counts.
+  const prefs = await readCategoryPrefs(supabase)
+  const categories = resolveTagCategories(prefs, await categoryKeysInUse(supabase))
+  const hiddenKeys = new Set(prefs.hidden ?? [])
+  const hidden: TagCategoryDef[] = BUILTIN_TAG_CATEGORIES.filter(c => hiddenKeys.has(c.key)).map(c => ({ ...c }))
+
   const counts = new Map<string, number>()
-  await tallyUsage(supabase, 'trades', counts)
-  await tallyUsage(supabase, 'historical_trades', counts)
+  const keys = categories.map(c => c.key)
+  await tallyUsage(supabase, 'trades', keys, counts)
+  await tallyUsage(supabase, 'historical_trades', keys, counts)
   const usage: Record<string, number> = {}
   for (const [k, v] of counts) usage[k] = v
 
@@ -63,8 +72,12 @@ export default async function TagsSettingsPage() {
           the <span className="text-gray-400">✕</span> on its chip. Merge and
           remove rewrite every native + imported trade that uses the tag.
         </p>
+        <p className="text-sm text-gray-500 mt-2">
+          Categories are yours too — add your own (say <span className="text-gray-400">4h Candle Shape</span>)
+          and remove any you don&apos;t use.
+        </p>
       </header>
-      <TagMergeClient tags={tags} usage={usage} />
+      <TagMergeClient tags={tags} usage={usage} categories={categories} hidden={hidden} />
     </div>
   )
 }

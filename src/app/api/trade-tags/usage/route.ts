@@ -1,8 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
-import type { TagCategory } from '@/lib/supabase/types'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { clientError } from '@/lib/api-error'
+import { resolveTagCategories } from '@/lib/tag-categories'
+import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -18,13 +19,11 @@ type AnyClient = any
  */
 
 const PAGE = 1000
-const CATEGORIES: TagCategory[] = [
-  'setups', 'confluences', 'order_flow', 'trade_management', 'day_type', 'mistakes', 'emotions',
-]
 
 async function tallyTable(
   supabase: AnyClient,
   table: 'trades' | 'historical_trades',
+  categories: readonly string[],
   counts: Map<string, number>,
 ): Promise<void> {
   for (let page = 0; ; page++) {
@@ -37,7 +36,7 @@ async function tallyTable(
     const rows = (data ?? []) as { tags_json: Record<string, unknown> | null }[]
     for (const r of rows) {
       const tj = r.tags_json ?? {}
-      for (const cat of CATEGORIES) {
+      for (const cat of categories) {
         for (const label of normalizeTagArray(tj[cat])) {
           if (!label) continue
           const key = `${cat}|${label}`
@@ -53,8 +52,14 @@ export async function GET() {
   const supabase: AnyClient = await createClient()
   const counts = new Map<string, number>()
   try {
-    await tallyTable(supabase, 'trades', counts)
-    await tallyTable(supabase, 'historical_trades', counts)
+    // Tally over the trader's OWN axes (built-ins they kept + anything they
+    // added), so a custom category's chips carry real counts.
+    const categories = resolveTagCategories(
+      await readCategoryPrefs(supabase),
+      await categoryKeysInUse(supabase),
+    ).map(c => c.key)
+    await tallyTable(supabase, 'trades', categories, counts)
+    await tallyTable(supabase, 'historical_trades', categories, counts)
   } catch (e) {
     return NextResponse.json(
       { error: clientError(e, 'Tally failed') },

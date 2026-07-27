@@ -193,7 +193,19 @@ export type BarImport = Database['public']['Tables']['bar_imports']['Row']
  */
 export type BarGranularity = '1m' | '5m' | '15m' | '1h' | '1d'
 
-export type TagCategory = 'setups' | 'confluences' | 'order_flow' | 'entry_model' | 'trade_management' | 'day_type' | 'mistakes' | 'emotions'
+/** The taxonomy axes TapeScore ships with. */
+export type BuiltinTagCategory =
+  | 'setups' | 'confluences' | 'order_flow' | 'entry_model'
+  | 'trade_management' | 'day_type' | 'mistakes' | 'emotions'
+
+/**
+ * A tag category key. OPEN by design (Pt 16): a trader can add their own axis
+ * ("4h Candle Shape") from Settings → Tags, so this is any snake_case slug —
+ * `src/lib/tag-categories.ts` owns the resolver and the shape rules. The
+ * `(string & {})` half keeps the built-in names autocompleting while letting a
+ * custom key through anywhere a category is accepted.
+ */
+export type TagCategory = BuiltinTagCategory | (string & {})
 export type StatCategory = 'rvol' | 'ib_sizing' | 'adr' | 'atr'
 
 /** One row of the "Where price can go" roadmap. `role` orders the card
@@ -364,6 +376,13 @@ export interface TradeTags {
   day_type?: string[]
   mistakes?: string[]
   emotions?: string[]
+  /**
+   * Custom categories (Pt 16). `tags_json` is JSONB, so a trader-defined axis
+   * is just another key — no schema change per category. The union covers the
+   * legacy single-string `day_type` shape too; always read through
+   * `normalizeTagArray()`.
+   */
+  [category: string]: string[] | string | undefined
 }
 
 /**

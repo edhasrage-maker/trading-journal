@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { TradeTag, TradeTags, TagCategory } from '@/lib/supabase/types'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { useUiMode } from '@/lib/ui-mode'
+import { useTagCategories } from '@/lib/tag-categories-client'
 
 interface Props {
   tags: TradeTag[]
@@ -17,39 +18,29 @@ interface Props {
   onTagCreated?: (tag: TradeTag) => void
 }
 
-const CATEGORY_LABELS: Record<TagCategory, string> = {
+/** Shorter headings than the canonical names where the picker is tight on
+ *  space. Anything not listed (including every custom category) uses its own
+ *  label as-is. */
+const SHORT_LABELS: Record<string, string> = {
   setups: 'Setup',
-  confluences: 'Confluences',
-  order_flow: 'Order Flow',
-  entry_model: 'Entry Model',
   trade_management: 'Management',
-  day_type: 'Day Type',
-  mistakes: 'Mistakes',
-  emotions: 'Emotions',
 }
 
-const CATEGORY_COLORS: Partial<Record<TagCategory, string>> = {
+const CATEGORY_COLORS: Record<string, string> = {
   mistakes: 'bg-red-700 border-red-600 text-white',
   emotions: 'bg-purple-700 border-purple-600 text-white',
 }
 
 const DEFAULT_SELECTED = 'bg-blue-700 border-blue-600 text-white'
 
-const CATEGORY_ORDER: TagCategory[] = [
-  'setups',
-  'confluences',
-  'order_flow',
-  'entry_model',
-  'trade_management',
-  'day_type',
-  'mistakes',
-  'emotions',
-]
-
 export default function TagSelector({ tags, selected, suggested, onChange, onTagCreated }: Props) {
   // Highlights (beginner) shows only the Setup category; Detailed Tape (pro)
   // shows the full taxonomy. (docs/BEGINNER_PRO_MODES.md)
   const { mode } = useUiMode()
+  // The trader's own category list (Pt 16) — built-ins they kept plus any axis
+  // they added in Settings → Tags. Starts from the built-ins so the picker
+  // paints instantly, then reconciles.
+  const categories = useTagCategories()
   // Which category currently has its inline input expanded (only one at a
   // time; the affordance is rarely used and stays out of the way otherwise).
   const [addingFor, setAddingFor] = useState<TagCategory | null>(null)
@@ -112,17 +103,21 @@ export default function TagSelector({ tags, selected, suggested, onChange, onTag
     }
   }
 
-  // Show every category in CATEGORY_ORDER, even empty ones — otherwise the
-  // user can't add the very first tag to an empty category.
+  // Show every category the trader has, even empty ones — otherwise they can't
+  // add the very first tag to a category they just created.
+  const visible = mode === 'beginner'
+    ? categories.filter(c => c.key === 'setups')
+    : categories
   return (
     <div className="space-y-4">
-      {(mode === 'beginner' ? (['setups'] as TagCategory[]) : CATEGORY_ORDER).map(cat => {
+      {visible.map(def => {
+        const cat = def.key
         const list = byCategory[cat] ?? []
         const adding = addingFor === cat
         return (
           <div key={cat}>
             <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              {CATEGORY_LABELS[cat] ?? cat}
+              {SHORT_LABELS[cat] ?? def.label}
             </h4>
             <div className="flex flex-wrap gap-1.5 items-center">
               {list.map(tag => {

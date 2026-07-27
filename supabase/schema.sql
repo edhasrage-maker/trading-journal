@@ -178,9 +178,12 @@ create index if not exists trades_day_idx on trades(trading_day_id);
 -- ============================================================
 create table if not exists trade_tags (
   id uuid primary key default uuid_generate_v4(),
-  category text not null check (category in (
-    'setups', 'confluences', 'order_flow', 'trade_management', 'day_type', 'mistakes', 'emotions'
-  )),
+  -- OPEN taxonomy (Pt 16, migration 20260727_custom_tag_categories): traders add
+  -- their own axes ("4h Candle Shape") from Settings → Tags, so this is a SHAPE
+  -- check, not a value enum. The key doubles as a JSONB key in trades.tags_json,
+  -- hence the lowercase snake_case rule. Which categories a trader sees lives in
+  -- trader_profile.onboarding_json.tag_categories — see src/lib/tag-categories.ts.
+  category text not null check (category ~ '^[a-z][a-z0-9_]{1,30}$'),
   label text not null,
   sort_order integer default 0,
   -- Free-text definition. Used by /api/predict-day-type to give the AI a

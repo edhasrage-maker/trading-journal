@@ -4,6 +4,8 @@ import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { normalizeTagArray, type Trade, type TradingDay, type MarketContext, type TradeTags, type EodAiAnalysis } from '@/lib/supabase/types'
 import { rMultiple as rMultipleNum } from '@/lib/analytics'
+import { resolveTagCategories } from '@/lib/tag-categories'
+import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
 
 /**
  * Drop a copy of every export into the project's exports/ folder. The dev
@@ -177,7 +179,15 @@ export async function GET(req: Request) {
   const dayById = new Map(daysRaw.map(d => [d.id, d]))
   const ctxByDay = new Map(ctxRaw.map(c => [c.trading_day_id, c]))
 
-  const lines: string[] = [TRADE_HEADERS.join(',')]
+  // Custom tag categories (Pt 16) become EXTRA COLUMNS AT THE END. Appending
+  // rather than interleaving keeps the shipped column order byte-stable, so a
+  // spreadsheet or script built against an older export still lines up.
+  const extraCategories = resolveTagCategories(
+    await readCategoryPrefs(supabase),
+    await categoryKeysInUse(supabase),
+  ).map(c => c.key).filter(k => !TRADE_HEADERS.includes(k))
+
+  const lines: string[] = [[...TRADE_HEADERS, ...extraCategories].join(',')]
 
   for (const t of trades) {
     const day = dayById.get(t.trading_day_id)
@@ -234,6 +244,8 @@ export async function GET(req: Request) {
       t.sierra_trade_id ?? '',
       t.screenshot_url ?? '',
       t.notes ?? '',
+      // Custom categories, in the same order as the appended headers.
+      ...extraCategories.map(c => joinTags((tags as Record<string, unknown>)[c])),
     ].map(csvCell).join(',')
 
     lines.push(row)

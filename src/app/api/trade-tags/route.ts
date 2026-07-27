@@ -3,20 +3,11 @@ import { NextResponse } from 'next/server'
 import type { TagCategory, TradeTag } from '@/lib/supabase/types'
 import { tagKey } from '@/lib/tradezella-import'
 import { clientError } from '@/lib/api-error'
+import { resolveTagCategories } from '@/lib/tag-categories'
+import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
-
-const VALID_CATEGORIES: TagCategory[] = [
-  'setups',
-  'confluences',
-  'order_flow',
-  'entry_model',
-  'trade_management',
-  'day_type',
-  'mistakes',
-  'emotions',
-]
 
 export async function GET() {
   const supabase: AnyClient = await createClient()
@@ -33,7 +24,14 @@ export async function POST(req: Request) {
   const category = (body.category ?? '').trim() as TagCategory
   const label = (body.label ?? '').trim()
 
-  if (!category || !VALID_CATEGORIES.includes(category)) {
+  // The category list is per-trader now (built-ins minus hidden, plus their own
+  // axes), so validate against what THIS trader actually has rather than a
+  // hardcoded union — otherwise a custom category could never hold a tag.
+  const categories = resolveTagCategories(
+    await readCategoryPrefs(supabase),
+    await categoryKeysInUse(supabase),
+  )
+  if (!category || !categories.some(c => c.key === category)) {
     return NextResponse.json({ error: `Invalid category: ${category}` }, { status: 400 })
   }
   if (!label) {

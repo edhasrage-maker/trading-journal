@@ -26,11 +26,12 @@ const client = new Anthropic()
  * don't re-suggest tags already on the trade.
  */
 
-// Categories worth suggesting from free-text notes. day_type is excluded — it's
-// structural / auto-tagged (RTH vs GBX), not something described in notes.
-const SUGGESTABLE: TagCategory[] = [
-  'setups', 'confluences', 'order_flow', 'entry_model', 'trade_management', 'mistakes', 'emotions',
-]
+// Categories NOT worth suggesting from free-text notes. day_type is structural
+// / auto-tagged (RTH vs GBX), not something a trader describes in prose.
+// Everything else the trader has — including the custom axes they added in
+// Settings → Tags (Pt 16) — is fair game, since the model is constrained to
+// labels that already exist in their library and can never invent one.
+const NOT_SUGGESTABLE: readonly string[] = ['day_type']
 
 /** Deterministic 5m-structure confluence labels. `followFade(side, regime)` is
  *  exact math, so these are suggested from the trade's stored
@@ -65,7 +66,7 @@ export async function POST(req: Request) {
   // Group the library by category, keeping only the suggestable categories.
   const library = new Map<TagCategory, string[]>()
   for (const r of tagRows ?? []) {
-    if (!SUGGESTABLE.includes(r.category)) continue
+    if (NOT_SUGGESTABLE.includes(r.category)) continue
     const arr = library.get(r.category) ?? []
     if (!arr.includes(r.label)) arr.push(r.label)
     library.set(r.category, arr)
@@ -124,9 +125,10 @@ export async function POST(req: Request) {
     }
   }
 
-  const libraryBlock = SUGGESTABLE
-    .filter(cat => library.has(cat))
-    .map(cat => `${cat}:\n${library.get(cat)!.map(l => `  - ${l}`).join('\n')}`)
+  // Insertion order = the sort_order the library rows came back in, so the
+  // prompt lists categories the way the trader sees them.
+  const libraryBlock = [...library.entries()]
+    .map(([cat, labels]) => `${cat}:\n${labels.map(l => `  - ${l}`).join('\n')}`)
     .join('\n\n')
 
   const traderProfile = await getTraderProfile()
