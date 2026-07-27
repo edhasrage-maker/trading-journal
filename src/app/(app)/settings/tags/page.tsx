@@ -58,9 +58,10 @@ export default async function TagsSettingsPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-white">Tag Management</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Merge near-duplicate tags so analytics groups them correctly, or remove
-          a tag entirely with the <span className="text-gray-400">✕</span> on its
-          chip. Both rewrite every native + imported trade that uses the tag.
+          Add a tag with <span className="text-gray-400">+ Add tag</span>, merge
+          near-duplicates so analytics groups them correctly, or remove one with
+          the <span className="text-gray-400">✕</span> on its chip. Merge and
+          remove rewrite every native + imported trade that uses the tag.
         </p>
       </header>
       <TagMergeClient tags={tags} usage={usage} />

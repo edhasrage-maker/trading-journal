@@ -134,6 +134,12 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null)
   const [deleteResult, setDeleteResult] = useState<string | null>(null)
 
+  // Add-tag: which category's inline "+ Add tag" input is open + its draft.
+  const [addingCat, setAddingCat] = useState<TagCategory | null>(null)
+  const [addDraft, setAddDraft] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+  const [addError, setAddError] = useState<string | null>(null)
+
   const suggestions = useMemo(() => suggestPairs(tags, 2), [tags])
 
   const usageFor = (t: TradeTag): number => usage[`${t.category}|${t.label}`] ?? 0
@@ -244,6 +250,34 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
     }
   }
 
+  // Create a new tag in a category — reuses the same POST the inline trade-tag
+  // picker uses (idempotent server-side: an existing label just comes back).
+  const addTag = async (cat: TagCategory) => {
+    const label = addDraft.trim()
+    if (!label || addBusy) return
+    setAddBusy(true)
+    setAddError(null)
+    try {
+      const res = await fetch('/api/trade-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: cat, label }),
+      })
+      const json = (await res.json()) as { tag?: TradeTag; created?: boolean; error?: string }
+      if (!res.ok || !json.tag) { setAddError(json.error ?? `Add failed (${res.status})`); return }
+      if (json.created === false) { setAddError(`"${json.tag.label}" already exists in this category.`); return }
+      const tag = json.tag
+      setTags(prev => (prev.some(t => t.id === tag.id) ? prev : [...prev, tag]))
+      setAddDraft('')
+      setAddingCat(null)
+      router.refresh() // keep the SSR usage tallies in sync
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setAddBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-8">
       {/* Delete result banner */}
@@ -276,7 +310,7 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
       {/* Per-category sections */}
       {CATEGORY_ORDER.map(cat => {
         const catTags = byCategory[cat] ?? []
-        if (catTags.length === 0) return null
+        // Render EVERY category (even empty ones) so a first tag can be added.
         const catSuggestions = suggestionsByCategory[cat] ?? []
         return (
           <section key={cat} className="space-y-3">
@@ -302,7 +336,7 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
               </div>
             )}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
               {catTags.map(t => (
                 <span
                   key={t.id}
@@ -322,7 +356,53 @@ export default function TagMergeClient({ tags: initialTags, usage: initialUsage 
                   </button>
                 </span>
               ))}
+
+              {/* Inline add — create a new tag in this category. */}
+              {addingCat === cat ? (
+                <span className="inline-flex items-center gap-1">
+                  <input
+                    autoFocus
+                    value={addDraft}
+                    onChange={e => setAddDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); void addTag(cat) }
+                      else if (e.key === 'Escape') { setAddingCat(null); setAddDraft(''); setAddError(null) }
+                    }}
+                    placeholder="New tag…"
+                    disabled={addBusy}
+                    maxLength={80}
+                    className="px-2.5 py-1 rounded-full text-xs bg-gray-900 border border-gray-600 text-gray-100 focus:border-blue-500 focus:outline-none w-40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void addTag(cat)}
+                    disabled={addBusy || !addDraft.trim()}
+                    className="px-2.5 py-1 rounded-full text-xs bg-blue-700 border border-blue-600 text-white disabled:opacity-50"
+                  >
+                    {addBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Add'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setAddingCat(null); setAddDraft(''); setAddError(null) }}
+                    className="text-gray-600 hover:text-gray-300 px-1"
+                    aria-label="Cancel"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setAddingCat(cat); setAddDraft(''); setAddError(null) }}
+                  className="px-2.5 py-1 rounded-full text-xs font-medium border border-dashed border-gray-600 text-gray-500 hover:border-gray-400 hover:text-gray-300 transition-colors"
+                >
+                  + Add tag
+                </button>
+              )}
             </div>
+            {addingCat === cat && addError && (
+              <p className="text-xs text-red-400">{addError}</p>
+            )}
           </section>
         )
       })}
