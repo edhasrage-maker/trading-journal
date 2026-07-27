@@ -1229,14 +1229,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           />
         </Section>
 
-        <Section title="TapeScore read" sub="plain read · yours to override" control={analyzeButton}>
-          <PrepAiRead analysis={aiAnalysis} />
-        </Section>
-
-        {/* Your read — LAST in Detailed Tape on purpose: you form your bias,
-            observations and mood AFTER annotating the chart, day type and market
-            context above, not before. */}
-        <Section title="Your read" sub="your call, after everything above">
+        {/* Your read — you commit your bias, observations and mood here: AFTER
+            annotating the chart, day type and market context above, but BEFORE
+            the AI's TapeScore read below, which grades what you've written. */}
+        <Section title="Your read" sub="your call — TapeScore grades it below">
           <PrepNotesForm
             part="read"
             value={prepNotes}
@@ -1247,6 +1243,10 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             showAdvanced={isAdmin}
             beginner={false}
           />
+        </Section>
+
+        <Section title="TapeScore read" sub="plain read · yours to override" control={analyzeButton}>
+          <PrepAiRead analysis={aiAnalysis} />
         </Section>
       </>)}
 
