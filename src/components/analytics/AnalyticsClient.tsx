@@ -14,6 +14,7 @@ import CsvExportButton from './CsvExportButton'
 import TradeListModal, { type ModalCategory } from './TradeListModal'
 import DataInsights from '@/components/insights/DataInsights'
 import { computeInsights, type InsightTrade } from '@/lib/data-insights'
+import { mergeDiveInsights, runDives, toDiveRows, type DiveRow } from '@/lib/deep-dive/registry'
 import { useUiMode } from '@/lib/ui-mode'
 import { useLongTaskBeacon } from '@/lib/longtask-beacon'
 import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
@@ -179,8 +180,16 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
   // Computed over the same `filtered` set every table reads, gated + ranked by
   // (effect × sample confidence); the engine returns nothing on a thin sample,
   // and DataInsights renders nothing when the list is empty.
+  // Deep dives (Pt 11) merge into the same list: they carry the modelled-dollar
+  // findings the contrast engine can't produce, and each supersedes any
+  // shallower read of its own subject. Pure functions over rows already in
+  // memory, so this costs no extra query.
   const insights = useMemo(
-    () => computeInsights(filtered.map(toInsightTrade), { limit: 5 }),
+    () => mergeDiveInsights(
+      computeInsights(filtered.map(toInsightTrade), { limit: 6 }),
+      runDives(toDiveRows(filtered as unknown as (Partial<DiveRow> & { id: string })[])),
+      5,
+    ),
     [filtered],
   )
 

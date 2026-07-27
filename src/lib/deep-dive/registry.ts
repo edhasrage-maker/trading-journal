@@ -19,6 +19,9 @@ import { analyzeScaleOutEv, type ScaleOutTrade } from './scale-out-ev'
 import { analyzeTimeOfDay, type TimeOfDayTrade } from './time-of-day'
 import type { ExitFill } from './exit-events'
 import type { DeepDiveResult } from './types'
+// Type-only: dives render into the same "what your data already says" list as
+// the contrast engine, but the two libs stay decoupled at runtime.
+import type { RankedInsight } from '@/lib/data-insights'
 
 /** The lean trade row every server-side dive reads. One query feeds them all. */
 export interface DiveRow {
@@ -40,6 +43,27 @@ export interface DiveOptions {
   timeZone?: string
 }
 
+/** How a dive presents itself in the "what your data already says" list, whose
+ *  voice is a short CLAIM followed by the numbers. The dive's own headline is
+ *  the numbers, so each dive supplies the claim — one for a finding that costs
+ *  money, one for a clean read. */
+interface InsightCopy {
+  /** Eyebrow, matching the contrast engine's dimension labels. */
+  dimension: string
+  /** Claim when the dive found something worth fixing. No trailing period. */
+  leak: string
+  /** Claim when it didn't. */
+  ok: string
+  /** Tone for the clean read — 'good' is a genuine all-clear, 'neutral' is
+   *  "nothing separated itself", which is not the same thing. */
+  okTone: 'good' | 'neutral'
+  /** Noun for the footnote sample count ("205 scale-outs"). */
+  sampleUnit: string
+  /** Contrast-engine insight keys this dive supersedes, so the list never runs
+   *  two reads of the same subject side by side. */
+  supersedes: string[]
+}
+
 interface DiveRunner {
   id: string
   title: string
@@ -48,6 +72,7 @@ interface DiveRunner {
   /** What gets sent to the coach when the trader clicks the opener topic. Phrased
    *  so it ALSO matches this dive's own keywords — clicking routes back here. */
   followUp: string
+  insight: InsightCopy
   run(rows: DiveRow[], opts: DiveOptions): DeepDiveResult | null
 }
 
@@ -59,6 +84,14 @@ export const SERVER_DIVES: DiveRunner[] = [
     title: 'The tilt cascade',
     keywords: ['tilt', 'revenge', 'after a loss', 'losing streak', 'consecutive losses', 'chasing', 'on tilt'],
     followUp: 'Walk me through my tilt cascade after consecutive losses — what does the data say?',
+    insight: {
+      dimension: 'Tilt', okTone: 'good', sampleUnit: 'trades',
+      leak: 'A losing streak turns you into a different trader',
+      ok: "Losing streaks don't knock you off your game",
+      // 'prev_outcome' is the contrast engine's after-a-win/after-a-loss read —
+      // the same subject, one layer shallower.
+      supersedes: ['prev_outcome'],
+    },
     run: rows => analyzeTiltCascade(rows
       .filter(r => r.entry_time)
       .map((r): TiltTrade => ({ day: dayOf(r.entry_time), entryTime: r.entry_time!, pnl: r.pnl, quantity: r.quantity }))),
@@ -68,6 +101,15 @@ export const SERVER_DIVES: DiveRunner[] = [
     title: 'Is scaling out paying you?',
     keywords: ['scale out', 'scaling', 'partials', 'runner', 'tp1', 'first target', 'take profit', 'let it run', 'trim'],
     followUp: 'Is scaling out actually paying me, or should I take the full size at my first target?',
+    insight: {
+      dimension: 'Exits', okTone: 'good', sampleUnit: 'scale-outs',
+      leak: 'Your runners cost more than they pay',
+      ok: 'Your scale-out is earning its keep',
+      // Supersede the capture read: on its own "you keep 39% of the move" reads
+      // as "hold longer", which is the OPPOSITE of what the EV math says when
+      // the runner is the leak. One read of the exit, not two that fight.
+      supersedes: ['capture_efficiency'],
+    },
     run: rows => analyzeScaleOutEv(rows.map((r): ScaleOutTrade => ({
       id: r.id,
       direction: r.direction,
@@ -85,6 +127,12 @@ export const SERVER_DIVES: DiveRunner[] = [
     title: 'Your session clock',
     keywords: ['time of day', 'session', 'morning', 'afternoon', 'open', 'lunch', 'power hour', 'what time', 'which hour', 'too early', 'too late'],
     followUp: 'What does my session clock say — is there a time of day I should stop trading?',
+    insight: {
+      dimension: 'Session clock', okTone: 'neutral', sampleUnit: 'trades',
+      leak: 'Part of your trading day is pure tuition',
+      ok: 'No part of your session stands out as the problem',
+      supersedes: ['time_of_day'],
+    },
     run: (rows, opts) => analyzeTimeOfDay(
       rows.map((r): TimeOfDayTrade => ({ entryTime: r.entry_time, pnl: r.pnl })),
       { timeZone: opts.timeZone },
@@ -128,6 +176,77 @@ export function diveSuggestions(results: DeepDiveResult[]): { id: string; line: 
       ?? `Dig into "${r.title}" — show me the breakdown.`,
     score: r.severity,
   }))
+}
+
+/** Normalize any trade-ish row set (the first-read teaser rows, the analytics
+ *  rows) into DiveRows, so a call site that already fetched trades doesn't need
+ *  a second query just to run the dives. */
+export function toDiveRows(rows: (Partial<DiveRow> & { id: string })[]): DiveRow[] {
+  return rows.map(r => ({
+    id: r.id,
+    entry_time: r.entry_time ?? null,
+    direction: r.direction ?? null,
+    entry_price: r.entry_price ?? null,
+    quantity: r.quantity ?? null,
+    pnl: r.pnl ?? null,
+    symbol: r.symbol ?? null,
+    high_during_position: r.high_during_position ?? null,
+    low_during_position: r.low_during_position ?? null,
+    entry_atr_1m: r.entry_atr_1m ?? null,
+    exits_json: Array.isArray(r.exits_json) ? r.exits_json : null,
+  }))
+}
+
+/** At most this many of the list's slots go to dives, so the block keeps at
+ *  least one classic contrast when both kinds have something to say. */
+const MAX_DIVE_INSIGHTS = 2
+
+/**
+ * Render findings in the voice of the "what your data already says" list: a
+ * short claim, then the dive's own headline as the number-carrying detail.
+ */
+export function diveInsights(results: DeepDiveResult[]): RankedInsight[] {
+  const out: RankedInsight[] = []
+  for (const r of results) {
+    const dive = SERVER_DIVES.find(d => d.id === r.id)
+    if (!dive) continue
+    const { insight } = dive
+    // A dive that proposes a test found something that costs money; one that
+    // doesn't looked and found nothing to fix.
+    const isLeak = r.test != null && r.test.impactUsd > 0
+    const sample = r.segments.reduce((m, s) => Math.max(m, s.n ?? 0), 0)
+    out.push({
+      key: `dive_${r.id.replace(/-/g, '_')}`,
+      dimension: insight.dimension,
+      headline: isLeak ? insight.leak : insight.ok,
+      detail: r.headline,
+      footnote: sample > 0 ? `${sample.toLocaleString('en-US')} ${insight.sampleUnit}` : '',
+      tone: isLeak ? 'bad' : insight.okTone,
+      score: r.severity,
+    })
+  }
+  return out
+}
+
+/**
+ * Merge dive findings into the contrast-engine list: drop any insight a dive
+ * supersedes, rank everything together on score, and cap the dive share so the
+ * list doesn't become all dives.
+ */
+export function mergeDiveInsights(
+  insights: RankedInsight[],
+  results: DeepDiveResult[],
+  limit: number,
+): RankedInsight[] {
+  const dives = diveInsights(results)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_DIVE_INSIGHTS)
+  const superseded = new Set(
+    dives.flatMap(d => SERVER_DIVES.find(s => `dive_${s.id.replace(/-/g, '_')}` === d.key)?.insight.supersedes ?? []),
+  )
+  return [...insights.filter(i => !superseded.has(i.key)), ...dives]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
 }
 
 /**

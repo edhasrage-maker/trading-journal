@@ -21,6 +21,7 @@ import { NextResponse } from 'next/server'
 import { avgCaptureRatio, avgMfeMaeRatio, formatCapturePct, type TradeWithExcursion } from '@/lib/analytics'
 import { computeBehavioralProxies, type ProxyTrade } from '@/lib/behavioral-proxies'
 import { computeInsights, type InsightTrade, type RankedInsight } from '@/lib/data-insights'
+import { mergeDiveInsights, runDives, toDiveRows, type DiveRow } from '@/lib/deep-dive/registry'
 import { userConflict } from '@/lib/tenant-conflict'
 
 export const dynamic = 'force-dynamic'
@@ -148,7 +149,15 @@ export async function GET(req: Request) {
   // gated/ranked "what your data already says" read the Patterns page shows,
   // teased on the first-read card so a brand-new tagless account gets a payoff
   // beyond just best/worst day. Empty on a thin sample (the engine suppresses).
-  const insights: RankedInsight[] = computeInsights(trades as unknown as InsightTrade[], { limit: 3 })
+  // Deep dives run over the SAME rows and merge into the same ranked list: they
+  // answer what the contrast engine can't ("scaling out costs you $X over 205
+  // scale-outs"), and each supersedes any shallower read of its own subject.
+  // Compute a few extra contrasts so the merge has real candidates to rank.
+  const insights: RankedInsight[] = mergeDiveInsights(
+    computeInsights(trades as unknown as InsightTrade[], { limit: 5 }),
+    runDives(toDiveRows(trades as unknown as (Partial<DiveRow> & { id: string })[])),
+    3,
+  )
 
   const byDay = new Map<string, TeaserTrade[]>()
   for (const t of trades) {

@@ -6,9 +6,11 @@
  */
 import {
   SERVER_DIVES, UNAVAILABLE_DIVES, runDives, diveSuggestions, matchDiveIds,
-  formatDiveForPrompt, diveContextBlock, type DiveRow,
+  formatDiveForPrompt, diveContextBlock, diveInsights, mergeDiveInsights, toDiveRows,
+  type DiveRow,
 } from '../src/lib/deep-dive/registry.ts'
 import type { DeepDiveResult } from '../src/lib/deep-dive/types.ts'
+import type { RankedInsight } from '../src/lib/data-insights.ts'
 
 let failures = 0
 const check = (name: string, cond: boolean, detail?: string) => {
@@ -101,6 +103,43 @@ const noTest: DeepDiveResult = {
   segments: [{ label: 'only', value: 1 }], detail: ['d'],
 }
 check('renders a finding that proposes no test', !formatDiveForPrompt(noTest).includes('PROPOSED TEST'))
+
+console.log('dive-registry: "what your data already says" merge')
+
+const asInsights = diveInsights(results)
+check('one insight per finding', asInsights.length === results.length)
+check('headline is a short claim, not the numbers', asInsights.every(i => !/\$|%/.test(i.headline)))
+check('claims carry no trailing period (the renderer adds one)', asInsights.every(i => !i.headline.endsWith('.')))
+check('detail carries the numbers', asInsights.some(i => /\$/.test(i.detail)))
+check('a finding with a test is toned as a leak',
+  asInsights.find(i => i.key === 'dive_scale_out_ev')?.tone === 'bad')
+check('keys are namespaced so they cannot collide with contrast keys',
+  asInsights.every(i => i.key.startsWith('dive_')))
+check('footnote states the sample', /\d+ (trades|scale-outs)/.test(asInsights[0].footnote))
+
+const classic: RankedInsight[] = [
+  { key: 'time_of_day', dimension: 'Time of day', headline: 'Right after the open is your weak spot', detail: 'd', footnote: 'f', tone: 'bad', score: 0.9 },
+  { key: 'capture_efficiency', dimension: 'Exits', headline: 'You keep less than half the move', detail: 'd', footnote: 'f', tone: 'bad', score: 0.85 },
+  { key: 'instrument', dimension: 'Instrument', headline: 'NQ is your best book', detail: 'd', footnote: 'f', tone: 'good', score: 0.8 },
+]
+const merged = mergeDiveInsights(classic, results, 3)
+check('merged list respects the limit', merged.length === 3)
+check('the scale-out dive supersedes the capture read',
+  !merged.some(i => i.key === 'capture_efficiency') && merged.some(i => i.key === 'dive_scale_out_ev'))
+check('unrelated contrasts survive when there is room', mergeDiveInsights(classic, results, 5).some(i => i.key === 'instrument'))
+// The time-of-day dive is capped out of this list (two stronger dives take the
+// slots), so it must NOT suppress the contrast engine's time-of-day read — a
+// finding that isn't shown can't supersede anything.
+check('a dive capped out of the list suppresses nothing', merged.some(i => i.key === 'time_of_day'))
+check('merged list is ranked by score',
+  merged.every((i, n) => n === 0 || merged[n - 1].score >= i.score))
+check('caps the dive share of the list', mergeDiveInsights(classic, results, 5).filter(i => i.key.startsWith('dive_')).length <= 2)
+check('no findings ⇒ the contrast list is untouched',
+  mergeDiveInsights(classic, [], 3).map(i => i.key).join(',') === 'time_of_day,capture_efficiency,instrument')
+
+check('toDiveRows fills missing fields with null', toDiveRows([{ id: 'a' }])[0].pnl === null)
+check('toDiveRows rejects a non-array exits_json',
+  toDiveRows([{ id: 'a', exits_json: 'x' as unknown as DiveRow['exits_json'] }])[0].exits_json === null)
 
 console.log(failures === 0 ? '\nAll dive-registry tests passed.' : `\n${failures} failure(s).`)
 process.exit(failures === 0 ? 0 : 1)

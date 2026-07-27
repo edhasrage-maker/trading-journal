@@ -15,6 +15,7 @@ import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { analyzeTiltCascade, type TiltTrade } from '../src/lib/deep-dive/tilt-cascade.ts'
 import { analyzeScaleOutEv, type ScaleOutTrade } from '../src/lib/deep-dive/scale-out-ev.ts'
+import { diveInsights, runDives, toDiveRows, type DiveRow } from '../src/lib/deep-dive/registry.ts'
 import { analyzeTimeOfDay, type TimeOfDayTrade } from '../src/lib/deep-dive/time-of-day.ts'
 import type { DeepDiveResult } from '../src/lib/deep-dive/types.ts'
 
@@ -125,6 +126,19 @@ async function main() {
       atrPts: r.entry_atr_1m == null ? null : Number(r.entry_atr_1m),
     }))
     show(analyzeScaleOutEv(input), 'scale-out-ev')
+  }
+
+  // Exactly the lines the dashboard's "what your data already says" block will
+  // render for this account (claim + numbers), before the merge with the
+  // contrast engine trims them to the top few.
+  if (!diveArg) {
+    console.log(`\n── "what your data already says" rows ${'─'.repeat(26)}`)
+    const insights = diveInsights(runDives(toDiveRows(rows as unknown as (Partial<DiveRow> & { id: string })[]), { timeZone: TZ }))
+    if (!insights.length) console.log('  (no dive findings for this account)')
+    for (const i of insights) {
+      console.log(`  • [${i.dimension}] ${i.headline}. ${i.detail}`)
+      console.log(`      ${i.footnote}  tone=${i.tone}  score=${i.score.toFixed(2)}`)
+    }
   }
 
   if (wanted('time-of-day')) {
