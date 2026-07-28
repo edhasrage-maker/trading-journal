@@ -13,7 +13,18 @@
  *   low_during_position  = entry_price + (min(ticks) − entryTick)
  * captureComponents clamps mfe_dollars_per_leg to the high/low ceiling, so fixing
  * the extremes fixes capture app-wide while preserving the per-leg scale-out value
- * where it sits below the (now-correct) ceiling. mfe_dollars_per_leg is left as-is.
+ * where it sits below the (now-correct) ceiling.
+ *
+ * NOTE: this script rewrites mfe_dollars_per_leg TOO — an older header claimed it
+ * was left alone, which was wrong. The two changes move capture in OPPOSITE
+ * directions and should be judged separately. Measured on the owner's 5,634
+ * NQ-family trades:
+ *     stored high/low + stored per-leg  ->  68.0%
+ *     TICK   high/low + stored per-leg  ->  74.3%   (excursion fix alone)
+ *     TICK   high/low + TICK   per-leg  ->  50.5%   (what --commit writes)
+ * The excursion fix RAISES capture, as it must when an inflated MFE denominator
+ * is corrected. The 24-point drop is entirely the per-leg rewrite. Use
+ * --skip-per-leg to apply only the excursion half.
  *
  * Covers NQ-family only (NQ/MNQ) — the only root with 2026 .scid coverage.
  * ES/MES and unrecognized symbols are skipped and counted.
@@ -38,6 +49,10 @@ for (const l of readFileSync('.env.public-feed', 'utf8').split(/\r?\n/)) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sb: any = createClient(process.env.PUBLIC_SUPABASE_URL!, process.env.PUBLIC_SUPABASE_SERVICE_ROLE_KEY!)
 const COMMIT = process.argv.includes('--commit')
+// Apply ONLY the high/low excursion correction, leaving mfe_dollars_per_leg
+// untouched. The two are independent fixes bundled in one pass and they push
+// capture opposite ways; this lets the verified half land on its own.
+const SKIP_PER_LEG = process.argv.includes('--skip-per-leg')
 const userArg = process.argv.find(a => a.startsWith('--user='))?.split('=')[1]
   ?? (process.argv.includes('--user') ? process.argv[process.argv.indexOf('--user') + 1] : undefined)
 const LIMIT = (() => { const a = process.argv.find(x => x.startsWith('--limit=')); return a ? parseInt(a.split('=')[1], 10) : Infinity })()
@@ -186,15 +201,20 @@ async function processTable(table: 'historical_trades' | 'trades', uid: string |
     // The after-row carries the new mfe_dollars_per_leg too, so the before/after
     // capture reflects BOTH fixes (captureComponents prefers mfe_dollars_per_leg,
     // clamped to the new high/low ceiling).
-    after.push({ ...r, high_during_position: ex.high, low_during_position: ex.low, mfe_dollars_per_leg: ex.mfeLeg ?? r.mfe_dollars_per_leg })
-    updates.push({ id: r.id, high: ex.high, low: ex.low, mfeLeg: ex.mfeLeg })
+    after.push({
+      ...r,
+      high_during_position: ex.high,
+      low_during_position: ex.low,
+      mfe_dollars_per_leg: SKIP_PER_LEG ? r.mfe_dollars_per_leg : (ex.mfeLeg ?? r.mfe_dollars_per_leg),
+    })
+    updates.push({ id: r.id, high: ex.high, low: ex.low, mfeLeg: SKIP_PER_LEG ? null : ex.mfeLeg })
   }
 
   const capBefore = avgCaptureRatio(before as never)
   const capAfter = avgCaptureRatio(after as never)
   console.log(`\n[${table}] rows=${rows.length} recomputed=${recomputed} skipped(non-NQ/no-cover)=${skipped}`)
   console.log(`  capture: ${capBefore.avg == null ? 'n/a' : (capBefore.avg * 100).toFixed(1) + '%'} (n=${capBefore.count})  →  ${capAfter.avg == null ? 'n/a' : (capAfter.avg * 100).toFixed(1) + '%'} (n=${capAfter.count})`)
-  console.log(`  avg |old high − new high|: ${recomputed ? (deltaSum / recomputed).toFixed(1) : 'n/a'} pts | mfe_dollars_per_leg recomputed: ${legFixed}`)
+  console.log(`  avg |old high − new high|: ${recomputed ? (deltaSum / recomputed).toFixed(1) : 'n/a'} pts | mfe_dollars_per_leg: ${SKIP_PER_LEG ? `${legFixed} computed, NOT written (--skip-per-leg)` : `${legFixed} recomputed`}`)
 
   if (COMMIT) {
     for (let i = 0; i < updates.length; i += 200) {
@@ -202,7 +222,12 @@ async function processTable(table: 'historical_trades' | 'trades', uid: string |
       await Promise.all(batch.map(u => {
         const patch: Record<string, number> = { high_during_position: u.high, low_during_position: u.low }
         if (u.mfeLeg != null) patch.mfe_dollars_per_leg = u.mfeLeg
-        return sb.from(table).update(patch).eq('id', u.id)
+        // Scope the WRITE by user too, not just the read. Ids are unique so this
+        // is belt-and-braces, but the public project is multi-tenant and this
+        // key bypasses RLS — an unscoped update is the shape of the mistake.
+        let q = sb.from(table).update(patch).eq('id', u.id)
+        if (uid) q = q.eq('user_id', uid)
+        return q
       }))
       written += batch.length
       if (written % 1000 === 0) console.log(`    …${written} written`)
