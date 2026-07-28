@@ -1045,6 +1045,62 @@ export interface Bucket {
  * buckets: <0, 0-1, 1-1.5, 1.5-2, ≥2. Trades with null values go into a
  * separate "Unknown" bucket at the end.
  */
+/**
+ * Quintile break points for a numeric condition, derived from the data itself.
+ *
+ * Exists because the hand-set alternative rots. The Performance-by-Market-
+ * Condition breaks were quintile-aligned by hand in 2026-06 and had drifted
+ * badly by 2026-07: ATR-10's quintiles slid from 10.0/12.0/14.9 down to
+ * 7.7/9.9/13.4 as the tape quietened, so 41% of trades piled into the bottom
+ * bucket and the band stopped saying anything. Absolute point/percent cuts can't
+ * survive a change in the volatility regime; deriving them can.
+ *
+ * Breaks are rounded to one "nice" step chosen from the middle of the scale, so
+ * the axis reads 8 / 10 / 13 / 19 rather than 7.74 / 9.91 / 13.43 / 18.87. One
+ * step for the whole scale (not per value) keeps the labels visually consistent.
+ *
+ * Falls back to `fallback` — and reports `derived: false` so the caller can say
+ * so — when the sample is too thin for quintiles to mean anything, or when
+ * rounding collapses the breaks into fewer than two distinct values (a
+ * degenerate distribution, e.g. every trade on one day).
+ */
+export function quintileBreaks(
+  values: number[],
+  fallback: number[],
+  minSample = 100,
+): { breaks: number[]; derived: boolean; sample: number } {
+  const clean = values.filter(v => v != null && Number.isFinite(v)).sort((a, b) => a - b)
+  if (clean.length < minSample) return { breaks: fallback, derived: false, sample: clean.length }
+  const at = (p: number) => clean[Math.min(clean.length - 1, Math.floor(clean.length * p))]
+  const raw = [0.2, 0.4, 0.6, 0.8].map(at)
+  const step = niceStep(raw[raw.length - 1] - raw[0])
+  const decimals = Number.isInteger(step) ? 0 : Number.isInteger(step * 10) ? 1 : 2
+  const rounded = Array.from(new Set(
+    raw.map(v => Number((Math.round(v / step) * step).toFixed(decimals))),
+  )).sort((a, b) => a - b)
+  if (rounded.length < 2) return { breaks: fallback, derived: false, sample: clean.length }
+  return { breaks: rounded, derived: true, sample: clean.length }
+}
+
+/**
+ * Rounding granularity for a set of breaks, chosen from how far apart they are
+ * rather than how big they are. Magnitude alone isn't enough: `ib_vs_10d_avg`
+ * and a raw ATR can both sit "around 10" while one spans 0.7 units and the
+ * other spans 11, and a step sized for the second flattens the first (rounding
+ * 0.67 and 0.86 both downward moved 30% of trades into one bucket).
+ *
+ * Targets roughly a twelfth of the p20–p80 spread — fine enough that rounding
+ * barely moves a break, coarse enough that the axis stays readable. The ladder
+ * deliberately omits 2.5 / 0.25 so breaks land on numbers a person would pick.
+ */
+const STEP_LADDER = [100, 50, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01]
+
+function niceStep(spread: number): number {
+  const target = Math.abs(spread) / 12
+  for (const s of STEP_LADDER) if (s <= target) return s
+  return STEP_LADDER[STEP_LADDER.length - 1]
+}
+
 export function bucketByNumeric(
   items: TradeWithContext[],
   getValue: (t: TradeWithContext) => number | null,

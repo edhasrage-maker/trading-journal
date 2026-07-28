@@ -498,7 +498,10 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
           {/* Mistakes / Emotions Impact tables removed — pending new tagging
               system. Historical data preserved in tags_json. */}
 
-          <ConditionBuckets trades={filtered} />
+          {/* Bars aggregate the filtered set; break points come from the full
+              loaded history so they don't move when a tag or date sub-filter is
+              applied — two views of this chart stay comparable. */}
+          <ConditionBuckets trades={filtered} calibrateFrom={trades} />
 
           <RollingPerformance trades={filtered} />
 

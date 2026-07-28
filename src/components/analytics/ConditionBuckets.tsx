@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import BarChart from '@/components/charts/BarChart'
-import { bucketByNumeric, type TradeWithContext, type Bucket } from '@/lib/analytics'
+import { bucketByNumeric, quintileBreaks, type TradeWithContext, type Bucket } from '@/lib/analytics'
 
 /**
  * Was: filter on trading_day_id (excluded all historical trades because
@@ -28,7 +28,10 @@ interface ConditionDef {
   key: 'rvol' | 'ib_vs_10d_avg' | 'ib_size' | 'adr' | 'atr_1m'
   title: string
   description: string
-  breaks: number[]
+  /** Used only when the sample is too thin to derive quintiles (see
+   *  `quintileBreaks`). Live breaks are computed from the data at render time —
+   *  these constants are the historical hand-set values, kept as a floor. */
+  fallbackBreaks: number[]
   format: (n: number) => string
   /** Per-trade value override. Returns the entry-time snapshot when available
    *  (preferred — no afternoon lookahead), falls back to the day-level value
@@ -53,7 +56,7 @@ const CONDITIONS: ConditionDef[] = [
     // they put 1% of trades above 180 and 8% below 70, so both wings were
     // effectively empty and the middle two bands carried 74% of the sample.
     // Current quintiles p20=86 p40=97 p60=109 p80=127.
-    breaks: [85, 95, 110, 130],
+    fallbackBreaks: [85, 95, 110, 130],
     format: n => `${n.toFixed(0)}%`,
     // Prefer per-trade entry-time RVOL; fall back to day-level rvol when null.
     resolve: t => t.entry_rvol ?? t.rvol,
@@ -62,7 +65,7 @@ const CONDITIONS: ConditionDef[] = [
     key: 'ib_vs_10d_avg',
     title: 'IB Size vs 10d Avg',
     description: 'Ratio of today\'s IB range to the trailing 10-day average.',
-    breaks: [0.7, 1.0, 1.3],
+    fallbackBreaks: [0.7, 1.0, 1.3],
     format: n => `${n.toFixed(1)}×`,
   },
   // Break points below are rounded to nice numbers AT the actual quintile
@@ -75,25 +78,26 @@ const CONDITIONS: ConditionDef[] = [
   // sparse and the visualization useless. These quintile-aligned breaks
   // give roughly 20% of trades per bucket so each band is informative.
   //
-  // THESE DRIFT. They're absolute point/percent values, so a shift in the
-  // volatility regime slides the whole distribution across fixed cuts.
-  // Re-checked 2026-07-27 (Pt 23): IB size (15/25/24/14/22%), ADR
-  // (20/19/18/18/25%) and IB vs 10d (23/32/22/23%) were still fine, but ATR and
-  // RVOL had gone lopsided and were re-quintiled — see the note on each. Worth
-  // re-running the check whenever the tape changes character: a 41%-in-one-
-  // bucket split means the band has stopped saying anything.
+  // THEY DRIFTED, so they are no longer what's actually rendered. Being absolute
+  // point/percent values, a shift in the volatility regime slid the whole
+  // distribution across the fixed cuts: by 2026-07 ATR-10 had 41% of trades in
+  // its bottom bucket and RVOL had 1% in its top. Both were re-quintiled by hand
+  // (2026-07-27, Pt 23) and then the hand-setting was retired entirely —
+  // `quintileBreaks` now derives the cuts from the trades on screen, so the
+  // bands re-calibrate themselves and this can't rot again. The arrays below
+  // survive only as a fallback for samples too thin to quintile.
   {
     key: 'ib_size',
     title: 'IB Size (points)',
     description: 'Initial Balance range in raw points.',
-    breaks: [100, 150, 200, 250],
+    fallbackBreaks: [100, 150, 200, 250],
     format: n => n.toFixed(0),
   },
   {
     key: 'adr',
     title: 'Average Daily Range',
     description: 'ADR in points (RTH).',
-    breaks: [220, 270, 320, 380],
+    fallbackBreaks: [220, 270, 320, 380],
     format: n => n.toFixed(0),
   },
   {
@@ -104,7 +108,7 @@ const CONDITIONS: ConditionDef[] = [
     // p40=12.0 / p60=14.9; the tape quietened and those moved to 7.7 / 9.9 /
     // 13.4, piling 41% of trades into the bottom bucket — two quintiles
     // collapsed into one bar. Current quintiles p20=7.7 p40=9.9 p60=13.4 p80=18.9.
-    breaks: [8, 10, 13, 19],
+    fallbackBreaks: [8, 10, 13, 19],
     format: n => n.toFixed(0),
     // Prefer per-trade entry-time ATR; fall back to day-level atr_1m when null.
     resolve: t => t.entry_atr_1m ?? t.atr_1m,
@@ -112,15 +116,25 @@ const CONDITIONS: ConditionDef[] = [
 ]
 
 interface Props {
+  /** Trades the bars aggregate — the fully filtered set. */
   trades: TradeWithContext[]
+  /** Trades the BREAK POINTS are derived from. Deliberately the wider,
+   *  unfiltered set: if the cuts moved every time you clicked a tag or narrowed
+   *  the date range, no two views of this chart would be comparable. Defaults to
+   *  `trades` when the caller has nothing wider to offer. */
+  calibrateFrom?: TradeWithContext[]
 }
 
-export default function ConditionBuckets({ trades }: Props) {
+export default function ConditionBuckets({ trades, calibrateFrom }: Props) {
   // Default collapsed — analytics page has many sections and starting them
   // all open made the page feel cluttered. User opens the section they care
   // about for that review.
   const [open, setOpen] = useState(false)
   const scopedTrades = useMemo(() => trades.filter(hasMarketContext), [trades])
+  const calibrationTrades = useMemo(
+    () => (calibrateFrom ?? trades).filter(hasMarketContext),
+    [calibrateFrom, trades],
+  )
   const excluded = trades.length - scopedTrades.length
   return (
     // Wrapped in the same card styling as every other analytics section
@@ -132,7 +146,7 @@ export default function ConditionBuckets({ trades }: Props) {
         <div>
           <h2 className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Performance by Market Condition</h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            How your trades performed across different market regimes — {scopedTrades.length} trade{scopedTrades.length === 1 ? '' : 's'} in window
+            How your trades performed across different market regimes — {scopedTrades.length} trade{scopedTrades.length === 1 ? '' : 's'} in window. Bands are five equal slices of your own history, so they stay meaningful as the tape changes
             {excluded > 0 && (
               <span className="text-gray-600">
                 {' · '}{excluded} historical excluded (no market data)
@@ -145,7 +159,7 @@ export default function ConditionBuckets({ trades }: Props) {
       {open && (
         <div className="grid gap-4 lg:grid-cols-2 mt-4">
           {CONDITIONS.map(c => (
-            <ConditionCard key={c.key} cond={c} trades={scopedTrades} />
+            <ConditionCard key={c.key} cond={c} trades={scopedTrades} calibrationTrades={calibrationTrades} />
           ))}
         </div>
       )}
@@ -153,17 +167,35 @@ export default function ConditionBuckets({ trades }: Props) {
   )
 }
 
-function ConditionCard({ cond, trades }: { cond: ConditionDef; trades: TradeWithContext[] }) {
+function ConditionCard(
+  { cond, trades, calibrationTrades }:
+  { cond: ConditionDef; trades: TradeWithContext[]; calibrationTrades: TradeWithContext[] },
+) {
   // Use per-trade resolver when provided (rvol/atr_1m → entry-time snapshot
   // with day-level fallback). Day-level structural conditions (IB/ADR/etc)
   // omit the resolver and we read t[cond.key] directly. valueOf is inlined
   // into the useMemo callback so its identity doesn't change render-to-render.
+  //
+  // Breaks are quintiles of the trader's OWN distribution, computed off the
+  // wider calibration set. Trade-weighted, not day-weighted, which is the right
+  // basis here: each bar should hold ~20% of the trades being compared, not 20%
+  // of the sessions.
+  const { breaks, derived } = useMemo(
+    () => {
+      const valueOf = cond.resolve ?? ((t: TradeWithContext) => t[cond.key])
+      const values = calibrationTrades
+        .map(valueOf)
+        .filter((v): v is number => v != null && Number.isFinite(v))
+      return quintileBreaks(values, cond.fallbackBreaks)
+    },
+    [calibrationTrades, cond.resolve, cond.key, cond.fallbackBreaks],
+  )
   const buckets = useMemo(
     () => {
       const valueOf = cond.resolve ?? ((t: TradeWithContext) => t[cond.key])
-      return bucketByNumeric(trades, valueOf, cond.breaks, cond.format)
+      return bucketByNumeric(trades, valueOf, breaks, cond.format)
     },
-    [trades, cond.resolve, cond.key, cond.breaks, cond.format],
+    [trades, cond.resolve, cond.key, breaks, cond.format],
   )
 
   // Hide ANY bucket with zero trades — previously we kept named buckets
@@ -186,7 +218,12 @@ function ConditionCard({ cond, trades }: { cond: ConditionDef; trades: TradeWith
     <div className="border-t border-gray-700 pt-5 space-y-4">
       <div>
         <h3 className="font-medium text-white text-sm">{cond.title}</h3>
-        <p className="text-xs text-gray-500 mt-0.5">{cond.description}</p>
+        <p className="text-xs text-gray-500 mt-0.5">
+          {cond.description}
+          {!derived && (
+            <span className="text-gray-600"> Not enough trades yet to set bands from your own data — using defaults.</span>
+          )}
+        </p>
       </div>
 
       <BarChart
