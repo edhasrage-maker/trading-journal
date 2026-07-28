@@ -133,7 +133,15 @@ async function main() {
       const s = Date.parse(t.entry_time!), e = Date.parse(t.exit_time!)
       let hi = -Infinity, lo = Infinity
       for (const b of bars) {
-        if (b.t >= s - 60_000 && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
+        // A 1-minute bar stamped b.t covers [b.t, b.t+60s), so count it only
+        // when that interval actually overlaps the hold. The old test
+        // (b.t >= s - 60_000) was meant to catch the bar CONTAINING a
+        // mid-minute entry — a 16:24:00 bar for a 16:24:30 fill — but it also
+        // swept in the ENTIRE preceding minute, so an entry stamped exactly
+        // 16:24:00 was credited with 16:23's high and low: price action from
+        // before the trade existed. That inflated MFE (understating capture)
+        // and MAE (overstating heat) on every trade.
+        if (b.t + 60_000 > s && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
       }
       if (hi === -Infinity || lo === Infinity) continue
       // Refuse to store a window that doesn't contain the trade's own fills —

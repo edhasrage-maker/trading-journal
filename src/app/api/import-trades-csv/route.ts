@@ -138,8 +138,12 @@ async function backfillExcursionsFromBars(
         const e = Date.parse(r.exit_time)
         let hi = -Infinity, lo = Infinity
         for (const b of parsed) {
-          // Include the entry minute's bar (bar ts is the minute open, so allow 60s slack).
-          if (b.t >= s - 60_000 && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
+          // A 1-minute bar stamped b.t covers [b.t, b.t+60s) — count it only
+          // when that interval overlaps the hold. The previous test
+          // (b.t >= s - 60_000) was meant to include the bar CONTAINING a
+          // mid-minute entry, but it also swept in the whole preceding minute,
+          // crediting a trade with price action from before it was open.
+          if (b.t + 60_000 > s && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
         }
         // Only store a window that actually contains the trade's own fills.
         // Around a quarterly roll the shared feed can be carrying a different
