@@ -521,6 +521,13 @@ N/A (skip the criterion in the denominator). Per-trade score = passes /
 Also produce execution_parameter_breakdown — per-criterion pass rate
 across the session — so the UI can show which criteria are dragging.
 
+Also produce per_trade — the per-trade score you just computed, one entry per
+COMPLIANT trade, keyed by the trade's number in the "Trades Taken" list above
+(1-based). You are already calculating this to get the sub-metric mean; emitting
+it costs nothing and is what lets the UI show a trader the score for ONE trade
+instead of only the session average. Do not invent entries for trades you
+excluded as breaches, and do not re-derive anything — report what you used.
+
   1. setup_in_playbook — the setup tag on the trade exists in the trader's
      curated 'setups' tag library. Improvised one-off setups not in the
      library fail. N/A if no setup tag at all on the trade.
@@ -792,6 +799,9 @@ ${useStructuredSchema ? `Respond with ONLY valid JSON in this exact structure (n
       "no_mistakes_tagged": <0..1 or null>,
       "stable_emotion": <0..1 or null>
     },
+    "per_trade": [
+      { "trade_number": <1-based index in the Trades Taken list>, "score": <0..1>, "passes": <count>, "fails": <count>, "na": <count> }
+    ],
     "headline": "<1 sentence ≤15 words — WHY this execution score, always visible. Examples: 'Three give-backs and stops blown on T1/T3/T4 collapse capture; only T2 traded clean.' / 'Clean entry quality but exit timing left 60% of MFE on the table.'>",
     "notes": "<2-3 sentences MAX — brief diagnostic narrative behind 'Show details'. ABSOLUTELY DO NOT include: per-trade arithmetic ('T1 MAE = 19.25 vs 19'), criterion-by-criterion lists ('setup_in_playbook=1.0, stop_in_atr_band=0...'), composite-recompute formulas ('0.35*0.41+0.20*0.10...'), or 'Reporting X = Y' lines. Those numbers are already in the per-metric chips above and the execution_parameter_breakdown object — re-narrating them is wasted text. Just describe in plain English what dragged the score and what didn't, like a coach commenting, not a calculator showing work.>"
   }

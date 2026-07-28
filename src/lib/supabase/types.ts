@@ -566,6 +566,29 @@ export interface ExecutionScore {
     no_mistakes_tagged: number | null
     stable_emotion: number | null
   }
+  /** Optional: the PER-TRADE Execution Parameters score, one entry per
+   *  compliant trade.
+   *
+   *  The model has always computed this — the sub-metric above is its mean —
+   *  but until 2026-07-27 only the mean was emitted, so there was no per-trade
+   *  score anywhere in the data. Persisting it is what lets the UI answer "how
+   *  did THIS trade score" instead of only "how did the session score".
+   *
+   *  `trade_number` is the 1-based index into the trades array as it was passed
+   *  to buildEodPrompt — the same array and order the EOD page renders, which is
+   *  what makes the mapping safe. Re-ordering that array without re-running the
+   *  analysis would silently mis-attribute these.
+   *
+   *  Absent on every day analyzed before this shipped; the UI must treat missing
+   *  as "not scored yet — re-run Analyze Session", never as zero. */
+  per_trade?: Array<{
+    trade_number: number
+    /** 0..1 — passes / (passes + fails), N/A criteria excluded. */
+    score: number
+    passes: number
+    fails: number
+    na: number
+  }>
 }
 
 // ============================================================

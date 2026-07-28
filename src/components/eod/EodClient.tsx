@@ -14,6 +14,8 @@ import LiveChart from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
+import TradeContextMenu, { type TradeContextMenuState } from '@/components/session/TradeContextMenu'
+import TradeHighlightCard, { type PerTradeScore } from './TradeHighlightCard'
 import TradeEditDrawer from '@/components/session/TradeEditDrawer'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
@@ -94,6 +96,10 @@ export default function EodClient({
   // Recap edit-in-place drawer (Session-merge Pt 13 step 2): the id of the trade
   // being quick-edited, or null when the drawer is closed.
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null)
+  // Right-click menu on a trade row, and the trade currently "highlighted"
+  // (P&L + its own execution score) from that menu.
+  const [tradeMenu, setTradeMenu] = useState<TradeContextMenuState | null>(null)
+  const [highlightTradeId, setHighlightTradeId] = useState<string | null>(null)
   // Tags are local so a label created inline from the drawer's TagSelector
   // shows up immediately instead of waiting for a page reload.
   const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
@@ -164,6 +170,32 @@ export default function EodClient({
   })
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+
+  // Per-trade execution score, keyed by trade id.
+  //
+  // The analysis stores `trade_number` — the 1-based position of the trade in
+  // the array that was sent to buildEodPrompt. That array is this same `trades`
+  // list in this same order, which is the only reason index-mapping is safe.
+  // It is also the fragile part: a trade added or deleted since the analysis ran
+  // shifts every later index. So the map is only built when the counts still
+  // match; otherwise every trade reports "not scored yet", which is honest —
+  // far better than confidently attributing trade 4's score to trade 3.
+  const perTradeScores = useMemo<Record<string, PerTradeScore>>(() => {
+    const rows = aiAnalysis?.execution?.per_trade
+    if (!rows?.length) return {}
+    const out: Record<string, PerTradeScore> = {}
+    for (const r of rows) {
+      const t = trades[r.trade_number - 1]
+      if (!t) continue
+      out[t.id] = { score: r.score, passes: r.passes, fails: r.fails, na: r.na }
+    }
+    // A breach trade is legitimately absent (execution never scores breaches),
+    // so a partial map is expected. What is NOT expected is an index pointing
+    // past the end of the list — that means the list changed under the analysis.
+    const maxNumber = Math.max(...rows.map(r => r.trade_number))
+    if (maxNumber > trades.length) return {}
+    return out
+  }, [aiAnalysis, trades])
   // Highlights hides the MFE/MAE-capture metrics in the header (kept for
   // Detailed Tape); plain stats — Trades, Win Rate, W/L, PnL — always show.
   const { mode } = useUiMode()
@@ -1198,6 +1230,7 @@ export default function EodClient({
         onDelete={handleDeleteTrade}
         deletingId={deletingTradeId}
         onEdit={setEditingTradeId}
+        onContextMenu={(tradeId, e) => setTradeMenu({ tradeId, x: e.clientX, y: e.clientY })}
         editingId={editingTradeId}
         summaries={summaries}
         summariesLoading={summariesLoading}
@@ -1205,6 +1238,26 @@ export default function EodClient({
         postExitByTradeId={postExitByTradeId}
         bars={bars}
       />
+
+      {/* Right-click menu on a trade row → open the full log, or highlight the
+          trade's own P&L + execution score. */}
+      <TradeContextMenu
+        state={tradeMenu}
+        onClose={() => setTradeMenu(null)}
+        onOpenIntraday={id => router.push(`/intraday/${date}#trade-${id}`)}
+        onHighlight={id => setHighlightTradeId(id)}
+      />
+      {highlightTradeId && (() => {
+        const t = trades.find(x => x.id === highlightTradeId)
+        if (!t) return null
+        return (
+          <TradeHighlightCard
+            trade={t}
+            score={perTradeScores[highlightTradeId] ?? null}
+            onClose={() => setHighlightTradeId(null)}
+          />
+        )
+      })()}
 
       {/* Edit-in-place drawer (Pt 13 step 2). Opens on a recap row's edit
           action; saves via the shared compact TradeForm and replaces the row in

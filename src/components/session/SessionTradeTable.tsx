@@ -112,6 +112,10 @@ interface Props {
   /** Open this trade's full log in the intraday page. Row-click fallback when
    *  no onEdit is given; on EOD it moves into the drawer's "open full log". */
   onRowOpen?: (tradeId: string) => void
+  /** Right-click on a data row. The caller owns the menu (position + actions);
+   *  the table just reports which trade was clicked and where. Omit to leave
+   *  the browser's native context menu alone. */
+  onContextMenu?: (tradeId: string, e: React.MouseEvent) => void
   /** Edit this trade in place — the per-row "edit" button and the row-click.
    *  Intraday opens the inline TradeForm; EOD opens the recap edit drawer. */
   onEdit?: (tradeId: string) => void
@@ -197,6 +201,7 @@ export default function SessionTradeTable({
   onDelete,
   deletingId,
   onRowOpen,
+  onContextMenu,
   onEdit,
   editingId,
   rowIdPrefix = 'eod-trade-',
@@ -701,6 +706,11 @@ export default function SessionTradeTable({
                   onMouseEnter={e => onHoverEnter?.(t.id, e)}
                   onMouseLeave={onHoverLeave}
                   onClick={() => rowAction?.(t.id)}
+                  // Right-click opens the per-trade menu instead of the browser's.
+                  // Wired only when a handler is supplied, so surfaces that don't
+                  // offer the menu keep the native one rather than swallowing the
+                  // gesture and giving the trader nothing.
+                  onContextMenu={onContextMenu ? e => { e.preventDefault(); onContextMenu(t.id, e) } : undefined}
                   title={onEdit ? 'Edit this trade' : "Open this trade's log in the intraday page"}
                   style={{ scrollMarginTop: 80 }}
                   className={`group ${hasOverviewRow ? '' : 'border-b'} transition-colors ${rowAction ? 'cursor-pointer' : 'cursor-default'} ${
