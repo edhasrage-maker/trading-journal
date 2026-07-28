@@ -585,8 +585,12 @@ export default function SessionTradeTable({
               {showAtr && <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." />}
               <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} />
               {showR && <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." />}
-              {showMfe && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
-                <span className="inline-flex items-center gap-1 justify-end">
+              {showMfe && <th className="text-center font-normal pb-2 pr-3 whitespace-nowrap">
+                {/* Centered rather than right-aligned: the header carries a sort
+                    control and an info icon, so right-aligning parked the short
+                    values ("0%", "100%") under the icon instead of under the
+                    label they belong to. */}
+                <span className="inline-flex items-center gap-1 justify-center">
                   <button
                     type="button"
                     onClick={() => onSort('mfe')}
@@ -887,7 +891,7 @@ export default function SessionTradeTable({
                     return (
                       <>
                         {showMfe && (
-                          <td className={`py-1.5 pr-3 text-right ${capCls}`}
+                          <td className={`py-1.5 pr-3 text-center ${capCls}`}
                             title={
                               isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.'
                                 // A perfect exit reads 100% only because it's clamped there —

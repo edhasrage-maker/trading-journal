@@ -93,9 +93,34 @@ Step 1 — DIRECTION from the POSITION, never from order side or color:
 - Color is P/L (green = profit, red = loss), NOT direction. Never infer long/short from a green or red fill.
 - ONLY if the chart shows NO open position (flat) is a lone working order a PENDING ENTRY — then, and only then, a Sell order = a short entry setup.
 
-Step 2 — ENTRY = the position's fill / average price, not an order line:
-- Use the "Trade: Qty@PRICE" text, the position average-price line, or the fill marker. If only current price + open P/L are shown, back entry out (long: entry = current − open points; short: current + open points).
-- IGNORE any P/L tile ("+$40.00 USD", "+5 P/L: 40.00C, 4.00p") as a price LEVEL — it sits at the CURRENT price, and is never the entry, target, or stop.
+Step 2 — ENTRY = the position's average fill price. Prefer DERIVING it, in this order:
+
+  (a) SOLVE IT FROM THE WORKING ORDERS — most reliable, and self-checking.
+      Each bracket order's label carries its projected P&L in POINTS, and that
+      distance is measured from your entry. So:
+          entry = stop_price   − stop_points     (long)
+          entry = stop_price   + stop_points     (short)
+          entry = target_price − target_points   (short)
+          entry = target_price + target_points   (long)
+      Worked example — a SHORT showing "B|Stop (-84.00C, 21.00p)" at 27876.00 and
+      "B|Lmt (+168.00C, 42.00p)" at 27813.00 gives 27876 − 21 = 27855 AND
+      27813 + 42 = 27855. Two orders agreeing is a confirmed entry. If they
+      disagree, the labels were misread — re-read them before going on.
+  (b) The position average-price LINE (the horizontal line the position/P&L tile
+      is anchored to).
+  (c) Back it out of current price and open P&L points (long: current − open
+      points; short: current + open points).
+
+- Do NOT take entry from a "Trade: Qty@PRICE" readout. That is the last TAPE
+  PRINT — a size@price that just traded in the market — not your position. In a
+  multi-pane chartbook each pane prints its own, so they disagree with each other
+  and with your fill: one real screenshot showed "Trade: 5@27836.00" on the left
+  and "Trade: 3@27859.00" on the right while the actual entry was 27855.
+- IGNORE any P/L tile ("+$40.00 USD", "+5 P/L: 40.00C, 4.00p") as a price LEVEL —
+  it sits at the CURRENT price, and is never the entry, target, or stop.
+- If the screenshot shows several chart panes, they are usually the SAME
+  instrument at different timeframes. Read the levels from the pane whose order
+  labels are legible, and never mix values from two panes into one trade.
 
 Step 3 — STOP vs TP1 by the order's own P&L SIGN and by GEOMETRY, not the Buy/Sell letter:
 - A working-order label showing a POSITIVE projected P&L "(+320.00C, 32.00p)" is the TARGET (books a profit if it fills). A NEGATIVE label "(-160.00C, 16.00p)" is the STOP (books a loss). This sign is the most reliable signal — use it.
@@ -170,6 +195,8 @@ Return ONLY valid JSON with no other text:
   "entry_price": number or null,
   "stop_price": number or null,
   "tp1_price": number or null,
+  "stop_points": number or null,   // the "NN.NNp" distance on the STOP order's label, unsigned. null if not shown.
+  "tp1_points": number or null,    // the "NN.NNp" distance on the TARGET order's label, unsigned. null if not shown.
   "direction": "long" or "short" or null,
   "entry_time": "HH:MM" string or null,
   "quantity": number or null,
@@ -189,6 +216,46 @@ Return ONLY valid JSON with no other text:
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     const data = jsonMatch ? JSON.parse(jsonMatch[0]) : {}
+
+    // Entry reconciliation — a bracket order's label states its projected P&L in
+    // POINTS, and that distance is measured from the fill, so entry can be SOLVED
+    // rather than read. Two orders give two independent answers that must agree.
+    //
+    // This exists because the readable-looking source is a trap: Sierra's
+    // "Trade: Qty@PRICE" readout is the last TAPE PRINT, not the position, and a
+    // multi-pane chartbook shows a different one per pane. A real case read
+    // 27859 off that readout when the orders put the fill at 27855 — a 4-point
+    // error that silently mis-stated R and made P&L irreconcilable.
+    const derivedEntry = (): number | null => {
+      const dir = data.direction
+      if (dir !== 'long' && dir !== 'short') return null
+      const isLong = dir === 'long'
+      const num = (v: unknown): number | null =>
+        typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.abs(v) : null
+      const cands: number[] = []
+      // Long: stop sits BELOW entry and target ABOVE, so entry = stop + d and
+      // entry = target − d. Short is the mirror.
+      const sp = typeof data.stop_price === 'number' ? data.stop_price : null
+      const spd = num(data.stop_points)
+      if (sp != null && spd != null) cands.push(isLong ? sp + spd : sp - spd)
+      const tp = typeof data.tp1_price === 'number' ? data.tp1_price : null
+      const tpd = num(data.tp1_points)
+      if (tp != null && tpd != null) cands.push(isLong ? tp - tpd : tp + tpd)
+      if (cands.length === 0) return null
+      // Both orders must agree (within a tick) before we trust the derivation.
+      if (cands.length === 2 && Math.abs(cands[0] - cands[1]) > 0.5) return null
+      return cands[0]
+    }
+    const solved = derivedEntry()
+    if (solved != null && Number.isFinite(solved)) {
+      // Prefer the solved value; it is arithmetic off two labels, not a reading
+      // of one. Only override when the model's entry actually disagrees.
+      if (typeof data.entry_price !== 'number' || Math.abs(data.entry_price - solved) > 0.5) {
+        data.entry_price = Math.round(solved * 100) / 100
+      }
+    }
+    delete data.stop_points
+    delete data.tp1_points
 
     // Symbol guard — a Sierra window is full of text that looks symbol-ish: the
     // chart tab strip along the bottom ("NQ 1M FP", "NQ Daily VPs"), study
