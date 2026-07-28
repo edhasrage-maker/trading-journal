@@ -634,10 +634,13 @@ export default function SessionTradeTable({
                   </div>
                 )}
               </th>}
-              {showMae && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">
+              {showMae && <th className="text-center font-normal pb-2 pr-3 whitespace-nowrap">
                 {/* Unit dropdown stacked ABOVE the MAE label so the column stays
-                    narrow (was a single wide inline row: MAE · ×ATR · ?). */}
-                <span className="inline-flex flex-col items-end gap-0.5">
+                    narrow (was a single wide inline row: MAE · ×ATR · ?).
+                    Centered to match MFE % — both are short numeric columns
+                    under headers wide enough that right-aligning parked the
+                    values under the controls instead of under the labels. */}
+                <span className="inline-flex flex-col items-center gap-0.5">
                   <select
                     value={mfeUnit}
                     onChange={e => setMfeUnit(e.target.value as MfeUnit)}
@@ -649,7 +652,7 @@ export default function SessionTradeTable({
                     <option value="pts">pts</option>
                     <option value="dollars">$</option>
                   </select>
-                  <span className="inline-flex items-center gap-1 justify-end">
+                  <span className="inline-flex items-center gap-1 justify-center">
                     <button
                       type="button"
                       onClick={() => onSort('mae')}
@@ -694,7 +697,7 @@ export default function SessionTradeTable({
                   </div>
                 )}
               </th>}
-              {showPostExit && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap" title="Was your exit well-timed? A plain-language verdict from what the market did in the 30 min after you were out — 'exit right' (it reversed once you left), 'early' (it kept running your way — money left on the table), 'stop right' (a loss that kept going against you), or 'gave it back' (you had a real winner before it turned red).">Post-Exit</th>}
+              {showPostExit && <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap" title="Was your exit well-timed? A plain-language verdict from what the market did in the 30 min after you were out — 'exit right' (it reversed once you left), 'early' (it kept running your way — money left on the table), 'stop right' (a loss that kept going against you), or 'gave it back' (you had a real winner before it turned red).">Post-Exit</th>}
               <th className="w-8" />
             </tr>
           </thead>
@@ -906,7 +909,7 @@ export default function SessionTradeTable({
                           </td>
                         )}
                         {showMae && (
-                          <td className="py-1.5 pr-3 text-right whitespace-nowrap"
+                          <td className="py-1.5 pr-3 text-center whitespace-nowrap"
                             title={maePts == null ? 'Heat unavailable — no excursion data for this trade.'
                               : winnerHeat ? `Won but sat through ${maeAtr!.toFixed(1)}×ATR of heat — a late/lucky entry worth reviewing.`
                               : `Max adverse excursion (heat taken).${(t.pnl ?? 0) <= 0 ? ' Adverse movement is expected on a losing trade.' : ''}`}>
@@ -928,22 +931,30 @@ export default function SessionTradeTable({
                   {showPostExit && (() => {
                     const ext = postExitByTradeId?.[t.id]
                     const v = postExitVerdict(t as VerdictTrade, ext)
-                    if (!v) return <td className="py-1.5 pr-3 text-right text-gray-700">—</td>
+                    if (!v) return <td className="py-1.5 pr-3 text-left text-gray-700">—</td>
                     // The 30-min post-exit window hasn't fully filled — common
                     // when the session was ended early (Pt 13 step 3). Flag the
                     // verdict as provisional rather than silently under-counting.
                     const partial = ext != null && ext.full_window === false
+                    // Left-aligned and width-capped. These verdicts run long
+                    // ("stop right — kept rising 181pts") and were nowrap, so the
+                    // column grew to fit the longest one, pushed the table past
+                    // the viewport, and stranded the header far to the right of
+                    // everything else. Truncated, with the full text still in the
+                    // cell's tooltip.
                     return (
-                      <td className={`py-1.5 pr-3 text-right whitespace-nowrap ${VERDICT_TONE_CLASS[v.tone]}`} title={v.title}>
-                        <span className="mr-0.5">{v.glyph}</span>{v.label}
-                        {partial && (
-                          <span
-                            className="ml-1.5 align-middle text-[9px] font-normal text-amber-400/80 border border-amber-700/50 rounded px-1 py-0.5"
-                            title="The 30-minute post-exit window hasn't fully elapsed yet — this verdict is provisional and updates once it does."
-                          >
-                            partial window
-                          </span>
-                        )}
+                      <td className={`py-1.5 pr-3 text-left ${VERDICT_TONE_CLASS[v.tone]}`} title={v.title}>
+                        <span className="block max-w-[15rem] truncate">
+                          <span className="mr-0.5">{v.glyph}</span>{v.label}
+                          {partial && (
+                            <span
+                              className="ml-1.5 align-middle text-[9px] font-normal text-amber-400/80 border border-amber-700/50 rounded px-1 py-0.5"
+                              title="The 30-minute post-exit window hasn't fully elapsed yet — this verdict is provisional and updates once it does."
+                            >
+                              partial window
+                            </span>
+                          )}
+                        </span>
                       </td>
                     )
                   })()}

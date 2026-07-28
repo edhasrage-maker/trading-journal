@@ -26,8 +26,10 @@
  * is corrected. The 24-point drop is entirely the per-leg rewrite. Use
  * --skip-per-leg to apply only the excursion half.
  *
- * Covers NQ-family only (NQ/MNQ) — the only root with 2026 .scid coverage.
- * ES/MES and unrecognized symbols are skipped and counted.
+ * Covers NQ/MNQ and ES/MES. Front-month per date comes from the shared roll
+ * table (src/lib/futures-contracts.ts) — NOT a local copy, which is how this
+ * script ended up reading the wrong contract inside every roll window after
+ * those dates were measured and corrected. Other roots are skipped and counted.
  *
  * Targets the PUBLIC/cloud DB. DRY RUN by default; prints the before/after
  * capture for the scoped set so the change is visible before it's written.
@@ -41,7 +43,8 @@ import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { makeTickReader } from '../src/lib/scid-reader.ts'
 import { avgCaptureRatio, type ExitLeg } from '../src/lib/analytics.ts'
-import { symbolToMultiplier } from '../src/lib/futures-symbols.ts'
+import { symbolToMultiplier, chartSeriesRoot } from '../src/lib/futures-symbols.ts'
+import { contractFileForRoot } from '../src/lib/futures-contracts.ts'
 
 for (const l of readFileSync('.env.public-feed', 'utf8').split(/\r?\n/)) {
   const m = l.match(/^([A-Z_]+)=(.*)$/); if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
@@ -58,23 +61,23 @@ const userArg = process.argv.find(a => a.startsWith('--user='))?.split('=')[1]
 const LIMIT = (() => { const a = process.argv.find(x => x.startsWith('--limit=')); return a ? parseInt(a.split('=')[1], 10) : Infinity })()
 const DATA = 'D:/SierraCharts/Data'
 
-// NQ front-month roll table (each file is front-month in [prevRoll, thisRoll)).
-// Same table as scripts/backfill-structure-regime.ts.
-const CONTRACTS: { roll: string; file: string }[] = [
-  { roll: '2023-03-09', file: 'NQH3.CME.scid' }, { roll: '2023-06-08', file: 'NQM3.CME.scid' },
-  { roll: '2023-09-07', file: 'NQU3.CME.scid' }, { roll: '2023-12-07', file: 'NQZ3.CME.scid' },
-  { roll: '2024-03-07', file: 'NQH4.CME.scid' }, { roll: '2024-06-13', file: 'NQM4.CME.scid' },
-  { roll: '2024-09-12', file: 'NQU4.CME.scid' }, { roll: '2024-12-12', file: 'NQZ4.CME.scid' },
-  { roll: '2025-03-13', file: 'NQH5.CME.scid' }, { roll: '2025-06-12', file: 'NQM5.CME.scid' },
-  { roll: '2025-09-11', file: 'NQU5.CME.scid' }, { roll: '2025-12-11', file: 'NQz5.CME.scid' },
-  { roll: '2026-03-12', file: 'NQH6.CME.scid' }, { roll: '2026-06-11', file: 'NQM6.CME.scid' },
-  { roll: '2026-09-11', file: 'NQU6.CME.scid' },
-]
-function contractFor(dateISO: string): string | null {
-  for (const c of CONTRACTS) if (dateISO < c.roll) return c.file
-  return null
+// Front-month resolution comes from the SHARED roll table
+// (src/lib/futures-contracts.ts). This script used to carry its own copy — the
+// fourth in the repo — and it still held the textbook "8 days before expiry"
+// dates after those were measured and corrected, so every trade inside a roll
+// window read the wrong contract. The anchoring below cancels the price basis,
+// but the RANGE still came from the wrong book.
+//
+// Using the shared table also gets ES for free: same quarterly schedule, and
+// the local .scid history now covers both roots back to 2023.
+const TICK_ROOTS = ['NQ', 'ES'] as const
+type TickRoot = (typeof TICK_ROOTS)[number]
+/** Mini root a trade belongs to, or null if we hold no tick history for it. */
+function tickRoot(sym: string | null | undefined): TickRoot | null {
+  if (!sym) return null
+  const r = chartSeriesRoot(sym)
+  return (TICK_ROOTS as readonly string[]).includes(r) ? (r as TickRoot) : null
 }
-const isNQ = (sym: string | null | undefined) => !!sym && /(^|[^A-Z])M?NQ/i.test(sym)
 
 const readers = new Map<string, ReturnType<typeof makeTickReader>>()
 function reader(file: string) {
@@ -102,8 +105,8 @@ interface Row {
  */
 function excursion(r: Row): { high: number; low: number; mfeLeg: number | null } | null {
   if (r.entry_price == null || r.startMs == null || r.endMs == null || r.endMs <= r.startMs) return null
-  if (!isNQ(r.symbol)) return null
-  const file = contractFor(r.date); if (!file) return null
+  const root = tickRoot(r.symbol); if (!root) return null
+  const file = contractFileForRoot(root, r.date, DATA); if (!file) return null
   const rdr = reader(file)
   let ticks: number[]
   try { ticks = rdr.read(r.startMs, r.endMs + 1000) } catch { return null }
