@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Archivo, Hanken_Grotesk, Spline_Sans_Mono } from "next/font/google";
 import "./globals.css";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
+import ThemeKeeper from "@/components/ThemeKeeper";
 
 // TapeScore design system: Archivo = display/brand, Hanken Grotesk = body/UI,
 // Spline Sans Mono = log/time/tape readouts.
@@ -70,6 +71,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="min-h-screen bg-gray-950 text-white">
+        {/* Re-asserts the saved theme on every route change. The head script
+            above covers first paint; this covers client-side navigation, where
+            an imperatively-set <html> attribute isn't guaranteed to survive
+            reconciliation. See ThemeKeeper. */}
+        <ThemeKeeper />
         {children}
         <ServiceWorkerRegister />
       </body>

@@ -26,10 +26,25 @@ export const MULTIPLIERS: Record<string, number> = {
   ZC: 50, ZS: 50, ZW: 50,
 }
 
-/** Map "MNQM6.CME" → "MNQ", "ESM6.CME" → "ES", "6EM6.CME" → "6E". */
+/**
+ * Map "MNQM6.CME" → "MNQ", "ESM6.CME" → "ES", "6EM6.CME" → "6E",
+ * "NQU26-CME" → "NQ".
+ *
+ * Sierra writes the exchange suffix with EITHER separator depending on where
+ * the symbol came from — "NQU26.CME" in some exports, "NQU26-CME" in others.
+ * Splitting on "." alone left the hyphen form entirely unparsed, so
+ * "NQU26-CME" came back as its own root. The visible symptom was a duplicate
+ * raw contract sitting next to "NQ" in the chart's instrument dropdown, but
+ * that was the harmless half: `symbolToMultiplier` keys off this too, and an
+ * unrecognised root silently falls back to a multiplier of 1 — so every dollar
+ * figure derived from such a trade (MFE/MAE in $, capture %, per-leg MFE) came
+ * out 20× too small for NQ and 50× for ES.
+ *
+ * No futures root contains "." or "-", so splitting on either is safe.
+ */
 export function symbolRoot(symbol: string): string {
-  // Take the part before the first "." (drops .CME, .NYMEX, etc.)
-  const noExchange = symbol.split('.')[0]
+  // Take the part before the first "." or "-" (drops .CME / -CME / .NYMEX …)
+  const noExchange = symbol.split(/[.-]/)[0]
   // Strip the last contract month code (one letter + one or two digit year)
   // e.g. "MNQM6" → "MNQ", "ZNH26" → "ZN"
   return noExchange.replace(/[A-Z]\d{1,2}$/, '')

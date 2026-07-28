@@ -27,8 +27,13 @@ export default function ThemeToggle({ compact = false }: { compact?: boolean }) 
   const [theme, setTheme] = useState<Theme>('dark')
 
   useEffect(() => {
-    const current = document.documentElement.getAttribute('data-theme')
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- read the value the head script already applied
+    // Read the SAVED choice, not the current attribute. ThemeKeeper repairs a
+    // dropped attribute on navigation, and reading the DOM here would race it —
+    // the icon would show "Light" on a page that is about to become light.
+    let saved: string | null = null
+    try { saved = localStorage.getItem(THEME_KEY) } catch { /* private mode / blocked */ }
+    const current = saved ?? document.documentElement.getAttribute('data-theme')
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reflect the already-applied theme
     if (current === 'light') setTheme('light')
   }, [])
 
