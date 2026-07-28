@@ -178,6 +178,12 @@ export const PROMPT_ANCHORS: PromptAnchor[] = [
   { id: 'B5', phrase: 'Active downtrend', variant: 'owner' },
   { id: 'B6', phrase: 'Time-of-day is NOT a scored rule', variant: 'owner' },
   { id: 'B7', phrase: 'judge the STATE', variant: 'both' },
+  // The model has no bar series and no order-flow feed — only the per-trade
+  // fields. Added after a live analysis invented session structure ("a tape that
+  // had stopped supporting the bullish bias") to explain three losing longs the
+  // trader had tagged "Follow LTF structure". Distinct from B1: outcome bias is
+  // judging a decision by what happened next; this is fabricating market state.
+  { id: 'B8', phrase: 'You cannot see the tape', variant: 'both' },
 ]
 
 /** Returns a violation for every expected anchor missing from `promptText`.

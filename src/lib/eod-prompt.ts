@@ -227,6 +227,16 @@ No post-exit counterfactuals — not "would have hit target", not "ran X further
 stop", not "scratched a winner". Grade the decision on what was knowable at the time.
 (This rule is global; it is not tied to any one scoring criterion.)
 
+**You cannot see the tape.** You have NO bar series, NO order-flow feed and NO chart for
+this session — only the per-trade fields above. NEVER describe what price or structure was
+DOING between, during or after entries: not "the tape stopped supporting the bullish bias",
+not "structure invalidated", not "buyers dried up", not "momentum faded". The single
+structure datum you have is "5m structure AT ENTRY" per trade, a snapshot at that bar and
+nothing more. A run of losing trades in one direction is NOT evidence that structure turned
+— that is the outcome talking, and inventing the market state to explain it is the same
+error as outcome bias. If a point needs price action you were not given, say you don't have
+it or make the point from the fields you do.
+
 **Causation vs correlation.** The market causes trade outcomes, not the trader's reads. A
 weak read does not "cause" a loss; don't write "the missing read led to the stop-out." A
 setup with positive EV is still valid even without a size-up qualifier.
@@ -362,8 +372,17 @@ export function buildEodPrompt({
         const dtRaw = (t.tags_json as { day_type?: unknown } | null | undefined)?.day_type
         const dts = Array.isArray(dtRaw) ? dtRaw : (dtRaw ? [dtRaw] : [])
         const isGbx = dts.some(d => typeof d === 'string' && d.toUpperCase().includes('GBX'))
+        // The ONLY market-structure datum in this prompt. Computed from 5m pivot
+        // structure at the entry bar (scripts/backfill-structure-regime.ts) —
+        // a snapshot at entry, NOT a running read of the session. Without it the
+        // model invents structure to explain a losing streak: a live analysis
+        // called three longs "a tape that had stopped supporting the bullish
+        // bias" when the trader had tagged all three Follow LTF structure and
+        // the regime was neutral.
+        const regime5m = (t as { structure_5m_regime?: string | null }).structure_5m_regime ?? null
         return `  ${i + 1}. open ${time} → close ${exitTime} | ${dir} @ ${t.entry_price ?? '?'} stop ${t.stop_price ?? '?'} TP1 ${tp1} exit ${exit} qty ${t.quantity ?? '?'} | PnL ${pnl}
        intra-trade extremes: high=${hdp} low=${ldp}
+       5m structure AT ENTRY: ${regime5m ?? 'N/A'} (snapshot at the entry bar — you have no reading of what structure did after)
        entry ATR-10(1m): ${atr ?? 'N/A'} | planned TP1: ${plannedR} | session: ${isGbx ? 'GBX/overnight — exempt from prep_adherence + the ATR stop-band check ONLY; STILL execution-scored on every other criterion' : 'RTH'}
        setups: ${setups} | entry_model: ${entryModel} | confluences: ${confluences}
        management: ${mgmt} | mistakes: ${mistakes} | emotions: ${emotions}${notesLine}${commentaryLine}`
@@ -591,6 +610,21 @@ note it.
 
 These come up repeatedly in EOD analyses. Read this section CAREFULLY and apply
 each rule literally — don't soften, don't add hedges, don't tell stories.
+
+**0. You cannot see the tape.** You have NO bar series, NO order-flow feed and
+NO chart for this session — only the per-trade fields listed above. NEVER
+describe what price or structure was DOING between, during or after entries:
+not "the tape stopped supporting the bullish bias", not "structure invalidated",
+not "buyers dried up", not "momentum faded". The single structure datum you have
+is "5m structure AT ENTRY" per trade — a snapshot at that bar, not a running
+read of the session. A run of losing trades in one direction is NOT evidence
+that structure turned; that is the outcome talking, and inventing market state
+to explain it is the same error as outcome bias in a different coat. This is not
+hypothetical: an analysis called three MNQ longs "a tape that had stopped
+supporting the bullish bias" when the trader had tagged all three "Follow LTF
+structure" and the recorded regime was neutral. If a point needs price action
+you were not given, say you don't have it, or make the point from the fields you
+do have (tags, confluence counts, timing, size, P&L).
 
 **1. Causation vs correlation.** The market causes trade outcomes, not the
 trader's reads. A weak orderflow read does NOT "directly cause" a loss; a
