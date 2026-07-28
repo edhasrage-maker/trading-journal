@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { TradeTag } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { normalizeTradeLevels } from '@/lib/trade-geometry'
+import { MULTIPLIERS, symbolRoot } from '@/lib/futures-symbols'
 import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
@@ -120,7 +121,16 @@ If a value lands on the WRONG side of entry for the direction, you have misread 
   If the position tile and a TQ value disagree, trust the position tile. If no
   position size is visible anywhere, return null — do not fall back to a single
   order's quantity, which is usually smaller than the real position.
-- Symbol: the contract/instrument symbol in the chart header (usually top-left), e.g. "ESU6.CME", "MNQU6.CME", "NQU6.CME". Return the EXACT string shown; do not normalize or guess. Null if not visible.
+- Symbol: the TRADED CONTRACT symbol, from the chart header (usually top-left) or
+  the position/order labels — e.g. "ESU6.CME", "MNQU6.CME", "NQU6.CME". It always
+  looks like root + month-code + year, optionally with an exchange suffix, and it
+  NEVER contains spaces.
+  Do NOT take it from the chart tab strip along the bottom of the window, a study
+  or indicator name, or a timeframe label — "NQ 1M FP", "NQ Daily VPs", "1m HA",
+  "Recon Tape" and the like are chart names, not instruments, even though they
+  start with a root that looks right.
+  Return the EXACT string shown; do not normalize or guess. Null if no real
+  contract symbol is visible — null is better than a chart name.
 
 PART 2 — VISUAL SIGNALS (for tag suggestions)
 
@@ -179,6 +189,19 @@ Return ONLY valid JSON with no other text:
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     const data = jsonMatch ? JSON.parse(jsonMatch[0]) : {}
+
+    // Symbol guard — a Sierra window is full of text that looks symbol-ish: the
+    // chart tab strip along the bottom ("NQ 1M FP", "NQ Daily VPs"), study
+    // names, timeframe labels. One of those getting through is worse than no
+    // symbol at all, because symbolToMultiplier() falls back to 1 for an
+    // unrecognised root and every dollar figure derived from the trade then
+    // comes out silently wrong — R, capture %, MFE/MAE in $ (a 5-lot MNQ read
+    // as "NQ 1M FP" graded a $340 risk as $170, printing 1.94R for a ~0.97R
+    // trade). Keep the symbol only if its root resolves to a known multiplier.
+    if (typeof data.symbol === 'string') {
+      const root = symbolRoot(data.symbol.trim())
+      if (!(root in MULTIPLIERS)) data.symbol = null
+    }
 
     // Geometry guard — stop/TP1 must sit on the correct side of entry for the
     // direction (long: stop<entry<TP1; short: TP1<entry<stop). The vision model

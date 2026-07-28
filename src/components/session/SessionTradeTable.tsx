@@ -78,15 +78,35 @@ function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
   // by definition, so a point of fill-vs-logged-price rounding was blanking the
   // best exits in the book.
   if (r != null) return formatCapturePct(r, { exitedAtExtreme: exitedAtExtreme(t) }) ?? '—'
-  // Capture came back null. When we have the inputs to know the trade simply
-  // didn't run favorably — a loss/scratch, MFE ≤ 0, or a tiny sub-noise-floor
-  // green tag it gave right back — that's a real 0% captured, not unknown. Show
-  // "0%" instead of a bare "—"; reserve "—" for genuinely missing data (no
-  // pnl / qty / entry / excursion). Mirrors captureRatio's floor-at-0.
-  if (t.pnl != null && t.quantity != null && t.entry_price != null && mfeMaePoints(t) != null) {
-    return '0%'
-  }
+  // Capture came back null. For a LOSS or scratch that is a real 0% captured —
+  // the trade gave back whatever green it briefly showed — so "0%" beats a bare
+  // "—", and it mirrors captureRatio's floor-at-0.
+  //
+  // A WINNER is a different case and must NOT print 0%. captureRatio also
+  // returns null when MFE sits under the noise floor (< 0.5 × entry ATR), and a
+  // profitable trade there did not capture zero of its move — it banked money.
+  // Printing "0%" on a +$330 trade states the opposite of what happened, so it
+  // falls through to "—": the ratio is unavailable, not zero.
+  const hasInputs = t.pnl != null && t.quantity != null && t.entry_price != null && mfeMaePoints(t) != null
+  if (hasInputs && (t.pnl ?? 0) <= 0) return '0%'
   return null
+}
+
+/** Why capture is blank, for the cell tooltip — a bare "—" should never leave
+ *  the reader wondering whether the number is missing or the product is broken.
+ *  Null when capture rendered a value (no explanation needed). */
+function captureBlankReason(t: Trade, bars?: BarLike[]): string | null {
+  if (captureDisplay(t, bars) != null) return null
+  if (t.pnl == null || t.quantity == null || t.entry_price == null) {
+    return 'Capture needs entry price, quantity and P&L on this trade.'
+  }
+  const xc = mfeMaePoints(t)
+  if (xc == null) return 'No MFE/MAE data for this trade yet, so capture can\'t be computed.'
+  const atr = (t as Trade & { entry_atr_1m?: number | null }).entry_atr_1m
+  if (atr != null && atr > 0 && xc.mfe < atr * 0.5) {
+    return `The move never cleared half an ATR (${xc.mfe.toFixed(2)} pts vs ${(atr * 0.5).toFixed(2)}), so a capture ratio here would be noise rather than a read on your exit.`
+  }
+  return 'Capture is unavailable for this trade.'
 }
 
 interface Props {
@@ -873,7 +893,10 @@ export default function SessionTradeTable({
                                 // A perfect exit reads 100% only because it's clamped there —
                                 // say so, or it looks like a suspiciously round number.
                                 : exitedAtExtreme(t) ? CAPTURE_AT_EXTREME_TOOLTIP
-                                : undefined
+                                // Say WHY the cell is blank — an unexplained em-dash
+                                // reads as a broken product rather than a metric
+                                // that honestly doesn't apply to this trade.
+                                : captureBlankReason(t, bars ?? undefined) ?? undefined
                             }>
                             {captureDisplay(t, bars ?? undefined) ?? '—'}
                           </td>
