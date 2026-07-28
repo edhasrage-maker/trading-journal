@@ -519,15 +519,18 @@ across the session — so the UI can show which criteria are dragging.
          (do not count it in the per-trade denominator). A 5-lot trade
          with 1/3 OF is a perfectly valid trade; it was simply ineligible
          for the size-up exception. Never score it as a #5 fail.
-  6. break_of_cluster_or_bubble_entry — the trigger was a structural break
-     (price breaking through a cluster of orders, or breaking ABOVE/BELOW a
-     delta bubble), NOT a discretionary price entry. PASS AUTOMATICALLY when the
-     trade's entry_model tag includes "Break of Clusters/Bubbles" — that tag IS
-     the trader declaring this trigger; trust it over your read of the prose.
-     NEVER re-judge a tagged break-of-bubble entry as "location-based /
-     discretionary" and score it 0. Only an UNtagged, purely discretionary price
-     entry (no break-of-cluster/bubble in entry_model, order_flow, or notes)
-     fails.
+  6. break_of_cluster_or_bubble_entry — despite the key name, this criterion is
+     "was there a DEFINED entry trigger", not "was it one specific trigger". The
+     trader's entry_model library holds several, and break-of-cluster/bubble is
+     only one of them. PASS AUTOMATICALLY when the trade carries ANY defined
+     entry_model tag — "Break of Candle", "Break of Clusters/Bubbles", "Break
+     Above/Below Prior Bar POC", "Waited for Heiken-Ashi to Flip", "1 ATR Entry"
+     — that tag IS the trader declaring their trigger; trust it over your read of
+     the prose, and NEVER re-judge it as "location-based / discretionary".
+     FAIL only a genuinely triggerless entry: tagged "Based on Price" alone (that
+     label IS the discretionary case), or no entry_model tag AND no trigger
+     described in the notes. N/A if there is no entry_model tag but the notes
+     clearly describe a trigger you can't map to a model.
   7. chart_not_emotion_management — exits driven by clear technical /
      structural triggers pass. Worked examples:
        PASS: "Exited long because a HUGE buyer came in above me but
