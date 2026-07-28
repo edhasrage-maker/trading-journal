@@ -2,6 +2,10 @@ import { useState, useEffect, useMemo } from 'react'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { Trade } from '@/lib/supabase/types'
 
+/** Per-date instrument pick. Mirrors LiveChart's `livechart-view-…` /
+ *  `livechart-tf-…` key shape so all three chart prefs read as one family. */
+const instrumentKey = (date: string) => `livechart-instrument-${date}`
+
 export interface ChartInstruments {
   /** Concrete symbol to load bars for (resolves the active root → a bar symbol). */
   activeSymbol: string | null
@@ -23,7 +27,11 @@ export interface ChartInstruments {
  * resolves it to a concrete bar symbol, and filters the plotted trades to it.
  * `chartSymbol` is the page's default (most-common traded symbol).
  */
-export function useChartInstruments(chartSymbol: string | null, trades: Trade[]): ChartInstruments {
+export function useChartInstruments(
+  chartSymbol: string | null,
+  trades: Trade[],
+  date?: string,
+): ChartInstruments {
   const [availableSymbols, setAvailableSymbols] = useState<string[]>([])
   useEffect(() => {
     let cancelled = false
@@ -34,7 +42,26 @@ export function useChartInstruments(chartSymbol: string | null, trades: Trade[])
     return () => { cancelled = true }
   }, [])
 
+  // The picked instrument, PERSISTED per date.
+  //
+  // This was plain component state, so switching to ES held only until the
+  // component next unmounted — a page navigation or a refresh dropped it and
+  // the chart snapped back to `defaultRoot` (the day's most-traded symbol).
+  // The timeframe and the zoom range were already persisted, which made the
+  // instrument the one control that wouldn't stay where it was put.
+  //
+  // Scoped per DATE, matching the per-(symbol, date) keys the timeframe and
+  // view range already use: within a session your choice sticks across reloads,
+  // and a different day still opens on the instrument you actually traded
+  // rather than inheriting a peek at ES from last week.
   const [rootOverride, setRootOverride] = useState<string | null>(null)
+  useEffect(() => {
+    if (!date) return
+    let saved: string | null = null
+    try { saved = localStorage.getItem(instrumentKey(date)) } catch { /* private mode */ }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate the saved pick; localStorage isn't readable during render
+    setRootOverride(saved)
+  }, [date])
   // Group traded + imported symbols by PRODUCT ROOT (ES, NQ); micros collapse to
   // their mini. Each root → one concrete symbol to load bars for (prefer one
   // that has imported bars).
@@ -58,7 +85,11 @@ export function useChartInstruments(chartSymbol: string | null, trades: Trade[])
   return {
     activeSymbol,
     symbolOptions: rootOptions.map(o => ({ symbol: o.symbol, label: o.root })),
-    onSymbolChange: (s: string) => setRootOverride(chartSeriesRoot(s)),
+    onSymbolChange: (s: string) => {
+      const root = chartSeriesRoot(s)
+      setRootOverride(root)
+      if (date) { try { localStorage.setItem(instrumentKey(date), root) } catch { /* private mode */ } }
+    },
     chartTrades,
     tradeHasBars: (t: Trade) => availableRoots.size === 0 || !t.symbol || availableRoots.has(chartSeriesRoot(t.symbol)),
   }

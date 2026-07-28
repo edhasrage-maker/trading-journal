@@ -264,7 +264,7 @@ export default function EodClient({
     return best
   }, [initialTrades])
   // ES/NQ instrument switcher for the chart (shared with intraday + prep).
-  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(chartSymbol, trades)
+  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(chartSymbol, trades, date)
 
   // Generate (or reuse cached) AI Overview summaries whenever trades change.
   // Pulls hits from localStorage by content hash; batches the misses into one

@@ -79,7 +79,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const [barsVersion, setBarsVersion] = useState(0)
   // ES/NQ instrument switcher for the chart (shared with intraday + EOD). Other
   // chartSymbol uses (market-context auto-fill) stay on the day's default.
-  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(chartSymbol, initialTrades)
+  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(chartSymbol, initialTrades, date)
   // Ref to the LiveChart so analyze() can snapshot its canvas as a PNG when
   // the user hasn't pasted a Sierra screenshot. Falls back to text-only
   // analysis if the chart isn't ready (no bars / pre-mount / screenshot view).

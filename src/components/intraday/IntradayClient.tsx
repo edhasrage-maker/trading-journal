@@ -325,7 +325,7 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
   const effectiveChartSymbol = chartSymbol ?? 'NQ'
 
   // ES/NQ instrument switcher for the chart (shared hook with EOD + prep).
-  const { activeSymbol: activeChartSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(effectiveChartSymbol, trades)
+  const { activeSymbol: activeChartSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(effectiveChartSymbol, trades, date)
 
   return (
     <div className="space-y-4">

@@ -60,7 +60,7 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
   // Instrument switcher (ES/NQ dropdown) — same hook the intraday/EOD charts use.
   // Falls back to the day's traded symbols when /api/bars/symbols isn't reachable
   // (logged-out share context), so multi-instrument days still get a toggle.
-  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(defaultSymbol, trades)
+  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(defaultSymbol, trades, day.date)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [hoverTradeId, setHoverTradeId] = useState<string | null>(null)
   // Enlarged screenshot (click a trade's screenshot to open full-screen).
