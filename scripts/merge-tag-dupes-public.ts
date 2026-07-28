@@ -43,6 +43,12 @@ const MERGES: [string, string, string][] = [
   // curated label (sort 260, 108 uses). tags_json holds raw strings, so the two
   // casings were two separate tags everywhere downstream.
   ['confluences', 'Follow LTF structure', 'Follow LTF Structure'],
+  // Same concept per the trader; 5 uses vs 38 on the long form.
+  ['confluences', 'Waited for 2x Failed Attempts', 'Waited For 2x Failed Attempts From Opposing Side'],
+  // 5–5 TIE on usage, so "keep the one with more" didn't decide it. Canonical is
+  // the short chip: it stays readable in the picker, and the trader confirmed the
+  // long form adds no distinct concept. Flipping it later is just another merge.
+  ['mistakes', 'No Confirmation of Buyers/Sellers Stepping In', 'No Confirmation'],
 ]
 
 const TABLES = ['trades', 'historical_trades'] as const
