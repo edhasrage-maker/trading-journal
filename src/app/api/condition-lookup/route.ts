@@ -50,16 +50,19 @@ async function handle(req: Request) {
   // Vintage source differs by deployment: the LOCAL single-tenant build stamps
   // one global key in lookup_metadata; the CLOUD per-user build keeps a row per
   // user in condition_lookup_meta (RLS scopes the read to the caller).
-  const vintagePromise = LOCAL_FEATURES_ENABLED
+  // `history_start_date` (cloud only) is carried through so the panel can say
+  // the buckets were built from a windowed history — a smaller `n` with no
+  // explanation reads as missing data rather than a deliberate setting.
+  const vintagePromise: Promise<{ at: string | null; historyStart: string | null }> = LOCAL_FEATURES_ENABLED
     ? (supabase.from('lookup_metadata').select('value').eq('key', 'condition_lookup_refreshed_at').maybeSingle() as Promise<{ data: { value: { at: string } | null } | null }>)
-      .then(({ data }) => data?.value?.at ?? null)
-    : (supabase.from('condition_lookup_meta').select('refreshed_at').maybeSingle() as Promise<{ data: { refreshed_at: string | null } | null }>)
-      .then(({ data }) => data?.refreshed_at ?? null)
+      .then(({ data }) => ({ at: data?.value?.at ?? null, historyStart: null }))
+    : (supabase.from('condition_lookup_meta').select('refreshed_at, history_start_date').maybeSingle() as Promise<{ data: { refreshed_at: string | null; history_start_date: string | null } | null }>)
+      .then(({ data }) => ({ at: data?.refreshed_at ?? null, historyStart: data?.history_start_date ?? null }))
 
   const [
     { data: thresholds, error: tErr },
     { data: lookup, error: lErr },
-    refreshedAt,
+    vintageMeta,
   ] = await Promise.all([
     supabase.from('condition_thresholds').select('*') as Promise<{ data: ConditionThreshold[] | null; error: { message: string } | null }>,
     supabase.from('condition_lookup').select('*') as Promise<{ data: ConditionLookupRow[] | null; error: { message: string } | null }>,
@@ -87,9 +90,10 @@ async function handle(req: Request) {
   return NextResponse.json({
     ...outcome,
     vintage: {
-      refreshed_at: refreshedAt,
+      refreshed_at: vintageMeta.at,
       lookup_row_count: lookup.length,
       threshold_count: thresholds.length,
+      history_start_date: vintageMeta.historyStart,
     },
   })
 }

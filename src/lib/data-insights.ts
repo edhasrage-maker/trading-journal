@@ -592,9 +592,6 @@ const dayOfWeek: Builder = trades => {
 // the insight feed — and Pt 24's Task A is a standing reminder of how easily a
 // day-character read can be misread. Same reason the dimension is "Day
 // character" rather than "Day type".
-const SIZE_BAND_LABEL: Record<string, string> = {
-  small: 'small-IB days', normal: 'normal-IB days', large: 'large-IB days',
-}
 const REGIME_BAND_LABEL: Record<string, string> = {
   chop: 'chop-IB days', mid: 'mid-range-IB days', expanded: 'expanded-IB days',
 }
@@ -675,26 +672,32 @@ function bandVsRestInsight(
   }
 }
 
-/** 11. IB size band — small / normal / large IB days (absolute size vs the
- *  trailing 10-day average IB). */
-const dayTypeSize: Builder = trades => {
-  const cls = classifyTradeDays(trades)
-  return bandVsRestInsight(
-    trades,
-    t => { const k = dayKeyOf(t); return k ? cls.get(k)?.sizeBand ?? null : null },
-    { key: 'day_type_size', dimension: 'Day character', label: b => SIZE_BAND_LABEL[b] ?? b },
-  )
-}
-
-/** 12. IB regime band — chop / mid-range / expanded (IB ÷ its own ATR). A
- *  separate family from the size band above on purpose: the two lenses measure
- *  different things and are free to disagree. */
-const dayTypeRegime: Builder = trades => {
+/**
+ * 11. Day character — ONE family, keyed on the IB ÷ its-own-ATR regime
+ * (chop / mid-range / expanded).
+ *
+ * Pt 23 ran this as two families (regime and absolute IB size) on the theory
+ * that the lenses disagreed. Pt 24 measured it over 448 days: r = 0.54, the two
+ * bands land in the same or an adjacent tier 98% of the time, and holding
+ * either fixed the other adds nothing that survives trimming one session.
+ * Two families would have doubled this dimension's chances of winning a slot in
+ * a top-N ranked list while carrying barely more than one dimension's
+ * information — the ranking is cherry-picked from ~10 contrasts already, and
+ * INSIGHT_Z_MIN is set at 1.96 precisely because of that multiple-comparison
+ * risk. One family, one slot.
+ *
+ * The regime lens is the one kept: it's the study-native basis, it's what
+ * condition_lookup's IB_ATR dimension buckets on, and being normalized to
+ * current volatility it stays comparable across years — where IB-vs-10-day-avg
+ * is only comparable to the recent past. `ib_size_band` stays persisted and
+ * still drives the prep panel's action-level chip.
+ */
+const dayCharacter: Builder = trades => {
   const cls = classifyTradeDays(trades)
   return bandVsRestInsight(
     trades,
     t => { const k = dayKeyOf(t); return k ? cls.get(k)?.regimeBand ?? null : null },
-    { key: 'day_type_regime', dimension: 'Day character', label: b => REGIME_BAND_LABEL[b] ?? b },
+    { key: 'day_character', dimension: 'Day character', label: b => REGIME_BAND_LABEL[b] ?? b },
   )
 }
 
@@ -709,7 +712,7 @@ const dayTypeRegime: Builder = trades => {
 const BUILDERS: Builder[] = [
   timeOfDay, instrument, direction, tradesPerDay, revengeReentry,
   captureEfficiency, heatVsReward, sizeVsOutcome, prevOutcome, dayOfWeek,
-  dayTypeSize, dayTypeRegime,
+  dayCharacter,
 ]
 
 /**

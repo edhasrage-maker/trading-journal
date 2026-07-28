@@ -620,8 +620,15 @@ create table if not exists public.condition_lookup_meta (
   user_id          uuid primary key references auth.users(id) on delete cascade default auth.uid(),
   refreshed_at     timestamptz,
   lookup_row_count integer,
+  -- Optional inclusive lower bound (PT session date) on the history the lookup
+  -- aggregates. NULL = all history (the default, and the pre-20260728
+  -- behaviour). Bounds BOTH the trade aggregation and the threshold cuts —
+  -- see migrations/20260728_condition_lookup_history_window.sql.
+  history_start_date date,
   updated_at       timestamptz default now()
 );
+-- for projects created before 20260728
+alter table public.condition_lookup_meta add column if not exists history_start_date date;
 alter table public.condition_lookup_meta enable row level security;
 drop policy if exists "Owner access" on public.condition_lookup_meta;
 create policy "Owner access" on public.condition_lookup_meta

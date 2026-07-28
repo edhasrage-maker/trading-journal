@@ -322,11 +322,11 @@ NO TRADE DATA — the trader logged no trades in this window.
   // historical (Tradezella) half of the union participates too — the IB
   // classification is a property of the SESSION, not of who recorded the trade.
   // Same reasoning as analytics' histToContext.
-  const ibByDate = new Map<string, { regime: string | null; sizeBand: string | null }>()
+  const ibByDate = new Map<string, { regime: string | null }>()
   {
     const { data: mcs } = await supabase
       .from('market_context')
-      .select('trading_day_id, rvol, atr_1m, ib_regime, ib_size_band')
+      .select('trading_day_id, rvol, atr_1m, ib_regime')
       .in('trading_day_id', dayIds)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const m of (mcs ?? []) as any[]) {
@@ -334,8 +334,8 @@ NO TRADE DATA — the trader logged no trades in this window.
         mcByDay.set(m.trading_day_id, { rvol: m.rvol ?? null, atr: m.atr_1m ?? null })
       }
       const date = dayDateById.get(m.trading_day_id)
-      if (date && !ibByDate.has(date) && (m.ib_regime || m.ib_size_band)) {
-        ibByDate.set(date, { regime: m.ib_regime ?? null, sizeBand: m.ib_size_band ?? null })
+      if (date && !ibByDate.has(date) && m.ib_regime) {
+        ibByDate.set(date, { regime: m.ib_regime })
       }
     }
   }
@@ -417,8 +417,12 @@ NO TRADE DATA — the trader logged no trades in this window.
   // cross-tabulated separately). Kept apart on purpose: merging them would make
   // "what the tape measured at 07:30" indistinguishable from "what I called it
   // afterwards", and only the first is available while the trader can still act.
+  // ONE lens, not two. The absolute IB-size band is persisted and drives the
+  // prep chip, but it is r=0.54 with this one and lands in the same or an
+  // adjacent tier on 98% of days — a second bucket list would spend prompt
+  // budget restating this one and invite the model to read a "disagreement"
+  // between them that Pt 24 showed doesn't exist.
   const ibRegimeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
-  const ibSizeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
 
   // Exit efficiency (MFE capture) — answers "am I leaving runners on the table /
   // should I hold for a TP2?". PRIMARY basis is DOLLARS: mfe_dollars_per_leg
@@ -578,19 +582,14 @@ NO TRADE DATA — the trader logged no trades in this window.
       }
     }
 
-    // Day character (IB ÷ ATR regime + IB size band) — BOTH sources, keyed by
-    // session date, so the historical half of the union is included.
+    // Day character (IB ÷ its own ATR) — BOTH sources, keyed by session date so
+    // the historical half of the union is included.
     {
-      const ib = t._date ? ibByDate.get(t._date) : undefined
-      if (ib?.regime) {
-        const b = ibRegimeBuckets.get(ib.regime) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+      const regime = t._date ? ibByDate.get(t._date)?.regime : undefined
+      if (regime) {
+        const b = ibRegimeBuckets.get(regime) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
         b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
-        ibRegimeBuckets.set(ib.regime, b)
-      }
-      if (ib?.sizeBand) {
-        const b = ibSizeBuckets.get(ib.sizeBand) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
-        b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
-        ibSizeBuckets.set(ib.sizeBand, b)
+        ibRegimeBuckets.set(regime, b)
       }
     }
 
@@ -793,11 +792,6 @@ ${MAE_BUCKETS.map(([label]) => {
     mid: 'mid (7.7–13×)',
     expanded: 'expanded (≥ 13×)',
   }
-  const IB_SIZE_LABEL: Record<string, string> = {
-    small: 'small (IB < 0.75× its 10-day average)',
-    normal: 'normal (0.75–1.25×)',
-    large: 'large (> 1.25×)',
-  }
   const namedLine = (
     m: Map<string, { count: number; wins: number; losers: number; pnl: number }>,
     order: string[],
@@ -806,13 +800,10 @@ ${MAE_BUCKETS.map(([label]) => {
     const b = m.get(k)!
     return `    ${labels[k] ?? k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`
   }).join('\n')
-  const dayCharacterBlock = (ibRegimeBuckets.size === 0 && ibSizeBuckets.size === 0)
-    ? '  (no IB day-character data in this window — needs market_context.ib_regime / ib_size_band, which the prep page writes and scripts/backfill-ib-day-type.ts fills for history)'
-    : `  By IB CHARACTER — how big the first hour was RELATIVE TO ITS OWN ATR (measured at 07:30 PT, known before the trader acts):
-${namedLine(ibRegimeBuckets, ['chop', 'mid', 'expanded'], IB_REGIME_LABEL) || '    (n/a)'}
-  By IB SIZE — how big the first hour was in absolute terms vs the trailing 10 days:
-${namedLine(ibSizeBuckets, ['small', 'normal', 'large'], IB_SIZE_LABEL) || '    (n/a)'}
-  NB: these two lenses answer different questions and can disagree. They are a MEASUREMENT of the session, not the trader's hand-applied day_types[] labels above — never conflate the two, and don't claim a day-character edge off a thin bucket.`
+  const dayCharacterBlock = ibRegimeBuckets.size === 0
+    ? '  (no IB day-character data in this window — needs market_context.ib_regime, which the prep page writes and scripts/backfill-ib-day-type.ts fills for history)'
+    : `${namedLine(ibRegimeBuckets, ['chop', 'mid', 'expanded'], IB_REGIME_LABEL)}
+  NB: this is a MEASUREMENT of the session, not the trader's hand-applied day_types[] labels above — never conflate the two. It also does NOT sort this trader's P&L on its own: the buckets sit within a few dollars of each other once single heavy sessions are trimmed, so do not present a bucket's EV as an edge. The absolute IB-size lens (IB vs its trailing 10-day average) tracks this one closely (r 0.54; same or adjacent tier on 98% of days) and is deliberately NOT listed as a second read.`
 
   const conditionsBlock = (rvolBuckets.size === 0 && atrRegimeBuckets.size === 0)
     ? '  (not enough market-context data to split days by regime in this window)'

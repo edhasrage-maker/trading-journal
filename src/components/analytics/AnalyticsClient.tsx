@@ -24,7 +24,6 @@ import {
   aggregateByDayType,
   aggregateByStructureFollowFade,
   aggregateByIbRegime,
-  aggregateByIbSizeBand,
   tagImpact,
   computeStats,
   formatCapturePct,
@@ -220,7 +219,6 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
   const dayTypePerf = useMemo(() => aggregateByDayType(filtered), [filtered])
   const structurePerf = useMemo(() => aggregateByStructureFollowFade(filtered), [filtered])
   const ibRegimePerf = useMemo(() => aggregateByIbRegime(filtered), [filtered])
-  const ibSizePerf = useMemo(() => aggregateByIbSizeBand(filtered), [filtered])
 
   // Drilldown modal state — which (category, label) pair the user clicked
   // on. Click any tag label in any of the five performance tables to open
@@ -462,24 +460,30 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
             data={dayTypePerf}
             onTagClick={openCategory('day_types')}
           />
-          {/* Day CHARACTER — the derived counterpart to Day Type above. Two
-              separate tables on purpose: Day Type is what you tagged after the
-              fact, this is what the Initial Balance actually printed by 07:30.
-              Merging them would make it impossible to tell a hindsight label
-              from a measurement. Renders only once days have been classified
+          {/* Day CHARACTER — the derived counterpart to Day Type above. Kept a
+              separate table from Day Type on purpose: Day Type is what you
+              tagged after the fact, this is what the Initial Balance actually
+              printed by 07:30, and merging them would make a hindsight label
+              indistinguishable from a measurement.
+
+              ONE table, not two. Pt 23 shipped this alongside a second "IB Size
+              Band" table on the theory that the two lenses disagreed. Pt 24
+              measured that: r = 0.54 over 448 days, the bands land in the same
+              or an adjacent tier 98% of the time, and holding one lens fixed
+              the other adds nothing that survives trimming a single session
+              (within mid — the bulk of the book — size reads $29/$30/$27).
+              Two near-identical tables where neither sorts P&L reads as signal
+              when it isn't, so the absolute-size lens moved into this table's
+              description as context. It stays persisted on market_context and
+              still drives the prep panel's action-level chip.
+
+              Renders only once days have been classified
               (scripts/backfill-ib-day-type.ts). */}
           {ibRegimePerf.length > 0 && (
             <TagPerformanceTable
               title="Day Character (measured at IB close)"
-              description="IB range ÷ its own ATR — how directional the first hour actually was. Derived from bars at 07:30 PT, not tagged by hand."
+              description="IB range ÷ its own ATR — how directional the first hour actually was, derived from bars at 07:30 PT rather than tagged by hand. The absolute-size read (IB vs its trailing 10-day average) tracks this closely and is shown on the prep panel; it isn't a second, independent signal."
               data={ibRegimePerf}
-            />
-          )}
-          {ibSizePerf.length > 0 && (
-            <TagPerformanceTable
-              title="IB Size Band (measured at IB close)"
-              description="IB range vs its trailing 10-day average — how big the first hour was relative to normal."
-              data={ibSizePerf}
             />
           )}
           <TagPerformanceTable

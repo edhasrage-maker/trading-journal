@@ -508,6 +508,23 @@ export async function refreshConditionLookup(
   const scope = <T extends { eq: (c: string, v: string) => T }>(q: T): T =>
     userId ? q.eq('user_id', userId) : q
 
+  // ── 0. optional history window (condition_lookup_meta.history_start_date) ──
+  // NULL = all history, which is the default and what every row had before the
+  // 20260728 migration. When set, it bounds BOTH the trade aggregation and the
+  // threshold cuts below — see the migration for why they must move together.
+  let historyStart: string | null = null
+  if (userId) {
+    const { data: meta } = await supabase
+      .from('condition_lookup_meta')
+      .select('history_start_date')
+      .eq('user_id', userId)
+      .maybeSingle()
+    historyStart = (meta as { history_start_date?: string | null } | null)?.history_start_date ?? null
+  }
+  /** Is this PT session date inside the configured window? */
+  const inWindow = (date: string | null | undefined): boolean =>
+    !!date && (historyStart === null || date >= historyStart)
+
   // ── 1. market_context + trading_days (id → date) ──
   const [{ data: contextsRaw, error: cErr }, { data: daysRaw, error: dErr }] = await Promise.all([
     scope(supabase.from('market_context').select('trading_day_id, rvol, rvol_at_ib_close, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_1m, ib_atr_ratio')),
@@ -518,9 +535,11 @@ export async function refreshConditionLookup(
   ]
   if (cErr) throw new Error(`Failed to load market_context: ${cErr.message}`)
   if (dErr) throw new Error(`Failed to load trading_days: ${dErr.message}`)
-  const contexts = contextsRaw ?? []
   const days = daysRaw ?? []
   const dayDateById = new Map(days.map(d => [d.id, d.date]))
+  // Windowed at the source so every downstream count (including the returned
+  // market_context_rows) describes the data the lookup was actually built from.
+  const contexts = (contextsRaw ?? []).filter(ctx => inWindow(dayDateById.get(ctx.trading_day_id)))
 
   const metricsByDate = new Map<string, MetricRow>()
   for (const ctx of contexts) {
@@ -530,6 +549,8 @@ export async function refreshConditionLookup(
   }
 
   // ── 2. thresholds ──
+  // Computed from the SAME windowed contexts as the aggregation below: the cuts
+  // have to describe the era whose trades will fill the buckets.
   const thresholds = computeThresholds(contexts.map(ctx => deriveMetrics(ctx)))
 
   // ── 3. trades (native + historical), paginated past the 1000 cap ──
@@ -564,12 +585,12 @@ export async function refreshConditionLookup(
   const trades: TradeLite[] = []
   for (const t of native) {
     const date = t.trading_day_id ? dayDateById.get(t.trading_day_id) : null
-    if (!date) continue
-    trades.push({ date, pnl: t.pnl })
+    if (!inWindow(date)) continue
+    trades.push({ date: date!, pnl: t.pnl })
   }
   for (const t of hist) {
-    if (!t.trade_date) continue
-    trades.push({ date: t.trade_date, pnl: t.net_pnl })
+    if (!inWindow(t.trade_date)) continue
+    trades.push({ date: t.trade_date!, pnl: t.net_pnl })
   }
 
   // ── 4. build lookup ──

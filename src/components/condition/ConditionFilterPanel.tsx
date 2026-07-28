@@ -50,6 +50,9 @@ interface VintageInfo {
   refreshed_at: string | null
   lookup_row_count: number
   threshold_count: number
+  /** Set when the trader has deliberately narrowed the history the buckets are
+   *  built from. Null = all history. Surfaced so a small n reads as a choice. */
+  history_start_date?: string | null
 }
 
 interface LookupResponse extends LookupOutcome {
@@ -98,7 +101,6 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle')
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
-  const [notes, setNotes] = useState('')
   const [showInfo, setShowInfo] = useState(false)
   /** User can override the auto picker (which defaults to tertile, falls
    *  back to median when tertile has insufficient data) to inspect the
@@ -140,7 +142,6 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           ib_atr: p.ib_atr != null ? String(p.ib_atr) : '',
         }
         setInputs(next)
-        setNotes(p.notes ?? '')
         setLastSavedAt(new Date(p.updated_at).getTime())
         setSaveStatus('saved')
       } catch {
@@ -148,7 +149,6 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
       }
     })()
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date])
 
   // ── Debounced lookup on input change ──────────────────────────────────────
@@ -226,7 +226,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
         matched_tertile_condition_id: outcome?.best_tertile?.row.condition_id ?? null,
         consolidated_verdict: outcome?.consolidated.verdict ?? null,
         conflict_flag: outcome?.conflict ?? false,
-        notes: notes || null,
+        // `notes` intentionally omitted — see the Save block below.
       }
       const res = await fetch(`/api/daily-prep/${date}`, {
         method: 'POST',
@@ -294,6 +294,16 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           >
             · lookup {vintageAge === 0 ? 'refreshed today' : `${vintageAge}d old`}
             {vintageStale && ' · stale'}
+          </span>
+        )}
+        {/* A narrowed history makes every n smaller. Say so, or it reads as
+            missing data instead of a deliberate window. */}
+        {vintage?.history_start_date && (
+          <span
+            className="font-mono text-gray-500"
+            title={`Condition buckets are built only from sessions on or after ${vintage.history_start_date}. Clear condition_lookup_meta.history_start_date to use all history.`}
+          >
+            · from {vintage.history_start_date}
           </span>
         )}
         {lastSavedAt && saveStatus === 'saved' && (
@@ -401,16 +411,14 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           <ConditionsHighlight match={effectiveMatch} showEv baselineEv={outcome.baseline_ev} />
         )}
 
-        {/* Notes + Save */}
+        {/* Save. The notes textarea that used to live here was removed
+            2026-07-27 — the prep page already owns free-text ("what you're
+            watching, plan deviations") and asking for it twice on the same
+            screen just made the trader choose a box. `daily_prep.notes` and its
+            API field are untouched, and the POST below deliberately OMITS the
+            key (the route only writes `notes` when present), so notes saved
+            before the removal survive rather than being nulled on the next save. */}
         <div className="space-y-2 pt-3 border-t border-gray-800">
-          <label className="block text-xs text-gray-500">Notes (optional)</label>
-          <textarea
-            rows={2}
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            placeholder="What you're watching, plan deviations, etc."
-            className="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-600 resize-none"
-          />
           <div className="flex items-center justify-end gap-3">
             {saveStatus === 'error' && (
               <span className="text-xs text-red-400">Save failed</span>
