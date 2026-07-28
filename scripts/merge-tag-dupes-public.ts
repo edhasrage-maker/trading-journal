@@ -39,10 +39,17 @@ const userArg = arg('user')
 const MERGES: [string, string, string][] = [
   ['mistakes', 'FOMO Trade', 'FOMO'],
   ['mistakes', 'Revenge Trade', 'Revenge Trading'],
-  // Case-only collision: the seeded default (sort 11) vs the trader's own
-  // curated label (sort 260, 108 uses). tags_json holds raw strings, so the two
-  // casings were two separate tags everywhere downstream.
-  ['confluences', 'Follow LTF structure', 'Follow LTF Structure'],
+  // REVERSED 2026-07-28 — the first pass merged this the WRONG WAY.
+  // 'Follow LTF structure' / 'Fade LTF structure' (sort 11/12) are NOT seed junk:
+  // they are the structure-confluence tags from migration
+  // 20260718_structure_confluence_tags, and src/app/api/trades/suggest-tags emits
+  // those EXACT strings for deterministic follow/fade detection ("Labels must
+  // exist in the trader's library or the suggestion is silently skipped").
+  // Merging them away and deleting the row disabled auto-tagging for this account.
+  // Canonical is therefore the AUTO-DETECTABLE label, not the more-used one —
+  // usage can be migrated, a detector target cannot be invented per-user.
+  ['confluences', 'Follow LTF Structure', 'Follow LTF structure'],
+  ['confluences', 'Faded LTF Move/5m Structure', 'Fade LTF structure'],
   // Same concept per the trader; 5 uses vs 38 on the long form.
   ['confluences', 'Waited for 2x Failed Attempts', 'Waited For 2x Failed Attempts From Opposing Side'],
   // 5–5 TIE on usage, so "keep the one with more" didn't decide it. Canonical is
