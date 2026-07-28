@@ -182,18 +182,40 @@ function lvl(price: number, delta: number, firstMin: number, lastMin = firstMin 
 }
 const anchor = (price: number, min: number, direction: 'long' | 'short' | null = 'long') =>
   ({ id: 't1', entryMs: min * MIN, entryPrice: price, direction })
-const mcfg: MatchConfig = { tickSize: 0.25, maxTicks: 8, maxMinutes: 30 }
+const mcfg: MatchConfig = { tickSize: 0.25, rowHeight: 1, maxTicks: 8, maxMinutes: 30 }
 
 check('a level at the entry price matches',
   matchTradeToLevels(anchor(7100, 20), [lvl(7100, -2000, 10)], mcfg).length === 1)
 check('distance is measured in TICKS, not points',
-  matchTradeToLevels(anchor(7101, 20), [lvl(7100, -2000, 10)], mcfg)[0]?.distanceTicks === 4)
+  matchTradeToLevels(anchor(7102, 20), [lvl(7100, -2000, 10)], mcfg)[0]?.distanceTicks === 4)
 check('beyond maxTicks does not match',
-  matchTradeToLevels(anchor(7103, 20), [lvl(7100, -2000, 10)], mcfg).length === 0)
-check('beyond maxMinutes does not match',
-  matchTradeToLevels(anchor(7100, 90), [lvl(7100, -2000, 10)], mcfg).length === 0)
-check('age is reported in minutes',
-  matchTradeToLevels(anchor(7100, 25), [lvl(7100, -2000, 10)], mcfg)[0]?.ageMinutes === 15)
+  matchTradeToLevels(anchor(7104, 20), [lvl(7100, -2000, 10)], mcfg).length === 0)
+
+// A level is an INTERVAL. On a 5pt row an entry near the top is 19 ticks from
+// the low edge but is inside the level, and must read as distance 0.
+const mcfg5: MatchConfig = { ...mcfg, rowHeight: 5 }
+check('an entry INSIDE the row is distance 0',
+  matchTradeToLevels(anchor(7104.75, 20), [lvl(7100, -2000, 10)], mcfg5)[0]?.distanceTicks === 0)
+check('distance is measured to the NEAREST row edge',
+  matchTradeToLevels(anchor(7106, 20), [lvl(7100, -2000, 10)], mcfg5)[0]?.distanceTicks === 4)
+check('below the row measures off the LOW edge',
+  matchTradeToLevels(anchor(7099, 20), [lvl(7100, -2000, 10)], mcfg5)[0]?.distanceTicks === 4)
+check('a zero rowHeight throws', (() => {
+  try { matchTradeToLevels(anchor(7100, 20), [lvl(7100, -2000, 10)], { ...mcfg, rowHeight: 0 }); return false }
+  catch { return true }
+})())
+
+// Recency is anchored on the level's LAST print. A row aggregates the whole
+// session and price revisits levels, so its first print is usually near the
+// open and says nothing about whether the level was still live.
+check('recency is measured from the level\'s LAST print',
+  matchTradeToLevels(anchor(7100, 25), [lvl(7100, -2000, 10, 20)], mcfg)[0]?.ageMinutes === 5)
+check('a level that last printed long ago is stale',
+  matchTradeToLevels(anchor(7100, 200), [lvl(7100, -2000, 10, 20)], mcfg).length === 0)
+check('a level forming since the open is still live if it JUST printed',
+  matchTradeToLevels(anchor(7100, 200), [lvl(7100, -2000, 5, 195)], mcfg).length === 1)
+check('formingMinutes still reports the full age of the level',
+  matchTradeToLevels(anchor(7100, 200), [lvl(7100, -2000, 5, 195)], mcfg)[0]?.formingMinutes === 195)
 
 // THE honesty gate. A row that only started printing after the entry cannot
 // have informed it; matching on lastMs instead would credit hindsight, and
@@ -219,14 +241,14 @@ const many = matchTradeToLevels(anchor(7100, 20),
   [lvl(7101, -900, 10), lvl(7100.25, -800, 10), lvl(7100.5, -1500, 10)], mcfg)
 check('matches come back CLOSEST first', many[0]?.level.price === 7100.25)
 check('all qualifying levels are returned', many.length === 3)
+// 1pt rows: [7098,7099) and [7101,7102) are both exactly 1 point (4 ticks)
+// from an entry at 7100, so only the tie-break can order them.
 check('equal distance breaks toward the larger |delta|',
-  matchTradeToLevels(anchor(7100, 20), [lvl(7099.5, -700, 10), lvl(7100.5, -1500, 10)], mcfg)[0]
+  matchTradeToLevels(anchor(7100, 20), [lvl(7098, -700, 10), lvl(7101, -1500, 10)], mcfg)[0]
     ?.level.delta === -1500)
 
-// A 5pt NQ row is 20 ticks wide, so an 8-tick gate is tight in NQ terms —
-// the point of expressing proximity in ticks rather than points.
 check('tickSize scales the gate across instruments',
-  matchTradeToLevels(anchor(7102, 20), [lvl(7100, -2000, 10)], { ...mcfg, tickSize: 1 }).length === 1)
+  matchTradeToLevels(anchor(7108, 20), [lvl(7100, -2000, 10)], { ...mcfg, tickSize: 1 }).length === 1)
 check('a zero tickSize throws rather than dividing by zero', (() => {
   try { matchTradeToLevels(anchor(7100, 20), [lvl(7100, -2000, 10)], { ...mcfg, tickSize: 0 }); return false }
   catch { return true }
