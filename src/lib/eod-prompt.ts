@@ -20,7 +20,7 @@ import type { PrepNotes, AiAnalysis, Trade, MarketContext, EodAiAnalysis, RuleId
 import { symbolToMultiplier } from './futures-symbols.ts'
 import { CAPTURE_UNITS_DISCIPLINE } from './coach-methodology.ts'
 import {
-  OWNER_RAILS, isEmptyScoringProfile, resolveRails, resolveRubric, scoringProfileSummary, activeRailIds,
+  OWNER_RAILS, isEmptyScoringProfile, resolveRails, resolveRubric, scoringProfileSummary, activeRailIds, sizeCapFor,
   type RailConfig, type ScoringProfile,
 } from './scoring-profile.ts'
 
@@ -92,15 +92,23 @@ function genericRulesetBlock(sp: ScoringProfile, rc: RailConfig): string {
   const rulesLine = scoringProfileSummary(sp)
   const cdMin = rc.cooldownSec != null ? +(rc.cooldownSec / 60).toFixed(2) : null
 
+  // Caps read as "5 MNQ / 10 MES" when per-instrument, else the single number.
+  const capPhrase = rc.maxSizeByRoot
+    ? Object.entries(rc.maxSizeByRoot).map(([root, cap]) => `${cap} ${root}`).join(' / ')
+    : `${rc.maxSize} contracts`
+  const sizeUpPhrase = rc.sizeUpByRoot
+    ? ` A QUALIFYING (A+) setup may size up to ${Object.entries(rc.sizeUpByRoot).map(([root, cap]) => `${cap} ${root}`).join(' / ')} — the larger lot count on the smaller-ranging instrument is dollar-risk parity, NOT an escalation, so do not read it as over-sizing.`
+    : ''
+
   const railLines = [
     rc.dailyLossLimit != null
       ? `  • P1 = Daily loss limit: session net P&L not past $${rc.dailyLossLimit} (with a $${rc.dllBuffer} slippage buffer).`
       : '  • P1 = Daily loss limit: NOT TRACKED by this trader — always passes, ignore for the verdict.',
-    rc.maxSize != null
-      ? `  • P2 = Max position size: every trade ≤ ${rc.maxSize} contracts.`
+    rc.maxSize != null || rc.maxSizeByRoot != null
+      ? `  • P2 = Max position size: every trade within ${capPhrase}. Caps are PER INSTRUMENT — judge each trade against its OWN symbol's cap, never another instrument's.${sizeUpPhrase}`
       : '  • P2 = Max position size: NOT TRACKED — always passes.',
-    rc.postLossCap != null
-      ? `  • P3 = No size-up after a loss: the trade after a realized loss stays ≤ ${rc.postLossCap} contracts.`
+    rc.postLossCap != null || rc.maxSizeByRoot != null
+      ? `  • P3 = No size-up after a loss: the trade after a realized loss stays within its instrument's BASE cap (${capPhrase}) — a loss revokes any qualifying size-up.`
       : '  • P3 = No size-up after a loss: NOT TRACKED — always passes.',
     rc.cooldownSec != null
       ? `  • P4 = Cooldown after a loss: ≥ ${rc.cooldownSec}s (${cdMin} min) before re-entry.`
@@ -414,8 +422,14 @@ P6 are renumbered to P4 and P5.
 
 Rule reference (renumbered):
   • P1 = Daily loss limit (Session Net P&L not past −$500, with a $50 slippage buffer — closing between −$500 and −$550 is a stop-fill artifact, not a breach; only −$550 or worse is a true P1 breach)
-  • P2 = Size within cap (≤5 MNQ; ≤10 only on Qualifying S&D)
-  • P3 = No size-up after loss (post-loss → ≤5 MNQ, no scale to 10)
+  • P2 = Size within cap, PER INSTRUMENT: ≤5 MNQ / ≤10 MES base; a Qualifying
+    S&D (A+) setup may go to ≤10 MNQ / ≤20 MES. The larger ES lot count is
+    dollar-risk PARITY, not an escalation — NQ carries ~2.9x the dollar
+    volatility of ES per contract, so 20 MES sits BELOW 10 MNQ in risk. Judge
+    each trade against its own symbol's cap and never flag a 10-lot MES as
+    over-sized. The ≤$200 campaign-risk gate still binds on any size-up.
+  • P3 = No size-up after loss (post-loss → the BASE cap for that instrument:
+    ≤5 MNQ / ≤10 MES, no scale to the A+ tier)
   • P4 = Cooldown ≥90s after any loss
   • P5 = Trade cap ≤7 trades/session
 
@@ -515,7 +529,7 @@ across the session — so the UI can show which criteria are dragging.
      ATR in Market Context. If a trade shows entry ATR "N/A" (e.g. a GBX/
      overnight trade with no bars), mark this criterion N/A and SKIP it — do
      NOT fall back to the RTH session ATR; that volatility regime does not apply
-     outside RTH. Sub-0.5 needs tight_stop_reason logged. 10-MNQ trades: ≤1.25
+     outside RTH. Sub-0.5 needs tight_stop_reason logged. SIZED-UP (A+) trades: ≤1.25
      ATR AND ≤$200 campaign risk. Mechanical — formerly P4, no "marginal" soft zone.
   3. tp1_at_2r_or_reasoned — planned TP1 distance ÷ planned stop distance
      ≥ 2.0. If TP1 < 2R, the EOD recap or trade notes must explicitly
@@ -911,7 +925,7 @@ export function computeMfeCaptureDeterministic(
  *
  * Rules per spec (eod-prompt.ts ~line 178):
  *   P1: Session net P&L not past −$500
- *   P3: No size-up after loss (post-loss → ≤5 MNQ, no scale to 10)
+ *   P3: No size-up after loss (post-loss → that instrument's BASE cap)
  *   P4: Cooldown ≥90s after any loss
  *   P5: Trade cap ≤7 trades/session
  *
@@ -926,7 +940,9 @@ export interface DeterministicRuleResult {
 }
 
 export function computeDeterministicRules(
-  trades: Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl'>[],
+  // `symbol` is optional but load-bearing: without it every size cap is
+  // instrument-blind and a correctly-sized MES trade breaches an MNQ cap.
+  trades: (Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl'> & { symbol?: string | null })[],
   rc: RailConfig = OWNER_RAILS,
 ): { P1: DeterministicRuleResult; P2?: DeterministicRuleResult; P3: DeterministicRuleResult; P4: DeterministicRuleResult; P5: DeterministicRuleResult } {
   const sorted = [...trades]
@@ -959,11 +975,20 @@ export function computeDeterministicRules(
   // exception). Owner path leaves P2 undefined so the AI's setup-aware P2 (10
   // MNQ only on Qualifying S&D) is preserved unchanged.
   let P2: DeterministicRuleResult | undefined
-  if (rc.p2Deterministic && rc.maxSize != null) {
-    const over = sorted.filter(t => t.quantity != null && t.quantity > rc.maxSize!)
+  if (rc.p2Deterministic && (rc.maxSize != null || rc.maxSizeByRoot != null)) {
+    // Per-instrument: a cap written for MNQ must not condemn a correctly-sized
+    // MES trade. sizeCapFor() returns null when no cap covers that root, which
+    // means "not capped here" — never a breach.
+    const over = sorted.filter(t => {
+      const cap = sizeCapFor(rc, t.symbol, 'base')
+      return cap != null && t.quantity != null && t.quantity > cap
+    })
+    const capsLabel = rc.maxSizeByRoot
+      ? Object.entries(rc.maxSizeByRoot).map(([r, c]) => `${c} ${r}`).join(' / ')
+      : `${rc.maxSize}`
     P2 = over.length === 0
-      ? { status: 'pass', breach_count: 0, reason: `Every trade sized ≤${rc.maxSize} contracts.` }
-      : { status: 'fail', breach_count: over.length, reason: `${over.length} trade${over.length === 1 ? '' : 's'} exceeded the ${rc.maxSize}-contract max size.` }
+      ? { status: 'pass', breach_count: 0, reason: `Every trade sized within cap (${capsLabel}).` }
+      : { status: 'fail', breach_count: over.length, reason: `${over.length} trade${over.length === 1 ? '' : 's'} exceeded the size cap (${capsLabel}).` }
   }
 
   // ── P3 + P4: post-loss checks (size + cooldown), REALIZED-LOSS aware ────
@@ -1008,9 +1033,14 @@ export function computeDeterministicRules(
       // P3/P4 only react when the immediately-preceding REALIZED trade was a loss.
       if (!lastClosed || (lastClosed.pnl ?? 0) >= 0) continue
 
-      // P3 — size after a realized loss must be ≤ the post-loss cap.
-      if (p3Active && curr.quantity != null && curr.quantity > rc.postLossCap!) {
-        p3Breaches.push(`T${i + 1} sized ${curr.quantity} after a realized loss`)
+      // P3 — size after a realized loss must be ≤ the post-loss cap FOR THAT
+      // INSTRUMENT (the BASE cap, never the size-up one — the whole point of the
+      // rule is that a loss revokes the exception). A symbol-blind comparison
+      // here made every correctly-sized 10-lot MES trade a breach against a cap
+      // written for 5 MNQ.
+      const postLossCap = sizeCapFor(rc, curr.symbol, 'base') ?? rc.postLossCap
+      if (p3Active && postLossCap != null && curr.quantity != null && curr.quantity > postLossCap) {
+        p3Breaches.push(`T${i + 1} sized ${curr.quantity} after a realized loss (cap ${postLossCap})`)
       }
 
       // P4 — gap from the loss closing to this trade opening must be ≥ cooldown.

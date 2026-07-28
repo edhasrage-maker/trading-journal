@@ -35,7 +35,17 @@ export interface ScoringProfile {
   tp?: string | null
   rails?: {
     daily_loss_limit?: number | null
+    /** Default size cap in contracts — used for any instrument without an override. */
     max_size?: number | null
+    /** Per-instrument size caps keyed by SYMBOL ROOT ("MNQ", "MES", "ES").
+     *  A single number cannot express "5 MNQ or 10 MES": NQ carries roughly 2.9×
+     *  the dollar volatility of ES per contract (1m ATR 19.4×$2 vs 2.6×$5,
+     *  measured 2026-07-28), so one lot count is either too loose on NQ or too
+     *  tight on ES. Any root not listed falls back to `max_size`. */
+    max_size_by_root?: Record<string, number> | null
+    /** Per-root cap for a QUALIFYING (A+) size-up. Falls back to the base cap,
+     *  i.e. "this trader has no size-up exception". */
+    size_up_by_root?: Record<string, number> | null
     max_trades?: number | null
     cooldown_min?: number | null
     no_add_to_loser?: boolean | null
@@ -163,12 +173,20 @@ export interface RailConfig {
   dailyLossLimit: number | null
   /** Slippage buffer on the DLL (a stop that fills past the limit isn't a breach). */
   dllBuffer: number
-  /** Max position size (contracts); null = no size rule. */
+  /** Default max position size (contracts); null = no size rule. Per-instrument
+   *  overrides live in `maxSizeByRoot` — always read a cap through
+   *  `sizeCapFor()`, never off this field directly. */
   maxSize: number | null
+  /** Per-symbol-root size caps, e.g. { MNQ: 5, MES: 10 }. null = none set. */
+  maxSizeByRoot: Record<string, number> | null
+  /** Per-symbol-root caps for a QUALIFYING (A+) size-up, e.g. { MNQ: 10, MES: 20 }. */
+  sizeUpByRoot: Record<string, number> | null
   /** When true, P2 (size cap) is computed deterministically (qty ≤ maxSize).
    *  Owner = false (P2 left to the AI for the S&D 10-lot exception). */
   p2Deterministic: boolean
-  /** Post-loss size cap (contracts) for P3; = maxSize. null = no P3 rule. */
+  /** Post-loss size cap (contracts) for P3; = the BASE cap. null = no P3 rule.
+   *  Per-instrument via `sizeCapFor(rc, symbol)` — P3 never uses the size-up
+   *  cap, that's the whole point of the rule. */
   postLossCap: number | null
   /** Cooldown after a loss in SECONDS; null = no cooldown rule. */
   cooldownSec: number | null
@@ -185,7 +203,15 @@ export const OWNER_RAILS: RailConfig = {
   dailyLossLimit: -500,
   dllBuffer: 50,
   maxSize: 5,
-  p2Deterministic: false,   // owner P2 stays AI-driven (10 MNQ on Qualifying S&D)
+  // Instrument-normalized, not a size increase. NQ carries ~2.9× the dollar
+  // volatility of ES per contract (1m ATR 19.4 × $2 = $38.7 vs 2.6 × $5 = $13.1,
+  // measured 2026-07-28), because NQ is ~1.9× more volatile than ES in PERCENT
+  // terms on top of a 3.75× price ratio. So 10 MES ≈ $131 of ATR-risk against
+  // 5 MNQ ≈ $194, and the A+ 20 MES ≈ $262 against 10 MNQ ≈ $387 — both ES caps
+  // sit BELOW their NQ equivalent. The $200 campaign-risk gate still binds.
+  maxSizeByRoot: { MNQ: 5, MES: 10 },
+  sizeUpByRoot: { MNQ: 10, MES: 20 },
+  p2Deterministic: false,   // owner P2 stays AI-driven (the A+ / Qualifying S&D exception)
   postLossCap: 5,
   cooldownSec: 90,
   tradeCap: 7,
@@ -204,10 +230,41 @@ export const UNTRACKED_RAILS: RailConfig = {
   dailyLossLimit: null,
   dllBuffer: 50,
   maxSize: null,
+  maxSizeByRoot: null,
+  sizeUpByRoot: null,
   p2Deterministic: false,
   postLossCap: null,
   cooldownSec: null,
   tradeCap: null,
+}
+
+/** "MNQU6.CME" → "MNQ". Local copy of futures-symbols' symbolRoot so this module
+ *  stays dependency-free and client-safe (see the header note). */
+function rootOf(symbol: string): string {
+  return symbol.split('.')[0].replace(/[A-Z]\d{1,2}$/, '').toUpperCase()
+}
+
+/**
+ * The size cap that applies to ONE trade, in contracts. Always read caps through
+ * this — a bare `rc.maxSize` comparison is instrument-blind, which is what made
+ * a 10-lot MES trade a P3 breach against a cap written for MNQ.
+ *
+ * `kind: 'base'` is the everyday cap (and the post-loss cap for P3).
+ * `kind: 'sizeUp'` is the qualifying-setup exception, falling back to the base
+ * cap when the trader has no size-up concept.
+ * Returns null when no cap applies to this instrument → the rule is inactive.
+ */
+export function sizeCapFor(
+  rc: RailConfig,
+  symbol: string | null | undefined,
+  kind: 'base' | 'sizeUp' = 'base',
+): number | null {
+  const root = symbol ? rootOf(symbol) : null
+  const table = kind === 'sizeUp' ? rc.sizeUpByRoot : rc.maxSizeByRoot
+  if (root && table && table[root] != null) return table[root]
+  // No size-up entry for this root → fall back to its base cap, not the default.
+  if (kind === 'sizeUp' && root && rc.maxSizeByRoot?.[root] != null) return rc.maxSizeByRoot[root]
+  return rc.maxSize
 }
 
 /** True when the profile carries no gradable rules → resolve to the owner
@@ -220,6 +277,7 @@ export function isEmptyScoringProfile(sp?: ScoringProfile | null): boolean {
   if (sp.tp) return false
   const r = sp.rails ?? {}
   if (r.daily_loss_limit != null || r.max_size != null || r.max_trades != null || r.cooldown_min != null || r.no_add_to_loser) return false
+  if (r.max_size_by_root && Object.keys(r.max_size_by_root).length > 0) return false
   if (sp.execution && sp.execution.uses_orderflow != null) return false
   return true
 }
@@ -238,12 +296,22 @@ export function resolveRails(sp?: ScoringProfile | null, isLocalOwner = true): R
   if (isEmptyScoringProfile(sp)) return isLocalOwner ? { ...OWNER_RAILS } : { ...UNTRACKED_RAILS }
   const r = sp!.rails ?? {}
   const maxSize = r.max_size != null ? r.max_size : null
+  const clean = (t?: Record<string, number> | null): Record<string, number> | null => {
+    if (!t) return null
+    const out: Record<string, number> = {}
+    for (const [k, v] of Object.entries(t)) if (typeof v === 'number' && v > 0) out[k.toUpperCase()] = v
+    return Object.keys(out).length ? out : null
+  }
+  const maxSizeByRoot = clean(r.max_size_by_root)
   return {
     isOwner: false,
     dailyLossLimit: r.daily_loss_limit != null ? -Math.abs(r.daily_loss_limit) : null,
     dllBuffer: 50,
     maxSize,
-    p2Deterministic: maxSize != null,
+    maxSizeByRoot,
+    sizeUpByRoot: clean(r.size_up_by_root),
+    // A per-instrument cap is just as gradable as a scalar one.
+    p2Deterministic: maxSize != null || maxSizeByRoot != null,
     postLossCap: maxSize,
     cooldownSec: r.cooldown_min != null ? r.cooldown_min * 60 : null,
     tradeCap: r.max_trades != null ? r.max_trades : null,
@@ -256,7 +324,7 @@ export function activeRailIds(rc: RailConfig): PRuleId[] {
   if (rc.isOwner) return ['P1', 'P2', 'P3', 'P4', 'P5']
   const ids: PRuleId[] = []
   if (rc.dailyLossLimit != null) ids.push('P1')
-  if (rc.maxSize != null) { ids.push('P2', 'P3') }
+  if (rc.maxSize != null || rc.maxSizeByRoot != null) { ids.push('P2', 'P3') }
   if (rc.cooldownSec != null) ids.push('P4')
   if (rc.tradeCap != null) ids.push('P5')
   return ids

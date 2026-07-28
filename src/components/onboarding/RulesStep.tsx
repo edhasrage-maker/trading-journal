@@ -52,6 +52,11 @@ export default function RulesStep({ onNext, onSkipAll }: { onNext: () => void; o
   const [tp, setTp] = useState({ on: false, text: '' })
   const [dll, setDll] = useState({ on: false, value: '' })
   const [maxSize, setMaxSize] = useState({ on: false, value: '' })
+  // Per-instrument size caps. One lot number can't cover two instruments: NQ
+  // carries ~2.9x the dollar volatility of ES per contract, so a cap that's right
+  // for NQ is punitively tight on ES (and vice versa). Empty list = the single
+  // "max position size" above applies everywhere, which is the common case.
+  const [perInstrument, setPerInstrument] = useState<{ root: string; base: string; sizeUp: string }[]>([])
   const [maxTrades, setMaxTrades] = useState({ on: false, value: '' })
   const [cooldown, setCooldown] = useState({ on: false, value: '' })
   const [noAdd, setNoAdd] = useState(false)
@@ -72,6 +77,11 @@ export default function RulesStep({ onNext, onSkipAll }: { onNext: () => void; o
       const rails = sp.rails ?? {}
       if (rails.daily_loss_limit != null) setDll({ on: true, value: String(rails.daily_loss_limit) })
       if (rails.max_size != null) setMaxSize({ on: true, value: String(rails.max_size) })
+      if (rails.max_size_by_root && typeof rails.max_size_by_root === 'object') {
+        const su = (rails.size_up_by_root ?? {}) as Record<string, number>
+        setPerInstrument(Object.entries(rails.max_size_by_root as Record<string, number>)
+          .map(([root, base]) => ({ root, base: String(base), sizeUp: su[root] != null ? String(su[root]) : '' })))
+      }
       if (rails.max_trades != null) setMaxTrades({ on: true, value: String(rails.max_trades) })
       if (rails.cooldown_min != null) setCooldown({ on: true, value: String(rails.cooldown_min) })
       if (rails.no_add_to_loser) setNoAdd(true)
@@ -82,6 +92,17 @@ export default function RulesStep({ onNext, onSkipAll }: { onNext: () => void; o
   }, [])
 
   const num = (s: string) => { const n = parseFloat(s); return Number.isFinite(n) ? n : null }
+  /** Collapse the per-instrument rows into { ROOT: cap }, dropping blanks. Null
+   *  when nothing usable is set, so the profile stays clean. */
+  const byRoot = (pick: (r: { root: string; base: string; sizeUp: string }) => string): Record<string, number> | null => {
+    const out: Record<string, number> = {}
+    for (const r of perInstrument) {
+      const root = r.root.trim().toUpperCase()
+      const v = num(pick(r))
+      if (root && v != null && v > 0) out[root] = v
+    }
+    return Object.keys(out).length ? out : null
+  }
 
   // The five preset safety rails, in display order. Dismissing one hides it and
   // turns it off (so it saves as null). Dismissal is UI-only — a re-opened wizard
@@ -128,6 +149,8 @@ export default function RulesStep({ onNext, onSkipAll }: { onNext: () => void; o
             rails: {
               daily_loss_limit: dll.on ? num(dll.value) : null,
               max_size: maxSize.on ? num(maxSize.value) : null,
+              max_size_by_root: byRoot(r => r.base),
+              size_up_by_root: byRoot(r => r.sizeUp),
               max_trades: maxTrades.on ? num(maxTrades.value) : null,
               cooldown_min: cooldown.on ? num(cooldown.value) : null,
               no_add_to_loser: noAdd,
@@ -196,6 +219,60 @@ export default function RulesStep({ onNext, onSkipAll }: { onNext: () => void; o
               <RailRow key={r.key} label={r.label} unit={r.unit} v={r.v!} set={r.set!} onDismiss={() => dismissRail(r.key)} />
             )
           ))}
+          {/* Per-instrument caps. Hidden until the size rail is on, and empty by
+              default — most traders want one number. It exists because a single
+              lot cap is wrong the moment you trade two instruments of different
+              volatility: 10 MES is not "double size" against 5 MNQ, it's the
+              same dollar risk. */}
+          {maxSize.on && !dismissed.has('maxSize') && (
+            <div className="pl-1 border-l-2 border-gray-800 space-y-2">
+              {perInstrument.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setPerInstrument([{ root: '', base: '', sizeUp: '' }])}
+                  className="text-[11px] text-gray-500 hover:text-gray-300 underline decoration-dotted"
+                >
+                  Trade more than one instrument? Set a cap per instrument
+                </button>
+              ) : (
+                <>
+                  <p className="text-[11px] text-gray-500">
+                    Caps per instrument — these override the number above for that symbol.
+                    Sizing bigger on a calmer instrument keeps your dollar risk the same, so
+                    it isn&apos;t scored as over-sizing.
+                  </p>
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-gray-600">
+                    <span className="w-20">Symbol</span><span className="w-16 text-right">Max</span><span className="w-20 text-right">A+ setup</span>
+                  </div>
+                  {perInstrument.map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        value={row.root}
+                        onChange={e => setPerInstrument(prev => prev.map((r, j) => (j === i ? { ...r, root: e.target.value.toUpperCase() } : r)))}
+                        placeholder="MNQ" className={`${field} w-20 uppercase`}
+                      />
+                      <input
+                        value={row.base} inputMode="decimal"
+                        onChange={e => setPerInstrument(prev => prev.map((r, j) => (j === i ? { ...r, base: e.target.value } : r)))}
+                        placeholder="5" className={`${field} w-16 text-right`}
+                      />
+                      <input
+                        value={row.sizeUp} inputMode="decimal"
+                        onChange={e => setPerInstrument(prev => prev.map((r, j) => (j === i ? { ...r, sizeUp: e.target.value } : r)))}
+                        placeholder="optional" className={`${field} w-20 text-right`}
+                      />
+                      <DismissButton onClick={() => setPerInstrument(prev => prev.filter((_, j) => j !== i))} />
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setPerInstrument(prev => [...prev, { root: '', base: '', sizeUp: '' }])}
+                    className="text-[11px] text-gray-500 hover:text-gray-300"
+                  >+ Add instrument</button>
+                </>
+              )}
+            </div>
+          )}
           {RAILS.every(r => dismissed.has(r.key)) && <p className="text-xs text-gray-600">No safety rails — add one back below, or skip.</p>}
           {dismissed.size > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-gray-800/60">

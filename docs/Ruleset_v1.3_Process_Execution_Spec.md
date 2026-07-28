@@ -1,5 +1,6 @@
 # TRADING RULESET — v1.3
-**Effective 2026-06-07 · NQ/MNQ · RTH 06:30–13:00 PST**
+**Effective 2026-06-07 · NQ/MNQ + ES/MES · RTH 06:30–13:00 PST**
+**Amendment 8 (2026-07-28): size caps are PER INSTRUMENT — see §Size.**
 **Amended 2026-06-08 (3 times same day):**
   1. Verdict threshold relaxed from "all 7 pass" → "5 of 7 pass" — see §VERDICT (now superseded by amendment 3).
   2. Execution gains Prep adherence sub-metric — see §EXECUTION QUALITY (now superseded by amendment 3).
@@ -31,17 +32,25 @@ This is a **post-session scoring rubric.** The bot grades it after the session, 
 
 ## SIZING — two independent dimensions
 **Contract size (fixed lots):**
-- Base = **5 MNQ**, every trade.
-- Only increase = **10 MNQ**, only on Qualifying S&D. Nothing else exceeds 5.
+- Base = **5 MNQ / 10 MES**, every trade.
+- Only increase = **10 MNQ / 20 MES**, only on Qualifying S&D. Nothing else exceeds base.
+- **Why ES is double the lots and it is NOT an escalation:** caps normalize DOLLAR
+  RISK, not lot counts. NQ carries ~2.9x the dollar volatility of ES per contract
+  (1m ATR 19.4 x $2 = $38.70 vs 2.6 x $5 = $13.10, measured 2026-07-28) because NQ
+  runs ~1.9x hotter than ES in percent terms on top of a 3.75x price ratio. So
+  10 MES ~ $131 of ATR-risk against 5 MNQ ~ $194, and 20 MES ~ $262 against
+  10 MNQ ~ $387. **Both ES caps sit BELOW their NQ equivalent.** The lot count is
+  the legible form of the rule; the $200 campaign-risk cap below is the binding one,
+  and it re-tightens automatically if ES volatility rises.
 - Two paths to 10: **(A)** full 10 on entry, or **(B)** 5 then add 5.
-- **Post-loss: hard 5 MNQ cap.** No path reaches 10 after any loss.
+- **Post-loss: hard BASE cap for that instrument (5 MNQ / 10 MES).** No path reaches the A+ tier after any loss.
 
 **Path B add (kept):** add the second 5 only if — original is Qualifying S&D, add is driven by *new confirming information* (fresh delta flip, absorption holding, higher-low/lower-high, reclaim/rejection), not by price moving against you. Any add that averages a losing position, follows a loss, or chases extension = breach.
 
 **Stop distance (ATR points, independent of size):**
 - Standard 1.0 ATR; band **0.5–1.5 ATR** (ATR-10 Wilder, 1m, at entry).
 - < 0.5 ATR only with logged `tight_stop_reason`. > 1.5 ATR = breach.
-- **10-MNQ trades:** stop ≤ 1.25 ATR AND total campaign risk ≤ $200 (= 40% of $500 DLL). At $20/pt, $200 caps combined stop at 10 points; the add does not get a fresh budget.
+- **Sized-up (A+) trades, either instrument:** stop ≤ 1.25 ATR AND total campaign risk ≤ $200 (= 40% of $500 DLL). The add does not get a fresh budget. This gate binds BEFORE the lot cap — if $200 is not enough room for the full A+ size at the current ATR, the trade is smaller, on either instrument.
 
 ## PROCESS RULES (binary, hard safety rails only)
 Missing-data handling differs by tier (see §Unscorable). All 5 rules are mechanical / quantitative — no judgment involved. Stop validity (was P4) and setup validity (was P7) moved into Execution Parameters per the 2026-06-08 (amendment 3) restructure since they're quality concerns, not safety rails.
@@ -49,8 +58,8 @@ Missing-data handling differs by tier (see §Unscorable). All 5 rules are mechan
 | ID | Rule | Pass | Data field(s) | Enforce |
 |----|------|------|---------------|---------|
 | P1 | Daily loss limit | Session Net P&L not past −$500 | Net P&L by session | ENFORCED |
-| P2 | Size within cap | ≤5 MNQ; ≤10 only on valid Qualifying S&D (Path A/B) | Quantity, Setups, Orderflow, Net P&L | SELF |
-| P3 | No size-up after loss | Post-loss → ≤5 MNQ, no scale to 10 | Quantity, Net P&L, sequence | SELF |
+| P2 | Size within cap | Per instrument: ≤5 MNQ / ≤10 MES; ≤10 MNQ / ≤20 MES only on valid Qualifying S&D (Path A/B) | Quantity, Symbol, Setups, Orderflow, Net P&L | SELF |
+| P3 | No size-up after loss | Post-loss → that instrument's base cap (≤5 MNQ / ≤10 MES), no scale to the A+ tier | Quantity, Symbol, Net P&L, sequence | SELF |
 | P4 | Cooldown | ≥90s after any loss | close time → open time | SELF until ACSIL |
 | P5 | Trade cap | ≤7 trades/session | trade count by session | SELF until ACSIL |
 
@@ -86,7 +95,7 @@ Composite is diagnostic only. Never combined with process.
 Each criterion is binary per trade (pass = 1, fail = 0, N/A = skipped). Per-trade score = passes ÷ (passes + fails). Sub-metric score = mean across compliant trades.
 
 1. **Setup in playbook.** The setup tag on the trade exists in the trader's curated `setups` tag library. Discretionary one-off setups not in the library fail.
-2. **Stop in 0.5–1.5 ATR band** (formerly P4). Stop ÷ ATR-10 mult between 0.5 and 1.5 inclusive, using the **trade's own entry ATR** — never the day/RTH session ATR. If the trade has no per-trade entry ATR (e.g. a GBX/overnight trade with no bars), mark **N/A and skip** — the RTH ATR regime does not apply outside RTH. Sub-0.5 needs `tight_stop_reason` logged. 10-MNQ trades: ≤1.25 ATR AND total campaign risk ≤$200.
+2. **Stop in 0.5–1.5 ATR band** (formerly P4). Stop ÷ ATR-10 mult between 0.5 and 1.5 inclusive, using the **trade's own entry ATR** — never the day/RTH session ATR. If the trade has no per-trade entry ATR (e.g. a GBX/overnight trade with no bars), mark **N/A and skip** — the RTH ATR regime does not apply outside RTH. Sub-0.5 needs `tight_stop_reason` logged. Sized-up (A+) trades, either instrument: ≤1.25 ATR AND total campaign risk ≤$200.
 3. **TP1 ≥ 2R, or reason logged.** Planned TP1 is at least 2× the planned risk distance. If TP1 < 2R, the EOD recap must explain why (one-off structural target, day-character, etc.). Missing reason = fail.
 4. **Clear area of interest noted.** The trade is anchored to a specific structural level (PDH/PDL, IBH/IBL, ONH/ONL, HTF zone, LVN, demand/supply cluster). "Random mid-range entry" or "felt right" = fail.
 5. **2/3 orderflow reads = A+.** Trade has at least 2 of 3 strong orderflow signals: delta flip, absorption (delta bubble failure), delta fade. Trades with 0 or 1 OF signals fail this criterion.
@@ -119,7 +128,7 @@ Computed in application code, never by the AI. The AI's only new responsibility 
 - Compliant-session rate, rolling 10 and 20 sessions.
 - Per-rule breach count; days-between-breach per rule.
 - Breach **count vector** (never averaged), e.g. `P1:0 P2:1 P3:0 P4:2 P5:1`.
-- 10-MNQ usage count and 10-MNQ breach count (tracks whether the size exception is being abused).
+- A+ size-up usage count and breach count, per instrument (tracks whether the size exception is being abused).
 - Execution Parameters per-criterion pass rate (which of the 9 criteria are dragging the composite — surfaced in `execution_parameter_breakdown`).
 
 ## REMOVED FROM SCORING (ritual/qualitative, not process rules)
@@ -127,4 +136,4 @@ Pre-trade read-aloud, post-loss screen-off, observation-only journaling, emotion
 
 ## STANDING FLAGS
 - ACSIL kill-switch **not compiled.** P4 (cooldown) and P5 (trade cap) are SELF-POLICED until confirmed live; only P1 (daily loss limit) is externally enforced.
-- Contract size is fixed by rule (5 / 10), not ATR-derived. Stop floats with ATR, so dollar risk rises with volatility — bounded only by P1, the Execution-Parameters #2 stop-band, the $200 campaign cap, and the post-loss size cap. The 10-MNQ S&D on a wide-ATR day is your largest single-trade risk; on days where ATR > 8 points the $200 cap makes a full 10-MNQ entry mathematically impossible. That is intended.
+- Contract size is fixed by rule (base / A+ per instrument), not ATR-derived. Stop floats with ATR, so dollar risk rises with volatility — bounded only by P1, the Execution-Parameters #2 stop-band, the $200 campaign cap, and the post-loss size cap. The 10-MNQ S&D on a wide-ATR day is your largest single-trade risk; on days where ATR > 8 points the $200 cap makes a full 10-MNQ entry mathematically impossible. That is intended.
