@@ -112,6 +112,49 @@ check('a null alias list does not throw',
 check('empty/blank aliases are skipped',
   flat(suggestTagsFromText('anything at all', [tag('setups', 'IB Fade', ['', '   '])])).length === 0)
 
+console.log('IB notes — and the exclusion that a one-word label needs')
+
+const IB_LIB: TradeTag[] = [
+  tag('setups', 'IB Fade', ['ib fade', 'faded the ib']),
+  tag('confluences', 'IB Hold'),
+  tag('confluences', 'IB Target for TP'),
+  tag('confluences', 'IB Reclaim (Break & Fail)'),
+  tag('confluences', '3rd Attempt', ['3rd time', 'third time']),
+  tag('mistakes', 'Oversized', ['wrong size', 'too big', '!oversized ib']),
+  tag('order_flow', 'Absorption/Exhaustion (Countermov)', ['selling fail', 'no continuation']),
+]
+
+// Bare "IB" is a LOCATION, not a setup, and four IB tags could claim it.
+// Forcing one would be exactly the guess this system must not make.
+check('bare "IB" alone tags nothing — four candidates, no basis to pick',
+  flat(suggestTagsFromText('price pushed up to the IB and stalled there', IB_LIB)).length === 0)
+check('a SPECIFIC IB reference still fires',
+  flat(suggestTagsFromText('9 EMA continuation trade near IB to Hold', IB_LIB)).includes('IB Hold'))
+check('"faded the IB" fires IB Fade via alias',
+  flat(suggestTagsFromText('faded the IB after the failed extension', IB_LIB)).includes('IB Fade'))
+
+// THE false positive. This note is about a WIDE INITIAL BALANCE, not position
+// size, and it was tagging the mistake Oversized.
+const ibNote = 'Took this bc of oversized IB way above avg and at ADR range. '
+  + 'Dont think it was terrible and fit in the playbook.'
+check('"oversized IB" no longer tags the Oversized MISTAKE',
+  !flat(suggestTagsFromText(ibNote, IB_LIB)).includes('Oversized'))
+check('...while plain "oversized" position language still does',
+  flat(suggestTagsFromText('I was oversized on this one', IB_LIB)).includes('Oversized'))
+check('an exclusion beats an alias too',
+  !flat(suggestTagsFromText('wrong size because of oversized IB', IB_LIB)).includes('Oversized'))
+check('exclusions do not leak to other tags',
+  flat(suggestTagsFromText('oversized IB but I faded the IB anyway', IB_LIB)).includes('IB Fade'))
+
+// The third real IB note, which tagged NOTHING before.
+const ibNote3 = 'Kind of dicey but after watching big selling fail for the 3rd time on a >avg IB day I had to try it.'
+const got3 = flat(suggestTagsFromText(ibNote3, IB_LIB))
+check('"selling fail" -> Absorption/Exhaustion', got3.includes('Absorption/Exhaustion (Countermov)'))
+check('"3rd time" -> 3rd Attempt', got3.includes('3rd Attempt'))
+
+check('matchReason ignores a tag suppressed by an exclusion',
+  matchReason(IB_LIB.find(t => t.label === 'Oversized')!, ibNote) === null)
+
 console.log('matchReason — what the learning loop writes back')
 
 check('reports the ALIAS that fired',

@@ -75,9 +75,9 @@ BEGIN
       ('confluences', 'Large Delta on DBP',
        ARRAY['huge delta','big delta','large delta','huge sellers','huge buyers','delta on dbp','vps and delta','stacked delta']),
       ('confluences', '2nd Attempt',
-       ARRAY['second attempt','2nd try','tried again','entered again']),
+       ARRAY['second attempt','2nd try','2nd time','second time','tried again','entered again']),
       ('confluences', '3rd Attempt',
-       ARRAY['third attempt','3rd try']),
+       ARRAY['third attempt','3rd try','3rd time','third time']),
       ('confluences', 'Added to Position',
        ARRAY['added to position','added size','scaled in']),
       -- entry_model
@@ -88,8 +88,12 @@ BEGIN
       ('entry_model', 'Waited for Heiken-Ashi to Flip',
        ARRAY['ha flip','heiken ashi flip','waited for the flip']),
       -- mistakes
+      -- '!oversized ib' is an EXCLUSION (leading !). Real note: "Took this bc of
+      -- oversized IB way above avg" describes a WIDE INITIAL BALANCE, not the
+      -- position size, and was tagging the mistake Oversized. A wrong tag is
+      -- worse than a missing one here because these feed Entry scoring.
       ('mistakes', 'Oversized',
-       ARRAY['wrong size','too big','sized up','oversize','too much size']),
+       ARRAY['wrong size','too big','sized up','oversize','too much size','!oversized ib','!ib was oversized']),
       ('mistakes', 'FOMO',
        ARRAY['fomo','fomod','jumped in']),
       ('mistakes', 'Chased',
@@ -108,7 +112,8 @@ BEGIN
       ('order_flow', 'Delta Flip',
        ARRAY['delta flip','flipped delta']),
       ('order_flow', 'Absorption/Exhaustion (Countermov)',
-       ARRAY['no continuation','absorbed','absorption','got absorbed','no follow through']),
+       ARRAY['no continuation','absorbed','absorption','got absorbed','no follow through',
+             'selling fail','buying fail','sellers failed','buyers failed','failed to get lower','failed to get higher']),
       ('order_flow', 'Following Buying/Selling Strength',
        ARRAY['following strength','with the strength','buyers stepping in','sellers stepping in']),
       -- setups

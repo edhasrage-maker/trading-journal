@@ -195,12 +195,33 @@ export function suggestTagsFromText(text: string, allTags: TradeTag[]): TradeTag
   return out as TradeTags
 }
 
+/**
+ * An alias beginning with `!` is an EXCLUSION: if that phrase appears, the tag
+ * is suppressed no matter what else matched.
+ *
+ * Needed because a one-word label can be ambiguous in the trader's own
+ * vocabulary. Real case: "Took this bc of oversized IB way above avg" tagged
+ * the MISTAKE `Oversized` — but that sentence describes a wide initial
+ * balance, not the position size. A wrong tag is worse than a missing one here,
+ * because these feed Entry scoring, so `!oversized ib` suppresses it while
+ * plain "oversized" keeps working.
+ *
+ * Same column, same phrase-matching rule, no extra schema.
+ */
+const isExclusion = (a: string): boolean => a.trimStart().startsWith('!')
+const exclusionBody = (a: string): string => a.trimStart().slice(1)
+
 /** True when the tag's label (bag of words) or any alias (phrase) matches. */
 function matchesTag(tag: TradeTag, tokens: Set<string>, phrase: string[]): boolean {
+  const aliases = (tag.aliases ?? []).filter(a => typeof a === 'string' && a.trim())
+  // Exclusions win over everything, so check them first.
+  for (const a of aliases) {
+    if (isExclusion(a) && containsPhrase(phrase, phraseTokens(exclusionBody(a)))) return false
+  }
   if (matchKeywords(tagKeywords(tag.label), tokens)) return true
-  for (const alias of tag.aliases ?? []) {
-    if (typeof alias !== 'string' || !alias.trim()) continue
-    if (containsPhrase(phrase, phraseTokens(alias))) return true
+  for (const a of aliases) {
+    if (isExclusion(a)) continue
+    if (containsPhrase(phrase, phraseTokens(a))) return true
   }
   return false
 }
@@ -215,10 +236,11 @@ function matchesTag(tag: TradeTag, tokens: Set<string>, phrase: string[]): boole
  */
 export function matchReason(tag: TradeTag, text: string): string | null {
   if (!text || text.trim().length < 3) return null
-  if (matchKeywords(tagKeywords(tag.label), tokenize(text))) return tag.label
   const phrase = phraseTokens(text)
+  if (!matchesTag(tag, tokenize(text), phrase)) return null
+  if (matchKeywords(tagKeywords(tag.label), tokenize(text))) return tag.label
   for (const alias of tag.aliases ?? []) {
-    if (typeof alias !== 'string' || !alias.trim()) continue
+    if (typeof alias !== 'string' || !alias.trim() || isExclusion(alias)) continue
     if (containsPhrase(phrase, phraseTokens(alias))) return alias
   }
   return null
