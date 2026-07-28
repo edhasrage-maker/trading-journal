@@ -11,6 +11,9 @@
  *   --ticks      Entry must be within this many ticks of the level. Default 8.
  *   --minutes    Aggression must have finished within this many minutes. Default 30.
  *   --pct        Session percentile defining significance. Default 0.99.
+ *   --z          Minimum robust z-score vs the session's own rows. Default 3.
+ *                This is the OUTLIER gate: a percentile alone always crowns the
+ *                top row, however flat the day.
  *   --departure  Price must have left the level by this many ROW HEIGHTS between
  *                the aggression and the revisit. Default 1.
  *   --detail     Print every match, not just the summary.
@@ -145,6 +148,7 @@ async function main(): Promise<void> {
   const maxMinutes = Number(arg('minutes') ?? 30)
   const pct = Number(arg('pct') ?? 0.99)
   const minDeparture = Number(arg('departure') ?? 1)
+  const minRobustZ = Number(arg('z') ?? 3)
   const detail = flag('detail')
   const write = flag('write')
 
@@ -182,6 +186,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n${write ? 'WRITE' : 'DRY RUN'} · ${from} → ${to} · ${days.length} days · ${trades.length} trades`)
+  console.log(`min robust z ${minRobustZ} (outlier gate)`)
   console.log(`rows ${rowHeight}pt · within ${maxTicks} ticks · within ${maxMinutes} min · p${(pct * 100).toFixed(0)} threshold`)
   console.log('='.repeat(78))
 
@@ -232,7 +237,7 @@ async function main(): Promise<void> {
       // aggression happening under them. See detectRevisitLevels.
       const det = detectRevisitLevels(asOf.rows, asOf.bars, entryMs, {
         rowHeight, breakDistance: rowHeight, thresholdPercentile: pct,
-        minDeparture: minDeparture * rowHeight,
+        minDeparture: minDeparture * rowHeight, minRobustZ,
       })
       if (det.levels.length === 0) continue
 
@@ -265,7 +270,7 @@ async function main(): Promise<void> {
           `  ${new Date(Date.parse(trade.entry_time!)).toISOString().slice(11, 19)} ` +
           `${(trade.direction ?? '?').padEnd(5)} @${trade.entry_price} → ` +
           `${L.price} ${L.delta > 0 ? '+' : ''}${L.delta} ${L.side}/${L.kind} ` +
-          `(${best.distanceTicks.toFixed(1)}t, ${best.ageMinutes.toFixed(0)}m ago, left ${L.departure.toFixed(0)}pt) ` +
+          `(${best.distanceTicks.toFixed(1)}t, ${best.ageMinutes.toFixed(0)}m ago, left ${L.departure.toFixed(0)}pt, z${L.robustZ.toFixed(1)} ${L.timesMedian.toFixed(1)}xmed) ` +
           `${best.againstAggressor ? 'FADE' : 'FOLLOW'} → ${labels.join(', ') || '—'}`)
       }
     }

@@ -195,7 +195,7 @@ function barSeries(fromMin: number, toMin: number, priceAt: (m: number) => numbe
   }
   return out
 }
-const rcfg = { rowHeight: 5, breakDistance: 5, minDeparture: 5, thresholdPercentile: 0 }
+const rcfg = { rowHeight: 5, breakDistance: 5, minDeparture: 5, thresholdPercentile: 0, minRobustZ: 3 }
 /** Filler rows so the percentile has a population to sit in. */
 const filler = Array.from({ length: 20 }, (_, i) => rowVisits(7000 + i * 5, [{ from: 0, to: 5, delta: 10 }]))
 
@@ -239,6 +239,47 @@ check('a level still printing has no banked delta',
   detectRevisitLevels(
     [rowVisits(7100, [{ from: 10, to: 60, delta: -2000 }]), ...filler],
     upBars, 30 * MIN, rcfg).levels.find(l => l.price === 7100) === undefined)
+
+console.log('detectRevisitLevels — OUTLIER ONLY, not merely top-ranked')
+
+// THE case a percentile cannot handle. Every row here is ordinary: the biggest
+// is barely above the rest. p99 still RANKS one of them first, so a purely
+// positional threshold would crown it a level. Nothing stood out, so nothing
+// should be detected.
+const flat = [
+  rowVisits(7100, [{ from: 10, to: 20, delta: -120 }, { from: 55, to: 60, delta: -5 }]),
+  ...Array.from({ length: 30 }, (_, i) =>
+    rowVisits(7000 + i * 5, [{ from: 0, to: 5, delta: (i % 2 ? 95 : -105) }])),
+]
+const flatRanked = detectRevisitLevels(flat, upBars, 58 * MIN, { ...rcfg, minRobustZ: 0 })
+const flatGated = detectRevisitLevels(flat, upBars, 58 * MIN, rcfg)
+check('a percentile alone still crowns the top row of a flat session',
+  flatRanked.levels.length > 0)
+check('the outlier gate returns NOTHING on that same flat session',
+  flatGated.levels.length === 0, `got ${flatGated.levels.length}`)
+
+// The genuinely extreme level from earlier must survive the gate.
+const outlier = upRes.levels.find(l => l.price === 7100)
+check('a real outlier still passes', outlier !== undefined)
+check('robustZ is reported', (outlier?.robustZ ?? 0) > 3)
+check('timesMedian is reported', (outlier?.timesMedian ?? 0) > 3)
+
+// MAD is used rather than a standard deviation precisely because the outliers
+// are in the sample: a few huge rows inflate sigma enough to mask themselves.
+const withGiants = [
+  rowVisits(7100, [{ from: 10, to: 20, delta: -2000 }, { from: 55, to: 60, delta: -5 }]),
+  ...Array.from({ length: 6 }, (_, i) => rowVisits(7200 + i * 5, [{ from: 0, to: 5, delta: 3000 + i }])),
+  ...Array.from({ length: 30 }, (_, i) => rowVisits(7000 + i * 5, [{ from: 0, to: 5, delta: i % 2 ? 50 : -50 }])),
+]
+check('a real outlier survives even when bigger rows exist elsewhere',
+  detectRevisitLevels(withGiants, upBars, 58 * MIN, { ...rcfg, thresholdPercentile: 0 })
+    .levels.some(l => l.price === 7100))
+
+check('a zero-MAD session does not divide by zero',
+  detectRevisitLevels(
+    [rowVisits(7100, [{ from: 10, to: 20, delta: -2000 }, { from: 55, to: 60, delta: -5 }]),
+      ...Array.from({ length: 10 }, (_, i) => rowVisits(7000 + i * 5, [{ from: 0, to: 5, delta: 100 }]))],
+    upBars, 58 * MIN, rcfg).levels.some(l => l.price === 7100))
 
 console.log('matchTradeToLevels')
 

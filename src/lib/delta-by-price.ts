@@ -288,6 +288,10 @@ export interface RevisitLevel extends DetectedDeltaLevel {
   departure: number
   /** How many separate visits contributed the pre-revisit delta. */
   priorVisits: number
+  /** How extreme this level is vs the session's own rows (median/MAD). */
+  robustZ: number
+  /** Multiple of the session's median row |delta|. */
+  timesMedian: number
 }
 
 export interface RevisitConfig {
@@ -296,6 +300,21 @@ export interface RevisitConfig {
   thresholdPercentile?: number
   /** Absolute floor on |delta|, in contracts. Default 0 (off). */
   minDelta?: number
+  /**
+   * Minimum robust z-score — `0.6745 × (|delta| − median) / MAD` over the
+   * session's banked row deltas. Default 3.
+   *
+   * WHY A PERCENTILE IS NOT ENOUGH. A percentile is a RANK, so p99 always
+   * selects the top ~1% of rows no matter how flat the day was: the detector
+   * can never answer "nothing stood out today", it just crowns whatever
+   * happened to be biggest. This gate is absolute rather than positional, so a
+   * session whose largest row is merely average produces no level at all.
+   *
+   * Median/MAD rather than mean/σ deliberately: the outliers we are hunting are
+   * IN the sample, and they drag a standard deviation up enough to hide
+   * themselves. MAD is unmoved by them.
+   */
+  minRobustZ?: number
   /**
    * Price must have left the row by at least this much (price units) between
    * the aggression and the revisit. This is the gate that makes it a REVISIT
@@ -374,10 +393,21 @@ export function detectRevisitLevels(
   )
   const sessionVolume = rows.reduce((s, r) => s + r.volume, 0)
 
+  // Robust spread of this session's banked deltas, for the absolute gate.
+  const median = quantileLower(absSorted, 0.5)
+  const mad = quantileLower(
+    absSorted.map(v => Math.abs(v - median)).sort((a, b) => a - b), 0.5)
+  const minRobustZ = cfg.minRobustZ ?? 3
+  const robustZ = (mag: number): number =>
+    mad > 0 ? 0.6745 * (mag - median) / mad : (mag > median ? Infinity : 0)
+
   const levels: RevisitLevel[] = []
   for (const b of banked) {
     const mag = Math.abs(b.delta)
     if (mag === 0 || mag < threshold) continue
+    // Relative rank got it this far; this asks whether it is actually extreme.
+    const z = robustZ(mag)
+    if (z < minRobustZ) continue
 
     const rowTop = b.row.price + cfg.rowHeight
     const after = pre.filter(x => x.ts > b.endMs)
@@ -412,6 +442,8 @@ export function detectRevisitLevels(
       aggressionEndMs: b.endMs,
       departure,
       priorVisits: b.visits,
+      robustZ: z,
+      timesMedian: median > 0 ? mag / median : 0,
     })
   }
 
