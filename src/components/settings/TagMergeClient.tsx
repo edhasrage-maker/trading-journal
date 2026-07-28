@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertCircle, ArrowRight, Loader2, GitMerge, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowRight, Loader2, GitMerge, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import type { TagCategory, TradeTag } from '@/lib/supabase/types'
 import { labelForCategory, type TagCategoryDef } from '@/lib/tag-categories'
 import { invalidateTagCategories } from '@/lib/tag-categories-client'
@@ -144,6 +144,73 @@ export default function TagMergeClient({
   const [addDraft, setAddDraft] = useState('')
   const [addBusy, setAddBusy] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
+
+  // Edit-tag: label, description and aliases for ONE tag at a time. Aliases are
+  // held as newline-separated text because a phrase can contain a comma, and a
+  // textarea is the only input where the user can see the whole list at once.
+  const [editing, setEditing] = useState<TradeTag | null>(null)
+  const [editLabel, setEditLabel] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editAliases, setEditAliases] = useState('')
+  const [editBusy, setEditBusy] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [editResult, setEditResult] = useState<string | null>(null)
+
+  const openEditor = (t: TradeTag) => {
+    setEditing(t)
+    setEditLabel(t.label)
+    setEditDescription(t.description ?? '')
+    setEditAliases((t.aliases ?? []).join('\n'))
+    setEditError(null)
+    setEditResult(null)
+  }
+  const closeEditor = () => {
+    setEditing(null)
+    setEditError(null)
+  }
+
+  /**
+   * Save label / description / aliases together.
+   *
+   * A rename rewrites every trade and historical row that used the old label
+   * BEFORE the tag itself changes, so no usage is lost — which is why renaming
+   * is a real operation here rather than "delete it and add a new one". That
+   * shortcut strips the tag from every trade, and if a detector emits the exact
+   * label string it silently unhooks the detector too.
+   */
+  const saveTagEdit = async () => {
+    if (!editing || editBusy) return
+    const label = editLabel.trim()
+    if (!label) { setEditError('Label cannot be empty'); return }
+    const aliases = editAliases.split('\n').map(a => a.trim()).filter(Boolean)
+    setEditBusy(true)
+    setEditError(null)
+    try {
+      const res = await fetch('/api/trade-tags/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: editing.id, label, description: editDescription, aliases }),
+      })
+      const json = (await res.json()) as {
+        tag?: TradeTag; renamed?: boolean; from_label?: string
+        trades_updated?: number; historical_updated?: number; error?: string
+      }
+      if (!res.ok || !json.tag) { setEditError(json.error ?? `Save failed (${res.status})`); return }
+      const saved = json.tag
+      setTags(prev => prev.map(t => (t.id === saved.id ? saved : t)))
+      setEditResult(
+        json.renamed
+          ? `Renamed "${json.from_label}" to "${saved.label}" — rewrote ${json.trades_updated ?? 0} trades and ${json.historical_updated ?? 0} imported rows.`
+          : `Saved "${saved.label}".`,
+      )
+      setEditing(null)
+      router.refresh() // usage tallies are keyed by label, so a rename moves them
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setEditBusy(false)
+    }
+  }
 
   const suggestions = useMemo(() => suggestPairs(tags, 2), [tags])
 
@@ -418,6 +485,117 @@ export default function TagMergeClient({
 
   return (
     <div className="space-y-8">
+      {/* Edit result banner */}
+      {editResult && (
+        <div className="bg-green-900/30 border border-green-800 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
+          <Pencil className="w-4 h-4 mt-0.5 shrink-0" />
+          <div>{editResult}</div>
+        </div>
+      )}
+
+      {/* Tag editor. Renaming rewrites usage rather than dropping it, so this
+          is safe in a way that delete-and-re-add is not. */}
+      {editing && (
+        <div className="bg-gray-900/60 border border-blue-900/50 rounded-lg p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">
+              Editing <span className="text-blue-300">{editing.label}</span>
+              <span className="text-gray-500 font-normal"> in {labelOf(editing.category)}</span>
+            </h3>
+            <button
+              type="button"
+              onClick={closeEditor}
+              aria-label="Close editor"
+              className="text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-gray-500 mb-1">Name</label>
+            <input
+              value={editLabel}
+              onChange={e => setEditLabel(e.target.value)}
+              disabled={editBusy}
+              maxLength={80}
+              className="w-full px-3 py-2 rounded text-sm bg-gray-950 border border-gray-700 text-gray-100 focus:border-blue-500 focus:outline-none"
+            />
+            <p className="text-xs text-gray-600 mt-1">
+              Renaming rewrites every trade and imported row that uses it — the {usageFor(editing)} use
+              {usageFor(editing) === 1 ? '' : 's'} shown on the chip move with it. Nothing is lost.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-gray-500 mb-1">Definition</label>
+            <textarea
+              value={editDescription}
+              onChange={e => setEditDescription(e.target.value)}
+              disabled={editBusy}
+              rows={3}
+              placeholder="What this tag means, in your words…"
+              className="w-full px-3 py-2 rounded text-sm bg-gray-950 border border-gray-700 text-gray-100 focus:border-blue-500 focus:outline-none"
+            />
+            <p className="text-xs text-gray-600 mt-1">
+              Given to the AI as the rubric for this label when it classifies.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-gray-500 mb-1">
+              Aliases — one per line
+            </label>
+            <textarea
+              value={editAliases}
+              onChange={e => setEditAliases(e.target.value)}
+              disabled={editBusy}
+              rows={5}
+              placeholder={'at vwap\nvwap reclaim\n!oversized ib'}
+              spellCheck={false}
+              className="w-full px-3 py-2 rounded text-sm font-mono bg-gray-950 border border-gray-700 text-gray-100 focus:border-blue-500 focus:outline-none"
+            />
+            <p className="text-xs text-gray-600 mt-1">
+              Other ways you write this in your notes, so it auto-tags. Matched as a whole
+              phrase, so <span className="text-gray-400 font-mono">wrong size</span> needs both
+              words and won&apos;t fire on &ldquo;size&rdquo; alone.
+            </p>
+            <p className="text-xs text-gray-600 mt-1">
+              Start a line with <span className="text-gray-400 font-mono">!</span> to EXCLUDE it —{' '}
+              <span className="text-gray-400 font-mono">!oversized ib</span> stops &ldquo;oversized IB&rdquo;
+              (a wide initial balance) tagging this as a sizing mistake.
+            </p>
+          </div>
+
+          {editError && (
+            <div className="bg-red-900/30 border border-red-800 rounded p-2 text-sm text-red-200 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div>{editError}</div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void saveTagEdit()}
+              disabled={editBusy || !editLabel.trim()}
+              className="px-3 py-1.5 rounded text-sm bg-blue-700 border border-blue-600 text-white disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {editBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={closeEditor}
+              disabled={editBusy}
+              className="px-3 py-1.5 rounded text-sm bg-gray-800 border border-gray-700 text-gray-300 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Delete result banner */}
       {deleteResult && (
         <div className="bg-green-900/30 border border-green-800 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
@@ -559,7 +737,26 @@ export default function TagMergeClient({
                   className="inline-flex items-center gap-1.5 text-xs bg-gray-900 border border-gray-800 rounded-full pl-3 pr-1.5 py-1 text-gray-300"
                   title={`Used by ${usageFor(t)} trade${usageFor(t) === 1 ? '' : 's'}`}
                 >
-                  <span>{t.label} <span className="text-gray-500">({usageFor(t)})</span></span>
+                  <span>
+                    {t.label} <span className="text-gray-500">({usageFor(t)})</span>
+                    {(t.aliases?.length ?? 0) > 0 && (
+                      <span
+                        className="text-blue-400/70 ml-1"
+                        title={`${t.aliases!.length} alias${t.aliases!.length === 1 ? '' : 'es'}: ${t.aliases!.join(', ')}`}
+                      >
+                        ≈{t.aliases!.length}
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openEditor(t)}
+                    aria-label={`Edit ${t.label}`}
+                    title={`Edit "${t.label}" — name, definition, aliases`}
+                    className="text-gray-600 hover:text-blue-400 transition-colors"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => void handleDelete(t)}

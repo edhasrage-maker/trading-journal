@@ -73,6 +73,12 @@ export default async function TagsSettingsPage() {
           remove rewrite every native + imported trade that uses the tag.
         </p>
         <p className="text-sm text-gray-500 mt-2">
+          The <span className="text-gray-400">✎</span> on a chip edits its name, its definition,
+          and its <span className="text-gray-400">aliases</span> — the other ways you word it in
+          your notes, so it auto-tags. Renaming carries the tag&apos;s existing uses with it, which
+          makes it safe in a way that deleting and re-adding is not.
+        </p>
+        <p className="text-sm text-gray-500 mt-2">
           Categories are yours too — add your own (say <span className="text-gray-400">4h Candle Shape</span>)
           and remove any you don&apos;t use.
         </p>
