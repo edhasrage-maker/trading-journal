@@ -113,6 +113,32 @@ function tagKeywords(label: string): KeywordReq[] {
   return reqs
 }
 
+/**
+ * Ordered, normalized token list — keeps duplicates AND stopwords, unlike
+ * `tokenize`. Aliases are matched as contiguous PHRASES against this.
+ */
+function phraseTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map(normalizePart)
+    .filter(Boolean)
+}
+
+/** True when `needle` appears as a contiguous run inside `haystack`. */
+function containsPhrase(haystack: string[], needle: string[]): boolean {
+  if (needle.length === 0 || needle.length > haystack.length) return false
+  outer: for (let i = 0; i <= haystack.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer
+    }
+    return true
+  }
+  return false
+}
+
 /** Match a structured tag requirement list against a notes-token set. */
 function matchKeywords(reqs: KeywordReq[], tokens: Set<string>): boolean {
   if (reqs.length === 0) return false
@@ -130,20 +156,88 @@ function matchKeywords(reqs: KeywordReq[], tokens: Set<string>): boolean {
 /**
  * Suggest tags whose keyword requirements are satisfied by the text.
  * Returns a TradeTags object grouped by category. Empty when text < 3 chars.
+ *
+ * A tag matches on its LABEL or on any of its ALIASES. Aliases exist because
+ * the label is a phrase and the notes are prose: "VWAP Hold/Bounce" requires
+ * both "vwap" AND ("hold" OR "bounce"), so a note reading "the increased
+ * volatility at VWAP" matches nothing, even though it plainly refers to the
+ * level. Real misses from live notes: "wrong size" → Oversized, "BOC" → Break
+ * of Candle, "HUGE sellers on the DBP" → Large Delta on DBP. In every case no
+ * significant word overlaps, so no amount of stemming would bridge it — only
+ * the trader's own vocabulary can.
+ *
+ * Labels and aliases match by DIFFERENT rules, deliberately.
+ *
+ * A label is matched as a bag of significant words, stopwords dropped, because
+ * a label is a name and word order in the notes is arbitrary. An ALIAS is
+ * matched as a contiguous PHRASE with stopwords KEPT, because an alias is
+ * literally something the trader types.
+ *
+ * Applying the label rule to aliases silently destroys precision: "at vwap"
+ * would drop "at" as a stopword, collapse to bare "vwap", and then fire
+ * VWAP Hold/Bounce on "price broke through VWAP" — the opposite trade. Phrase
+ * matching keeps "at vwap" meaning what it says. A single-word alias ("boc")
+ * is still a deliberate broad catch; that choice belongs to the trader, which
+ * is why aliases are editable data rather than code.
  */
 export function suggestTagsFromText(text: string, allTags: TradeTag[]): TradeTags {
   if (!text || text.trim().length < 3) return {}
   const tokens = tokenize(text)
+  const phrase = phraseTokens(text)
   const out: Partial<Record<TagCategory, string[]>> = {}
   for (const tag of allTags) {
-    const reqs = tagKeywords(tag.label)
-    if (!matchKeywords(reqs, tokens)) continue
+    if (!matchesTag(tag, tokens, phrase)) continue
     const cat = tag.category
     const arr = out[cat] ?? []
     if (!arr.includes(tag.label)) arr.push(tag.label)
     out[cat] = arr
   }
   return out as TradeTags
+}
+
+/** True when the tag's label (bag of words) or any alias (phrase) matches. */
+function matchesTag(tag: TradeTag, tokens: Set<string>, phrase: string[]): boolean {
+  if (matchKeywords(tagKeywords(tag.label), tokens)) return true
+  for (const alias of tag.aliases ?? []) {
+    if (typeof alias !== 'string' || !alias.trim()) continue
+    if (containsPhrase(phrase, phraseTokens(alias))) return true
+  }
+  return false
+}
+
+/**
+ * Which alias (or the label) caused a tag to match. Returns null when it does
+ * not match at all.
+ *
+ * This is what the learning loop writes back against: when the trader confirms
+ * an AI-suggested tag, the phrase that triggered it becomes a new alias, so the
+ * deterministic layer catches it next time and the LLM is asked less often.
+ */
+export function matchReason(tag: TradeTag, text: string): string | null {
+  if (!text || text.trim().length < 3) return null
+  if (matchKeywords(tagKeywords(tag.label), tokenize(text))) return tag.label
+  const phrase = phraseTokens(text)
+  for (const alias of tag.aliases ?? []) {
+    if (typeof alias !== 'string' || !alias.trim()) continue
+    if (containsPhrase(phrase, phraseTokens(alias))) return alias
+  }
+  return null
+}
+
+/**
+ * Add `phrase` to a tag's alias list, deduped case-insensitively. Pure — the
+ * caller persists the result. Returns the list unchanged when the phrase is
+ * empty, already present, or already implied by the label (no point storing an
+ * alias the label would have matched anyway).
+ */
+export function addAlias(tag: TradeTag, phrase: string): string[] {
+  const existing = (tag.aliases ?? []).filter(a => typeof a === 'string' && a.trim())
+  const clean = phrase.trim()
+  if (!clean) return existing
+  if (existing.some(a => a.toLowerCase() === clean.toLowerCase())) return existing
+  // Would the label already have caught it? Then it adds nothing.
+  if (matchKeywords(tagKeywords(tag.label), tokenize(clean))) return existing
+  return [...existing, clean]
 }
 
 /**

@@ -130,6 +130,15 @@ export interface Database {
           // Free-text definition. Used by /api/predict-day-type to give the
           // AI a precise classification rubric per label. Null when unset.
           description: string | null
+          // Alternative phrasings that should auto-select this tag from notes.
+          // A label is a PHRASE ("VWAP Hold/Bounce") but notes are prose
+          // ("the volatility at VWAP"), and the matcher requires EVERY
+          // significant word of the label — so the tag never fires. Aliases are
+          // the deterministic fix, editable in Settings → Tags.
+          // Kept OFF `description`, which is injected verbatim into the
+          // predict-day-type prompt as a rubric and must not carry matcher data.
+          // Migration: 20260728_tag_aliases.sql. Null when never set.
+          aliases: string[] | null
           created_at: string
         }
         Insert: Omit<Database['public']['Tables']['trade_tags']['Row'], 'id' | 'created_at'>
