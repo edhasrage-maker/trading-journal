@@ -79,9 +79,11 @@ every move written first). Applied to prod 2026-07-27:
 
 ## 4. The read after repair — this is the current answer
 
-Re-attributing is not the same as dropping. Most of the misfiled rows landed on days that
-*do* have `market_context`, so they are now classified under their true day's character and the
-classified sample **grew** from 4,817 to 4,706 usable rows on corrected parents.
+Re-attributing is not the same as dropping. Most of the misfiled rows landed on days that *do*
+have `market_context`, so rather than vanishing they are now classified under their **true**
+day's character. The classified sample moves from 4,817 rows on partly-wrong parents to 4,706 on
+correct ones — slightly smaller only because the 49 newly created days have no `market_context`
+yet, so their trades sit out rather than being misclassified (see §7).
 
 | lens | bucket | n | WR | EV | PF |
 |---|---|---:|---:|---:|---:|
