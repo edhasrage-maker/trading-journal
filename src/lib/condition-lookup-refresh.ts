@@ -6,6 +6,7 @@ import type {
   ConditionComboType,
 } from '@/lib/supabase/types'
 import { REGIME_CUTS_MEANHL10 } from '@/lib/ib-day-type'
+import { MIN_SAMPLE } from '@/lib/sample-size'
 
 // Supabase clients are structurally identical for our purposes (server session
 // client OR service-role client); we only call .from(...).select/insert/delete.
@@ -316,10 +317,28 @@ function assignVerdict(v: VerdictInputs): {
   n_reliable: boolean
 } {
   const { stats, baselineWins, baselineN } = v
-  const n_adequate = stats.n_trades >= 10 && stats.n_sessions >= 5
+  const n_adequate = stats.n_trades >= MIN_SAMPLE && stats.n_sessions >= 5
   const n_reliable = stats.n_trades >= 30 && stats.n_sessions >= 10
-  // Insufficient data: too few trades to say anything meaningful
-  if (stats.n_trades < 5) {
+  // Insufficient data: too few trades to say anything meaningful.
+  //
+  // This floor was `< 5` and is now MIN_SAMPLE (10) — the same floor the panel
+  // renders against. The old gap at n = 5–9 produced buckets that were not
+  // INSUFFICIENT_DATA but not `n_adequate` either, so they fell through to
+  // YELLOW_FLAT_POS/NEG. The panel then showed a graded, coloured headline
+  // ("Be selective", Grade C) directly above a body reading "n=6 — too few
+  // trades in conditions like today to say anything honest yet": the headline
+  // asserting what the body says it can't support.
+  //
+  // Invisible on a long history (every bucket clears 10), which is why it took
+  // windowing the founder's account to 2026 to surface it — on a real new
+  // account 23 of 236 buckets landed in that gap, two of them in the
+  // highest-specificity tier the panel reaches for first.
+  //
+  // Only the TRADE floor is raised here. `n_adequate` also wants n_sessions ≥ 5,
+  // and 12 trades across 1 session is arguably just as thin — but that's a
+  // change to what counts as evidence, not a contradiction being removed, so
+  // it's deliberately left alone.
+  if (stats.n_trades < MIN_SAMPLE) {
     return {
       verdict: 'INSUFFICIENT_DATA',
       verdict_rank: VERDICT_RANK.INSUFFICIENT_DATA,
