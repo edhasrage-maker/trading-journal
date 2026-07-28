@@ -7,7 +7,7 @@
 // Check). Cross-user badges (top-3 PnL, TapeCenter) are gated on the
 // benchmarking work and are NOT here — see the gamification plan.
 
-import { mfeMaeAtr, type TradeWithExcursion } from '@/lib/analytics'
+import { avgMfeMaeAtr, type TradeWithExcursion } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 
 export type AchievementId =
@@ -32,7 +32,7 @@ export interface Achievement {
  *  collection strip, lifetime counts) use these generic entries directly since
  *  they don't recompute the day. */
 export const ACHIEVEMENT_CATALOG: Record<AchievementId, { label: string; emoji: string; blurb: string }> = {
-  sniper:      { label: 'Sniper',      emoji: '🎯', blurb: 'A winning trade with under 0.25×ATR of heat — a surgical entry.' },
+  sniper:      { label: 'Sniper',      emoji: '🎯', blurb: 'The day averaged under 0.25×ATR of heat across every trade — surgical all session.' },
   grand_slam:  { label: 'Grand Slam',  emoji: '⚾', blurb: 'A trade of 8R or more — swung big and connected.' },
   game_winner: { label: 'Game Winner', emoji: '🏀', blurb: "Your best trade captured 80%+ of the day's range." },
   career_day:  { label: 'Career Day',  emoji: '📅', blurb: 'A top-10% P&L day across your logged sessions.' },
@@ -70,6 +70,9 @@ export interface AchievementInput {
 
 // Thresholds — single source of truth so the UI copy and the rules never drift.
 export const ACHIEVEMENT_THRESHOLDS = {
+  // Sniper is a DAY-LEVEL average: mean adverse heat across ALL of the day's
+  // trades (incl. stop-outs) must stay under this ×ATR — "surgical entries all
+  // session", not just one lucky tight entry.
   sniperMaeAtr: 0.25,
   grandSlamR: 8,
   gameWinnerCapture: 0.8,
@@ -97,16 +100,17 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
   const earned: Achievement[] = []
   const green = (dayPnl ?? 0) > 0
 
-  // 🎯 Sniper — a WINNING trade that took under 0.25×ATR of adverse heat.
-  const sniper = trades.some(t => {
-    if (t.pnl == null || t.pnl <= 0) return false
-    const x = mfeMaeAtr(t)
-    return x != null && x.mae < T.sniperMaeAtr
-  })
-  if (sniper) {
+  // 🎯 Sniper — the day's AVERAGE adverse heat across ALL trades (winners and
+  // stop-outs alike) stayed under 0.25×ATR: every entry was surgical, not just
+  // one. avgMfeMaeAtr uses each trade's stored entry_atr_1m (same basis the
+  // persisted result + backfill compute on, so the coin never drifts between the
+  // EOD recap and the dashboard) and only averages trades with a computable
+  // excursion+ATR. Needs at least one such trade.
+  const heat = avgMfeMaeAtr(trades)
+  if (heat.mae != null && heat.count > 0 && heat.mae < T.sniperMaeAtr) {
     earned.push({
       id: 'sniper', ...ACHIEVEMENT_CATALOG.sniper,
-      blurb: `A winning trade with under ${T.sniperMaeAtr}×ATR of heat — surgical entry.`,
+      blurb: `Averaged ${heat.mae.toFixed(2)}×ATR of heat across ${heat.count} ${heat.count === 1 ? 'trade' : 'trades'} — surgical all day.`,
     })
   }
 
