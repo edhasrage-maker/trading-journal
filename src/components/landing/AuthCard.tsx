@@ -8,10 +8,25 @@ import Turnstile, { CAPTCHA_SITE_KEY } from './Turnstile'
 
 type Mode = 'magic' | 'password' | 'signup'
 
+/**
+ * Why the sign-in link they just clicked didn't work. Keyed by the reason
+ * classified in src/app/auth/callback/route.ts and passed through the landing
+ * page as ?auth_error=…
+ *
+ * Every one of these is a normal thing to hit, so the copy names the cause and
+ * the fix in the same breath — a failed link used to dump the trader back on
+ * the marketing page with no message at all.
+ */
+const AUTH_ERRORS: Record<string, string> = {
+  expired: 'That sign-in link has expired. They last about an hour and work once — enter your email below and we’ll send a fresh one.',
+  invalid: 'That sign-in link didn’t work. Links work once, and have to be opened in the same browser you requested them from — enter your email below for a fresh one.',
+  failed: 'Something went wrong signing you in. Enter your email below and we’ll send a new link.',
+}
+
 const redirectTo = () =>
   typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined
 
-export default function AuthCard() {
+export default function AuthCard({ authError }: { authError?: string | null }) {
   const [mode, setMode] = useState<Mode>('magic')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -84,8 +99,16 @@ export default function AuthCard() {
         <Mail className="w-9 h-9 text-blue-400 mx-auto mb-4" />
         <h2 className="text-lg font-semibold text-white">Check your email</h2>
         <p className="text-gray-400 text-sm mt-2">
-          Sign-in link sent to <span className="text-white">{email}</span>. Open it on this device to sign in.
+          Sign-in link sent to <span className="text-white">{email}</span>.
         </p>
+        {/* The two things that actually go wrong, said before they happen —
+            opening the link on a phone when it was requested on a desktop is
+            the single most common reason a sign-in fails. */}
+        <p className="text-gray-500 text-xs mt-3 leading-relaxed">
+          Open it <span className="text-gray-300">in this browser</span>, on this device — a link opened
+          somewhere else can&apos;t sign you in. It works once and lasts about an hour.
+        </p>
+        <p className="text-gray-600 text-xs mt-2">Nothing after a minute? Check your spam folder.</p>
       </div>
     )
   }
@@ -96,6 +119,14 @@ export default function AuthCard() {
     <div className="w-full max-w-sm rounded-2xl border border-gray-800 bg-gray-900 p-6 shadow-xl">
       <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Get started free</h2>
       <p className="text-gray-400 text-sm mt-0.5">Enter your email to start reviewing your trading game.</p>
+
+      {/* Why the link they clicked bounced them here. Suppressed once they've
+          acted, so a fresh form error replaces it rather than stacking. */}
+      {authError && !error && AUTH_ERRORS[authError] && (
+        <div className="mt-4 bg-amber-950/40 border border-amber-900/60 text-amber-100/90 text-sm px-3 py-2.5 rounded-lg">
+          {AUTH_ERRORS[authError]}
+        </div>
+      )}
 
       {/* Explore the demo — one-click, no signup (hosted build only) */}
       {!LOCAL_FEATURES_ENABLED && (

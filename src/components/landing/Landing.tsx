@@ -23,7 +23,7 @@ const STEPS = [
   { n: '03', title: 'Import & explore', body: 'Upload your trades and your analytics populate immediately.' },
 ]
 
-export default function Landing() {
+export default function Landing({ authError }: { authError?: string | null }) {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-200">
       {/* Top bar */}
@@ -53,7 +53,7 @@ export default function Landing() {
             ))}
           </ul>
         </div>
-        <div id="get-started" className="flex lg:justify-end scroll-mt-24"><AuthCard /></div>
+        <div id="get-started" className="flex lg:justify-end scroll-mt-24"><AuthCard authError={authError} /></div>
       </section>
 
       {/* Magic moment — paste a screenshot, we read the trade */}
