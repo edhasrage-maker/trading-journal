@@ -46,12 +46,22 @@ import { contractFileForRoot, type ContractRoot } from '../src/lib/futures-contr
 
 const ROOTS: ContractRoot[] = ['NQ', 'ES']
 
-// A normal CME session is 23h → 1380 one-minute bars. Only a day at or above
-// that is treated as already fed, so a run interrupted mid-day (importScidDay
-// upserts in 1000-row chunks, and 1000 < 1380) is re-fed rather than left half
-// written. Short sessions — holiday early closes — fall below it and get
-// re-read on a resume, which is a handful of days a year and cheap.
-const FULL_SESSION_BARS = 1380
+// One-minute bars in a FULL PT session, by weekday — measured against the
+// .scid files, not assumed. CME equity futures run Sunday 15:00 PT through
+// Friday 14:00 PT with a 1-hour maintenance break at 14:00 PT each day, so:
+// a midweek PT day holds 23h (1380), Friday stops at the close (840), Sunday
+// only starts at the open (540), and Saturday is genuinely empty.
+// Used two ways — which dates are worth reading at all, and whether a
+// symbol-day is already complete on a resume. Getting Sunday wrong here would
+// silently drop a real session from every backfill.
+const FULL_SESSION_BARS: Record<number, number> = {
+  0: 540,   // Sun — 15:00 PT open
+  1: 1380, 2: 1380, 3: 1380, 4: 1380,
+  5: 840,   // Fri — 14:00 PT close
+  6: 0,     // Sat — market closed
+}
+/** Weekday of a PT calendar date (noon UTC keeps it off any DST boundary). */
+const weekdayOf = (date: string): number => new Date(`${date}T12:00:00Z`).getUTCDay()
 
 // Local .scid → shared root symbol, resolved PER DATE off the quarterly roll
 // table, so a trade at ANY date reads the contract that was actually front-month
@@ -126,12 +136,12 @@ async function main() {
       console.error('--from / --to must be YYYY-MM-DD'); process.exit(1)
     }
     // Oldest first so an interrupted run resumes by moving --from forward.
-    // Weekends are skipped outright: they'd cost a multi-GB .scid seek each to
-    // discover there are no ticks, and over a multi-year range that is hours.
+    // Saturdays are skipped — the market is shut, so they'd cost a multi-GB
+    // .scid seek each just to learn there are no ticks. Sundays are KEPT: the
+    // week opens at 15:00 PT Sunday, which is a real 540-bar session.
     dates = []
     for (const d = new Date(`${from}T12:00:00Z`); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
-      const dow = d.getUTCDay()
-      if (dow !== 0 && dow !== 6) dates.push(d.toISOString().slice(0, 10))
+      if (d.getUTCDay() !== 6) dates.push(d.toISOString().slice(0, 10))
     }
   } else if (daysIdx >= 0) {
     const n = Math.max(1, Number(args[daysIdx + 1]) || 8)
@@ -178,7 +188,13 @@ async function main() {
           .eq('symbol', f.root)
           .gte('ts', start)
           .lte('ts', end)
-        if ((count ?? 0) >= FULL_SESSION_BARS) { skipped++; anyOk = true; continue }
+        // Compare against THIS weekday's full session, so a complete Friday
+        // (840) or Sunday (540) counts as done instead of being re-fed every
+        // resume — while a run interrupted mid-day (importScidDay upserts in
+        // 1000-row chunks) still falls short and gets rewritten. Holiday early
+        // closes also fall short and are simply re-read; that's a few days a
+        // year and cheap.
+        if ((count ?? 0) >= FULL_SESSION_BARS[weekdayOf(date)]) { skipped++; anyOk = true; continue }
       }
       const out = await importScidDay(sb, {
         scidFile: f.scidFile,
