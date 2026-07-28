@@ -107,8 +107,14 @@ BEGIN
       ('mistakes', 'Not in Plan',
        ARRAY['not in plan','off plan']),
       -- order_flow
+      -- 'delta unwind' is deliberately NOT here. A dedicated Delta Unwind tag
+      -- exists and matches that phrase on its own label, so aliasing it onto
+      -- Delta Fade made one phrase produce two tags for the same concept. The
+      -- more specific tag wins, and it is the trader's own wording.
       ('order_flow', 'Delta Fade',
-       ARRAY['delta fade','delta unwind','delta faded','unwound']),
+       ARRAY['delta fade','delta faded','faded the delta']),
+      ('order_flow', 'Delta Unwind',
+       ARRAY['unwound','unwinding','delta unwound']),
       ('order_flow', 'Delta Flip',
        ARRAY['delta flip','flipped delta']),
       ('order_flow', 'Absorption/Exhaustion (Countermov)',
