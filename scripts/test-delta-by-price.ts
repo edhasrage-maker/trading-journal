@@ -14,7 +14,7 @@
  */
 import { existsSync } from 'fs'
 import {
-  quantileLower, rowDeltaStats, zoneTotal, detectDeltaLevels,
+  quantileLower, rowDeltaStats, zoneTotal, detectDeltaLevels, detectRevisitLevels,
   type DetectorConfig, type DetectedDeltaLevel,
 } from '../src/lib/delta-by-price.ts'
 import { readDeltaByPrice, type DeltaRow, type DeltaBar } from '../src/lib/scid-delta.ts'
@@ -30,7 +30,23 @@ const check = (name: string, cond: boolean, detail?: string) => {
 
 /** Build a row. `ms` is the row's last trade time. */
 function row(price: number, delta: number, volume = 1000, ms = 0): DeltaRow {
-  return { price, delta, volume, trades: 10, firstMs: ms, lastMs: ms }
+  return {
+    price, delta, volume, trades: 10, firstMs: ms, lastMs: ms,
+    visits: [{ startMs: ms, endMs: ms, delta, volume }],
+  }
+}
+/** A row whose delta arrived across explicit visits (for the revisit tests). */
+function rowVisits(price: number, visits: { from: number; to: number; delta: number }[]): DeltaRow {
+  const vs = visits.map(v => ({ startMs: v.from * MIN, endMs: v.to * MIN, delta: v.delta, volume: 1000 }))
+  return {
+    price,
+    delta: vs.reduce((s, v) => s + v.delta, 0),
+    volume: vs.length * 1000,
+    trades: 10 * vs.length,
+    firstMs: vs[0].startMs,
+    lastMs: vs[vs.length - 1].endMs,
+    visits: vs,
+  }
 }
 /** A flat bar series at `price`, one per minute starting at `startMs`. */
 function flatBars(startMs: number, count: number, price: number): DeltaBar[] {
@@ -167,6 +183,62 @@ check('volumeShare is a fraction of session volume, not a percent',
 check('empty input yields no levels and no NaN',
   detectDeltaLevels([], [], cfgBase).levels.length === 0 &&
   detectDeltaLevels([], [], cfgBase).sessionDelta === 0)
+
+console.log('detectRevisitLevels — the trader is revisiting, not watching it print')
+
+/** One bar per minute over [fromMin, toMin), at prices from `priceAt`. */
+function barSeries(fromMin: number, toMin: number, priceAt: (m: number) => number): DeltaBar[] {
+  const out: DeltaBar[] = []
+  for (let m = fromMin; m < toMin; m++) {
+    const p = priceAt(m)
+    out.push({ ts: m * MIN, high: p, low: p, close: p })
+  }
+  return out
+}
+const rcfg = { rowHeight: 5, breakDistance: 5, minDeparture: 5, thresholdPercentile: 0 }
+/** Filler rows so the percentile has a population to sit in. */
+const filler = Array.from({ length: 20 }, (_, i) => rowVisits(7000 + i * 5, [{ from: 0, to: 5, delta: 10 }]))
+
+// Aggression at 10-20, price leaves UP to 7130, comes back, entry at 60.
+const sellThenUp = [rowVisits(7100, [{ from: 10, to: 20, delta: -2000 }, { from: 55, to: 60, delta: -50 }]), ...filler]
+const upBars = barSeries(0, 60, m => (m < 20 ? 7102 : m < 45 ? 7130 : 7102))
+const upRes = detectRevisitLevels(sellThenUp, upBars, 58 * MIN, rcfg)
+check('a revisited level is detected', upRes.levels.some(l => l.price === 7100))
+check('sellers that price refused to follow = absorption',
+  upRes.levels.find(l => l.price === 7100)?.kind === 'absorption')
+check('delta EXCLUDES the visit in progress',
+  upRes.levels.find(l => l.price === 7100)?.delta === -2000, 'the -50 revisit leg must not count')
+check('lastMs is when the AGGRESSION ended, not the revisit',
+  upRes.levels.find(l => l.price === 7100)?.lastMs === 20 * MIN)
+// Measured from the row INTERVAL, so from the 7105 top edge, not the 7100 low.
+check('departure records how far price left the row',
+  (upRes.levels.find(l => l.price === 7100)?.departure ?? 0) === 25)
+
+// Identical aggression, price breaks DOWN instead.
+const downBars = barSeries(0, 60, m => (m < 20 ? 7102 : m < 45 ? 7070 : 7102))
+check('sellers that price followed = continuation',
+  detectRevisitLevels(sellThenUp, downBars, 58 * MIN, rcfg)
+    .levels.find(l => l.price === 7100)?.kind === 'continuation')
+
+// Price never leaves the level: that is continuous trading, not a revisit.
+const stuckBars = barSeries(0, 60, () => 7102)
+check('no departure means no revisit level',
+  detectRevisitLevels(sellThenUp, stuckBars, 58 * MIN, rcfg)
+    .levels.find(l => l.price === 7100) === undefined)
+
+// THE no-hindsight guarantee: bars at or after the entry are ignored, so a
+// verdict can never be built from what happened once the trade was on.
+const futureBars = [...barSeries(0, 25, m => (m < 20 ? 7102 : 7130)), ...barSeries(25, 60, () => 7000)]
+check('bars at/after asOfMs are ignored',
+  detectRevisitLevels(sellThenUp, futureBars, 25 * MIN, rcfg)
+    .levels.find(l => l.price === 7100)?.kind === 'absorption',
+  'the 7000 print is after asOfMs and must not flip this to continuation')
+
+// A level whose aggression is still the current visit has nothing banked.
+check('a level still printing has no banked delta',
+  detectRevisitLevels(
+    [rowVisits(7100, [{ from: 10, to: 60, delta: -2000 }]), ...filler],
+    upBars, 30 * MIN, rcfg).levels.find(l => l.price === 7100) === undefined)
 
 console.log('matchTradeToLevels')
 

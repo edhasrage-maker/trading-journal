@@ -39,6 +39,23 @@ const RECORD_SIZE = 40
 // Microseconds between SCID epoch (1899-12-30) and Unix epoch (1970-01-01).
 const SCID_EPOCH_OFFSET_US = 25569 * 86400 * 1_000_000
 
+/**
+ * One contiguous period during which price was trading in a row.
+ *
+ * Rows are revisited: price trades a level, leaves, and comes back. Collapsing
+ * that into a single first/last span loses the thing that matters most about a
+ * level — WHEN its size printed. A trader revisiting a level is reacting to
+ * delta that accumulated on an EARLIER visit, and by the time they are back the
+ * market has already answered whether that aggression worked. Segmenting into
+ * visits is what makes that answer available from pre-entry data alone.
+ */
+export interface DeltaVisit {
+  startMs: number
+  endMs: number
+  delta: number
+  volume: number
+}
+
 /** One price row of the footprint. Covers `[price, price + rowHeight)`. */
 export interface DeltaRow {
   /** Low edge of the row, in price units. */
@@ -52,6 +69,11 @@ export interface DeltaRow {
   /** First and last timestamp (ms) that traded in this row. */
   firstMs: number
   lastMs: number
+  /**
+   * Contiguous visits, in order. A visit ends when the row goes untraded for
+   * longer than `visitGapMs`. Always at least one entry.
+   */
+  visits: DeltaVisit[]
 }
 
 /** Minimal OHLC-less bar — the detector only needs the excursion and the close. */
@@ -90,6 +112,12 @@ export interface ReadDeltaOptions {
   rowHeight: number
   /** Bar bucket for the returned series. Default 60s. */
   bucketMs?: number
+  /**
+   * A row's visit ends after this long without a trade in it. Default 5 min.
+   * Too short and a level that price is chopping around fragments into dozens
+   * of visits; too long and a genuine departure-and-return reads as one.
+   */
+  visitGapMs?: number
 }
 
 function recordTimeMs(fd: number, index: number): number {
@@ -126,6 +154,7 @@ export function readDeltaByPrice(
 ): DeltaByPriceResult {
   const priceDivisor = opts.priceDivisor ?? 100
   const bucketMs = opts.bucketMs ?? 60_000
+  const visitGapMs = opts.visitGapMs ?? 5 * 60_000
   if (!(opts.rowHeight > 0)) {
     throw new Error(`readDeltaByPrice: rowHeight must be > 0 (got ${opts.rowHeight})`)
   }
@@ -203,6 +232,7 @@ export function readDeltaByPrice(
             price: rowInt / priceDivisor,
             delta, volume, trades,
             firstMs: tMs, lastMs: tMs,
+            visits: [{ startMs: tMs, endMs: tMs, delta, volume }],
           })
         } else {
           existing.delta += delta
@@ -210,6 +240,15 @@ export function readDeltaByPrice(
           existing.trades += trades
           if (tMs < existing.firstMs) existing.firstMs = tMs
           if (tMs > existing.lastMs) existing.lastMs = tMs
+          // Records are time-ascending, so the open visit is always the last.
+          const open = existing.visits[existing.visits.length - 1]
+          if (tMs - open.endMs > visitGapMs) {
+            existing.visits.push({ startMs: tMs, endMs: tMs, delta, volume })
+          } else {
+            open.endMs = tMs
+            open.delta += delta
+            open.volume += volume
+          }
         }
 
         const px = priceInt / priceDivisor

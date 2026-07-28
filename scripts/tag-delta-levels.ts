@@ -9,8 +9,10 @@
  *   --from/--to  Trading-day range (PT dates). --to defaults to --from.
  *   --row        Row height in price units. Default 5 (NQ). ES would be 1.
  *   --ticks      Entry must be within this many ticks of the level. Default 8.
- *   --minutes    Level must have started within this many minutes. Default 30.
+ *   --minutes    Aggression must have finished within this many minutes. Default 30.
  *   --pct        Session percentile defining significance. Default 0.99.
+ *   --departure  Price must have left the level by this many ROW HEIGHTS between
+ *                the aggression and the revisit. Default 1.
  *   --detail     Print every match, not just the summary.
  *   --write      Actually apply the tags. DRY RUN unless this is passed.
  *
@@ -27,7 +29,7 @@
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { readDeltaByPrice } from '../src/lib/scid-delta.ts'
-import { detectDeltaLevels, type DetectedDeltaLevel } from '../src/lib/delta-by-price.ts'
+import { detectRevisitLevels, type RevisitLevel } from '../src/lib/delta-by-price.ts'
 import { matchTradesToLevels, type TradeAnchor, type LevelMatch } from '../src/lib/delta-level-match.ts'
 import { contractFor, isNQ, SC_DATA_DIR } from './nq-tick-series.ts'
 
@@ -142,6 +144,7 @@ async function main(): Promise<void> {
   const maxTicks = Number(arg('ticks') ?? 8)
   const maxMinutes = Number(arg('minutes') ?? 30)
   const pct = Number(arg('pct') ?? 0.99)
+  const minDeparture = Number(arg('departure') ?? 1)
   const detail = flag('detail')
   const write = flag('write')
 
@@ -224,8 +227,12 @@ async function main(): Promise<void> {
       }
       if (asOf.rows.length === 0) continue
 
-      const det = detectDeltaLevels(asOf.rows, asOf.bars, {
+      // REVISIT semantics: the trader is reacting to delta that already
+      // printed at this price, left, and has since been answered — not to
+      // aggression happening under them. See detectRevisitLevels.
+      const det = detectRevisitLevels(asOf.rows, asOf.bars, entryMs, {
         rowHeight, breakDistance: rowHeight, thresholdPercentile: pct,
+        minDeparture: minDeparture * rowHeight,
       })
       if (det.levels.length === 0) continue
 
@@ -252,13 +259,13 @@ async function main(): Promise<void> {
       proposed.set(tradeId, forTrade)
 
       if (detail) {
-        const L: DetectedDeltaLevel = best.level
+        const L = best.level as RevisitLevel
         const labels = [...forTrade].flatMap(([c, s]) => [...s].map(l => `${c}/${l}`))
         console.log(
           `  ${new Date(Date.parse(trade.entry_time!)).toISOString().slice(11, 19)} ` +
           `${(trade.direction ?? '?').padEnd(5)} @${trade.entry_price} → ` +
           `${L.price} ${L.delta > 0 ? '+' : ''}${L.delta} ${L.side}/${L.kind} ` +
-          `(${best.distanceTicks.toFixed(1)}t, ${best.ageMinutes.toFixed(0)}m) ` +
+          `(${best.distanceTicks.toFixed(1)}t, ${best.ageMinutes.toFixed(0)}m ago, left ${L.departure.toFixed(0)}pt) ` +
           `${best.againstAggressor ? 'FADE' : 'FOLLOW'} → ${labels.join(', ') || '—'}`)
       }
     }

@@ -272,3 +272,149 @@ export function detectDeltaLevels(
   levels.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
   return { levels, stats, threshold, sessionDelta, sessionVolume }
 }
+
+/**
+ * A level as seen ON A REVISIT — the shape a trader actually reacts to.
+ *
+ * `delta` here is the CUMULATIVE delta the row had accumulated BEFORE the
+ * current visit began: what the DBP displayed at that price when price came
+ * back to it. The current visit is deliberately excluded, because that is the
+ * one still printing.
+ */
+export interface RevisitLevel extends DetectedDeltaLevel {
+  /** When the aggression being reacted to finished. */
+  aggressionEndMs: number
+  /** Furthest price got from the row after that aggression, in price units. */
+  departure: number
+  /** How many separate visits contributed the pre-revisit delta. */
+  priorVisits: number
+}
+
+export interface RevisitConfig {
+  rowHeight: number
+  /** Percentile of pre-revisit |delta| defining significance. Default 0.99. */
+  thresholdPercentile?: number
+  /** Absolute floor on |delta|, in contracts. Default 0 (off). */
+  minDelta?: number
+  /**
+   * Price must have left the row by at least this much (price units) between
+   * the aggression and the revisit. This is the gate that makes it a REVISIT
+   * rather than continuous trading at one level.
+   */
+  minDeparture: number
+  /** How far beyond the row counts as follow-through, in price units. */
+  breakDistance: number
+  /**
+   * The banked aggression must have finished at least this long before
+   * `asOfMs`. Default 2 min.
+   *
+   * This is what separates the AGGRESSION from the REVISIT, and it is not
+   * optional. Price is by definition back at the level when the trade is
+   * taken, so the row's most recent visit is the revisit itself. Counting it
+   * as part of the level both inflates the delta and pushes the aggression's
+   * end to the entry instant, leaving no price action in between to judge —
+   * which silently drops the level instead of classifying it.
+   */
+  revisitGapMs?: number
+}
+
+export interface RevisitResult {
+  levels: RevisitLevel[]
+  threshold: number
+  stats: RowDeltaStats
+}
+
+/**
+ * Detect levels being REVISITED as of `asOfMs`.
+ *
+ * This exists because the obvious approach is wrong. Judging a level from a
+ * row's session-cumulative delta at the moment of entry always returns
+ * `unresolved`: price is sitting ON the level while it prints, so there is no
+ * follow-through to read yet. But a trader is not reacting to aggression as it
+ * happens — they are revisiting a price where large delta ALREADY printed, left,
+ * and by now has been answered. Segmenting the row into visits recovers that:
+ *
+ *   aggression (earlier visit) → departure → return → entry
+ *
+ * Every one of those is strictly before `asOfMs`, so absorption and
+ * continuation are decided WITHOUT any post-entry data. No hindsight, and the
+ * verdict is the one the trader could actually have had on screen.
+ *
+ * Bars must cover `[sessionStart, asOfMs)`; anything at or after `asOfMs` is
+ * ignored even if passed.
+ */
+export function detectRevisitLevels(
+  rows: DeltaRow[],
+  bars: DeltaBar[],
+  asOfMs: number,
+  cfg: RevisitConfig,
+): RevisitResult {
+  const pre = bars.filter(b => b.ts < asOfMs)
+
+  // Per row: the delta banked before the current visit started, and when that
+  // banked aggression finished.
+  const banked: { row: DeltaRow; delta: number; endMs: number; visits: number }[] = []
+  const cutoff = asOfMs - (cfg.revisitGapMs ?? 2 * 60_000)
+  for (const row of rows) {
+    // Everything at or after the cutoff is the revisit, not the aggression.
+    const useable = row.visits.filter(v => v.endMs <= cutoff)
+    if (useable.length === 0) continue
+    banked.push({
+      row,
+      delta: useable.reduce((s, v) => s + v.delta, 0),
+      endMs: Math.max(...useable.map(v => v.endMs)),
+      visits: useable.length,
+    })
+  }
+
+  const absSorted = banked.map(b => Math.abs(b.delta)).sort((a, b) => a - b)
+  const threshold = Math.max(
+    quantileLower(absSorted, cfg.thresholdPercentile ?? 0.99),
+    cfg.minDelta ?? 0,
+  )
+  const sessionVolume = rows.reduce((s, r) => s + r.volume, 0)
+
+  const levels: RevisitLevel[] = []
+  for (const b of banked) {
+    const mag = Math.abs(b.delta)
+    if (mag === 0 || mag < threshold) continue
+
+    const rowTop = b.row.price + cfg.rowHeight
+    const after = pre.filter(x => x.ts > b.endMs)
+    if (after.length === 0) continue
+
+    // How far price got AWAY from the row interval after the aggression. This
+    // separates a genuine leave-and-return from price simply sitting there.
+    const departure = Math.max(
+      ...after.map(x => Math.max(b.row.price - x.low, x.high - rowTop, 0)),
+    )
+    if (departure < cfg.minDeparture) continue
+
+    const side: DeltaSide = b.delta < 0 ? 'sell' : 'buy'
+    const followThrough = side === 'sell'
+      ? b.row.price - Math.min(...after.map(x => x.low))
+      : Math.max(...after.map(x => x.high)) - rowTop
+    const kind: DeltaLevelKind = followThrough > cfg.breakDistance ? 'continuation' : 'absorption'
+
+    levels.push({
+      price: b.row.price,
+      delta: b.delta,
+      volume: b.row.volume,
+      side,
+      kind,
+      strength: threshold > 0 ? mag / threshold : 0,
+      volumeShare: sessionVolume > 0 ? b.row.volume / sessionVolume : 0,
+      firstMs: b.row.firstMs,
+      // The matcher's recency gate should measure from when the AGGRESSION
+      // finished, not from the row's last print during the revisit.
+      lastMs: b.endMs,
+      followThrough,
+      aggressionEndMs: b.endMs,
+      departure,
+      priorVisits: b.visits,
+    })
+  }
+
+  levels.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+  return { levels, threshold, stats: rowDeltaStats(rows) }
+}
