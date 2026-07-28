@@ -17,6 +17,7 @@ import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { createClient } from '@supabase/supabase-js'
 import { chartSeriesRoot } from '../src/lib/futures-symbols'
+import { excursionContainsFills } from '../src/lib/excursion-guard'
 
 function loadEnv(): void {
   const path = join(process.cwd(), '.env.public-feed')
@@ -49,7 +50,14 @@ const OWNER_USER_ID = 'fa3fb352-9538-44cc-8ce1-1c76f307044c'
 const userArg = argv.find(a => a.startsWith('--user='))
 const USER_ID = userArg ? userArg.split('=')[1] : OWNER_USER_ID
 
-interface TradeRow { id: string; symbol: string | null; entry_time: string | null; exit_time: string | null }
+interface TradeRow {
+  id: string
+  symbol: string | null
+  entry_time: string | null
+  exit_time: string | null
+  entry_price: number | null
+  exit_price: number | null
+}
 
 async function fetchTrades(): Promise<TradeRow[]> {
   const PAGE = 1000
@@ -57,7 +65,7 @@ async function fetchTrades(): Promise<TradeRow[]> {
   for (let p = 0; p < 50; p++) {
     const { data, error } = await sb
       .from('trades')
-      .select('id, symbol, entry_time, exit_time')
+      .select('id, symbol, entry_time, exit_time, entry_price, exit_price')
       .eq('user_id', USER_ID)
       .is('high_during_position', null)
       .not('entry_time', 'is', null)
@@ -112,7 +120,7 @@ async function main() {
   }
 
   const updates: Array<{ id: string; high: number; low: number }> = []
-  let noBars = 0
+  let noBars = 0, rejected = 0
   for (const [, g] of byGroup) {
     let min = Infinity, max = -Infinity
     for (const t of g.rows) { min = Math.min(min, Date.parse(t.entry_time!)); max = Math.max(max, Date.parse(t.exit_time!)) }
@@ -127,11 +135,19 @@ async function main() {
       for (const b of bars) {
         if (b.t >= s - 60_000 && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
       }
-      if (hi > -Infinity && lo < Infinity) updates.push({ id: t.id, high: Math.round(hi * 100) / 100, low: Math.round(lo * 100) / 100 })
+      if (hi === -Infinity || lo === Infinity) continue
+      // Refuse to store a window that doesn't contain the trade's own fills —
+      // around a roll the shared feed can be carrying a different contract, and
+      // those bars are off by the carry basis. See src/lib/excursion-guard.ts.
+      if (!excursionContainsFills(hi, lo, t.entry_price, t.exit_price)) { rejected++; continue }
+      updates.push({ id: t.id, high: Math.round(hi * 100) / 100, low: Math.round(lo * 100) / 100 })
     }
   }
 
   console.log(`\nComputed excursion for ${updates.length} trade(s). Skipped (no bars for their market/dates): ${noBars}.`)
+  if (rejected > 0) {
+    console.log(`Rejected ${rejected} trade(s): the bars for those times don't contain the trade's own fill prices (left null rather than storing a wrong capture).`)
+  }
   if (dryRun) { console.log('Dry run — no writes.'); return }
   if (updates.length === 0) { console.log('Nothing to write.'); return }
 

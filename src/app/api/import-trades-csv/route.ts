@@ -4,6 +4,7 @@ import { parseTradeCsv } from '@/lib/csv-trade-import'
 import { parseSierraChartLog } from '@/lib/sc-importer'
 import { isNinjaTraderGrid, parseNinjaTraderGrid } from '@/lib/ninjatrader-import'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
+import { excursionContainsFills } from '@/lib/excursion-guard'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { liveAtr, postExitExtension } from '@/lib/atr'
 import { clientError } from '@/lib/api-error'
@@ -113,7 +114,7 @@ async function backfillExcursionsFromBars(
     bySymbol.get(root)!.push(i)
   }
 
-  let filled = 0, atrFilled = 0, peFilled = 0
+  let filled = 0, atrFilled = 0, peFilled = 0, rejected = 0
   for (const [root, idxs] of bySymbol) {
     let min = Infinity, max = -Infinity
     for (const i of idxs) {
@@ -140,10 +141,20 @@ async function backfillExcursionsFromBars(
           // Include the entry minute's bar (bar ts is the minute open, so allow 60s slack).
           if (b.t >= s - 60_000 && b.t <= e) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low }
         }
+        // Only store a window that actually contains the trade's own fills.
+        // Around a quarterly roll the shared feed can be carrying a different
+        // contract than the one the trade filled in, and those bars are off by
+        // the carry basis — storing them would put a confidently wrong capture
+        // and heat on the trade. Leaving it null reads honestly as "not
+        // available"; see src/lib/excursion-guard.ts.
         if (hi > -Infinity && lo < Infinity) {
-          r.high_during_position = Math.round(hi * 100) / 100
-          r.low_during_position = Math.round(lo * 100) / 100
-          filled++
+          if (excursionContainsFills(hi, lo, r.entry_price, r.exit_price)) {
+            r.high_during_position = Math.round(hi * 100) / 100
+            r.low_during_position = Math.round(lo * 100) / 100
+            filled++
+          } else {
+            rejected++
+          }
         }
       }
       // Entry ATR-10 (1-min Wilder) snapshot at entry — bars strictly before entry.
@@ -164,6 +175,13 @@ async function backfillExcursionsFromBars(
     }
   }
   if (filled > 0) warnings.push(`Filled MFE/MAE for ${filled} trade(s) from market data.`)
+  if (rejected > 0) {
+    warnings.push(
+      `Skipped MFE/MAE for ${rejected} trade(s): the market data we hold for those ` +
+      `times doesn't line up with your fill prices, so any capture figure from it ` +
+      `would be wrong. Everything else on those trades imported normally.`,
+    )
+  }
   if (atrFilled > 0) warnings.push(`Filled entry ATR for ${atrFilled} trade(s) from market data.`)
   if (peFilled > 0) warnings.push(`Filled post-exit continuation for ${peFilled} trade(s) from market data.`)
 }

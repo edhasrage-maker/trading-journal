@@ -27,27 +27,46 @@ export type ContractRoot = 'NQ' | 'ES'
 
 /**
  * Quarterly roll dates, oldest first. Month codes H=Mar M=Jun U=Sep Z=Dec.
- * The first entry has no predecessor, so it also stands in for any date before
- * its roll — in practice that contract only holds data back a few months, and
- * a date with no ticks reports "no data" rather than returning wrong bars.
+ * Entry i's contract is front-month over [roll(i-1), roll(i)) — the date is when
+ * that contract STOPS leading. The first entry has no predecessor, so it also
+ * stands in for any date before its roll; in practice that contract only holds
+ * data back a few months, and a date with no ticks reports "no data" rather than
+ * returning wrong bars.
+ *
+ * These dates are MEASURED, not derived from the calendar. The textbook rule —
+ * 8 days before the quarterly 3rd-Friday expiry — is not when liquidity moves:
+ * volume actually crosses over 4-5 sessions later, every quarter. Using the
+ * early date meant that for a few sessions each quarter the bar feed served the
+ * NEXT contract's prices while trades were still filling in the old one, and the
+ * two differ by the carry basis (~295 NQ points in Dec 2024). Excursions
+ * computed in those windows were nonsense — the high/low didn't even contain the
+ * trade's own fill price.
+ *
+ * Regenerate with `npx tsx scripts/derive-contract-rolls.ts` after adding a new
+ * quarter's .scid, then re-feed any dates whose contract changed. NQ and ES were
+ * measured separately and agree on every quarter where both have data, so one
+ * table serves both roots.
  */
 const ROLLS: ReadonlyArray<{ roll: string; code: string }> = [
-  { roll: '2023-03-09', code: 'H3' },
-  { roll: '2023-06-08', code: 'M3' },
-  { roll: '2023-09-07', code: 'U3' },
-  { roll: '2023-12-07', code: 'Z3' },
-  { roll: '2024-03-07', code: 'H4' },
-  { roll: '2024-06-13', code: 'M4' },
-  { roll: '2024-09-12', code: 'U4' },
-  { roll: '2024-12-12', code: 'Z4' },
-  { roll: '2025-03-13', code: 'H5' },
-  { roll: '2025-06-12', code: 'M5' },
-  { roll: '2025-09-11', code: 'U5' },
-  { roll: '2025-12-11', code: 'Z5' },
-  { roll: '2026-03-12', code: 'H6' },
-  { roll: '2026-06-11', code: 'M6' },
-  { roll: '2026-09-11', code: 'U6' },
-  { roll: '2026-12-11', code: 'Z6' },
+  { roll: '2023-03-13', code: 'H3' },
+  { roll: '2023-06-12', code: 'M3' },
+  { roll: '2023-09-11', code: 'U3' },
+  { roll: '2023-12-11', code: 'Z3' },
+  { roll: '2024-03-11', code: 'H4' },
+  { roll: '2024-06-17', code: 'M4' },
+  { roll: '2024-09-16', code: 'U4' },
+  { roll: '2024-12-17', code: 'Z4' },
+  { roll: '2025-03-18', code: 'H5' },
+  { roll: '2025-06-16', code: 'M5' },
+  { roll: '2025-09-15', code: 'U5' },
+  { roll: '2025-12-15', code: 'Z5' },
+  { roll: '2026-03-16', code: 'H6' },
+  { roll: '2026-06-15', code: 'M6' },
+  // Not yet measurable — the successor contract has no local file. Projected
+  // from the +4-day drift every measured quarter shows, rather than left on the
+  // textbook date, which is known to be early. Re-derive once the files exist.
+  { roll: '2026-09-15', code: 'U6' },
+  { roll: '2026-12-15', code: 'Z6' },
 ]
 
 export interface Contract {
