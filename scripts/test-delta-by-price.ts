@@ -15,9 +15,12 @@
 import { existsSync } from 'fs'
 import {
   quantileLower, rowDeltaStats, zoneTotal, detectDeltaLevels,
-  type DetectorConfig,
+  type DetectorConfig, type DetectedDeltaLevel,
 } from '../src/lib/delta-by-price.ts'
 import { readDeltaByPrice, type DeltaRow, type DeltaBar } from '../src/lib/scid-delta.ts'
+import {
+  matchTradeToLevels, matchTradesToLevels, type MatchConfig,
+} from '../src/lib/delta-level-match.ts'
 
 let failures = 0
 const check = (name: string, cond: boolean, detail?: string) => {
@@ -164,6 +167,76 @@ check('volumeShare is a fraction of session volume, not a percent',
 check('empty input yields no levels and no NaN',
   detectDeltaLevels([], [], cfgBase).levels.length === 0 &&
   detectDeltaLevels([], [], cfgBase).sessionDelta === 0)
+
+console.log('matchTradeToLevels')
+
+/** A detected level, spelled out so the match gates can be driven directly. */
+function lvl(price: number, delta: number, firstMin: number, lastMin = firstMin + 5): DetectedDeltaLevel {
+  return {
+    price, delta, volume: 5000,
+    side: delta < 0 ? 'sell' : 'buy',
+    kind: 'absorption',
+    strength: 1.5, volumeShare: 0.03, followThrough: -1,
+    firstMs: firstMin * MIN, lastMs: lastMin * MIN,
+  }
+}
+const anchor = (price: number, min: number, direction: 'long' | 'short' | null = 'long') =>
+  ({ id: 't1', entryMs: min * MIN, entryPrice: price, direction })
+const mcfg: MatchConfig = { tickSize: 0.25, maxTicks: 8, maxMinutes: 30 }
+
+check('a level at the entry price matches',
+  matchTradeToLevels(anchor(7100, 20), [lvl(7100, -2000, 10)], mcfg).length === 1)
+check('distance is measured in TICKS, not points',
+  matchTradeToLevels(anchor(7101, 20), [lvl(7100, -2000, 10)], mcfg)[0]?.distanceTicks === 4)
+check('beyond maxTicks does not match',
+  matchTradeToLevels(anchor(7103, 20), [lvl(7100, -2000, 10)], mcfg).length === 0)
+check('beyond maxMinutes does not match',
+  matchTradeToLevels(anchor(7100, 90), [lvl(7100, -2000, 10)], mcfg).length === 0)
+check('age is reported in minutes',
+  matchTradeToLevels(anchor(7100, 25), [lvl(7100, -2000, 10)], mcfg)[0]?.ageMinutes === 15)
+
+// THE honesty gate. A row that only started printing after the entry cannot
+// have informed it; matching on lastMs instead would credit hindsight, and
+// these tags feed Entry scoring.
+check('a level that STARTS after the entry is rejected',
+  matchTradeToLevels(anchor(7100, 20), [lvl(7100, -2000, 25)], mcfg).length === 0)
+check('...even though its lastMs is comfortably in range',
+  lvl(7100, -2000, 25).lastMs / MIN === 30)
+check('requireEstablished:false is the only way to see it',
+  matchTradeToLevels(anchor(7100, 20), [lvl(7100, -2000, 25)],
+    { ...mcfg, requireEstablished: false }).length === 1)
+
+check('a LONG into a big SELL row is fading the aggressor',
+  matchTradeToLevels(anchor(7100, 20, 'long'), [lvl(7100, -2000, 10)], mcfg)[0]?.againstAggressor === true)
+check('a LONG into a big BUY row is following it',
+  matchTradeToLevels(anchor(7100, 20, 'long'), [lvl(7100, 2000, 10)], mcfg)[0]?.againstAggressor === false)
+check('a SHORT into a big BUY row is fading the aggressor',
+  matchTradeToLevels(anchor(7100, 20, 'short'), [lvl(7100, 2000, 10)], mcfg)[0]?.againstAggressor === true)
+check('no direction yields null, not a guess',
+  matchTradeToLevels(anchor(7100, 20, null), [lvl(7100, -2000, 10)], mcfg)[0]?.againstAggressor === null)
+
+const many = matchTradeToLevels(anchor(7100, 20),
+  [lvl(7101, -900, 10), lvl(7100.25, -800, 10), lvl(7100.5, -1500, 10)], mcfg)
+check('matches come back CLOSEST first', many[0]?.level.price === 7100.25)
+check('all qualifying levels are returned', many.length === 3)
+check('equal distance breaks toward the larger |delta|',
+  matchTradeToLevels(anchor(7100, 20), [lvl(7099.5, -700, 10), lvl(7100.5, -1500, 10)], mcfg)[0]
+    ?.level.delta === -1500)
+
+// A 5pt NQ row is 20 ticks wide, so an 8-tick gate is tight in NQ terms —
+// the point of expressing proximity in ticks rather than points.
+check('tickSize scales the gate across instruments',
+  matchTradeToLevels(anchor(7102, 20), [lvl(7100, -2000, 10)], { ...mcfg, tickSize: 1 }).length === 1)
+check('a zero tickSize throws rather than dividing by zero', (() => {
+  try { matchTradeToLevels(anchor(7100, 20), [lvl(7100, -2000, 10)], { ...mcfg, tickSize: 0 }); return false }
+  catch { return true }
+})())
+
+const batch = matchTradesToLevels(
+  [{ ...anchor(7100, 20), id: 'hit' }, { ...anchor(9999, 20), id: 'miss' }],
+  [lvl(7100, -2000, 10)], mcfg)
+check('unmatched trades are absent, not empty-arrayed',
+  batch.has('hit') && !batch.has('miss') && batch.size === 1)
 
 console.log('GOLDEN FIXTURE — ESU6 2026-07-28 13:30-17:30Z, 1pt rows')
 

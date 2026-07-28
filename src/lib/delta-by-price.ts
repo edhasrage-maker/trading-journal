@@ -75,6 +75,13 @@ export interface DetectedDeltaLevel {
   strength: number
   /** Share of session volume that traded in this row, 0..1. */
   volumeShare: number
+  /**
+   * First trade time in the row (ms). Matching uses this, not `lastMs`: a
+   * level only informs an entry if it was ALREADY FORMING when the trade was
+   * taken. A row often keeps trading for hours after, and anchoring on its last
+   * print would credit a trader with reading size that had not printed yet.
+   */
+  firstMs: number
   /** Last trade time in the row (ms) — the anchor for the hold check. */
   lastMs: number
   /**
@@ -256,6 +263,7 @@ export function detectDeltaLevels(
       kind,
       strength: threshold > 0 ? mag / threshold : 0,
       volumeShare: sessionVolume > 0 ? row.volume / sessionVolume : 0,
+      firstMs: row.firstMs,
       lastMs: row.lastMs,
       followThrough,
     })
