@@ -182,7 +182,11 @@ compliant trades. Also produce execution_parameter_breakdown (per-criterion pass
      missing reason = fail. N/A when TP1 or stop is missing.
   4. clear_area_of_interest — the entry is anchored to a specific level/structure the
      trader trades from (session levels, prior-day levels, an HTF zone, S/R, a demand/
-     supply area, an LVN, etc.). A generic mid-range entry with no level fails.
+     supply area, an LVN, etc.). FAIL only when the trade is POSITIVELY mid-range —
+     the notes/tags/chart show an entry with no level near it. When the trade simply
+     carries no location information at all (no confluence tags, no notes, an imported
+     fills-only row), mark N/A and SKIP it — a trader who didn't journal the level is
+     NOT a trader who traded without one. Absence of evidence is never a fail.
 ${ofCriterion}
   6. break_of_cluster_or_bubble_entry — [for this trader: VALID ENTRY TRIGGER] the entry
      used a DEFINED trigger from the trader's OWN entry_model library (break/retest, candle
@@ -196,7 +200,11 @@ ${ofCriterion}
      Hitting the planned TP or getting stopped both pass automatically. A risk-off scratch
      on a deteriorating read is a VALID read-based exit (pass), not a mistake. NEVER judge
      the exit by what price did AFTER the trader was out (outcome bias is forbidden).
-  8. no_mistakes_tagged — tags_json.mistakes is empty on the trade.
+     N/A when the trade has NO notes and no exit reasoning to read — never infer an
+     emotional exit from the numbers alone.
+  8. no_mistakes_tagged — tags_json.mistakes is empty on the trade. N/A when this trader
+     does not use mistake tags at all (none tagged anywhere in the session) — an empty
+     journal is not a clean one.
   9. stable_emotion — the trade's tags_json.emotions reflect a composed, in-control state
      (in whatever words THIS trader uses — e.g. calm, focused, disciplined, confident,
      "Stable") → pass. A clearly compromised / tilted state (e.g. fearful, FOMO, revenge,
