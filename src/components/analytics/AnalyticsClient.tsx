@@ -552,10 +552,15 @@ function toInsightTrade(t: TradeWithContext): InsightTrade {
     mfe_dollars_per_leg: t.mfe_dollars_per_leg,
     date: t.date,
     trading_day_id: t.trading_day_id,
-    // Day-type context (inherited from market_context).
+    // Day-character context (inherited from market_context). The persisted
+    // bands are the study-exact meanHL10 classification; ib_size /
+    // ib_vs_10d_avg / atr_at_ib_close remain as the Wilder-basis fallback for
+    // days the backfill hasn't reached.
     ib_size: t.ib_size,
     ib_vs_10d_avg: t.ib_vs_10d_avg,
     atr_at_ib_close: t.atr_at_ib_close,
+    ib_regime: t.ib_regime,
+    ib_size_band: t.ib_size_band,
   }
 }
 

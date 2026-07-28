@@ -222,6 +222,39 @@ trade was taken as a mistake or a rule breach. A timing tendency from the trader
 may be surfaced in patterns[] / next_session_focus[], never in mistakes[].${enumerateOf}`
 }
 
+/**
+ * The 07:30 IB day-CHARACTER read (Pt 23/24), rendered for the EOD prompt.
+ *
+ * Two independent lenses that can disagree — IB relative to its OWN ATR
+ * (chop/mid/expanded) and IB in absolute terms vs the trailing 10 days
+ * (small/normal/large). This is a MEASUREMENT taken at the IB close, so unlike
+ * the trader's `day_types[]` chips it was knowable while the session was still
+ * tradeable. That distinction is the whole reason it's worth giving the model:
+ * "you could have known this at 07:30" is a coachable statement; "this turned
+ * out to be a trend day" is not.
+ *
+ * Emits nothing when the classification is absent (pre-backfill days, non-RTH,
+ * or a Wilder-basis-only day the persister deliberately refused) — a missing
+ * read must never read as a neutral one.
+ */
+function dayCharacterLine(mc?: Partial<MarketContext>): string {
+  const regime = mc?.ib_regime ?? null
+  const size = mc?.ib_size_band ?? null
+  if (!regime && !size) return ''
+  const parts: string[] = []
+  if (regime) {
+    const ratio = mc?.ib_atr_ratio != null ? ` (${Number(mc.ib_atr_ratio).toFixed(1)}× its own ATR)` : ''
+    parts.push(`${regime}${ratio}`)
+  }
+  if (size) {
+    const r = mc?.ib_vs_10d_avg != null ? ` (${Number(mc.ib_vs_10d_avg).toFixed(2)}× the 10-day average IB)` : ''
+    parts.push(`${size} IB${r}`)
+  }
+  return `- Day character at IB close (07:30 PT): ${parts.join(' · ')}. ` +
+    'This is a measurement of the tape, KNOWN BEFORE the trader committed — not a hindsight day_types[] label, and not a rule. ' +
+    'Use it only to ask whether the session was traded in a way that fits what the first hour had already shown; never treat it as a process breach.'
+}
+
 export interface BuildEodPromptInput {
   trades: Trade[]
   eodNotes?: string
@@ -677,6 +710,7 @@ Market Context:
 - ADR: ${marketContext?.adr ?? 'N/A'} | ATR (1m): ${marketContext?.atr_1m ?? 'N/A'}
 - PDH/PDL: ${marketContext?.pdh ?? 'N/A'} / ${marketContext?.pdl ?? 'N/A'}
 - IBH/IBL: ${marketContext?.ibh ?? 'N/A'} / ${marketContext?.ibl ?? 'N/A'}
+${dayCharacterLine(marketContext)}
 
 Session Summary (all timestamps America/Los_Angeles; cite them in PT in your reasoning).
 Session clock for reference: RTH 06:30–13:00 PT; Initial Balance 06:30–07:30 PT (IB CLOSE = 07:30 PT). A trade entered after 07:30 PT is POST-IB. There is NO entry-time rule — timing is never a process breach (see narrative discipline #6).

@@ -60,3 +60,6 @@ exports/
 docs/NQ_1m*.csv
 
 docs/*.csv
+
+# Repair-script backups (local audit trail, can contain many trade ids)
+scripts/.repair-backups/

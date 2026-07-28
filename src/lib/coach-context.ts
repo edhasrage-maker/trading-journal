@@ -318,15 +318,24 @@ NO TRADE DATA — the trader logged no trades in this window.
   // whether the trader is selective on the day types they do well on. Keyed by
   // trading_day_id (one market_context row per day/symbol; take the first).
   const mcByDay = new Map<string, { rvol: number | null; atr: number | null }>()
+  // Day CHARACTER (Pt 23/24) keyed by DATE rather than trading_day_id, so the
+  // historical (Tradezella) half of the union participates too — the IB
+  // classification is a property of the SESSION, not of who recorded the trade.
+  // Same reasoning as analytics' histToContext.
+  const ibByDate = new Map<string, { regime: string | null; sizeBand: string | null }>()
   {
     const { data: mcs } = await supabase
       .from('market_context')
-      .select('trading_day_id, rvol, atr_1m')
+      .select('trading_day_id, rvol, atr_1m, ib_regime, ib_size_band')
       .in('trading_day_id', dayIds)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const m of (mcs ?? []) as any[]) {
       if (!mcByDay.has(m.trading_day_id)) {
         mcByDay.set(m.trading_day_id, { rvol: m.rvol ?? null, atr: m.atr_1m ?? null })
+      }
+      const date = dayDateById.get(m.trading_day_id)
+      if (date && !ibByDate.has(date) && (m.ib_regime || m.ib_size_band)) {
+        ibByDate.set(date, { regime: m.ib_regime ?? null, sizeBand: m.ib_size_band ?? null })
       }
     }
   }
@@ -403,6 +412,13 @@ NO TRADE DATA — the trader logged no trades in this window.
   // flag so the coach can see if the trader is selective on the regimes they win in.
   const rvolBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
   const atrRegimeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
+  // Day CHARACTER buckets — the 07:30 IB measurement, NOT the hand-tagged
+  // day_types[] (which are hindsight labels applied after the session and are
+  // cross-tabulated separately). Kept apart on purpose: merging them would make
+  // "what the tape measured at 07:30" indistinguishable from "what I called it
+  // afterwards", and only the first is available while the trader can still act.
+  const ibRegimeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
+  const ibSizeBuckets = new Map<string, { count: number; wins: number; losers: number; pnl: number }>()
 
   // Exit efficiency (MFE capture) — answers "am I leaving runners on the table /
   // should I hold for a TP2?". PRIMARY basis is DOLLARS: mfe_dollars_per_leg
@@ -559,6 +575,22 @@ NO TRADE DATA — the trader logged no trades in this window.
         const b = followFadeBuckets.get(ff) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
         b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
         followFadeBuckets.set(ff, b)
+      }
+    }
+
+    // Day character (IB ÷ ATR regime + IB size band) — BOTH sources, keyed by
+    // session date, so the historical half of the union is included.
+    {
+      const ib = t._date ? ibByDate.get(t._date) : undefined
+      if (ib?.regime) {
+        const b = ibRegimeBuckets.get(ib.regime) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+        b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+        ibRegimeBuckets.set(ib.regime, b)
+      }
+      if (ib?.sizeBand) {
+        const b = ibSizeBuckets.get(ib.sizeBand) ?? { count: 0, wins: 0, losers: 0, pnl: 0 }
+        b.count++; if (isWin) b.wins++; if (pnl < 0) b.losers++; b.pnl += pnl
+        ibSizeBuckets.set(ib.sizeBand, b)
       }
     }
 
@@ -752,6 +784,36 @@ ${MAE_BUCKETS.map(([label]) => {
       const b = m.get(k)!
       return `    ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`
     }).join('\n')
+  // Day CHARACTER (Pt 23/24) — the 07:30 IB read. Rendered as its own labelled
+  // sub-block, and explicitly NOT merged with the day_types[] cross-tab above:
+  // this is a measurement taken while the trader can still act on it, day_types
+  // are labels applied afterwards.
+  const IB_REGIME_LABEL: Record<string, string> = {
+    chop: 'chop (IB < 7.7× its own ATR)',
+    mid: 'mid (7.7–13×)',
+    expanded: 'expanded (≥ 13×)',
+  }
+  const IB_SIZE_LABEL: Record<string, string> = {
+    small: 'small (IB < 0.75× its 10-day average)',
+    normal: 'normal (0.75–1.25×)',
+    large: 'large (> 1.25×)',
+  }
+  const namedLine = (
+    m: Map<string, { count: number; wins: number; losers: number; pnl: number }>,
+    order: string[],
+    labels: Record<string, string>,
+  ) => order.filter(k => m.has(k)).map(k => {
+    const b = m.get(k)!
+    return `    ${labels[k] ?? k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`
+  }).join('\n')
+  const dayCharacterBlock = (ibRegimeBuckets.size === 0 && ibSizeBuckets.size === 0)
+    ? '  (no IB day-character data in this window — needs market_context.ib_regime / ib_size_band, which the prep page writes and scripts/backfill-ib-day-type.ts fills for history)'
+    : `  By IB CHARACTER — how big the first hour was RELATIVE TO ITS OWN ATR (measured at 07:30 PT, known before the trader acts):
+${namedLine(ibRegimeBuckets, ['chop', 'mid', 'expanded'], IB_REGIME_LABEL) || '    (n/a)'}
+  By IB SIZE — how big the first hour was in absolute terms vs the trailing 10 days:
+${namedLine(ibSizeBuckets, ['small', 'normal', 'large'], IB_SIZE_LABEL) || '    (n/a)'}
+  NB: these two lenses answer different questions and can disagree. They are a MEASUREMENT of the session, not the trader's hand-applied day_types[] labels above — never conflate the two, and don't claim a day-character edge off a thin bucket.`
+
   const conditionsBlock = (rvolBuckets.size === 0 && atrRegimeBuckets.size === 0)
     ? '  (not enough market-context data to split days by regime in this window)'
     : `  By PARTICIPATION — RVOL terciles of your own days (low = quiet tape, high = busy):
@@ -867,6 +929,9 @@ ${sortByPnl(dayTypeBuckets).map(([, b]) => `  ${b.display}: ${b.count} trades ·
 
 DAY CONDITIONS — PERFORMANCE BY REGIME (are you selective on the conditions you win in? judge day-type selectivity against this):
 ${conditionsBlock}
+
+DAY CHARACTER — PERFORMANCE BY THE 07:30 IB READ (the ONLY day-level read available BEFORE the trader commits, so it's the one that can change today's plan — raise it unprompted when a bucket is clearly off the trader's baseline):
+${dayCharacterBlock}
 
 TOP MISTAKES (by frequency, top 10):
 ${sortByCount(mistakeCounts).map(([, b]) => `  ${b.display}: ${b.count} occurrences · ${fmt(b.pnl)} total PnL impact`).join('\n') || '  (no mistakes tagged in window)'}

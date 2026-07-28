@@ -84,6 +84,13 @@ export interface InsightTrade {
   ib_size?: number | null
   ib_vs_10d_avg?: number | null
   atr_at_ib_close?: number | null
+  // The PERSISTED day-character bands (Pt 23). Preferred over re-deriving from
+  // the raw context above, because these were classified on the study-exact
+  // meanHL10 basis while the derivation below can only reach the ~3%-off Wilder
+  // fallback — two surfaces disagreeing about what "expanded" means is worse
+  // than one of them staying quiet.
+  ib_regime?: 'chop' | 'mid' | 'expanded' | null
+  ib_size_band?: 'small' | 'normal' | 'large' | null
 }
 
 export type InsightTone = 'good' | 'bad' | 'neutral'
@@ -574,21 +581,35 @@ const dayOfWeek: Builder = trades => {
   }
 }
 
-// ── IB day-type (regime + size) — reuses the prep-page classifier ────────────
-// Needs per-day market_context (ib_size, ib_vs_10d_avg, atr_at_ib_close), so it
-// only fires on days with prep or a bars backfill — silent on a fresh fills
-// import. atrMeanHL10 isn't persisted; the classifier's Wilder basis
-// (REGIME_CUTS_WILDER) is what atr_at_ib_close is calibrated for, so passing it
-// as atrWilder10 is exact, not an approximation.
+// ── IB day CHARACTER (regime + size) ────────────────────────────────────────
+// Needs per-day market_context, so it only fires on days with prep or a bars
+// backfill — silent on a fresh fills import.
+//
+// Labels stay deliberately literal ("expanded-IB days", not "trend days"). This
+// is a MEASUREMENT of the first hour taken at 07:30 PT; the trader's own
+// `day_types[]` chips are hindsight labels for the same sessions. Naming a
+// measured band after a hindsight label would make the two indistinguishable in
+// the insight feed — and Pt 24's Task A is a standing reminder of how easily a
+// day-character read can be misread. Same reason the dimension is "Day
+// character" rather than "Day type".
 const SIZE_BAND_LABEL: Record<string, string> = {
   small: 'small-IB days', normal: 'normal-IB days', large: 'large-IB days',
 }
 const REGIME_BAND_LABEL: Record<string, string> = {
-  chop: 'chop days', mid: 'mid-range days', expanded: 'trend days',
+  chop: 'chop-IB days', mid: 'mid-range-IB days', expanded: 'expanded-IB days',
 }
 
-/** Classify each trading day into its IB size + regime bands (once per day —
- *  the context is inherited on every trade of the day). */
+/**
+ * Classify each trading day into its IB size + regime bands (once per day — the
+ * context is inherited on every trade of the day).
+ *
+ * Prefers the PERSISTED `ib_regime` / `ib_size_band`, which were classified on
+ * the study-exact meanHL10 basis by the prep page or the backfill. Only when a
+ * day carries none does it fall back to re-deriving from the raw context, and
+ * that path can reach only the Wilder basis (`atr_at_ib_close`, ~3% smaller,
+ * with its own shifted cuts) — a labelled approximation everywhere else in the
+ * app, so it stays the fallback here too rather than the default.
+ */
 function classifyTradeDays(trades: InsightTrade[]): Map<string, { sizeBand: string | null; regimeBand: string | null }> {
   const byDay = new Map<string, InsightTrade[]>()
   for (const t of trades) {
@@ -600,6 +621,11 @@ function classifyTradeDays(trades: InsightTrade[]): Map<string, { sizeBand: stri
   }
   const out = new Map<string, { sizeBand: string | null; regimeBand: string | null }>()
   for (const [k, ts] of byDay) {
+    const persisted = ts.find(t => t.ib_regime != null || t.ib_size_band != null)
+    if (persisted) {
+      out.set(k, { sizeBand: persisted.ib_size_band ?? null, regimeBand: persisted.ib_regime ?? null })
+      continue
+    }
     const ctx = ts.find(t => t.ib_size != null || t.ib_vs_10d_avg != null || t.atr_at_ib_close != null)
     if (!ctx) { out.set(k, { sizeBand: null, regimeBand: null }); continue }
     const c = classifyIbDayType({
@@ -649,23 +675,26 @@ function bandVsRestInsight(
   }
 }
 
-/** 11. IB size band — small / normal / large IB days. */
+/** 11. IB size band — small / normal / large IB days (absolute size vs the
+ *  trailing 10-day average IB). */
 const dayTypeSize: Builder = trades => {
   const cls = classifyTradeDays(trades)
   return bandVsRestInsight(
     trades,
     t => { const k = dayKeyOf(t); return k ? cls.get(k)?.sizeBand ?? null : null },
-    { key: 'day_type_size', dimension: 'Day type', label: b => SIZE_BAND_LABEL[b] ?? b },
+    { key: 'day_type_size', dimension: 'Day character', label: b => SIZE_BAND_LABEL[b] ?? b },
   )
 }
 
-/** 12. IB regime band — chop / mid / trend days (IB ÷ ATR). */
+/** 12. IB regime band — chop / mid-range / expanded (IB ÷ its own ATR). A
+ *  separate family from the size band above on purpose: the two lenses measure
+ *  different things and are free to disagree. */
 const dayTypeRegime: Builder = trades => {
   const cls = classifyTradeDays(trades)
   return bandVsRestInsight(
     trades,
     t => { const k = dayKeyOf(t); return k ? cls.get(k)?.regimeBand ?? null : null },
-    { key: 'day_type_regime', dimension: 'Day type', label: b => REGIME_BAND_LABEL[b] ?? b },
+    { key: 'day_type_regime', dimension: 'Day character', label: b => REGIME_BAND_LABEL[b] ?? b },
   )
 }
 
