@@ -39,6 +39,16 @@ const dryRun = argv.includes('--dry-run')
 const limitArg = argv.find(a => a.startsWith('--limit='))
 const limit = limitArg ? parseInt(limitArg.split('=')[1], 10) : Infinity
 
+// TENANT SCOPING (mandatory). The public project is multi-tenant and this
+// service-role key BYPASSES RLS, so an unscoped `from('trades')` reads and
+// writes across EVERY user's rows. This script previously filtered on nothing
+// but `high_during_position IS NULL` — harmless only by accident, because the
+// owner happened to be the sole account with gaps. Default to the owner;
+// `--user <uuid>` targets another tenant deliberately.
+const OWNER_USER_ID = 'fa3fb352-9538-44cc-8ce1-1c76f307044c'
+const userArg = argv.find(a => a.startsWith('--user='))
+const USER_ID = userArg ? userArg.split('=')[1] : OWNER_USER_ID
+
 interface TradeRow { id: string; symbol: string | null; entry_time: string | null; exit_time: string | null }
 
 async function fetchTrades(): Promise<TradeRow[]> {
@@ -48,6 +58,7 @@ async function fetchTrades(): Promise<TradeRow[]> {
     const { data, error } = await sb
       .from('trades')
       .select('id, symbol, entry_time, exit_time')
+      .eq('user_id', USER_ID)
       .is('high_during_position', null)
       .not('entry_time', 'is', null)
       .not('exit_time', 'is', null)
@@ -129,7 +140,10 @@ async function main() {
   for (let i = 0; i < updates.length; i += BATCH) {
     const batch = updates.slice(i, i + BATCH)
     const results = await Promise.all(batch.map(u =>
-      sb.from('trades').update({ high_during_position: u.high, low_during_position: u.low }).eq('id', u.id),
+      sb.from('trades')
+        .update({ high_during_position: u.high, low_during_position: u.low })
+        .eq('id', u.id)
+        .eq('user_id', USER_ID),   // scoped on the write too, not just the read
     ))
     for (const r of results) { if (r.error) console.error('  update failed:', r.error.message); else wrote++ }
     process.stdout.write(`  wrote ${wrote}/${updates.length}\r`)
