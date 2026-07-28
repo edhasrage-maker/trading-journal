@@ -387,6 +387,19 @@ export default function EodClient({
         (result.skippedFiltered ? ` (${result.skippedFiltered} filtered out)` : '')
       showToast(summary, 'success')
     }
+    // A Sierra log routinely covers more than the day you picked — the export is
+    // "recent activity", not "this session". Each date now lands on its own
+    // trading_day, but say so: silently filing trades under days the trader
+    // didn't choose is how 20% of the journal ended up mis-dated unnoticed.
+    if (result.dates && result.dates.length > 1) {
+      const others = result.dates.filter(d => d.date !== date)
+      const otherTrades = others.reduce((a, d) => a + d.trades, 0)
+      showToast(
+        `That log covered ${result.dates.length} sessions (${result.dates[0].date} → ${result.dates[result.dates.length - 1].date}). ` +
+        `${otherTrades} trade${otherTrades === 1 ? '' : 's'} went to ${others.length} other day${others.length === 1 ? '' : 's'}, not ${date}.`,
+        'success',
+      )
+    }
     if (result.droppedColumns) {
       const dropped = Object.entries(result.droppedColumns)
         .map(([scope, cols]) => `${scope}: ${cols.join(', ')}`)

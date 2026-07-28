@@ -6,7 +6,7 @@ import { resilientUpsert, resilientBulkUpsert, resilientUpdate } from '@/lib/res
 import { perLegMaxDollars, type BarLike } from '@/lib/analytics'
 import { computeStructure5mAlignment } from '@/lib/structure-5m'
 import { isOutsideRth } from '@/lib/rth'
-import { sessionUtcWindow } from '@/lib/pt-time'
+import { sessionUtcWindow, todayPT } from '@/lib/pt-time'
 import { buildDayRegimeSeries, regimeAtEntry, buildDayEntryMetrics, atrAtEntry, rvolAtEntry } from '@/lib/nq-front-month'
 import type { TradingDay } from '@/lib/supabase/types'
 
@@ -49,27 +49,74 @@ export async function POST(req: Request) {
 
   const allDroppedColumns: Record<string, string[]> = {}
 
-  // 3. Ensure trading_day exists (resilient — old columns only, should always work)
-  const { data: day, error: dayError, droppedColumns: dayDropped } = await resilientUpsert<TradingDay>(
-    supabase,
-    'trading_days',
-    { date, updated_at: new Date().toISOString() },
-    { onConflict: 'date' },
-  )
-  if (dayDropped.length > 0) allDroppedColumns['trading_days (day upsert)'] = dayDropped
-  if (dayError || !day) {
-    console.error('[import-sc-log] trading_days upsert failed:', dayError)
-    return NextResponse.json(
-      { error: `Failed to upsert trading day: ${dayError?.message ?? 'unknown'}` },
-      { status: 500 },
+  // 3. Group the parsed rows by THEIR OWN PT session date, then ensure a
+  //    trading_day per date.
+  //
+  //    This used to pin every parsed row to the single `date` from the import
+  //    form. A Sierra log that spans more than one session therefore collapsed
+  //    into one day, and the whole 4b–4e pipeline below ran once against that
+  //    one date — so bars, GBX purity, the regime series and the entry metrics
+  //    were all computed for the wrong session for every row that didn't belong
+  //    to it.
+  //
+  //    That is not hypothetical: by 2026-07-27 it had put 1,173 of 5,754 native
+  //    trades (20%) under the wrong day across 37 days, including one blob of
+  //    430 rows spanning 57 dates. It silently invalidated a whole study before
+  //    anyone noticed. See docs/findings-expanded-ib-day.md and
+  //    scripts/repair-misdated-trades.ts (which cleans up history; this is the
+  //    fix that stops it recurring).
+  //
+  //    A trading day here is the PT CALENDAR day — `sessionUtcWindow` anchors
+  //    00:00:00–23:59:59 PT — so a row's correct parent is the PT date of its
+  //    entry. `todayPT` is DST-exact. Rows with no parseable entry time fall
+  //    back to the form date, which is the best guess available and matches the
+  //    old behaviour for that (rare) case.
+  const rowsByDate = new Map<string, typeof rows>()
+  for (const r of rows) {
+    const d = r.entry_time_iso ? todayPT(new Date(r.entry_time_iso)) : date
+    const arr = rowsByDate.get(d)
+    if (arr) arr.push(r)
+    else rowsByDate.set(d, [r])
+  }
+  // With no rows at all, still touch the form date so an empty import behaves
+  // exactly as it did before (day row created, import stamped).
+  const dates = rowsByDate.size > 0 ? [...rowsByDate.keys()].sort() : [date]
+
+  const dayByDate = new Map<string, TradingDay>()
+  for (const d of dates) {
+    const { data: dayRow, error: dayError, droppedColumns: dayDropped } = await resilientUpsert<TradingDay>(
+      supabase,
+      'trading_days',
+      { date: d, updated_at: new Date().toISOString() },
+      { onConflict: 'date' },
     )
+    if (dayDropped.length > 0) allDroppedColumns['trading_days (day upsert)'] = dayDropped
+    if (dayError || !dayRow) {
+      console.error('[import-sc-log] trading_days upsert failed for', d, dayError)
+      return NextResponse.json(
+        { error: `Failed to upsert trading day ${d}: ${dayError?.message ?? 'unknown'}` },
+        { status: 500 },
+      )
+    }
+    dayByDate.set(d, dayRow)
+  }
+  if (dates.length > 1) {
+    console.log(`[import-sc-log] log spans ${dates.length} sessions (${dates[0]} → ${dates[dates.length - 1]}); importing each to its own trading_day`)
   }
 
-  // 4. Bulk upsert trades — resilient against missing exit_time/exit_price columns
+  // 4. Bulk upsert trades — resilient against missing exit_time/exit_price
+  //    columns — then run the per-day derived pipeline (4b–4e) ONCE PER DATE.
+  //    Every step below is keyed to a single session (that day's bars, that
+  //    day's GBX purity, that day's regime series, that day's entry metrics),
+  //    so it has to run inside this loop, not once for the whole file.
   let inserted = 0
   let skippedDuplicates = 0
-  if (rows.length > 0) {
-    const payload = rows.map(r => mapRowToTrade(r, day.id))
+  const perDate: { date: string; trades: number; inserted: number }[] = []
+  for (const d of dates) {
+    const dayRows = rowsByDate.get(d) ?? []
+    if (dayRows.length === 0) continue
+    const day = dayByDate.get(d)!
+    const payload = dayRows.map(r => mapRowToTrade(r, day.id))
     const { data: insertedRows, error: tradesError, droppedColumns: tradesDropped } =
       await resilientBulkUpsert<{ id: string }>(
         supabase,
@@ -90,8 +137,10 @@ export async function POST(req: Request) {
         { status: 500 },
       )
     }
-    inserted = insertedRows?.length ?? 0
-    skippedDuplicates = payload.length - inserted
+    const dayInserted = insertedRows?.length ?? 0
+    inserted += dayInserted
+    skippedDuplicates += payload.length - dayInserted
+    perDate.push({ date: d, trades: payload.length, inserted: dayInserted })
 
     // 4b. Auto-populate per-trade derived fields from ohlcv_bars (which
     // BarWatcher refreshes every ~3 min, so today's bars exist by the time
@@ -107,7 +156,7 @@ export async function POST(req: Request) {
       // PT-session bounds (not raw UTC day) so post-RTH / overnight (GBX)
       // trades — which land in the early hours of the next UTC day — get bars
       // for per-leg MFE instead of falling back to the no-bars estimate.
-      const { start: dayStart, end: dayEnd } = sessionUtcWindow(date)
+      const { start: dayStart, end: dayEnd } = sessionUtcWindow(d)
       const symbols = Array.from(new Set(payload.map(r => r.symbol).filter((s): s is string => !!s)))
       const barsBySymbol = new Map<string, BarLike[]>()
       for (const symbol of symbols) {
@@ -215,7 +264,7 @@ export async function POST(req: Request) {
       // backfill (scripts/backfill-structure-regime.ts) is authoritative.
       try {
         const dataDir = process.env.SIERRA_DATA_DIR || 'D:\\SierraCharts\\Data'
-        const series = buildDayRegimeSeries(dataDir, date)
+        const series = buildDayRegimeSeries(dataDir, d)
         if (series) {
           const { data: regimeTrades } = await supabase
             .from('trades').select('id, entry_time, structure_5m_regime').eq('trading_day_id', day.id)
@@ -241,7 +290,7 @@ export async function POST(req: Request) {
       // Best-effort; fills nulls only (a prior backfill value stays in place).
       try {
         const dataDir = process.env.SIERRA_DATA_DIR || 'D:\\SierraCharts\\Data'
-        const em = buildDayEntryMetrics(dataDir, date)
+        const em = buildDayEntryMetrics(dataDir, d)
         if (em) {
           const { data: emTrades } = await supabase
             .from('trades').select('id, entry_time, entry_atr_1m, entry_rvol').eq('trading_day_id', day.id)
@@ -266,18 +315,22 @@ export async function POST(req: Request) {
     }
   }
 
-  // 5. Mark import on day — resilient against missing last_sc_import_* columns
-  const { droppedColumns: markDropped } = await resilientUpdate<TradingDay>(
-    supabase,
-    'trading_days',
-    {
-      last_sc_import_at: new Date().toISOString(),
-      last_sc_import_filename: file.name,
-    },
-    'id',
-    day.id,
-  )
-  if (markDropped.length > 0) allDroppedColumns['trading_days (mark import)'] = markDropped
+  // 5. Mark the import on EVERY day this log touched — resilient against
+  //    missing last_sc_import_* columns. Marking only the form's date would
+  //    leave the other sessions looking as though they'd never been imported.
+  const importedAt = new Date().toISOString()
+  for (const d of dates) {
+    const dayRow = dayByDate.get(d)
+    if (!dayRow) continue
+    const { droppedColumns: markDropped } = await resilientUpdate<TradingDay>(
+      supabase,
+      'trading_days',
+      { last_sc_import_at: importedAt, last_sc_import_filename: file.name },
+      'id',
+      dayRow.id,
+    )
+    if (markDropped.length > 0) allDroppedColumns['trading_days (mark import)'] = markDropped
+  }
 
   return NextResponse.json({
     inserted,
@@ -285,6 +338,12 @@ export async function POST(req: Request) {
     skippedFiltered,
     parseErrors,
     archivedAs: archivePath,
+    // Per-session breakdown. Always present, so a log that quietly spanned more
+    // than the day the trader selected SAYS SO in the import result instead of
+    // looking like one big session — the failure mode that went unnoticed for
+    // 37 days' worth of trades.
+    dates: perDate,
+    spannedSessions: perDate.length,
     droppedColumns: Object.keys(allDroppedColumns).length > 0 ? allDroppedColumns : undefined,
   })
 }

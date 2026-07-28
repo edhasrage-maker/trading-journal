@@ -10,6 +10,10 @@ export interface ImportResult {
   parseErrors: string[]
   archivedAs?: string
   droppedColumns?: Record<string, string[]>
+  /** Per-session breakdown — a Sierra log routinely covers more than the day
+   *  picked in the form, and each session now lands on its own trading_day. */
+  dates?: { date: string; trades: number; inserted: number }[]
+  spannedSessions?: number
 }
 
 interface Props {
