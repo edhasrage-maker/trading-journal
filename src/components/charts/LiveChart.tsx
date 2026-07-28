@@ -580,6 +580,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
 
 
   const [viewSavedFlash, setViewSavedFlash] = useState(false)
+  // Distinct from the success flash: the save genuinely wrote nothing. Never
+  // report success for a no-op — a zoom that silently fails to persist is the
+  // hardest kind of bug to report.
+  const [viewSaveFailed, setViewSaveFailed] = useState(false)
 
   // Explicit "Save chart view" — locks in the current zoom for this day plus
   // the appearance prefs, with a confirmation flash. (Colors/font already
@@ -594,17 +598,25 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // Capture the visible logical (bar-index) range — current zoom + position.
     // Saved per-TF so each timeframe remembers its own zoom independently.
     const r = chartRef.current?.timeScale().getVisibleLogicalRange()
-    if (r && symbol) {
-      const range = { from: r.from, to: r.to }
-      saveView(symbol, date, chartTfMins, range)
-      // Push to Supabase only when saving the default 1m TF — cross-PC sync
-      // is per-(symbol, date) without TF dimension on the server. Higher TFs
-      // stay local-only until we add a TF column to chart_prefs.
-      if (chartTfMins === 1) {
-        schedulePushChartPref(viewKey(symbol, date, 1), range)
-      }
-      if (LIVECHART_DEBUG) console.log('[livechart] saveChartView', { tf: chartTfMins, range })
+    if (!r || !symbol) {
+      // Nothing to lock in — the chart has no visible range yet, or no symbol
+      // resolved. This used to fall through to the "Saved ✓" flash below, so a
+      // save that wrote NOTHING looked identical to one that worked, and the
+      // only symptom was the zoom silently not coming back. Say it failed.
+      if (LIVECHART_DEBUG) console.warn('[livechart] saveChartView skipped', { hasRange: !!r, symbol })
+      setViewSaveFailed(true)
+      setTimeout(() => setViewSaveFailed(false), 2500)
+      return
     }
+    const range = { from: r.from, to: r.to }
+    saveView(symbol, date, chartTfMins, range)
+    // Push to Supabase only when saving the default 1m TF — cross-PC sync
+    // is per-(symbol, date) without TF dimension on the server. Higher TFs
+    // stay local-only until we add a TF column to chart_prefs.
+    if (chartTfMins === 1) {
+      schedulePushChartPref(viewKey(symbol, date, 1), range)
+    }
+    if (LIVECHART_DEBUG) console.log('[livechart] saveChartView', { tf: chartTfMins, symbol, range })
     setViewSavedFlash(true)
     setTimeout(() => setViewSavedFlash(false), 1500)
   }
@@ -1983,10 +1995,12 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                       className={`w-full text-xs font-medium rounded py-1.5 transition-colors ${
                         viewSavedFlash
                           ? 'bg-green-600 text-white'
-                          : 'bg-blue-600 hover:bg-blue-500 text-white'
+                          : viewSaveFailed
+                            ? 'bg-red-600 text-white'
+                            : 'bg-blue-600 hover:bg-blue-500 text-white'
                       }`}
                     >
-                      {viewSavedFlash ? 'Saved ✓' : 'Save chart view'}
+                      {viewSavedFlash ? 'Saved ✓' : viewSaveFailed ? "Couldn't save the zoom" : 'Save chart view'}
                     </button>
                     <p className="text-[10px] text-gray-500">
                       Locks the current zoom for {date} + your colors/font. Restored automatically next time you open this day.
