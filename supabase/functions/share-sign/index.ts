@@ -14,7 +14,8 @@
 // Security model:
 //   • Gated on the unguessable share token, re-validating the SAME conditions
 //     as get_shared_day (not revoked, not expired). Revoke/expiry is enforced on
-//     every call (view-time), and signed URLs are short-lived (1h).
+//     every call (view-time), and signed URLs are short-lived (1h by default,
+//     up to 24h when the caller asks — see MAX_TTL_SEC).
 //   • The service role is used ONLY here, and it only ever signs paths that (a)
 //     belong to the token's trading day and (b) sit under the owner's folder —
 //     it never signs a client-supplied path.
@@ -26,7 +27,17 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
-const SIGNED_TTL_SEC = 60 * 60 // 1 hour — view-time freshness, dies fast if captured
+// 1 hour — view-time freshness for the interactive page, dies fast if captured.
+const SIGNED_TTL_SEC = 60 * 60
+// Callers may ask for longer, capped here. The one real case is the link's
+// UNFURL PREVIEW image: that URL is fetched by a scraper (Slack, iMessage,
+// Twitter) rather than a person, sometimes lazily when a recipient opens the
+// thread rather than when it was posted. At the 1h default a link pasted in the
+// evening and read the next morning previewed as the generic brand card. The
+// interactive page keeps the short default — the two have genuinely different
+// exposure, since the preview URL only ever reaches whoever already has the
+// share link.
+const MAX_TTL_SEC = 24 * 60 * 60
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -46,8 +57,13 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ signed: {} }, 405)
 
   try {
-    const { token } = await req.json().catch(() => ({}))
+    const { token, ttl } = await req.json().catch(() => ({}))
     if (!token || typeof token !== 'string') return json({ signed: {} }, 400)
+    // Clamped, never trusted raw: the token is the auth, so a caller holding it
+    // could otherwise ask for an arbitrarily long-lived URL.
+    const ttlSec = (typeof ttl === 'number' && Number.isFinite(ttl))
+      ? Math.min(Math.max(Math.floor(ttl), 60), MAX_TTL_SEC)
+      : SIGNED_TTL_SEC
 
     const admin = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -99,7 +115,7 @@ Deno.serve(async (req) => {
     if (list.length > 0) {
       const { data } = await admin.storage
         .from('screenshots')
-        .createSignedUrls(list, SIGNED_TTL_SEC)
+        .createSignedUrls(list, ttlSec)
       for (const r of data ?? []) {
         if (r.path && r.signedUrl) signed[r.path] = r.signedUrl
       }

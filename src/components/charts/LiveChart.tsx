@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2, Pencil, Type as TypeIcon } from 'lucide-react'
+import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2, Pencil, Type as TypeIcon, Highlighter } from 'lucide-react'
 import {
   createChart,
   CandlestickSeries,
@@ -41,6 +41,11 @@ interface Props {
    *  trade list is on-screen), the parent scrolls to that trade's row. When
    *  omitted, LiveChart falls back to navigating to /eod/<date>?trade=<id>. */
   onTradeActivate?: (tradeId: string) => void
+  /** Right-click → "Highlight" on a trade arrow. The parent owns the card (it
+   *  holds the per-trade scores), so LiveChart only reports which trade was
+   *  picked. Omit and the item isn't offered — the chart never shows an action
+   *  the host page can't fulfil. */
+  onHighlightTrade?: (tradeId: string) => void
   /** Called when the user clicks a blank chart spot while a trade popup is
    *  pinned — lets the parent clear its hoverTradeId so the popup dismisses. */
   onDismissHover?: () => void
@@ -302,7 +307,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onDismissHover, onLevels, session = 'rth', readOnly = false, prefsOverride = null },
+  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onHighlightTrade, onDismissHover, onLevels, session = 'rth', readOnly = false, prefsOverride = null },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -2216,6 +2221,19 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                 <Activity className="w-3.5 h-3.5 text-blue-400" />
                 Go to intraday review
               </button>
+              {/* Same pair the review table's row menu offers, so the gesture
+                  means the same thing wherever the trader right-clicks a trade.
+                  Rendered only when the host page can show a highlight. */}
+              {onHighlightTrade && (
+                <button
+                  type="button"
+                  onClick={() => { const id = arrowMenu.tradeId; setArrowMenu(null); onHighlightTrade(id) }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
+                >
+                  <Highlighter className="w-3.5 h-3.5 text-amber-400" />
+                  Highlight
+                </button>
+              )}
             </div>
           </>
         )}

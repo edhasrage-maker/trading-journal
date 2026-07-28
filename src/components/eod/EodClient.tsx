@@ -1119,6 +1119,7 @@ export default function EodClient({
             flashTrade(id)
             document.getElementById(`eod-trade-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
           }}
+          onHighlightTrade={setHighlightTradeId}
         />
       ) : (
       <ChartScreenshotPanel

@@ -18,12 +18,18 @@ export const dynamic = 'force-dynamic'
  * normal outcome, not a failure.
  *
  * Screenshots live in a private bucket, so the path is signed through the same
- * `share-sign` Edge Function the page body uses. Note the signature is
- * time-limited: scrapers (Slack, iMessage, Twitter) fetch and cache the image
- * at unfurl time, so a link pasted today previews correctly, but a re-scrape
- * after the signature expires falls back. That is the right trade — the
- * alternative is making trade screenshots publicly readable.
+ * `share-sign` Edge Function the page body uses — but with a 24h TTL rather
+ * than the 1h default. Scrapers fetch this URL on their own schedule, sometimes
+ * when a recipient opens the thread rather than when the link was posted, so at
+ * 1h a link pasted in the evening and read the next morning previewed as the
+ * generic brand card. The interactive page keeps the short default; this URL
+ * only ever reaches someone who already holds the share link.
+ *
+ * Requires the share-sign function to be redeployed with TTL support — until
+ * then it ignores the parameter and signs for 1h, which is exactly today's
+ * behaviour rather than a failure.
  */
+const PREVIEW_TTL_SEC = 24 * 60 * 60
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }) {
   const base = { title: 'Shared session — TapeScore' }
   try {
@@ -34,7 +40,7 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
     const day = (data?.day ?? null) as TradingDay | null
     if (!day) return base
 
-    await signSharedScreenshots(token, day, [])
+    await signSharedScreenshots(token, day, [], PREVIEW_TTL_SEC)
     const image = day.eod_chart_screenshot_url || day.chart_screenshot_url
     if (!image || !/^https?:\/\//i.test(image)) return base
 
@@ -60,6 +66,7 @@ async function signSharedScreenshots(
   token: string,
   day: TradingDay | null,
   trades: Trade[],
+  ttlSec?: number,
 ): Promise<void> {
   const isPath = (v: unknown): v is string =>
     typeof v === 'string' && v !== '' && !/^https?:\/\//i.test(v)
@@ -81,7 +88,7 @@ async function signSharedScreenshots(
         'Content-Type': 'application/json',
         ...(anon ? { Authorization: `Bearer ${anon}`, apikey: anon } : {}),
       },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify(ttlSec ? { token, ttl: ttlSec } : { token }),
       cache: 'no-store',
     })
     if (res.ok) signed = ((await res.json())?.signed ?? {}) as Record<string, string>
