@@ -488,6 +488,13 @@ export interface ProcessVerdict {
    *  per the spec). */
   verdict: 'Compliant' | 'Breach'
   per_rule: Record<RuleId, RuleStatus>
+  /** Which rails this trader actually TRACKS — the ones their scoring profile
+   *  defines. Rails they don't track auto-pass in `per_rule` (a trader with no
+   *  daily loss limit can't breach one), so without this the Risk axis counted
+   *  those free passes as discipline. Absent on rows analyzed before this
+   *  existed, and on the founder's build, both of which grade all five.
+   *  Empty array = tracks nothing = Risk is not scoreable. */
+  active_rails?: RuleId[]
   /** Convenience copy of breach_count per rule. e.g. { P2: 1, P3: 0, ... } */
   breach_count_vector: Record<RuleId, number>
   /** Tight headline summarizing the verdict in ≤15 words, one sentence.

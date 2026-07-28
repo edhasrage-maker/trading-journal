@@ -8,6 +8,7 @@ import FirstReadCards from '@/components/dashboard/FirstReadCards'
 import SierraAccountPicker from '@/components/import/SierraAccountPicker'
 import { isSierraLogText, sierraAccountsInLog, filterSierraLogByAccounts, type SierraAccount } from '@/lib/sc-accounts'
 import { combineSierraLog } from '@/lib/sc-combine'
+import { autoGradeLatestSession } from '@/lib/autograde'
 
 // Key for the last-imported file handle in the IndexedDB handle store — passed
 // back as showOpenFilePicker({ startIn }) so re-imports reopen at the same folder.
@@ -55,6 +56,9 @@ export default function ImportPage() {
   // True after a successful import that populated a previously-empty journal —
   // gates the post-import "first read" recap teaser (item 22).
   const [firstImport, setFirstImport] = useState(false)
+  // True while the newest session is being graded after a first import — what
+  // puts a real TapeScore in front of the trader instead of a blank one.
+  const [grading, setGrading] = useState(false)
   // A multi-account Sierra log awaiting the account choice before upload.
   const [pending, setPending] = useState<{ name: string; text: string; accounts: SierraAccount[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -150,6 +154,11 @@ export default function ImportPage() {
           body: JSON.stringify({ action: 'arm' }),
         }).catch(() => {})
         setFirstImport(true)
+        // Grade their most recent session so the first TapeScore exists without
+        // them having to know that's a thing they'd need to go and do.
+        setGrading(true)
+        await autoGradeLatestSession()
+        setGrading(false)
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -192,6 +201,11 @@ export default function ImportPage() {
           body: JSON.stringify({ action: 'arm' }),
         }).catch(() => {})
         setFirstImport(true)
+        // Grade their most recent session so the first TapeScore exists without
+        // them having to know that's a thing they'd need to go and do.
+        setGrading(true)
+        await autoGradeLatestSession()
+        setGrading(false)
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -281,9 +295,16 @@ export default function ImportPage() {
         </div>
       )}
 
-      {busy && (
+      {busy && !grading && (
         <div className="mt-4 flex items-center gap-2 text-sm text-gray-400">
           <Loader2 className="w-4 h-4 animate-spin" /> Parsing and importing…
+        </div>
+      )}
+
+      {grading && (
+        <div className="mt-4 flex items-center gap-2 text-sm text-amber-300/90">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Trades are in — grading your most recent session for your first TapeScore…
         </div>
       )}
 

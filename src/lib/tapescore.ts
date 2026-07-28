@@ -79,12 +79,16 @@ export function tapeScoreBand(score: number): TapeScoreBand {
  *  P6 (trade cap) → P5, and drop old P4/P7 (stop/setup validity — those
  *  moved into Execution Parameters). Rows already on the 5-rail shape count
  *  P1-P5 directly. */
-export function railPassCount(process: ProcessVerdict): number {
+export function railPassCount(process: ProcessVerdict, activeRails?: readonly string[]): number {
   const perRule = process.per_rule as Record<string, RuleStatus | undefined>
   const isLegacyShape = 'P6' in perRule || 'P7' in perRule
-  const railIds = isLegacyShape
-    ? ['P1', 'P2', 'P3', 'P5', 'P6']
-    : ['P1', 'P2', 'P3', 'P4', 'P5']
+  // `activeRails` (present once the analysis records it) narrows the count to
+  // the rails this trader actually tracks. Untracked rails AUTO-PASS, so
+  // counting all five credits them for rules they never set.
+  const railIds = activeRails
+    ?? (isLegacyShape
+      ? ['P1', 'P2', 'P3', 'P5', 'P6']
+      : ['P1', 'P2', 'P3', 'P4', 'P5'])
   let pass = 0
   for (const id of railIds) {
     if (perRule[id]?.status === 'pass') pass += 1
@@ -137,8 +141,18 @@ function entryFromExecution(e: ExecutionScore): number | null {
 export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null {
   const { process, execution, legacyScore } = input
 
-  const passCount = process?.per_rule ? railPassCount(process) : null
-  const risk = passCount != null ? (passCount / 5) * 100 : null
+  // Risk is scored over the rails the trader TRACKS. `active_rails` is absent on
+  // rows analyzed before it existed and on the founder's build — both grade all
+  // five, so they keep the historical /5 denominator exactly. An empty array
+  // means they track nothing, which makes Risk unscoreable rather than a free
+  // 5/5: the axis drops out and the remaining two re-weight, the same way a
+  // missing capture read already behaves.
+  const tracked = process?.active_rails?.length ?? null
+  const railDenom = tracked ?? 5
+  const passCount = process?.per_rule && railDenom > 0
+    ? railPassCount(process, process.active_rails)
+    : null
+  const risk = passCount != null ? (passCount / railDenom) * 100 : null
 
   // Split execution into Entry (composite minus capture) and Capture. An
   // execution object whose sub-metrics are all null means the analysis ran and
@@ -174,8 +188,14 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
   if (capture != null) { weighted += W_CAPTURE * capture; weightSum += W_CAPTURE }
   let score = Math.round(weighted / weightSum)
 
+  // With a known rail set, trust the verdict the analysis already derived
+  // proportionally (see applyDeterministicOverrides) — re-deriving it as
+  // "passCount >= 4" would call every trader who tracks three rails a Breach
+  // and cap them at 49. Legacy rows keep the historical arithmetic.
   const verdict: 'Compliant' | 'Breach' | null =
-    passCount != null ? (passCount >= 4 ? 'Compliant' : 'Breach') : null
+    passCount == null ? null
+      : tracked != null ? (process?.verdict ?? null)
+        : passCount >= 4 ? 'Compliant' : 'Breach'
   let capped = false
   if (verdict === 'Breach' && score > BREACH_CAP) {
     score = BREACH_CAP

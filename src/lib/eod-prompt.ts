@@ -1105,6 +1105,12 @@ export function applyDeterministicOverrides(
       }
       parsed.process.verdict = newVerdict
     }
+    // Record which rails were actually in play. The Risk axis reads this so the
+    // score is a proportion of what THIS trader tracks — the inactive rails
+    // above auto-pass ("no daily loss limit set"), and counting those free
+    // passes as discipline handed an un-onboarded trader most of a Risk score
+    // for rules they never set.
+    parsed.process.active_rails = rc.isOwner ? ['P1', 'P2', 'P3', 'P4', 'P5'] : activeRailIds(rc)
   }
 
   if (parsed.execution) {

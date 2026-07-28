@@ -7,6 +7,7 @@ import { Upload, PencilLine, BarChart2, Loader2, AlertTriangle } from 'lucide-re
 import SierraAccountPicker from '@/components/import/SierraAccountPicker'
 import { isSierraLogText, sierraAccountsInLog, filterSierraLogByAccounts, type SierraAccount } from '@/lib/sc-accounts'
 import { combineSierraLog } from '@/lib/sc-combine'
+import { autoGradeLatestSession } from '@/lib/autograde'
 
 // Under Vercel's ~4.5 MB serverless request-body limit — over this the platform
 // rejects the upload before our route runs, surfacing only a bare failure.
@@ -24,6 +25,10 @@ export default function EmptyStateImport({ today }: { today: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  // True while the newest session is being graded, between a successful import
+  // and the dashboard render. Worth blocking on: it's what puts a real
+  // TapeScore on the first dashboard they ever see.
+  const [grading, setGrading] = useState(false)
   // A multi-account Sierra log awaiting the account choice before upload.
   const [pending, setPending] = useState<{ name: string; text: string; accounts: SierraAccount[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -54,6 +59,12 @@ export default function EmptyStateImport({ today }: { today: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'arm' }),
       }).catch(() => {})
+      // Grade the newest session before handing over the dashboard, so the
+      // TapeScore hero has a real number on it rather than an invitation to go
+      // and get one. Best-effort: any failure just falls through.
+      setGrading(true)
+      await autoGradeLatestSession()
+      setGrading(false)
       router.refresh() // account now has data → dashboard renders past the empty state
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -116,6 +127,9 @@ export default function EmptyStateImport({ today }: { today: string }) {
         body: JSON.stringify({ action: 'arm' }),
       }).catch(() => {})
       setPending(null)
+      setGrading(true)
+      await autoGradeLatestSession()
+      setGrading(false)
       router.refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -164,7 +178,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
               className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-60"
             >
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {busy ? 'Importing…' : 'Import trades (CSV)'}
+              {grading ? 'Reading your last session…' : busy ? 'Importing…' : 'Import trades (CSV)'}
             </button>
             <Link
               href={`/intraday/${today}`}
@@ -190,6 +204,13 @@ export default function EmptyStateImport({ today }: { today: string }) {
         className="hidden"
         onChange={e => onPick(e.target.files)}
       />
+
+      {grading && (
+        <p className="mt-4 text-xs text-amber-300/90">
+          Trades are in. Grading your most recent session — this takes a few seconds and gives you
+          your first TapeScore.
+        </p>
+      )}
 
       {error && (
         <div className="mt-4 inline-flex items-center gap-2 text-xs text-red-400">
