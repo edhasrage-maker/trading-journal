@@ -175,6 +175,11 @@ export default function EmptyStateImport({ today }: { today: string }) {
           </div>
 
           <p className="text-xs text-gray-500 mt-4">…or drag &amp; drop a CSV / Sierra Chart .txt anywhere on this card</p>
+          {/* Both limits stated before the file is chosen — finding out after a
+              rejected upload is the same information delivered as a failure. */}
+          <p className="text-[11px] text-gray-600 mt-2">
+            Under ~4 MB. Keep any MAE/MFE columns — they power the move-capture and heat reads.
+          </p>
         </>
       )}
 

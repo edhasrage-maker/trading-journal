@@ -51,6 +51,14 @@ export default function SierraAccountPicker({ accounts, busy, onCancel, onConfir
 
   const totalFills = accounts.filter(a => selected.has(a.account)).reduce((n, a) => n + a.fills, 0)
 
+  // A log with a handful of accounts is usually a sim and a live account, or
+  // two prop accounts — NOT a copy-trading portfolio. Asserting "the same
+  // trades mirrored across every account" there is simply wrong, and it makes
+  // "Combine all" look like the obvious choice when combining two unrelated
+  // accounts is exactly what the trader doesn't want. Only a fleet gets the
+  // copy-trading framing and the combine-first default.
+  const fleet = accounts.length >= 5
+
   const toggle = (account: string) =>
     setSelected(prev => {
       const next = new Set(prev)
@@ -70,8 +78,9 @@ export default function SierraAccountPicker({ accounts, busy, onCancel, onConfir
         <div>
           <h3 className="text-sm font-semibold text-white">This file has {accounts.length} trade accounts</h3>
           <p className="text-xs text-gray-400 mt-1 max-w-md">
-            It looks like a copy-trading export — the same trades mirrored across every funded and eval
-            account. Pick the account you want to journal; only its fills are uploaded.
+            {fleet
+              ? 'It looks like a copy-trading export — the same trades mirrored across every funded and eval account. Pick the account you want to journal; only its fills are uploaded.'
+              : 'Pick the account you want to journal — only its fills are uploaded. Not sure? Choose the one you actually trade; you can import another later.'}
           </p>
         </div>
         <button type="button" onClick={onCancel} className="text-gray-500 hover:text-gray-200 shrink-0" aria-label="Cancel">
@@ -79,21 +88,32 @@ export default function SierraAccountPicker({ accounts, busy, onCancel, onConfir
         </button>
       </div>
 
-      {/* Primary path: one portfolio journal across every account. */}
+      {/* One portfolio journal across every account. Leads for a copy-trading
+          fleet (where it's the right answer); offered as a plain alternative
+          for a couple of accounts, where combining is usually NOT what's
+          wanted. */}
       {onCombineAll && (
-        <div className="mt-3 rounded-lg border border-blue-800/60 bg-blue-950/25 p-3 flex items-center gap-3">
-          <Layers className="w-5 h-5 text-blue-400 shrink-0" />
+        <div className={`mt-3 rounded-lg border p-3 flex items-center gap-3 ${
+          fleet ? 'border-blue-800/60 bg-blue-950/25' : 'border-gray-800 bg-gray-900/40'
+        }`}>
+          <Layers className={`w-5 h-5 shrink-0 ${fleet ? 'text-blue-400' : 'text-gray-500'}`} />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white">Combine all {accounts.length} accounts</p>
             <p className="text-[11px] text-gray-400 mt-0.5">
-              One journal for your whole portfolio — total size &amp; P&amp;L per decision, full history, no duplicates.
+              {fleet
+                ? 'One journal for your whole portfolio — total size & P&L per decision, full history, no duplicates.'
+                : 'One journal across all of them. Right if these mirror the same trades — not if they’re separate accounts you trade differently.'}
             </p>
           </div>
           <button
             type="button"
             onClick={onCombineAll}
             disabled={busy}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+            className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
+              fleet
+                ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                : 'border border-gray-700 bg-gray-800 text-gray-200 hover:bg-gray-700'
+            }`}
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Layers className="w-3.5 h-3.5" />}
             Combine all
@@ -101,7 +121,9 @@ export default function SierraAccountPicker({ accounts, busy, onCancel, onConfir
         </div>
       )}
 
-      <p className="mt-3 text-[11px] font-medium text-gray-500 uppercase tracking-wider">Or import a specific account</p>
+      <p className="mt-3 text-[11px] font-medium text-gray-500 uppercase tracking-wider">
+        {fleet ? 'Or import a specific account' : 'Import a specific account'}
+      </p>
 
       <div className="mt-2 relative">
         <Search className="w-3.5 h-3.5 text-gray-600 absolute left-2.5 top-1/2 -translate-y-1/2" />

@@ -71,6 +71,14 @@ function Brand({ className }: { className?: string }) {
 }
 
 /** Highlights / Detailed Tape — the view toggle, text-only with an underline. */
+// Two invented labels sitting in the masthead with nothing to say what they do:
+// a newcomer can't tell whether they're views, sections or account tiers. Each
+// carries a one-line explanation on hover.
+const VIEW_TOGGLE_TITLES = {
+  beginner: 'Highlights — the short version: your score, one focus, and recent sessions.',
+  pro: 'Detailed Tape — everything: full stats, charts and every breakdown.',
+} as const
+
 function ViewToggle({ compact = false }: { compact?: boolean }) {
   const { mode, setMode } = useUiMode()
   return (
@@ -80,6 +88,7 @@ function ViewToggle({ compact = false }: { compact?: boolean }) {
           key={m}
           type="button"
           onClick={() => setMode(m)}
+          title={VIEW_TOGGLE_TITLES[m]}
           aria-pressed={mode === m}
           className={cn(
             'whitespace-nowrap transition-colors border-b-2 pb-0.5',
