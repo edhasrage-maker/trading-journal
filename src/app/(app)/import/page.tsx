@@ -228,7 +228,17 @@ export default function ImportPage() {
       <p className="text-gray-400 text-sm mt-1">
         Upload a trade-history export — a CSV from another journal (NinjaTrader, Tradovate, Tradezella),
         or a Sierra Chart trade-activity log (<code className="text-gray-300">.txt</code>). We&apos;ll match your
-        entries, exits, P&amp;L, and — when the export includes them — MAE/MFE.
+        entries, exits and P&amp;L.
+      </p>
+      {/* The excursion columns are what power the reads people come here for,
+          and most exports leave them out — worth saying before the upload, not
+          after the dashboard comes back missing half its numbers. */}
+      <p className="text-gray-500 text-xs mt-2 max-w-2xl">
+        If your export has <span className="text-gray-300 font-mono">MAE</span> /{' '}
+        <span className="text-gray-300 font-mono">MFE</span> columns, keep them — they&apos;re what
+        power the move-capture and heat reads. Everything else works without them.
+        Files need to be under <span className="text-gray-300">~4 MB</span>; for a big Sierra log,
+        import one account at a time (we&apos;ll offer that automatically).
       </p>
 
       <div

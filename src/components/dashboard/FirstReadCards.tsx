@@ -66,6 +66,17 @@ export default function FirstReadCards({ variant }: { variant: 'dashboard' | 'im
 
   const single = worst == null // one day of history → a single "first read" card
 
+  // Capture and heat come from per-trade MFE/MAE, which only exist if the
+  // import carried them: most broker CSVs and every Sierra trade-activity log
+  // have no excursion columns, and the hosted app has no bar data to derive
+  // them from. The intro used to promise "how much of the move you kept, the
+  // heat you took" regardless — and then the cards showed neither, which reads
+  // as broken rather than as missing input. So say what this read is actually
+  // built from, and what unlocks the rest.
+  const hasExcursion = [best, worst].some(
+    t => t != null && (t.capturePct != null || t.mfeMaeRatio != null),
+  )
+
   return (
     <div className="relative rounded-xl border border-amber-900/50 bg-gradient-to-b from-amber-950/25 to-gray-900 p-5 mb-6">
       {variant === 'dashboard' && (
@@ -84,10 +95,22 @@ export default function FirstReadCards({ variant }: { variant: 'dashboard' | 'im
         <h2 className="text-sm font-semibold text-amber-100">Your first read</h2>
       </div>
       <p className="text-xs text-gray-400 max-w-xl mb-4">
-        {single
-          ? 'Your history’s in. Here’s how that day actually went — the same read you’ll get after every session: how much of the move you kept, the heat you took, and how you behaved.'
-          : 'Your history’s in. Here’s how two of your days actually went — the same read you’ll get after every session: how much of the move you kept, the heat you took, and how you behaved.'}
+        {`Your history’s in. Here’s how ${single ? 'that day' : 'two of your days'} actually went — the same read you’ll get after every session: `}
+        {hasExcursion
+          ? 'how much of the move you kept, the heat you took, and how you behaved.'
+          : 'what you made, how often you were right, and how you behaved.'}
       </p>
+
+      {!hasExcursion && (
+        <p className="text-[11px] text-gray-500 max-w-xl mb-4 -mt-2">
+          Want the move-capture and heat reads too? Those need per-trade MFE/MAE, which your export
+          didn&apos;t include —{' '}
+          <Link href="/import" className="text-amber-300/90 hover:text-amber-200 underline underline-offset-2">
+            re-import with those columns
+          </Link>{' '}
+          and they fill in.
+        </p>
+      )}
 
       <div className={`grid gap-3 ${single ? 'sm:grid-cols-1 max-w-md' : 'sm:grid-cols-2'}`}>
         <TeaserCard teaser={best} kind="best" />
