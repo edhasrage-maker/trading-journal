@@ -336,9 +336,18 @@ export default function ImportPage() {
               {warnings.map((w, i) => <li key={i}>{w}</li>)}
             </ul>
           )}
-          <Link href="/dashboard" className="inline-block mt-3 text-sm text-blue-400 hover:text-blue-300">
-            View your dashboard →
+          {/* Straight into the session you just imported, not back to the
+              overview. Bare /review resolves server-side to the session
+              awaiting completion, else the most recent trading day — which is
+              exactly what an import just produced, so no date plumbing needed.
+              "Back to the dashboard" reads like an exit from a job half done. */}
+          <Link href="/review" className="inline-flex items-center gap-1.5 mt-3 text-sm font-medium text-blue-400 hover:text-blue-300">
+            Review your trades →
           </Link>
+          <p className="text-xs text-gray-600 mt-1.5">
+            Or <Link href="/dashboard" className="text-gray-500 hover:text-gray-300 underline underline-offset-2">go to your dashboard</Link>{' '}
+            for the all-trades view.
+          </p>
         </div>
       )}
 
