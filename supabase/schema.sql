@@ -149,6 +149,13 @@ create table if not exists trades (
   -- fade derives from (direction, regime). Backfilled by
   -- scripts/backfill-structure-regime.ts; algorithm in src/lib/market-structure.ts.
   structure_5m_regime text check (structure_5m_regime is null or structure_5m_regime in ('bull', 'bear', 'neutral', 'insufficient')),
+  -- Pin a P&L + execution-score chip above this trade on the chart, including on
+  -- a shared link (get_shared_day returns to_jsonb(t), so the flag travels).
+  -- A FLAG, not a stored label: the chip's text is derived at render time, so a
+  -- corrected fill or a re-run analysis moves it rather than leaving a stale
+  -- number pinned to a chart other people are reading.
+  -- Migration: 20260728_trade_highlighted.sql.
+  highlighted boolean not null default false,
   exits_json jsonb, -- array of partial exits: [{ time: ISO-8601, price: number, qty: number }, ...]; null/empty -> fall back to single exit_time/exit_price avg
   tags_json jsonb default '{}',
   -- tags_json shape:
