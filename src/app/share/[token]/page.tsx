@@ -4,7 +4,51 @@ import type { Trade, TradingDay } from '@/lib/supabase/types'
 import type { ChartPrefs } from '@/components/charts/LiveChart'
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Shared session — TapeScore' }
+
+/**
+ * Per-share preview card. Without this the link unfurls to the generic branded
+ * opengraph-image.png from the root layout — the same picture for every session
+ * anyone shares, which tells a recipient nothing about what they're being sent.
+ *
+ * The image is the day's own saved chart: the Review page's chart first
+ * (`eod_chart_screenshot_url` — what the trader was actually looking at when
+ * they wrote the review), falling back to the prep chart, and finally to the
+ * brand card when the day has neither. Days reviewed on the LIVE chart rather
+ * than an uploaded screenshot legitimately have neither, so the fallback is a
+ * normal outcome, not a failure.
+ *
+ * Screenshots live in a private bucket, so the path is signed through the same
+ * `share-sign` Edge Function the page body uses. Note the signature is
+ * time-limited: scrapers (Slack, iMessage, Twitter) fetch and cache the image
+ * at unfurl time, so a link pasted today previews correctly, but a re-scrape
+ * after the signature expires falls back. That is the right trade — the
+ * alternative is making trade screenshots publicly readable.
+ */
+export async function generateMetadata({ params }: { params: Promise<{ token: string }> }) {
+  const base = { title: 'Shared session — TapeScore' }
+  try {
+    const { token } = await params
+    const supabase = await createClient()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any).rpc('get_shared_day', { p_token: token })
+    const day = (data?.day ?? null) as TradingDay | null
+    if (!day) return base
+
+    await signSharedScreenshots(token, day, [])
+    const image = day.eod_chart_screenshot_url || day.chart_screenshot_url
+    if (!image || !/^https?:\/\//i.test(image)) return base
+
+    const title = `Session review — ${day.date}`
+    return {
+      ...base,
+      openGraph: { title, images: [{ url: image }] },
+      twitter: { card: 'summary_large_image' as const, title, images: [image] },
+    }
+  } catch {
+    // Never let preview generation break the page itself.
+    return base
+  }
+}
 
 /**
  * Replace private-bucket screenshot PATHS on the shared day + trades with signed
