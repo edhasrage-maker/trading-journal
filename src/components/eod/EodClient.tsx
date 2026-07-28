@@ -15,7 +15,6 @@ import { useChartInstruments } from '@/lib/use-chart-instruments'
 import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
 import TradeContextMenu, { type TradeContextMenuState } from '@/components/session/TradeContextMenu'
-import TradeHighlightCard, { type PerTradeScore } from './TradeHighlightCard'
 import TradeEditDrawer from '@/components/session/TradeEditDrawer'
 import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
@@ -34,6 +33,7 @@ import { useUiMode } from '@/lib/ui-mode'
 import { useSessionClock } from '@/lib/use-session-clock'
 import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, formatCapturePct, CAPTURE_MISMATCH_TOOLTIP, type BarLike } from '@/lib/analytics'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
+import { buildHighlights } from '@/lib/trade-highlights'
 import type {
   TradingDay,
   Trade,
@@ -99,7 +99,6 @@ export default function EodClient({
   // Right-click menu on a trade row, and the trade currently "highlighted"
   // (P&L + its own execution score) from that menu.
   const [tradeMenu, setTradeMenu] = useState<TradeContextMenuState | null>(null)
-  const [highlightTradeId, setHighlightTradeId] = useState<string | null>(null)
   // Tags are local so a label created inline from the drawer's TagSelector
   // shows up immediately instead of waiting for a page reload.
   const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
@@ -171,31 +170,29 @@ export default function EodClient({
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
-  // Per-trade execution score, keyed by trade id.
-  //
-  // The analysis stores `trade_number` — the 1-based position of the trade in
-  // the array that was sent to buildEodPrompt. That array is this same `trades`
-  // list in this same order, which is the only reason index-mapping is safe.
-  // It is also the fragile part: a trade added or deleted since the analysis ran
-  // shifts every later index. So the map is only built when the counts still
-  // match; otherwise every trade reports "not scored yet", which is honest —
-  // far better than confidently attributing trade 4's score to trade 3.
-  const perTradeScores = useMemo<Record<string, PerTradeScore>>(() => {
-    const rows = aiAnalysis?.execution?.per_trade
-    if (!rows?.length) return {}
-    const out: Record<string, PerTradeScore> = {}
-    for (const r of rows) {
-      const t = trades[r.trade_number - 1]
-      if (!t) continue
-      out[t.id] = { score: r.score, passes: r.passes, fails: r.fails, na: r.na }
+  // On-chart highlight chips (P&L + score) for trades flagged `highlighted`.
+  const highlights = useMemo(() => buildHighlights(trades, aiAnalysis), [trades, aiAnalysis])
+  /** Toggle a trade's chip. Optimistic so the chart responds to the right-click
+   *  immediately; reverted if the write fails, because a callout that looks
+   *  saved and isn't would be discovered by the person you shared it with. */
+  const toggleHighlight = async (tradeId: string) => {
+    const t = trades.find(x => x.id === tradeId)
+    if (!t) return
+    const next = !t.highlighted
+    setTrades(prev => prev.map(x => (x.id === tradeId ? { ...x, highlighted: next } : x)))
+    try {
+      const res = await fetch(`/api/trades/${tradeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ highlighted: next }),
+      })
+      if (!res.ok) throw new Error(String(res.status))
+    } catch {
+      setTrades(prev => prev.map(x => (x.id === tradeId ? { ...x, highlighted: !next } : x)))
+      showToast('Could not save the highlight.', 'error')
     }
-    // A breach trade is legitimately absent (execution never scores breaches),
-    // so a partial map is expected. What is NOT expected is an index pointing
-    // past the end of the list — that means the list changed under the analysis.
-    const maxNumber = Math.max(...rows.map(r => r.trade_number))
-    if (maxNumber > trades.length) return {}
-    return out
-  }, [aiAnalysis, trades])
+  }
+
   // Highlights hides the MFE/MAE-capture metrics in the header (kept for
   // Detailed Tape); plain stats — Trades, Win Rate, W/L, PnL — always show.
   const { mode } = useUiMode()
@@ -1119,7 +1116,8 @@ export default function EodClient({
             flashTrade(id)
             document.getElementById(`eod-trade-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
           }}
-          onHighlightTrade={setHighlightTradeId}
+          onHighlightTrade={toggleHighlight}
+          highlights={highlights}
         />
       ) : (
       <ChartScreenshotPanel
@@ -1246,19 +1244,9 @@ export default function EodClient({
         state={tradeMenu}
         onClose={() => setTradeMenu(null)}
         onOpenIntraday={id => router.push(`/intraday/${date}#trade-${id}`)}
-        onHighlight={id => setHighlightTradeId(id)}
+        onHighlight={toggleHighlight}
+        isHighlighted={(id: string) => !!highlights[id]}
       />
-      {highlightTradeId && (() => {
-        const t = trades.find(x => x.id === highlightTradeId)
-        if (!t) return null
-        return (
-          <TradeHighlightCard
-            trade={t}
-            score={perTradeScores[highlightTradeId] ?? null}
-            onClose={() => setHighlightTradeId(null)}
-          />
-        )
-      })()}
 
       {/* Edit-in-place drawer (Pt 13 step 2). Opens on a recap row's edit
           action; saves via the shared compact TradeForm and replaces the row in

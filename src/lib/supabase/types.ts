@@ -106,6 +106,12 @@ export interface Database {
            *  null when bars are missing or fewer than 20 5m bars exist
            *  before entry. */
           structure_5m_alignment: 'following' | 'fading' | 'neutral' | null
+          /** Pin a P&L + execution-score chip above this trade on the chart.
+           *  Persisted (not localStorage) because the point is that a viewer of
+           *  a shared link sees it; the label itself is derived at render time
+           *  so an edited trade or a re-run analysis can't leave a stale
+           *  callout. Migration: 20260728_trade_highlighted.sql. */
+          highlighted: boolean | null
           exits_json: TradeExit[] | null
           tags_json: TradeTags
           notes: string | null

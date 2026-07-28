@@ -6,7 +6,8 @@ import LiveChart, { type ChartPrefs } from '@/components/charts/LiveChart'
 import ScreenshotLightbox from '@/components/intraday/ScreenshotLightbox'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import { chartSeriesRoot, symbolToMultiplier } from '@/lib/futures-symbols'
-import type { Trade, TradingDay } from '@/lib/supabase/types'
+import { buildHighlights } from '@/lib/trade-highlights'
+import type { Trade, TradingDay, EodAiAnalysis } from '@/lib/supabase/types'
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const
 
@@ -61,6 +62,14 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
   // Falls back to the day's traded symbols when /api/bars/symbols isn't reachable
   // (logged-out share context), so multi-instrument days still get a toggle.
   const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(defaultSymbol, trades, day.date)
+  // The trader's pinned P&L/score callouts. This is the whole reason the flag is
+  // persisted rather than kept in their browser: the recipient sees exactly the
+  // chart the trader marked up. Built from the same helper the EOD page uses, so
+  // the two can't drift. Read-only — no onHighlightTrade is passed below.
+  const sharedHighlights = useMemo(
+    () => buildHighlights(chartTrades, (day.eod_ai_analysis_json ?? null) as EodAiAnalysis | null),
+    [chartTrades, day.eod_ai_analysis_json],
+  )
   const [expanded, setExpanded] = useState<string | null>(null)
   const [hoverTradeId, setHoverTradeId] = useState<string | null>(null)
   // Enlarged screenshot (click a trade's screenshot to open full-screen).
@@ -128,6 +137,7 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
             hoverTradeId={hoverTradeId}
             onTradeActivate={onTradeActivate}
             onDismissHover={() => setHoverTradeId(null)}
+            highlights={sharedHighlights}
             prefsOverride={chartPrefs ?? null}
             readOnly
             height={520}

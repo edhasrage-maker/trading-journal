@@ -49,11 +49,15 @@ export default function TradeContextMenu({
   onClose,
   onOpenIntraday,
   onHighlight,
+  isHighlighted,
 }: {
   state: TradeContextMenuState | null
   onClose: () => void
   onOpenIntraday?: (tradeId: string) => void
   onHighlight?: (tradeId: string) => void
+  /** Whether this trade already carries a chart highlight, so the item can read
+   *  "Remove highlight" — the same toggle wording the chart's own menu uses. */
+  isHighlighted?: (tradeId: string) => boolean
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
 
@@ -97,7 +101,12 @@ export default function TradeContextMenu({
       onContextMenu={e => e.preventDefault()}
     >
       <MenuItem icon={ExternalLink} label="Intraday Review" hint="Open this trade's full log" onClick={run(onOpenIntraday)} />
-      <MenuItem icon={Highlighter} label="Highlight" hint="P&L and this trade's score" onClick={run(onHighlight)} />
+      <MenuItem
+        icon={Highlighter}
+        label={isHighlighted?.(state.tradeId) ? 'Remove highlight' : 'Highlight'}
+        hint="Pin P&L and score on the chart"
+        onClick={run(onHighlight)}
+      />
     </div>
   )
 }

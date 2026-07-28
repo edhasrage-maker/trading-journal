@@ -28,6 +28,25 @@ export interface ChartAnnotation {
   selected?: boolean
 }
 
+/**
+ * A trade "highlight" — the P&L and execution score chip pinned above a trade's
+ * entry arrow. Deliberately just those two numbers: the point is a chart someone
+ * ELSE can read at a glance (a screenshot, a screen-share, a shared link), and
+ * anything more turns a callout into a table.
+ */
+export interface TradeHighlight {
+  tradeId: string
+  /** Anchor — the trade's entry (epoch seconds on the chart's display scale). */
+  t: number
+  p: number
+  /** Left half of the chip, e.g. "+$248". */
+  pnl: string
+  /** Right half, e.g. "86%". Omitted when the day hasn't been scored per-trade. */
+  score?: string
+  /** Drives the chip's accent: green for a winner, red for a loser. */
+  positive: boolean
+}
+
 class AnnotationRenderer implements IPrimitivePaneRenderer {
   constructor(
     private readonly _data: readonly ChartAnnotation[],
@@ -35,6 +54,7 @@ class AnnotationRenderer implements IPrimitivePaneRenderer {
     private readonly _previewColor: string,
     private readonly _chart: IChartApi,
     private readonly _series: ISeriesApi<SeriesType>,
+    private readonly _highlights: readonly TradeHighlight[] = [],
   ) {}
 
   draw(target: CanvasRenderingTarget2D) {
@@ -45,7 +65,58 @@ class AnnotationRenderer implements IPrimitivePaneRenderer {
         else if (a.kind === 'text') this._drawText(ctx, ts, a.geom, a.color, a.selected ?? false, a.note)
       }
       if (this._preview) this._drawZone(ctx, ts, this._preview, this._previewColor, true, '', true)
+      // Highlights last so a callout is never buried under a zone fill.
+      for (const h of this._highlights) this._drawHighlight(ctx, ts, h)
     })
+  }
+
+  /** P&L (+ score) chip, centred above the trade's entry arrow. */
+  private _drawHighlight(
+    ctx: CanvasRenderingContext2D, ts: ReturnType<IChartApi['timeScale']>, h: TradeHighlight,
+  ) {
+    const anchor = this._pt(ts, h.t, h.p)
+    if (!anchor) return
+    const accent = h.positive ? '#22c55e' : '#ef4444'
+    const FONT = '700 12px -apple-system, system-ui, "Segoe UI", sans-serif'
+    const SUB = '600 12px -apple-system, system-ui, "Segoe UI", sans-serif'
+    ctx.save()
+    ctx.font = FONT
+    const pnlW = ctx.measureText(h.pnl).width
+    ctx.font = SUB
+    const sepW = h.score ? ctx.measureText('  ·  ').width : 0
+    const scoreW = h.score ? ctx.measureText(h.score).width : 0
+    const padX = 8, boxH = 22
+    const boxW = pnlW + sepW + scoreW + padX * 2
+    // Sit ABOVE the arrow and centred on it, so the chip never covers the
+    // candle the trade fired on — the one thing a reader wants to see next to it.
+    const x = anchor.x - boxW / 2
+    const y = anchor.y - boxH - 14
+
+    ctx.beginPath()
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, boxW, boxH, 6)
+    else ctx.rect(x, y, boxW, boxH)
+    ctx.fillStyle = 'rgba(17,24,39,0.94)'
+    ctx.fill()
+    ctx.lineWidth = 1.25
+    ctx.strokeStyle = accent
+    ctx.stroke()
+
+    ctx.textBaseline = 'middle'
+    const cy = y + boxH / 2 + 0.5
+    let cx = x + padX
+    ctx.font = FONT
+    ctx.fillStyle = accent
+    ctx.fillText(h.pnl, cx, cy)
+    cx += pnlW
+    if (h.score) {
+      ctx.font = SUB
+      ctx.fillStyle = 'rgba(255,255,255,0.35)'
+      ctx.fillText('  ·  ', cx, cy)
+      cx += sepW
+      ctx.fillStyle = 'rgba(255,255,255,0.92)'
+      ctx.fillText(h.score, cx, cy)
+    }
+    ctx.restore()
   }
 
   private _pt(ts: ReturnType<IChartApi['timeScale']>, t?: number, p?: number): { x: number; y: number } | null {
@@ -119,12 +190,14 @@ class AnnotationPaneView implements IPrimitivePaneView {
     if (!chart || !series) return null
     return new AnnotationRenderer(
       this._source.annotations, this._source.preview, this._source.previewColor, chart, series,
+      this._source.highlights,
     )
   }
 }
 
 export class AnnotationsPrimitive implements ISeriesPrimitive<Time> {
   annotations: readonly ChartAnnotation[] = []
+  highlights: readonly TradeHighlight[] = []
   preview: ZoneGeom | null = null
   previewColor = '#ef4444'
   chartApi: IChartApi | null = null
@@ -147,6 +220,10 @@ export class AnnotationsPrimitive implements ISeriesPrimitive<Time> {
 
   setData(annotations: readonly ChartAnnotation[]): void {
     this.annotations = annotations
+    this._requestUpdate?.()
+  }
+  setHighlights(highlights: readonly TradeHighlight[]): void {
+    this.highlights = highlights
     this._requestUpdate?.()
   }
   setPreview(preview: ZoneGeom | null, color = '#ef4444'): void {

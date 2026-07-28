@@ -15,7 +15,7 @@ import {
   type AutoscaleInfo,
 } from 'lightweight-charts'
 import { TradeArrowsPrimitive, type TradeArrow } from './TradeArrowsPrimitive'
-import { AnnotationsPrimitive, type ChartAnnotation, type AnnGeom } from './AnnotationsPrimitive'
+import { AnnotationsPrimitive, type ChartAnnotation, type AnnGeom, type TradeHighlight } from './AnnotationsPrimitive'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint, SessionKind } from '@/lib/session-levels'
@@ -41,11 +41,16 @@ interface Props {
    *  trade list is on-screen), the parent scrolls to that trade's row. When
    *  omitted, LiveChart falls back to navigating to /eod/<date>?trade=<id>. */
   onTradeActivate?: (tradeId: string) => void
-  /** Right-click → "Highlight" on a trade arrow. The parent owns the card (it
-   *  holds the per-trade scores), so LiveChart only reports which trade was
-   *  picked. Omit and the item isn't offered — the chart never shows an action
-   *  the host page can't fulfil. */
+  /** Right-click → Highlight on a trade arrow. Toggles: the menu reads "Remove
+   *  highlight" for a trade already in `highlights`. Omit and the item isn't
+   *  offered — the chart never shows an action the host page can't fulfil. */
   onHighlightTrade?: (tradeId: string) => void
+  /** Trades to pin a P&L (+ score) chip above, keyed by trade id. The parent
+   *  owns the content because it owns the scores; LiveChart anchors each chip to
+   *  that trade's entry and draws it. A read-only surface (a shared link) passes
+   *  these WITHOUT onHighlightTrade: the callouts render for the viewer, the
+   *  menu item doesn't appear. */
+  highlights?: Record<string, { pnl: string; score?: string; positive: boolean }>
   /** Called when the user clicks a blank chart spot while a trade popup is
    *  pinned — lets the parent clear its hoverTradeId so the popup dismisses. */
   onDismissHover?: () => void
@@ -307,7 +312,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onHighlightTrade, onDismissHover, onLevels, session = 'rth', readOnly = false, prefsOverride = null },
+  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onHighlightTrade, highlights, onDismissHover, onLevels, session = 'rth', readOnly = false, prefsOverride = null },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1219,6 +1224,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // Parallel hit-targets (same time/price as each arrow) tagged with the trade
     // id, for double/right-click mapping.
     const arrowHits: Array<{ tradeId: string; time: Time; price: number }> = []
+    // Highlight chips, anchored to the same (time, price) as the entry arrow so
+    // a chip stays glued to its arrow across timeframe changes and zoom rather
+    // than drifting off a raw timestamp.
+    const highlightAnchors: TradeHighlight[] = []
     for (const t of trades) {
       if (!t.entry_time || !t.direction) continue
       const isLong = t.direction === 'long'
@@ -1240,6 +1249,8 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           hovered: isHovered,
         })
         arrowHits.push({ tradeId: t.id, time: entryTime, price: entryPrice })
+        const hl = highlights?.[t.id]
+        if (hl) highlightAnchors.push({ tradeId: t.id, t: Number(entryTime), p: entryPrice, ...hl })
       }
       // Exits: prefer per-fill array, fall back to aggregated single exit
       const exitList: Array<{ time: string; price: number; qty: number }> =
@@ -1280,6 +1291,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     arrows.sort((a, b) => Number(a.hovered) - Number(b.hovered))
     tradeArrowsRef.current?.setData(arrows)
     arrowHitsRef.current = arrowHits
+    annotationsPrimRef.current?.setHighlights(highlightAnchors)
 
     // Entry→exit connector lines: one dashed 2-point line per scale-out,
     // fanning from the entry price to EACH exit's actual price (diagonal), so
@@ -1494,7 +1506,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // hover.trade?.id and hoverTradeId are in the dep list: when the user
     // hovers near a trade (crosshair) or the EOD row, the arrows re-render with
     // that trade's labels revealed + size bump, and its connector line bolds.
-  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId, session])
+    // `highlights` is a dep because the chips are built in this same pass:
+    // without it, toggling a highlight wouldn't repaint until something else
+    // happened to invalidate the effect.
+  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId, session, highlights])
 
   // Row-hover ↔ chart link: when a trade is hovered in the EOD list, drop the
   // crosshair on its entry (highlight where it was) and show the same
@@ -2245,7 +2260,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
                 >
                   <Highlighter className="w-3.5 h-3.5 text-amber-400" />
-                  Highlight
+                  {highlights?.[arrowMenu.tradeId] ? 'Remove highlight' : 'Highlight'}
                 </button>
               )}
             </div>
