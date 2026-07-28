@@ -167,10 +167,18 @@ Compute each sub-metric on 0..1 (higher = better):
   clamp(profit_factor / 2, 0, 1). Null any sub-metric you can't compute; if all null,
   composite is null. compliant_trade_count = the number of trades you included.
 
-**Execution Parameters — 9-criterion per-trade checklist (in THIS trader's framework):**
+**Execution Parameters — per-trade checklist (in THIS trader's framework):**
 For each compliant trade, mark each criterion pass (1), fail (0), or N/A (skip in the
 denominator). Per-trade score = passes / (passes+fails). Sub-metric = mean across
-compliant trades. Also produce execution_parameter_breakdown (per-criterion pass rate).
+compliant trades. Also produce execution_parameter_breakdown (per-criterion pass rate);
+emit null for any criterion marked NOT SCORED below.
+
+The public rubric is deliberately NARROWER than the owner's nine. Criteria 6-8 encode
+one trader's specific framework (a named entry-model library, notes detailed enough to
+read exit reasoning, a mistake-tagging habit), so grading a general user on them
+manufactures judgement out of what they didn't happen to write down. What's left is the
+part any trader can be held to: was this a setup you actually trade, sized against
+volatility, with a target worth the risk, at a level, in a composed state.
 
   1. setup_in_playbook — the setup tag exists in the trader's own curated 'setups' library.
      An improvised setup not in the library fails. N/A if no setup tag at all.
@@ -188,23 +196,15 @@ compliant trades. Also produce execution_parameter_breakdown (per-criterion pass
      fills-only row), mark N/A and SKIP it — a trader who didn't journal the level is
      NOT a trader who traded without one. Absence of evidence is never a fail.
 ${ofCriterion}
-  6. break_of_cluster_or_bubble_entry — [for this trader: VALID ENTRY TRIGGER] the entry
-     used a DEFINED trigger from the trader's OWN entry_model library (break/retest, candle
-     trigger, level reclaim, indicator flip, limit-at-AOI, whatever they use). PASS
-     automatically when the trade carries an entry_model tag — that tag IS the trader
-     declaring their trigger; trust it over your read of the prose. A purely discretionary
-     poke with no entry_model tag AND no trigger described in the notes fails. Do NOT
-     require any one specific model or impose a methodology they don't use.
-  7. chart_not_emotion_management — a discretionary exit driven by a technical/structural
-     read passes; a purely PnL-anchored emotional exit ("scared to give back") fails.
-     Hitting the planned TP or getting stopped both pass automatically. A risk-off scratch
-     on a deteriorating read is a VALID read-based exit (pass), not a mistake. NEVER judge
-     the exit by what price did AFTER the trader was out (outcome bias is forbidden).
-     N/A when the trade has NO notes and no exit reasoning to read — never infer an
-     emotional exit from the numbers alone.
-  8. no_mistakes_tagged — tags_json.mistakes is empty on the trade. N/A when this trader
-     does not use mistake tags at all (none tagged anywhere in the session) — an empty
-     journal is not a clean one.
+  6. break_of_cluster_or_bubble_entry — NOT SCORED FOR THIS TRADER. Requires a named
+     entry-model library this trader may not keep. Skip on EVERY trade (never in the
+     denominator, never a fail); return null for this key in the breakdown.
+  7. chart_not_emotion_management — NOT SCORED FOR THIS TRADER. Reading exit motivation
+     needs journal prose most traders don't write, and inferring it from the numbers is
+     mind-reading. Skip on EVERY trade; return null for this key in the breakdown.
+  8. no_mistakes_tagged — NOT SCORED FOR THIS TRADER. A trader who doesn't tag mistakes
+     would score a perfect record for never journaling. Skip on EVERY trade; return null
+     for this key in the breakdown.
   9. stable_emotion — the trade's tags_json.emotions reflect a composed, in-control state
      (in whatever words THIS trader uses — e.g. calm, focused, disciplined, confident,
      "Stable") → pass. A clearly compromised / tilted state (e.g. fearful, FOMO, revenge,
@@ -213,6 +213,11 @@ ${ofCriterion}
      require one specific tag word — judge the STATE in this trader's own vocabulary.
 
 ══ NARRATIVE DISCIPLINE (apply literally — don't soften, don't tell stories) ══
+
+**No outcome bias.** NEVER judge a decision by what price did AFTER the trader was out.
+No post-exit counterfactuals — not "would have hit target", not "ran X further after the
+stop", not "scratched a winner". Grade the decision on what was knowable at the time.
+(This rule is global; it is not tied to any one scoring criterion.)
 
 **Causation vs correlation.** The market causes trade outcomes, not the trader's reads. A
 weak read does not "cause" a loss; don't write "the missing read led to the stop-out." A
