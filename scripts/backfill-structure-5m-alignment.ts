@@ -18,22 +18,35 @@
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { computeStructure5mAlignment } from '../src/lib/structure-5m.ts'
+import { chartSeriesRoot } from '../src/lib/futures-symbols.ts'
 import type { BarLike } from '../src/lib/analytics.ts'
-
-for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
-  const m = line.match(/^([A-Z_]+)=(.*)$/)
-  if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-}
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const sb: any = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-)
 
 const argv = process.argv.slice(2)
 const dryRun = argv.includes('--dry-run')
 const force = argv.includes('--force')
 const limit = parseInt(argv.find(a => a.startsWith('--limit='))?.split('=')[1] ?? '') || Infinity
+const argVal = (n: string): string | null => argv.find(a => a.startsWith(`--${n}=`))?.split('=')[1] ?? null
+const envName = argVal('env') ?? 'public'
+const isProd = envName !== 'local'
+
+// LIVE-FIRST: .env.public-feed points at prod; .env.local is the dev project.
+for (const line of readFileSync(isProd ? '.env.public-feed' : '.env.local', 'utf8').split(/\r?\n/)) {
+  const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)$/)
+  if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '').trim()
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sb: any = createClient(
+  (isProd ? process.env.PUBLIC_SUPABASE_URL : process.env.NEXT_PUBLIC_SUPABASE_URL)!,
+  (isProd ? process.env.PUBLIC_SUPABASE_SERVICE_ROLE_KEY : process.env.SUPABASE_SERVICE_ROLE_KEY)!,
+)
+
+// TENANT SCOPING (mandatory on prod) — the service-role key BYPASSES RLS, so an
+// unscoped query spans every user. The dev project runs the single-user schema
+// and has no user_id column.
+const OWNER_USER_ID = 'fa3fb352-9538-44cc-8ce1-1c76f307044c'
+const USER_ID = argVal('user') ?? OWNER_USER_ID
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const scoped = (q: any) => (isProd ? q.eq('user_id', USER_ID) : q)
 
 interface TradeRow {
   id: string
@@ -50,9 +63,9 @@ async function main() {
   const PAGE = 1000
   const trades: TradeRow[] = []
   for (let p = 0; p < 50; p++) {
-    let q = sb
+    let q = scoped(sb
       .from('trades')
-      .select('id, entry_time, symbol, direction, structure_5m_alignment')
+      .select('id, entry_time, symbol, direction, structure_5m_alignment'))
       .order('entry_time', { ascending: false })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -70,7 +83,10 @@ async function main() {
   for (const t of trades) {
     if (!t.entry_time || !t.symbol || !t.direction) continue
     const date = t.entry_time.slice(0, 10)
-    const key = `${t.symbol}|${date}`
+    // Bars are stored per MINI ROOT (NQ, ES) — never per dated contract. This
+    // used to key on the raw trade symbol ("MNQ", "MNQU6.CME"), which matched
+    // almost nothing, and is why the column was populated for only 137 trades.
+    const key = `${chartSeriesRoot(t.symbol)}|${date}`
     const arr = groups.get(key) ?? []
     arr.push(t)
     groups.set(key, arr)
@@ -110,9 +126,9 @@ async function main() {
       if (alignment == null) { counts.no_data++; processed++; continue }
       counts[alignment]++
       if (!dryRun) {
-        const { error } = await sb.from('trades')
+        const { error } = await scoped(sb.from('trades')
           .update({ structure_5m_alignment: alignment })
-          .eq('id', t.id)
+          .eq('id', t.id))
         if (error) console.error(`  update ${t.id} failed:`, error.message)
         else counts.written++
       }
