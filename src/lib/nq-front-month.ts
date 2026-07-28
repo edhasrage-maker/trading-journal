@@ -11,37 +11,15 @@
 import { join } from 'path'
 import { readScidBars } from './scid-reader'
 import { findPivots, structureAt, type Regime, type Pivot } from './market-structure'
-
-// roll = 8 days before the quarterly 3rd-Friday expiry; front-month in
-// [prevRoll, thisRoll). NQ price = MNQ price (index level), so this covers both.
-const CONTRACTS = [
-  { roll: '2023-03-09', file: 'NQH3.CME.scid' },
-  { roll: '2023-06-08', file: 'NQM3.CME.scid' },
-  { roll: '2023-09-07', file: 'NQU3.CME.scid' },
-  { roll: '2023-12-07', file: 'NQZ3.CME.scid' },
-  { roll: '2024-03-07', file: 'NQH4.CME.scid' },
-  { roll: '2024-06-13', file: 'NQM4.CME.scid' },
-  { roll: '2024-09-12', file: 'NQU4.CME.scid' },
-  { roll: '2024-12-12', file: 'NQZ4.CME.scid' },
-  { roll: '2025-03-13', file: 'NQH5.CME.scid' },
-  { roll: '2025-06-12', file: 'NQM5.CME.scid' },
-  { roll: '2025-09-11', file: 'NQU5.CME.scid' },
-  { roll: '2025-12-11', file: 'NQz5.CME.scid' },
-  { roll: '2026-03-12', file: 'NQH6.CME.scid' },
-  { roll: '2026-06-11', file: 'NQM6.CME.scid' },
-  { roll: '2026-09-11', file: 'NQU6.CME.scid' },
-  { roll: '2026-12-11', file: 'NQZ6.CME.scid' },
-]
+import { contractsForRoot, contractFileForRoot, rollInForRoot } from './futures-contracts'
 
 /** Front-month contract .scid filename for a YYYY-MM-DD date, or null if out of
  *  the table's range. */
 export function contractFileForDate(date: string): string | null {
-  for (const c of CONTRACTS) if (c.roll > date) return c.file
-  return null
+  return contractFileForRoot('NQ', date)
 }
 function rollInForDate(date: string): string | null {
-  for (let i = 0; i < CONTRACTS.length; i++) if (CONTRACTS[i].roll > date) return i === 0 ? null : CONTRACTS[i - 1].roll
-  return null
+  return rollInForRoot('NQ', date)
 }
 
 export interface RegimeSeries {
@@ -57,7 +35,7 @@ export interface RegimeSeries {
  * `date`. Returns null when the .scid is missing/empty or too short to score.
  */
 export function buildDayRegimeSeries(dataDir: string, date: string, warmupDays = 20): RegimeSeries | null {
-  const file = contractFileForDate(date)
+  const file = contractFileForRoot('NQ', date, dataDir)
   if (!file) return null
   const rollIn = rollInForDate(date)
   const warmStart = new Date(Date.parse(date + 'T00:00:00Z') - warmupDays * 86400000).toISOString().slice(0, 10)
@@ -131,6 +109,7 @@ export function buildDayEntryMetrics(dataDir: string, date: string, warmupDays =
   // Walk the front-month contracts whose window [prevRoll, roll) intersects
   // [warmStart, end], in time order. ATR (`cur`) carries across; prevClose
   // resets per contract so the roll basis gap isn't a spurious TR.
+  const CONTRACTS = contractsForRoot('NQ', dataDir)
   for (let i = 0; i < CONTRACTS.length; i++) {
     const winStart = i === 0 ? '2000-01-01' : CONTRACTS[i - 1].roll
     const winEnd = CONTRACTS[i].roll

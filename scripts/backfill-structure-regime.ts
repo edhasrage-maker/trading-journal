@@ -16,6 +16,7 @@ import { join } from 'path'
 import { createClient } from '@supabase/supabase-js'
 import { readScidBars } from '../src/lib/scid-reader.ts'
 import { findPivots, structureAt, type Regime } from '../src/lib/market-structure.ts'
+import { contractsForRoot } from '../src/lib/futures-contracts.ts'
 
 for (const l of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
   const m = l.match(/^([A-Z_]+)=(.*)$/); if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
@@ -26,26 +27,9 @@ const commit = process.argv.includes('--commit')
 const DATA = 'D:\\SierraCharts\\Data'
 const K = 4
 
-// NQ front-month: roll = 8 days before the quarterly 3rd-Friday expiry. Each
-// contract is front-month in [prevRoll, thisRoll). Index price, so NQ stands in
-// for MNQ trades too. Same table as scripts/detect-tz-shift.ts.
-const CONTRACTS = [
-  { roll: '2023-03-09', file: 'NQH3.CME.scid' },
-  { roll: '2023-06-08', file: 'NQM3.CME.scid' },
-  { roll: '2023-09-07', file: 'NQU3.CME.scid' },
-  { roll: '2023-12-07', file: 'NQZ3.CME.scid' },
-  { roll: '2024-03-07', file: 'NQH4.CME.scid' },
-  { roll: '2024-06-13', file: 'NQM4.CME.scid' },
-  { roll: '2024-09-12', file: 'NQU4.CME.scid' },
-  { roll: '2024-12-12', file: 'NQZ4.CME.scid' },
-  { roll: '2025-03-13', file: 'NQH5.CME.scid' },
-  { roll: '2025-06-12', file: 'NQM5.CME.scid' },
-  { roll: '2025-09-11', file: 'NQU5.CME.scid' },
-  { roll: '2025-12-11', file: 'NQz5.CME.scid' },
-  { roll: '2026-03-12', file: 'NQH6.CME.scid' },
-  { roll: '2026-06-11', file: 'NQM6.CME.scid' },
-  { roll: '2026-09-11', file: 'NQU6.CME.scid' },
-]
+// NQ front-month roll table — now shared (src/lib/futures-contracts.ts) rather
+// than copied here, so this script, nq-front-month and the bar feed can't drift.
+const CONTRACTS = contractsForRoot('NQ', DATA)
 
 function bisectRight(arr: number[], x: number): number {
   let lo = 0, hi = arr.length

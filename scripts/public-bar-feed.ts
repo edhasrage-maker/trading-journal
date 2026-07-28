@@ -30,6 +30,10 @@
  *   npx tsx scripts/public-bar-feed.ts --days 8    # last 8 days — one-time, so the
  *                                                  # chart's session levels have lookback
  *
+ *   # Deep history backfill: an explicit range, one root at a time (their gaps
+ *   # differ, and one root at a time keeps each run's blast radius small).
+ *   npx tsx scripts/public-bar-feed.ts --from 2023-08-01 --to 2025-09-25 --roots NQ
+ *
  * SCHEDULE
  *   Task Scheduler, every ~3 min during your session — same cadence as BarWatcher.
  */
@@ -37,20 +41,29 @@ import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { createClient } from '@supabase/supabase-js'
 import { importScidDay } from '../src/lib/import-scid-day'
-import { todayPT } from '../src/lib/pt-time'
-import { contractFileForDate } from '../src/lib/nq-front-month'
+import { todayPT, sessionUtcWindow } from '../src/lib/pt-time'
+import { contractFileForRoot, type ContractRoot } from '../src/lib/futures-contracts'
 
-// Local .scid → shared root symbol, resolved PER DATE. NQ uses the continuous
-// front-month roll table (contractFileForDate) so a trade at ANY date reads the
-// contract that was actually front-month then — that's what makes MFE/MAE-from-
-// bars work across history, not just the current contract. All bars store under
-// 'NQ' (the chartSeriesRoot key micros/dated contracts resolve to). ES has no
-// roll table yet, so it stays on its front contract (single-contract coverage).
-function feedsForDate(date: string): Array<{ scidFile: string; root: string }> {
+const ROOTS: ContractRoot[] = ['NQ', 'ES']
+
+// A normal CME session is 23h → 1380 one-minute bars. Only a day at or above
+// that is treated as already fed, so a run interrupted mid-day (importScidDay
+// upserts in 1000-row chunks, and 1000 < 1380) is re-fed rather than left half
+// written. Short sessions — holiday early closes — fall below it and get
+// re-read on a resume, which is a handful of days a year and cheap.
+const FULL_SESSION_BARS = 1380
+
+// Local .scid → shared root symbol, resolved PER DATE off the quarterly roll
+// table, so a trade at ANY date reads the contract that was actually front-month
+// then — that's what makes MFE/MAE-from-bars work across history rather than
+// only for the current contract. Both roots store under their mini root ('NQ',
+// 'ES'), the key micros and dated contracts collapse to via chartSeriesRoot().
+function feedsForDate(date: string, roots: ContractRoot[]): Array<{ scidFile: string; root: string }> {
   const feeds: Array<{ scidFile: string; root: string }> = []
-  const nqFile = contractFileForDate(date)   // e.g. 2026-03-15 → NQM6.CME.scid
-  if (nqFile) feeds.push({ scidFile: nqFile, root: 'NQ' })
-  feeds.push({ scidFile: 'ESU6.CME.scid', root: 'ES' })
+  for (const root of roots) {
+    const file = contractFileForRoot(root, date)   // e.g. 2026-03-15 → NQM6.CME.scid
+    if (file) feeds.push({ scidFile: file, root })
+  }
   return feeds
 }
 
@@ -67,8 +80,12 @@ function loadEnv(): void {
 // Watchdog: a run must never outlive the scheduler interval. This runs hidden
 // and detached, so a hung await (Supabase upsert, DNS) would otherwise leak an
 // invisible node process every few minutes until the machine runs out of commit
-// memory (happened 2026-07-13). Backfills (--days) get a longer leash.
-const WATCHDOG_MS = process.argv.includes('--days') ? 15 * 60_000 : 4 * 60_000
+// memory (happened 2026-07-13). Backfills get a longer leash — a --from/--to
+// range can legitimately run for hours (~1s per symbol-day), so it must not
+// inherit the --days ceiling; that would kill a deep run partway through.
+const WATCHDOG_MS = process.argv.includes('--from')
+  ? 8 * 60 * 60_000
+  : process.argv.includes('--days') ? 30 * 60_000 : 4 * 60_000
 setTimeout(() => {
   console.error(`[public-bar-feed] watchdog: still running after ${WATCHDOG_MS / 60_000} min — force exit`)
   process.exit(3)
@@ -94,10 +111,29 @@ async function main() {
   //   --days N           → the last N calendar days (one-time backfill so the
   //                        session-levels lookback — prior day, overnight — has
   //                        data). Weekends/holidays report "no ticks" and skip.
+  //   --from A --to B    → an explicit range, oldest first (deep history).
   const args = process.argv.slice(2)
+  const flag = (name: string): string | null => {
+    const i = args.indexOf(name)
+    return i >= 0 ? args[i + 1] ?? null : null
+  }
   const daysIdx = args.indexOf('--days')
+  const from = flag('--from')
   let dates: string[]
-  if (daysIdx >= 0) {
+  if (from) {
+    const to = flag('--to') || todayPT()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      console.error('--from / --to must be YYYY-MM-DD'); process.exit(1)
+    }
+    // Oldest first so an interrupted run resumes by moving --from forward.
+    // Weekends are skipped outright: they'd cost a multi-GB .scid seek each to
+    // discover there are no ticks, and over a multi-year range that is hours.
+    dates = []
+    for (const d = new Date(`${from}T12:00:00Z`); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+      const dow = d.getUTCDay()
+      if (dow !== 0 && dow !== 6) dates.push(d.toISOString().slice(0, 10))
+    }
+  } else if (daysIdx >= 0) {
     const n = Math.max(1, Number(args[daysIdx + 1]) || 8)
     const today = todayPT()
     dates = Array.from({ length: n }, (_, i) => {
@@ -111,11 +147,39 @@ async function main() {
     dates = [todayPT()]
   }
 
-  console.log(`[public-bar-feed] ${dates.length === 1 ? dates[0] : `${dates[dates.length - 1]}…${dates[0]}`} → ${url.replace(/^https?:\/\//, '')}`)
+  // --roots NQ  (default: every root). Their coverage gaps differ, so a deep
+  // backfill normally runs one root at a time.
+  const rootsArg = flag('--roots')
+  const roots: ContractRoot[] = rootsArg
+    ? rootsArg.split(',').map(s => s.trim().toUpperCase()).filter((r): r is ContractRoot => (ROOTS as string[]).includes(r))
+    : ROOTS
+  if (roots.length === 0) { console.error(`--roots must name one of: ${ROOTS.join(', ')}`); process.exit(1) }
+
+  // Resume support for deep runs: a symbol-day that already has a full session
+  // of bars is left alone. Upserts are idempotent, so this is purely to avoid
+  // re-reading and re-sending work already done (and re-burning bandwidth) when
+  // a long run is interrupted. --force re-feeds regardless.
+  const skipExisting = Boolean(from) && !args.includes('--force')
+
+  console.log(`[public-bar-feed] ${dates.length === 1 ? dates[0] : `${dates[0]}…${dates[dates.length - 1]}`} (${dates.length} d) roots=${roots.join(',')} → ${url.replace(/^https?:\/\//, '')}`)
 
   let anyOk = false
+  let done = 0, skipped = 0, empty = 0, upsertedTotal = 0
+  const startedAt = Date.now()
   for (const date of dates) {
-    for (const f of feedsForDate(date)) {
+    for (const f of feedsForDate(date, roots)) {
+      if (skipExisting) {
+        // Same PT-session window importScidDay writes, so the count is
+        // comparable — a raw UTC day would straddle two sessions and miscount.
+        const { start, end } = sessionUtcWindow(date)
+        const { count } = await sb
+          .from('ohlcv_bars')
+          .select('ts', { count: 'exact', head: true })
+          .eq('symbol', f.root)
+          .gte('ts', start)
+          .lte('ts', end)
+        if ((count ?? 0) >= FULL_SESSION_BARS) { skipped++; anyOk = true; continue }
+      }
       const out = await importScidDay(sb, {
         scidFile: f.scidFile,
         storeAs: f.root,
@@ -125,11 +189,24 @@ async function main() {
       })
       if (out.ok) {
         anyOk = true
-        console.log(`  ${date} ${f.root.padEnd(4)} upserted ${out.result.upserted} bars`)
+        done++
+        upsertedTotal += out.result.upserted
+        if (from) {
+          const rate = (Date.now() - startedAt) / Math.max(1, done)
+          process.stdout.write(`  ${date} ${f.root.padEnd(3)} ${String(out.result.upserted).padStart(4)} bars  (${done} fed, ${skipped} skipped, ${empty} empty, ~${Math.round(rate)}ms/day)\r`)
+        } else {
+          console.log(`  ${date} ${f.root.padEnd(4)} upserted ${out.result.upserted} bars`)
+        }
       } else {
-        console.error(`  ${date} ${f.root.padEnd(4)} ${out.error}`)
+        // A holiday or a not-yet-created contract file is expected noise in a
+        // deep range — count it rather than spamming a line per date.
+        empty++
+        if (!from) console.error(`  ${date} ${f.root.padEnd(4)} ${out.error}`)
       }
     }
+  }
+  if (from) {
+    console.log(`\n[public-bar-feed] done: ${done} symbol-days fed (${upsertedTotal.toLocaleString()} bars), ${skipped} already present, ${empty} with no ticks, in ${Math.round((Date.now() - startedAt) / 1000)}s`)
   }
   process.exit(anyOk ? 0 : 1)
 }

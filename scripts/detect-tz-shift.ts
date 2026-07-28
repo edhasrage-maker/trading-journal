@@ -12,6 +12,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { createClient } from '@supabase/supabase-js'
 import { readScidBars } from '../src/lib/scid-reader.ts'
+import { contractFileForRoot } from '../src/lib/futures-contracts.ts'
 
 for (const l of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
   const m = l.match(/^([A-Z_]+)=(.*)$/); if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
@@ -20,29 +21,10 @@ for (const l of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
 const sb: any = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 const DATA = 'D:\\SierraCharts\\Data'
 
-// Front-month NQ by date: each contract is front-month until its roll (8 days
-// before the quarterly 3rd-Friday expiry). resolve(d) = first contract not yet
-// rolled at d. Price is index-level so NQ stands in for MNQ trades too.
-const CONTRACTS = [
-  { roll: '2023-03-09', file: 'NQH3.CME.scid' },
-  { roll: '2023-06-08', file: 'NQM3.CME.scid' },
-  { roll: '2023-09-07', file: 'NQU3.CME.scid' },
-  { roll: '2023-12-07', file: 'NQZ3.CME.scid' },
-  { roll: '2024-03-07', file: 'NQH4.CME.scid' },
-  { roll: '2024-06-13', file: 'NQM4.CME.scid' },
-  { roll: '2024-09-12', file: 'NQU4.CME.scid' },
-  { roll: '2024-12-12', file: 'NQZ4.CME.scid' },
-  { roll: '2025-03-13', file: 'NQH5.CME.scid' },
-  { roll: '2025-06-12', file: 'NQM5.CME.scid' },
-  { roll: '2025-09-11', file: 'NQU5.CME.scid' },
-  { roll: '2025-12-11', file: 'NQz5.CME.scid' },
-  { roll: '2026-03-12', file: 'NQH6.CME.scid' },
-  { roll: '2026-06-11', file: 'NQM6.CME.scid' },
-  { roll: '2026-09-11', file: 'NQU6.CME.scid' },
-]
+// Front-month NQ by date, from the shared roll table (8 days before the
+// quarterly 3rd-Friday expiry). Price is index-level so NQ stands in for MNQ.
 function contractFor(dateStr: string): string | null {
-  for (const c of CONTRACTS) if (c.roll > dateStr) return c.file
-  return null
+  return contractFileForRoot('NQ', dateStr, DATA)
 }
 
 function ptComp(ms: number) {
