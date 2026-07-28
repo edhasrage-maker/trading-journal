@@ -106,7 +106,20 @@ Step 4 — VALIDATE. The three prices ALWAYS order as:
 If a value lands on the WRONG side of entry for the direction, you have misread it — re-examine. If you still cannot place it confidently, return null rather than emitting a wrong-sided value. NEVER output a long with stop above entry, or a short with stop below entry.
 
 - Entry time: time at bottom axis at entry point (HH:MM, 24h)
-- Quantity: contracts shown in order marker or stats overlay
+- Quantity (contracts): read it from the OPEN POSITION, never from an order line.
+  It is the "+N" / "-N" size in the position / P&L tile you already located in
+  Step 1 — "+5 | P/L: 7.50C, 0.75p" means FIVE contracts. Report the absolute
+  value (a short's "-5" is quantity 5, not -5).
+  Sierra puts several other numbers nearby that are NOT the position size:
+  - "TQ:5" inside a working-order label is that bracket's TOTAL quantity. The
+    bare number next to the "X" button ("TQ:5  3 | X") is only THAT order's
+    share of it, because a bracket can be split across several orders. If you
+    must use an order label, take the TQ value, never the bare number.
+  - "Trades: 3/7" in a status header is a COUNT of trades taken, not a size.
+  - Child / attached order rows ("Child-Client") often show 0.
+  If the position tile and a TQ value disagree, trust the position tile. If no
+  position size is visible anywhere, return null — do not fall back to a single
+  order's quantity, which is usually smaller than the real position.
 - Symbol: the contract/instrument symbol in the chart header (usually top-left), e.g. "ESU6.CME", "MNQU6.CME", "NQU6.CME". Return the EXACT string shown; do not normalize or guess. Null if not visible.
 
 PART 2 — VISUAL SIGNALS (for tag suggestions)
