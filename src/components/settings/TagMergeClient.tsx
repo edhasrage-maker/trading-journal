@@ -155,6 +155,9 @@ export default function TagMergeClient({
   const [editBusy, setEditBusy] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [editResult, setEditResult] = useState<string | null>(null)
+  // Which category the last edit belonged to, so its confirmation renders next
+  // to that category rather than at the top of the page.
+  const [editResultCat, setEditResultCat] = useState<string | null>(null)
 
   const openEditor = (t: TradeTag) => {
     setEditing(t)
@@ -198,6 +201,7 @@ export default function TagMergeClient({
       if (!res.ok || !json.tag) { setEditError(json.error ?? `Save failed (${res.status})`); return }
       const saved = json.tag
       setTags(prev => prev.map(t => (t.id === saved.id ? saved : t)))
+      setEditResultCat(editing.category)   // pin the confirmation to this category
       setEditResult(
         json.renamed
           ? `Renamed "${json.from_label}" to "${saved.label}" — rewrote ${json.trades_updated ?? 0} trades and ${json.historical_updated ?? 0} imported rows.`
@@ -483,19 +487,14 @@ export default function TagMergeClient({
     }
   }
 
-  return (
-    <div className="space-y-8">
-      {/* Edit result banner */}
-      {editResult && (
-        <div className="bg-green-900/30 border border-green-800 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
-          <Pencil className="w-4 h-4 mt-0.5 shrink-0" />
-          <div>{editResult}</div>
-        </div>
-      )}
-
-      {/* Tag editor. Renaming rewrites usage rather than dropping it, so this
-          is safe in a way that delete-and-re-add is not. */}
-      {editing && (
+  /**
+   * The tag editor, rendered INLINE under the category whose chip was clicked
+   * rather than at the top of the page. It used to live above everything, so
+   * clicking a pencil part-way down a long tag list looked like nothing had
+   * happened — the panel opened off-screen. Built here and placed by the
+   * category loop below.
+   */
+  const tagEditor = editing && (
         <div className="bg-gray-900/60 border border-blue-900/50 rounded-lg p-4 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-white">
@@ -594,8 +593,10 @@ export default function TagMergeClient({
             </button>
           </div>
         </div>
-      )}
+  )
 
+  return (
+    <div className="space-y-8">
       {/* Delete result banner */}
       {deleteResult && (
         <div className="bg-green-900/30 border border-green-800 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
@@ -748,14 +749,22 @@ export default function TagMergeClient({
                       </span>
                     )}
                   </span>
+                  {/* Bigger hit target: a 12px icon inside a padded, rounded
+                      button. The negative margin keeps the chip the same height
+                      while roughly tripling the clickable area — the icon alone
+                      was a ~12px square and easy to miss. */}
                   <button
                     type="button"
                     onClick={() => openEditor(t)}
                     aria-label={`Edit ${t.label}`}
                     title={`Edit "${t.label}" — name, definition, aliases`}
-                    className="text-gray-600 hover:text-blue-400 transition-colors"
+                    className={`-my-1 p-1.5 rounded-full transition-colors ${
+                      editing?.id === t.id
+                        ? 'text-blue-300 bg-blue-900/40'
+                        : 'text-gray-500 hover:text-blue-400 hover:bg-gray-800'
+                    }`}
                   >
-                    <Pencil className="w-3 h-3" />
+                    <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
@@ -815,6 +824,17 @@ export default function TagMergeClient({
             </div>
             {addingCat === cat && addError && (
               <p className="text-xs text-red-400">{addError}</p>
+            )}
+
+            {/* Editor and its result sit under the category they belong to, so
+                the panel appears where you clicked instead of at the top of a
+                long page. */}
+            {editing?.category === cat && tagEditor}
+            {editResult && editResultCat === cat && (
+              <div className="bg-green-900/30 border border-green-800 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
+                <Pencil className="w-4 h-4 mt-0.5 shrink-0" />
+                <div>{editResult}</div>
+              </div>
             )}
           </section>
         )
