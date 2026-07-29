@@ -52,6 +52,30 @@ export function buildDayRegimeSeries(dataDir: string, date: string, warmupDays =
   return { times, seg, pivots, confirmIdx: pivots.map(p => p.confirmIdx) }
 }
 
+/**
+ * Cloud fallback for buildDayRegimeSeries: build the same K=4 5m pivot series
+ * from 1m `ohlcv_bars` rows (the shared bare-root NQ feed) when no local .scid
+ * is readable — e.g. the import ran on a machine without Sierra data, or on
+ * the deployed build. Rows must be ts-ascending (the later 1m bar in each 5m
+ * bucket supplies the close). A few sessions of warmup is enough for the
+ * zig-zag to confirm 2 highs + 2 lows; scripts/backfill-structure-regime.ts
+ * (full roll-bounded warmup) remains authoritative.
+ */
+export function buildRegimeSeriesFrom1mBars(rows: Array<{ ts: string; close: number }>): RegimeSeries | null {
+  const buckets = new Map<number, number>() // 5m bucket-open epoch sec → last close
+  for (const r of rows) {
+    const ms = Date.parse(r.ts)
+    if (!Number.isFinite(ms) || !Number.isFinite(r.close)) continue
+    buckets.set(Math.floor(ms / 300_000) * 300, r.close)
+  }
+  if (buckets.size < 10) return null
+  const times = [...buckets.keys()].sort((a, b) => a - b)
+  const closes = times.map(t => buckets.get(t)!)
+  const seg = new Array(closes.length).fill(0)
+  const pivots = findPivots(closes, seg, 4)
+  return { times, seg, pivots, confirmIdx: pivots.map(p => p.confirmIdx) }
+}
+
 /** Regime at an entry instant against a prebuilt day series. Null when the entry
  *  is before the series or >15 min from the nearest bar (data gap). */
 export function regimeAtEntry(series: RegimeSeries, entryMs: number): Regime | null {

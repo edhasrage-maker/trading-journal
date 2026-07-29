@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server'
 import { blockIfCloud } from '@/lib/local-features-guard'
 import { OBS_RECORDINGS_DIR } from '../list/route'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
+import { followFade, type Regime } from '@/lib/market-structure'
 
 const client = new Anthropic()
 
@@ -116,6 +117,22 @@ export async function POST(req: Request) {
     .order('sort_order') as { data: { label: string }[] | null }
   const mistakeLibrary = (mistakeRows ?? []).map(r => r.label)
 
+  // Per-trade deterministic 5m pivot regime (K=4 structure study) — read from
+  // the DB, not trusted from the client payload, so the prompt can CITE the
+  // trader's own computed structure instead of the model narrating trend from
+  // frames it can't fully see (the "finally a with-trend entry" failure mode).
+  const regimeById = new Map<string, string>()
+  {
+    const tradeIds = trades.map(t => t.id).filter(Boolean)
+    if (tradeIds.length > 0) {
+      const { data: regimeRows } = await supabase
+        .from('trades').select('id, structure_5m_regime').in('id', tradeIds)
+      for (const r of (regimeRows ?? []) as { id: string; structure_5m_regime: string | null }[]) {
+        if (r.structure_5m_regime) regimeById.set(r.id, r.structure_5m_regime)
+      }
+    }
+  }
+
   // Build the multimodal content array: one image block per frame, then the text.
   const blocks: Anthropic.MessageParam['content'] = []
   const labels: string[] = []
@@ -209,8 +226,18 @@ export async function POST(req: Request) {
     const mistakes = (t.tags_json?.mistakes as string[] | undefined)?.join(', ') || '—'
     const orderFlow = (t.tags_json?.order_flow as string[] | undefined)?.join(', ') || '—'
     const notes = t.notes?.trim() ? `\n  notes: ${t.notes.trim()}` : ''
+    const regime = regimeById.get(t.id)
+    const dirLower = t.direction?.toLowerCase()
+    let structLine = 'unavailable'
+    if ((regime === 'bull' || regime === 'bear' || regime === 'neutral' || regime === 'insufficient')
+        && (dirLower === 'long' || dirLower === 'short')) {
+      const ff = followFade(dirLower, regime as Regime)
+      structLine = regime === 'bull' || regime === 'bear'
+        ? `${regime} (${dir} = ${ff === 'follow' ? 'WITH' : 'AGAINST'} confirmed 5m structure)`
+        : regime === 'neutral' ? 'neutral (no confirmed 5m trend at entry)' : 'insufficient data'
+    }
     return `Trade ${i + 1} (id=${t.id}): ${dir} ${t.quantity ?? '?'} @ ${t.entry_price ?? '?'} → ${t.exit_price ?? '?'} | PnL ${pnl}
-  setups: ${setups} | order_flow: ${orderFlow} | mistakes: ${mistakes}${notes}`
+  setups: ${setups} | order_flow: ${orderFlow} | mistakes: ${mistakes} | structure_5m: ${structLine}${notes}`
   }).join('\n')
 
   const mistakeListBlock = mistakeLibrary.length > 0
@@ -223,6 +250,16 @@ export async function POST(req: Request) {
     ? `\n\nHOW THE ENTRY IMAGES ARE PROVIDED: each entry moment is an OVERVIEW image (the whole trading screen, downsized so fine text is soft) followed by several high-resolution TILES — magnified crops of that same screen. Use the OVERVIEW only to understand the layout and which panel is which (DOM, footprint, order-flow, chart). READ THE ACTUAL NUMBERS — DOM ladder prices, footprint cell values, and the prices on horizontal order lines — off the TILES, where they are legible. Do NOT read fine numbers off the OVERVIEW. A tile labeled e.g. "top-right" is the magnified top-right region of the same screen; a price is real only if you can read it on a tile.`
     : ''
 
+  // The frames show single moments — the model cannot see the tape between
+  // entries, and left to itself it narrates market structure ("higher-highs
+  // all morning", "buyers dried up") from what it can't verify. The
+  // structure_5m field is the trader's own deterministic pivot regime; make
+  // the model cite it rather than invent structure, and keep day-direction
+  // and 5m-timing claims distinct.
+  const structureRuleBlock = `
+
+MARKET-STRUCTURE DISCIPLINE: each trade's structure_5m field below is the trader's own deterministic 5-minute pivot regime at entry (strict K=4 fractal pivots on closes, ~20-minute confirmation lag; bull = HH+HL, bear = LH+LL, neutral = mixed/unconfirmed). Treat it as the ONLY authority on intraday trend/structure: cite it instead of inferring trend from the frames, and when it reads "unavailable", do not characterize the session's trend or structure at all — critique only what is visible in the frame at that moment. Never extrapolate one bounce or leg into a session-wide bias (e.g. "the trend was against you all morning"). Day direction and 5m timing are different claims: an entry can be WITH the day's dominant direction yet fired into a counter-trend bounce with no confirmed 5m structure — in that case say so precisely and critique the timing and location, not the direction. Do not describe order flow or "the tape" between entries; you only see isolated frames.`
+
   const traderProfile = await getTraderProfile()
   const prompt = profileContextBlock(traderProfile) + `You are an objective trading coach reviewing screen-recording frames from a futures trader's session. Each frame is what the trader was looking at on the chart at a precise moment.
 
@@ -234,7 +271,7 @@ For each trade you see frames of (an ENTRY frame and, when distinct, an EXIT fra
    - entry_price: the price the order was waiting at
    - stop_price: the working stop line (BELOW entry for longs, ABOVE for shorts). Sierra labels these as "Stop|Child-Client" with a "(-N.NNp)" suffix indicating distance — when you see "(-20.00p)" on a short, the stop is 20 points above entry.
    - tp1_price / tp2_price: working limit / TP lines (ABOVE entry for longs, BELOW for shorts). TP1 is closer to entry.
-   CRITICAL: return null for any field you cannot confidently read off the price scale or a labeled order line. DO NOT GUESS. A null is far more useful than a hallucinated number — the trader will be using these to backfill missing data. levels_confidence is "high" only if every non-null field came from a clearly-labeled order line at a readable price; "medium" if inferred from line position; "low" if the chart was hard to read.${mistakeListBlock}${tilingExplainBlock}
+   CRITICAL: return null for any field you cannot confidently read off the price scale or a labeled order line. DO NOT GUESS. A null is far more useful than a hallucinated number — the trader will be using these to backfill missing data. levels_confidence is "high" only if every non-null field came from a clearly-labeled order line at a readable price; "medium" if inferred from line position; "low" if the chart was hard to read.${mistakeListBlock}${tilingExplainBlock}${structureRuleBlock}
 
 The image array above is ordered as follows:
 ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}

@@ -7,7 +7,8 @@ import { perLegMaxDollars, type BarLike } from '@/lib/analytics'
 import { computeStructure5mAlignment } from '@/lib/structure-5m'
 import { isOutsideRth } from '@/lib/rth'
 import { sessionUtcWindow, todayPT } from '@/lib/pt-time'
-import { buildDayRegimeSeries, regimeAtEntry, buildDayEntryMetrics, atrAtEntry, rvolAtEntry } from '@/lib/nq-front-month'
+import { buildDayRegimeSeries, buildRegimeSeriesFrom1mBars, regimeAtEntry, buildDayEntryMetrics, atrAtEntry, rvolAtEntry } from '@/lib/nq-front-month'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { TradingDay } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -160,18 +161,28 @@ export async function POST(req: Request) {
       const symbols = Array.from(new Set(payload.map(r => r.symbol).filter((s): s is string => !!s)))
       const barsBySymbol = new Map<string, BarLike[]>()
       for (const symbol of symbols) {
-        const { data: barRows } = await supabase
-          .from('ohlcv_bars')
-          .select('ts, high, low, close')
-          .eq('symbol', symbol)
-          .gte('ts', dayStart)
-          .lte('ts', dayEnd)
-          .order('ts', { ascending: true })
-        if (barRows && barRows.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          barsBySymbol.set(symbol, (barRows as any[]).map(b => ({
-            ts: b.ts, high: Number(b.high), low: Number(b.low), close: Number(b.close),
-          })))
+        // The shared cloud feed stores continuous bars under the bare mini
+        // root (NQ/ES), not the dated contract on the trade (MNQU6.CME) — the
+        // same resolution /api/bars and atr.ts apply. Try the exact symbol
+        // first (local imports of dated series), then fall back to the root;
+        // without the fallback every prod import computed alignment/MFE
+        // against zero bars.
+        const candidates = [symbol, chartSeriesRoot(symbol)].filter((s, i, a) => a.indexOf(s) === i)
+        for (const barSymbol of candidates) {
+          const { data: barRows } = await supabase
+            .from('ohlcv_bars')
+            .select('ts, high, low, close')
+            .eq('symbol', barSymbol)
+            .gte('ts', dayStart)
+            .lte('ts', dayEnd)
+            .order('ts', { ascending: true })
+          if (barRows && barRows.length > 0) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            barsBySymbol.set(symbol, (barRows as any[]).map(b => ({
+              ts: b.ts, high: Number(b.high), low: Number(b.low), close: Number(b.close),
+            })))
+            break
+          }
         }
       }
 
@@ -264,20 +275,51 @@ export async function POST(req: Request) {
       // backfill (scripts/backfill-structure-regime.ts) is authoritative.
       try {
         const dataDir = process.env.SIERRA_DATA_DIR || 'D:\\SierraCharts\\Data'
-        const series = buildDayRegimeSeries(dataDir, d)
-        if (series) {
+        let series = buildDayRegimeSeries(dataDir, d)
+        let regimeSource = 'scid'
+        if (!series) {
+          // No readable .scid (deployed build, or the machine without Sierra
+          // data): rebuild the series from the shared ohlcv_bars feed. The
+          // regime study runs on NQ regardless of the instrument traded.
+          // 7 calendar days ≈ 5 sessions of warmup for the K=4 zig-zag.
+          regimeSource = 'ohlcv_bars'
+          const warmStart = new Date(Date.parse(d + 'T00:00:00Z') - 7 * 86400000).toISOString()
+          const seriesEnd = new Date(Date.parse(d + 'T00:00:00Z') + 86400000).toISOString()
+          const rows: Array<{ ts: string; close: number }> = []
+          const PAGE = 1000
+          for (let p = 0; ; p++) {
+            const { data: page } = await supabase
+              .from('ohlcv_bars')
+              .select('ts, close')
+              .eq('symbol', 'NQ')
+              .gte('ts', warmStart)
+              .lt('ts', seriesEnd)
+              .order('ts', { ascending: true })
+              .range(p * PAGE, p * PAGE + PAGE - 1)
+            if (!page || page.length === 0) break
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            rows.push(...(page as any[]).map(b => ({ ts: b.ts as string, close: Number(b.close) })))
+            if (page.length < PAGE) break
+          }
+          series = buildRegimeSeriesFrom1mBars(rows)
+        }
+        if (!series) {
+          console.warn(`[import-sc-log] structure_5m_regime: no series for ${d} (no .scid and no cloud NQ bars)`)
+        } else {
           const { data: regimeTrades } = await supabase
             .from('trades').select('id, entry_time, structure_5m_regime').eq('trading_day_id', day.id)
-          let regimeTagged = 0
+          let regimeTagged = 0, regimeNull = 0, regimeErrors = 0
           for (const t of (regimeTrades ?? []) as { id: string; entry_time: string | null; structure_5m_regime: string | null }[]) {
             if (!t.entry_time) continue
             const regime = regimeAtEntry(series, Date.parse(t.entry_time))
-            if (regime && t.structure_5m_regime !== regime) {
-              await supabase.from('trades').update({ structure_5m_regime: regime }).eq('id', t.id)
-              regimeTagged++
+            if (!regime) { regimeNull++; continue }
+            if (t.structure_5m_regime !== regime) {
+              const { error: regErr } = await supabase.from('trades').update({ structure_5m_regime: regime }).eq('id', t.id)
+              if (regErr) { regimeErrors++; console.warn(`[import-sc-log] regime update failed for ${t.id}: ${regErr.message}`) }
+              else regimeTagged++
             }
           }
-          if (regimeTagged > 0) console.log(`[import-sc-log] structure_5m_regime: tagged ${regimeTagged}`)
+          console.log(`[import-sc-log] structure_5m_regime (${regimeSource}): tagged=${regimeTagged}, no-regime=${regimeNull}, errors=${regimeErrors}`)
         }
       } catch (e) {
         console.warn('[import-sc-log] regime tagging skipped:', e instanceof Error ? e.message : 'unknown')
