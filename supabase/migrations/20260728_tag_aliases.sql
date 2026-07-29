@@ -127,8 +127,14 @@ BEGIN
        ARRAY['break and retest','break retest','entered on the retest']),
       ('setups', 'IB Fade',
        ARRAY['ib fade','faded the ib']),
+      -- The label parses as supply AND demand (both words required), while the
+      -- confluence tag "5m Supply/Demand" uses a SLASH, which the matcher reads
+      -- as either-word-satisfies. So a note saying "5m Supply doing" tagged the
+      -- confluence and missed the setup. These aliases close that asymmetry.
       ('setups', 'Supply And Demand',
-       ARRAY['supply and demand','supply zone','demand zone']),
+       ARRAY['supply and demand','supply zone','demand zone',
+             '5m supply','5m demand','1hr supply','1hr demand',
+             'into supply','into demand','off supply','off demand']),
       -- trade_management
       ('trade_management', 'Early Exit',
        ARRAY['exited early','got out early','scared to give back','cut it early']),
