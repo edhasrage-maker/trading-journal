@@ -12,6 +12,7 @@
 // See docs/ai-output-constraints-eval-plan.md.
 
 import type { EodAiAnalysis } from '@/lib/supabase/types'
+import type { SessionFacts } from '@/lib/session-facts'
 
 export interface Violation {
   /** Constraint id, e.g. 'A5' or 'B2'. */
@@ -184,6 +185,11 @@ export const PROMPT_ANCHORS: PromptAnchor[] = [
   // trader had tagged "Follow LTF structure". Distinct from B1: outcome bias is
   // judging a decision by what happened next; this is fabricating market state.
   { id: 'B8', phrase: 'You cannot see the tape', variant: 'both' },
+  // Precomputed tallies/gaps/tag counts. Prompt rules alone did not stop the
+  // arithmetic errors, so this anchor guards the block that supplies the numbers
+  // and checkFactClaims() below grades the output against it.
+  { id: 'B9', phrase: 'NEVER RECALCULATE', variant: 'both' },
+  { id: 'B10', phrase: 'NO INVENTED TRENDS', variant: 'both' },
 ]
 
 /** Returns a violation for every expected anchor missing from `promptText`.
@@ -194,4 +200,79 @@ export function checkPromptDrift(promptText: string, anchors: PromptAnchor[]): V
   return anchors
     .filter(anchor => !hay.includes(anchor.phrase.toLowerCase()))
     .map(anchor => ({ id: anchor.id, tier: 'A' as const, message: `prompt is missing the "${anchor.id}" constraint`, evidence: anchor.phrase }))
+}
+
+// ─── A9: fact-claim verification against precomputed SESSION FACTS ───────────
+
+/**
+ * Grade an analysis's NUMERIC claims against the deterministic session facts.
+ *
+ * This is the check that actually bites. The prompt already told the model to
+ * quote rather than calculate; a live analysis still wrote "3/3 ES supply/demand
+ * trades hit TP" (it was 2/3) and "T1→T2 was 60s, T8→T9 was 2 minutes" (44s and
+ * 84s). Instructions are advisory, a post-hoc comparison is not.
+ *
+ * DELIBERATELY CONSERVATIVE — a false accusation is worse than a miss here,
+ * because every flag costs the trader trust in the checker itself:
+ *   - "N/M" is only judged when M matches a tracked denominator (an instrument's
+ *     trade count, or the session's). A bare "2/3" about something else is
+ *     ignored, and a match is only flagged when N is not a tally we can produce
+ *     for that denominator (wins, losses, or wins+scratches).
+ *   - A "Ti→Tj … <duration>" claim is only judged for CONSECUTIVE pairs we
+ *     measured, with a ±20% or ±15s tolerance so "about 90 seconds" for 86s
+ *     passes while "2 minutes" for 84s does not.
+ */
+export function checkFactClaims(text: string, facts: SessionFacts): Violation[] {
+  const out: Violation[] = []
+  if (!text || facts.n === 0) return out
+
+  // ── Tallies: "3/3", "1/6", "2 of 3" ───────────────────────────────────────
+  const denominators = new Map<number, { label: string; allowed: Set<number> }>()
+  const addDen = (n: number, label: string, wins: number, losses: number, scratches: number) => {
+    if (n <= 1) return   // "1/1" is too ambiguous to judge
+    const allowed = new Set([wins, losses, wins + scratches, losses + scratches])
+    const prev = denominators.get(n)
+    // Two groups can share a denominator (6 NQ trades AND a 6-trade session);
+    // union the allowed sets so an ambiguous match can never be a false flag.
+    if (prev) for (const v of allowed) prev.allowed.add(v)
+    else denominators.set(n, { label, allowed })
+  }
+  for (const t of facts.byInstrument) addDen(t.n, t.root, t.wins, t.losses, t.scratches)
+  addDen(facts.n, 'session', facts.wins, facts.losses, facts.scratches)
+
+  const tallyRe = /(\d{1,2})\s*(?:\/|\s+of\s+)\s*(\d{1,2})/g
+  for (const m of text.matchAll(tallyRe)) {
+    const num = Number(m[1]), den = Number(m[2])
+    if (num > den) continue                       // "2/3R" style noise, not a tally
+    const d = denominators.get(den)
+    if (!d) continue
+    if (!d.allowed.has(num)) {
+      out.push({
+        id: 'A9', tier: 'A',
+        message: `tally "${m[0]}" does not match the computed ${d.label} record`,
+        evidence: `${m[0]} — computed: ${[...d.allowed].sort((a, b) => a - b).join(' or ')} of ${den}`,
+      })
+    }
+  }
+
+  // ── Re-entry gaps: "T1→T2 was 60s" / "T4 to T5 … 90 seconds" ──────────────
+  const gapRe = /T(\d{1,2})\s*(?:→|->|to|and)\s*T(\d{1,2})[^.;]{0,60}?(\d{1,3}(?:\.\d+)?)\s*(seconds?|secs?|s\b|minutes?|mins?|m\b)/gi
+  for (const m of text.matchAll(gapRe)) {
+    const from = Number(m[1]), to = Number(m[2])
+    const value = Number(m[3])
+    const unit = m[4].toLowerCase()
+    const claimed = /^m/.test(unit) ? value * 60 : value
+    const g = facts.gaps.find(x => x.from === from && x.to === to)
+    if (!g || g.seconds == null) continue
+    const tolerance = Math.max(15, g.seconds * 0.2)
+    if (Math.abs(claimed - g.seconds) > tolerance) {
+      out.push({
+        id: 'A9', tier: 'A',
+        message: `T${from}→T${to} gap claim is wrong`,
+        evidence: `claimed ${m[3]}${unit} (${claimed}s), actual ${g.seconds}s`,
+      })
+    }
+  }
+
+  return out
 }

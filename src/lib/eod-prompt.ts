@@ -19,6 +19,7 @@ import path from 'path'
 import type { PrepNotes, AiAnalysis, Trade, MarketContext, EodAiAnalysis, RuleId } from './supabase/types.ts'
 import { symbolToMultiplier } from './futures-symbols.ts'
 import { CAPTURE_UNITS_DISCIPLINE } from './coach-methodology.ts'
+import { computeSessionFacts, sessionFactsBlock } from './session-facts.ts'
 import {
   OWNER_RAILS, isEmptyScoringProfile, resolveRails, resolveRubric, scoringProfileSummary, activeRailIds, sizeCapFor,
   type RailConfig, type ScoringProfile,
@@ -226,6 +227,18 @@ ${ofCriterion}
 No post-exit counterfactuals — not "would have hit target", not "ran X further after the
 stop", not "scratched a winner". Grade the decision on what was knowable at the time.
 (This rule is global; it is not tied to any one scoring criterion.)
+
+**Quote, don't calculate — NEVER RECALCULATE what SESSION FACTS gives you.** Win/loss
+tallies, re-entry gaps in seconds, tag counts and MFE are precomputed in the SESSION FACTS
+block below the trade list. State those figures verbatim: don't count tags by eye, don't add
+up wins, don't turn timestamps into durations. A live analysis got roughly half its numbers
+wrong doing exactly that ("3/3 ES trades hit TP" when it was 2/3; "T1→T2 was 60s" when it
+was 44s) while every field it simply READ was correct.
+
+**NO INVENTED TRENDS.** "The gap lengthens", "quality improves through the session" and
+similar progressions require the values to ACTUALLY be monotone — check the sequence before
+writing one. Picking three values out of a longer list to make a trend appear is the same
+error.
 
 **You cannot see the tape.** You have NO bar series, NO order-flow feed and NO chart for
 this session — only the per-trade fields above. NEVER describe what price or structure was
@@ -611,7 +624,20 @@ note it.
 These come up repeatedly in EOD analyses. Read this section CAREFULLY and apply
 each rule literally — don't soften, don't add hedges, don't tell stories.
 
-**0. You cannot see the tape.** You have NO bar series, NO order-flow feed and
+**0a. Quote, don't calculate — NEVER RECALCULATE what SESSION FACTS gives you.**
+Win/loss tallies, re-entry gaps in seconds, tag counts and MFE are precomputed
+in the SESSION FACTS block below the trade list. State them verbatim: don't
+count tags by eye, don't add up wins, don't convert timestamps into durations.
+A live analysis got roughly half its numbers wrong doing exactly that ("3/3 ES
+trades hit TP" when it was 2/3; "T1→T2 was 60s" when it was 44s) while every
+field it simply READ was correct.
+
+**0b. NO INVENTED TRENDS.** "The gap lengthens", "quality improves through the
+session" and similar progressions require the values to ACTUALLY be monotone —
+check the sequence before writing one. Picking three values out of a longer list
+to make a trend appear is the same error.
+
+**0c. You cannot see the tape.** You have NO bar series, NO order-flow feed and
 NO chart for this session — only the per-trade fields listed above. NEVER
 describe what price or structure was DOING between, during or after entries:
 not "the tape stopped supporting the bullish bias", not "structure invalidated",
@@ -790,6 +816,7 @@ Session clock for reference: RTH 06:30–13:00 PT; Initial Balance 06:30–07:30
 
 Trades Taken (each may include the trader's own notes and a frame-grounded AI commentary written earlier from the OBS recording — treat the commentary as a separate independent observation from the structured tags):
 ${tradesBlock}
+${sessionFactsBlock(computeSessionFacts(trades))}
 
 Trader's EOD Reflection:
 ${eodNotes?.trim() || '(none provided)'}
