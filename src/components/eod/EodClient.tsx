@@ -238,6 +238,18 @@ export default function EodClient({
   const [pinHeader, setPinHeader] = useState(false)
   const [headerH, setHeaderH] = useState(0)
   const headerRef = useRef<HTMLDivElement | null>(null)
+  // The Masthead is FIXED at the top (h-[62px] on md+, h-14 below), so a bar
+  // pinned at top:0 lands underneath it and is invisible. Offset by its height
+  // instead. Kept in JS rather than a Tailwind class so the same number can be
+  // reused for the table-header offset below and the two can't drift.
+  const [navH, setNavH] = useState(62)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)')
+    const sync = () => setNavH(mq.matches ? 62 : 56)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate the saved pin preference once on mount (can't read localStorage during SSR)
     try { setPinHeader(localStorage.getItem(PIN_KEY) === '1') } catch { /* ignore */ }
@@ -851,8 +863,10 @@ export default function EodClient({
       className="space-y-6"
       // The trades table's own header is `sticky` and reads its offset from
       // this variable, so when the recap bar is pinned the column labels come
-      // to rest just below it instead of sliding underneath. 0 when unpinned.
-      style={{ '--eod-sticky-h': pinHeader ? `${headerH}px` : '0px' } as React.CSSProperties}
+      // to rest just below it instead of sliding underneath. It has to clear
+      // the FIXED masthead as well as the bar, hence navH + headerH. 0 when
+      // unpinned, which leaves the table exactly as it was.
+      style={{ '--eod-sticky-h': pinHeader ? `${navH + headerH}px` : '0px' } as React.CSSProperties}
     >
       {toast && (
         <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium transition-all
@@ -866,8 +880,11 @@ export default function EodClient({
           (no more date sitting under the Watch-folder button). */}
       <div
         ref={headerRef}
+        // top must clear the fixed Masthead — at top:0 this pinned underneath
+        // it and looked like the pin did nothing at all.
+        style={pinHeader ? { top: `${navH}px` } : undefined}
         className={pinHeader
-          ? 'sticky top-0 z-30 -mx-4 px-4 py-3 bg-gray-950/95 backdrop-blur border-b border-gray-800 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4'
+          ? 'sticky z-30 -mx-6 px-6 py-3 bg-gray-950/95 backdrop-blur border-b border-gray-800 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4'
           : 'flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4'}
       >
         <div data-tour="eod-header" className="shrink-0">
