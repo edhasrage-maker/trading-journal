@@ -96,7 +96,16 @@ function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
  *  the reader wondering whether the number is missing or the product is broken.
  *  Null when capture rendered a value (no explanation needed). */
 function captureBlankReason(t: Trade, bars?: BarLike[]): string | null {
-  if (captureDisplay(t, bars) != null) return null
+  const shown = captureDisplay(t, bars)
+  if (shown != null && shown !== '—') return null
+  // Ratio computed but out of bounds. This is the one blank that points at a
+  // DATA problem rather than a metric that doesn't apply, so name it — banking
+  // more than the move ever offered is impossible, and the usual cause is a
+  // wrong entry price or a mis-stamped entry time.
+  const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
+  if (r != null) {
+    return `Capture came out at ${Math.round(r * 100)}%, which can't happen — you can't bank more than the best the move offered. Your P&L and the market data for this trade disagree, usually a wrong entry price or an entry time stamped to the minute.`
+  }
   if (t.pnl == null || t.quantity == null || t.entry_price == null) {
     return 'Capture needs entry price, quantity and P&L on this trade.'
   }

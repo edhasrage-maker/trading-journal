@@ -5,12 +5,18 @@
  * scalps. See the audit in the Pt 11 thread: a 73s trade read $120 of "MFE" from
  * bars when the true tick excursion inside the hold window was ~$3.
  *
- * Method — basis-clean: the excursion RANGE comes from the NQ front-month tick
- * series (index proxy for MNQ), anchored to the trade's own entry_price so any
- * MNQ/NQ or calendar-roll basis cancels:
- *   entryTick = first NQ tick at/after entry
- *   high_during_position = entry_price + (max(ticks) − entryTick)
- *   low_during_position  = entry_price + (min(ticks) − entryTick)
+ * Method: the excursion comes from the front-month tick series over the trade's
+ * exact [entry, exit] window, taken DIRECTLY and widened to contain the fill:
+ *   high_during_position = max(max(ticks), entry_price)
+ *   low_during_position  = min(min(ticks), entry_price)
+ * with a basis guard that skips the trade when entry_price sits >0.25% outside
+ * the tick range (that means the series is a different contract).
+ *
+ * It used to anchor instead — entry_price + (extreme − firstTick) — to cancel
+ * MNQ/NQ and roll basis. Roll basis is now handled by resolving the correct
+ * front-month per date, so the anchor was mostly absorbing TIMESTAMP error and
+ * turning it into a shifted band. See the comment in excursion() for the case
+ * that produced a 109% capture.
  * captureComponents clamps mfe_dollars_per_leg to the high/low ceiling, so fixing
  * the extremes fixes capture app-wide while preserving the per-leg scale-out value
  * where it sits below the (now-correct) ceiling.
@@ -111,16 +117,37 @@ function excursion(r: Row): { high: number; low: number; mfeLeg: number | null }
   let ticks: number[]
   try { ticks = rdr.read(r.startMs, r.endMs + 1000) } catch { return null }
   if (ticks.length < 2) return null
-  const entryTick = ticks[0]
   let mx = -Infinity, mn = Infinity
   for (const p of ticks) { if (p > mx) mx = p; if (p < mn) mn = p }
-  const high = r.entry_price + (mx - entryTick)
-  const low = r.entry_price + (mn - entryTick)
 
-  // Per-leg scaling-aware $ ceiling. entryTick is the shared NQ baseline.
+  // Basis guard. Anchoring used to subtract the first tick and add entry_price,
+  // to cancel MNQ/NQ and calendar-roll basis. Roll basis is now handled properly
+  // by resolving the correct front-month per date, and MNQ-vs-NQ is a tick at
+  // most — so what the anchor actually absorbed was TIMESTAMP error, silently
+  // converting it into a shifted excursion band. One trade stamped 08:32 was
+  // really filled in the last seconds of 08:31; the first tick sat 4 points
+  // above the fill, which shifted the band down 4 points and produced a capture
+  // of 109% — impossible, so the UI blanked it.
+  //
+  // Direct extremes instead, with a guard: the fill must sit near the window's
+  // range. A carry basis is ~1% of price (≈295 NQ pts in Dec 2024), while
+  // timestamp slop is a handful of points, so 0.25% separates them cleanly.
+  // Outside that, the tick series is a different contract than the trade —
+  // skip rather than write a basis-shifted excursion.
+  const basisTol = Math.abs(r.entry_price) * 0.0025
+  if (r.entry_price < mn - basisTol || r.entry_price > mx + basisTol) return null
+  // Expand to include the fill: it is part of the position's own price range by
+  // definition, and a minute-rounded entry_time can open the window just after
+  // the actual fill.
+  const high = Math.max(mx, r.entry_price)
+  const low = Math.min(mn, r.entry_price)
+
+  // Per-leg scaling-aware $ ceiling, measured from the FILL (same basis as
+  // high/low above).
   const mult = symbolToMultiplier(r.symbol ?? '')
   const isLong = r.direction === 'long'
-  const favPts = (peak: number) => Math.max(0, isLong ? (peak - entryTick) : (entryTick - peak))
+  const entryBase = r.entry_price
+  const favPts = (peak: number) => Math.max(0, isLong ? (peak - entryBase) : (entryBase - peak))
   const legs = Array.isArray(r.exits_json) ? (r.exits_json as ExitLeg[]).filter(l => l && l.time && l.qty).slice() : []
   let mfeLeg: number | null = null
   if (legs.length > 1) {
