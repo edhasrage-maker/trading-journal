@@ -218,8 +218,15 @@ html[data-theme="light"] {
   --color-gray-900: #F7F8FC;  /* card / panel — raised, near-white */
   --color-gray-800: #D5D9E6;  /* card borders + control fills */
   --color-gray-700: #BFC5D8;  /* dividers / hover borders (more visible) */
-  --color-gray-600: #8892AB;
-  --color-gray-500: #6B7490;  /* faint */
+  /* 600/500 carry most of the small secondary text — column headers, the "· NN%"
+     suffixes, usage counts, help icons. At the previous #8892AB / #6B7490 they
+     measured 2.93:1 and 4.37:1 against the #F7F8FC card, i.e. below the 4.5:1
+     WCAG AA floor for text this size (12px). Both moved down one notch on the
+     same ramp — 600 takes the old 500, 500 goes darker — giving 4.37:1 and
+     5.51:1. Dark mode is unaffected; these sit on #0E1220 there with room to
+     spare. */
+  --color-gray-600: #6B7490;
+  --color-gray-500: #5C6480;  /* faint */
   --color-gray-400: #545C76;  /* muted */
   --color-gray-300: #3D4459;
   --color-gray-200: #2C3345;
