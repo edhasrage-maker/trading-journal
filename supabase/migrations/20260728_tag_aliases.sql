@@ -72,14 +72,33 @@ BEGIN
       -- confluences
       ('confluences', 'VWAP Hold/Bounce',
        ARRAY['at vwap','vwap reclaim','vwap bounce','reclaimed vwap','vwap rejection']),
+      -- Only phrases that name DELTA ON THE DBP. Deliberately NOT "huge
+      -- selling" / "huge sellers" and friends: those describe aggression
+      -- showing up, which is equally consistent with Delta Fade, Following
+      -- Buying/Selling Strength or Absorption. Where the words cannot pick
+      -- between three tags, the right answer is no tag.
       ('confluences', 'Large Delta on DBP',
-       ARRAY['huge delta','big delta','large delta','huge sellers','huge buyers','delta on dbp','vps and delta','stacked delta']),
+       ARRAY['huge delta','big delta','large delta','delta on dbp','vps and delta','stacked delta']),
       ('confluences', '2nd Attempt',
        ARRAY['second attempt','2nd try','2nd time','second time','tried again','entered again']),
       ('confluences', '3rd Attempt',
        ARRAY['third attempt','3rd try','3rd time','third time']),
       ('confluences', 'Added to Position',
        ARRAY['added to position','added size','scaled in']),
+      -- "following" does not stem to "follow", so prose naming the confluence
+      -- missed the tag entirely. Aliased onto the LOWERCASE-s row on purpose:
+      -- that is the label the structure detector emits, so notes and detector
+      -- land on the same row instead of splitting across two casings.
+      ('confluences', 'Follow LTF structure',
+       ARRAY['following ltf structure','following ltf','follow ltf','with ltf structure']),
+      -- Bare "20 EMA" reads as a confluence when listed among them, but as the
+      -- opposite when price loses it — hence the exclusions.
+      ('confluences', '20 EMA Hold',
+       ARRAY['20 ema','20ema','at 20 ema','!broke the 20 ema','!lost the 20 ema']),
+      ('confluences', '9 EMA Hold',
+       ARRAY['9 ema','9ema','at 9 ema','!broke the 9 ema','!lost the 9 ema']),
+      ('confluences', 'IB Hold',
+       ARRAY['ibl','ibh','ib low','ib high','at ib low','at ib high']),
       -- entry_model
       ('entry_model', 'Break of Candle',
        ARRAY['boc','break of candle','entered boc']),
