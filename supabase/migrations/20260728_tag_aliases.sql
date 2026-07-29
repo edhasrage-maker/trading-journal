@@ -150,8 +150,11 @@ BEGIN
       -- confluence tag "5m Supply/Demand" uses a SLASH, which the matcher reads
       -- as either-word-satisfies. So a note saying "5m Supply doing" tagged the
       -- confluence and missed the setup. These aliases close that asymmetry.
+      -- Bare 'supply' / 'demand' are the load-bearing entries: aliases match as
+      -- whole phrases, so the two-word forms below cannot fire on the single
+      -- word on its own, which is how it usually gets written.
       ('setups', 'Supply And Demand',
-       ARRAY['supply and demand','supply zone','demand zone',
+       ARRAY['supply','demand','supply and demand','supply zone','demand zone',
              '5m supply','5m demand','1hr supply','1hr demand',
              'into supply','into demand','off supply','off demand']),
       -- trade_management
