@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import Link from 'next/link'
-import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X, Upload, Share2, Pin, PinOff } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X, Upload, Share2 } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
@@ -227,48 +227,6 @@ export default function EodClient({
 
   // Help-popup state for the header MFE/MAE definitions. Same pattern as the
   // dashboard RecentDaysList — click to toggle, click outside to dismiss.
-  /**
-   * Pin the recap header so the day's stats stay on screen while scrolling the
-   * trades. Off by default and remembered per device. Its measured height feeds
-   * the --eod-sticky-h variable on the page root, which the trades table's own
-   * sticky header reads as its offset — otherwise the two would occupy the same
-   * strip and the column labels would disappear behind this bar.
-   */
-  const PIN_KEY = 'eod-pin-header-v1'
-  const [pinHeader, setPinHeader] = useState(false)
-  const [headerH, setHeaderH] = useState(0)
-  const headerRef = useRef<HTMLDivElement | null>(null)
-  // The Masthead is FIXED at the top (h-[62px] on md+, h-14 below), so a bar
-  // pinned at top:0 lands underneath it and is invisible. Offset by its height
-  // instead. Kept in JS rather than a Tailwind class so the same number can be
-  // reused for the table-header offset below and the two can't drift.
-  const [navH, setNavH] = useState(62)
-  useEffect(() => {
-    const mq = window.matchMedia('(min-width: 768px)')
-    const sync = () => setNavH(mq.matches ? 62 : 56)
-    sync()
-    mq.addEventListener('change', sync)
-    return () => mq.removeEventListener('change', sync)
-  }, [])
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate the saved pin preference once on mount (can't read localStorage during SSR)
-    try { setPinHeader(localStorage.getItem(PIN_KEY) === '1') } catch { /* ignore */ }
-  }, [])
-  useEffect(() => {
-    try { localStorage.setItem(PIN_KEY, pinHeader ? '1' : '0') } catch { /* ignore */ }
-  }, [pinHeader])
-  // Height is re-measured on resize/reflow — the strip wraps to two rows on
-  // narrow viewports, and a stale offset would leave a gap or an overlap.
-  useEffect(() => {
-    const el = headerRef.current
-    if (!el || !pinHeader) { setHeaderH(0); return }
-    const measure = () => setHeaderH(el.getBoundingClientRect().height)
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [pinHeader])
-
   const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
   const [ratioInfoOpen, setRatioInfoOpen] = useState(false)
   const mfeInfoRef = useRef<HTMLDivElement>(null)
@@ -859,15 +817,7 @@ export default function EodClient({
   }
 
   return (
-    <div
-      className="space-y-6"
-      // The trades table's own header is `sticky` and reads its offset from
-      // this variable, so when the recap bar is pinned the column labels come
-      // to rest just below it instead of sliding underneath. It has to clear
-      // the FIXED masthead as well as the bar, hence navH + headerH. 0 when
-      // unpinned, which leaves the table exactly as it was.
-      style={{ '--eod-sticky-h': pinHeader ? `${navH + headerH}px` : '0px' } as React.CSSProperties}
-    >
+    <div className="space-y-6">
       {toast && (
         <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium transition-all
           ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
@@ -878,15 +828,7 @@ export default function EodClient({
       {/* Header — single row. Left (title + date) is shrink-0 so it never gets
           compressed; the gap-4 guarantees clear space before the action buttons
           (no more date sitting under the Watch-folder button). */}
-      <div
-        ref={headerRef}
-        // top must clear the fixed Masthead — at top:0 this pinned underneath
-        // it and looked like the pin did nothing at all.
-        style={pinHeader ? { top: `${navH}px` } : undefined}
-        className={pinHeader
-          ? 'sticky z-30 -mx-6 px-6 py-3 bg-gray-950/95 backdrop-blur border-b border-gray-800 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4'
-          : 'flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4'}
-      >
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
         <div data-tour="eod-header" className="shrink-0">
           <h1 className="text-xl font-bold text-white">EOD Recap</h1>
           {/* Ended by choice (Pt 13 step 3) — a positive discipline note when the
@@ -954,25 +896,6 @@ export default function EodClient({
                 <Share2 className="w-3.5 h-3.5" /> {sharing ? 'Sharing…' : 'Share'}
               </button>
             )}
-            {/* Keep this strip on screen while scrolling the trades. Sits with
-                the other actions and carries a text label — as a bare icon next
-                to the heading it was invisible in practice. */}
-            <button
-              type="button"
-              onClick={() => setPinHeader(p => !p)}
-              aria-pressed={pinHeader}
-              title={pinHeader
-                ? 'Unpin — let this bar scroll away with the page'
-                : 'Pin this bar so the day’s stats stay visible while you scroll'}
-              className={`inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1 border transition-colors ${
-                pinHeader
-                  ? 'bg-blue-900/40 border-blue-700 text-blue-200 hover:bg-blue-900/60'
-                  : 'bg-gray-800 border-gray-700 text-gray-200 hover:bg-gray-700'
-              }`}
-            >
-              {pinHeader ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
-              {pinHeader ? 'Pinned' : 'Pin'}
-            </button>
           </div>
         </div>
         <div className="flex items-center gap-2 text-sm">

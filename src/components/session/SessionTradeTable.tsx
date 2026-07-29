@@ -613,10 +613,7 @@ export default function SessionTradeTable({
               user scrolls through trades. bg-gray-900 (matches the card
               background) so scrolling content doesn't show through. z-20
               is one above the chip's z-10 so the header always wins. */}
-          {/* top comes from --eod-sticky-h so this rests just under the EOD
-              recap bar when that is pinned. Defaults to 0 everywhere else
-              (Intraday sets no variable), preserving the old behaviour. */}
-          <thead className="sticky bg-gray-900 z-20" style={{ top: 'var(--eod-sticky-h, 0px)' }}>
+          <thead className="sticky top-0 bg-gray-900 z-20">
             <tr className="text-gray-500 border-b border-gray-800">
               <th className="font-normal pb-2 pr-2 w-8">
                 <button
