@@ -18,7 +18,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare } from 'lucide-react'
 import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaePoints, formatCapturePct, exitedAtExtreme, CAPTURE_AT_EXTREME_TOOLTIP, type BarLike } from '@/lib/analytics'
 import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { postExitVerdict, type VerdictTrade, type VerdictTone } from '@/lib/post-exit-verdict'
@@ -331,6 +331,23 @@ export default function SessionTradeTable({
   const showMfe = isCapture ? false : cols.mfe
   const showMae = isCapture ? false : cols.mae
   const showPostExit = isCapture ? false : cols.postExit
+
+  // Select-all for the bulk tag / delete flows. Deliberately built out of the
+  // existing per-row onToggleSelect rather than a new prop: both callers update
+  // selection with a functional setState, so sequential toggles compose, and
+  // neither has to change. Operates on the trades actually rendered.
+  const allSelected = sortedTrades.length > 0 && sortedTrades.every(t => selectedIds.has(t.id))
+  const someSelected = sortedTrades.some(t => selectedIds.has(t.id))
+  const toggleSelectAll = () => {
+    for (const t of sortedTrades) {
+      // Toggle only the rows that need to change, so this lands on all-on or
+      // all-off rather than inverting a partial selection.
+      if (allSelected === selectedIds.has(t.id)) onToggleSelect(t.id)
+    }
+  }
+  const selectAllTitle = allSelected
+    ? `Deselect all ${sortedTrades.length}`
+    : `Select all ${sortedTrades.length} trade${sortedTrades.length === 1 ? '' : 's'}`
   // Mixed-instrument day → highlight the per-row symbol chip so an ES entry at
   // 7,5xx isn't sitting unexplained among NQ 29,7xx rows.
   const mixedSymbols = useMemo(
@@ -496,6 +513,22 @@ export default function SessionTradeTable({
           >
             {sortDir === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
           </button>
+          {/* Same select-all as the desktop header — the bulk tag/delete bar is
+              reachable on mobile too, so it needs a way to fill it. */}
+          <button
+            type="button"
+            onClick={toggleSelectAll}
+            disabled={sortedTrades.length === 0}
+            aria-label={selectAllTitle}
+            title={selectAllTitle}
+            className="shrink-0 px-2.5 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-300 hover:text-white disabled:opacity-40 transition-colors"
+          >
+            {allSelected
+              ? <CheckSquare className="w-4 h-4 text-blue-400" />
+              : someSelected
+                ? <MinusSquare className="w-4 h-4 text-blue-400/70" />
+                : <Square className="w-4 h-4" />}
+          </button>
         </div>
         {sortedTrades.map(t => {
           const pnl = t.pnl ?? 0
@@ -582,7 +615,22 @@ export default function SessionTradeTable({
               is one above the chip's z-10 so the header always wins. */}
           <thead className="sticky top-0 bg-gray-900 z-20">
             <tr className="text-gray-500 border-b border-gray-800">
-              <th className="font-normal pb-2 pr-2 w-8" />
+              <th className="font-normal pb-2 pr-2 w-8">
+                <button
+                  type="button"
+                  onClick={toggleSelectAll}
+                  disabled={sortedTrades.length === 0}
+                  aria-label={selectAllTitle}
+                  title={selectAllTitle}
+                  className="flex items-center justify-center text-gray-500 hover:text-blue-400 disabled:opacity-40 transition-colors"
+                >
+                  {allSelected
+                    ? <CheckSquare className="w-3.5 h-3.5 text-blue-400" />
+                    : someSelected
+                      ? <MinusSquare className="w-3.5 h-3.5 text-blue-400/70" />
+                      : <Square className="w-3.5 h-3.5" />}
+                </button>
+              </th>
               <SortableHeader label="Time" sortKey="time" align="left" current={sortKey} dir={sortDir} onSort={onSort} />
               {/* Setup column replaces the old Dir column. Direction is
                   shown as an inline arrow on the setup chip itself. */}
