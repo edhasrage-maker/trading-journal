@@ -871,21 +871,7 @@ export default function EodClient({
           : 'flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4'}
       >
         <div data-tour="eod-header" className="shrink-0">
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            EOD Recap
-            {/* Pin the whole strip — title, date, actions and the day's stats —
-                so the numbers stay on screen while reading down the trades.
-                Off by default; the choice is remembered per device. */}
-            <button
-              type="button"
-              onClick={() => setPinHeader(p => !p)}
-              aria-pressed={pinHeader}
-              title={pinHeader ? 'Unpin — let this scroll away' : 'Pin this bar so it stays visible while you scroll'}
-              className={`transition-colors ${pinHeader ? 'text-blue-400' : 'text-gray-600 hover:text-gray-300'}`}
-            >
-              {pinHeader ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
-            </button>
-          </h1>
+          <h1 className="text-xl font-bold text-white">EOD Recap</h1>
           {/* Ended by choice (Pt 13 step 3) — a positive discipline note when the
               trader called the session early rather than trading to the close. */}
           {endedAtLabel && (
@@ -951,6 +937,25 @@ export default function EodClient({
                 <Share2 className="w-3.5 h-3.5" /> {sharing ? 'Sharing…' : 'Share'}
               </button>
             )}
+            {/* Keep this strip on screen while scrolling the trades. Sits with
+                the other actions and carries a text label — as a bare icon next
+                to the heading it was invisible in practice. */}
+            <button
+              type="button"
+              onClick={() => setPinHeader(p => !p)}
+              aria-pressed={pinHeader}
+              title={pinHeader
+                ? 'Unpin — let this bar scroll away with the page'
+                : 'Pin this bar so the day’s stats stay visible while you scroll'}
+              className={`inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1 border transition-colors ${
+                pinHeader
+                  ? 'bg-blue-900/40 border-blue-700 text-blue-200 hover:bg-blue-900/60'
+                  : 'bg-gray-800 border-gray-700 text-gray-200 hover:bg-gray-700'
+              }`}
+            >
+              {pinHeader ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+              {pinHeader ? 'Pinned' : 'Pin'}
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-2 text-sm">
