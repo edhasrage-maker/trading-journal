@@ -97,15 +97,20 @@ Step 2 — ENTRY = the position's average fill price. Prefer DERIVING it, in thi
 
   (a) SOLVE IT FROM THE WORKING ORDERS — most reliable, and self-checking.
       Each bracket order's label carries its projected P&L in POINTS, and that
-      distance is measured from your entry. So:
-          entry = stop_price   − stop_points     (long)
-          entry = stop_price   + stop_points     (short)
-          entry = target_price − target_points   (short)
-          entry = target_price + target_points   (long)
-      Worked example — a SHORT showing "B|Stop (-84.00C, 21.00p)" at 27876.00 and
-      "B|Lmt (+168.00C, 42.00p)" at 27813.00 gives 27876 − 21 = 27855 AND
-      27813 + 42 = 27855. Two orders agreeing is a confirmed entry. If they
-      disagree, the labels were misread — re-read them before going on.
+      distance is measured from your entry. Work from the GEOMETRY — a long's
+      stop sits BELOW its entry and its target ABOVE; a short is the mirror:
+          LONG :  entry = stop_price   + stop_points     (stop is below)
+                  entry = target_price − target_points   (target is above)
+          SHORT:  entry = stop_price   − stop_points     (stop is above)
+                  entry = target_price + target_points   (target is below)
+      Worked example 1 — a SHORT with "B|Stop (-84.00C, 21.00p)" at 27876.00 and
+      "B|Lmt (+168.00C, 42.00p)" at 27813.00: 27876 − 21 = 27855 AND
+      27813 + 42 = 27855.
+      Worked example 2 — a LONG with "S|Stop (-130.00C, 13.00p)" at 28004.00 and
+      "S|Lmt (+180.00C, 30.00p)" at 28047.00: 28004 + 13 = 28017 AND
+      28047 − 30 = 28017.
+      Two orders agreeing is a confirmed entry. If they disagree, the labels were
+      misread — re-read them before going on.
   (b) The position average-price LINE (the horizontal line the position/P&L tile
       is anchored to).
   (c) Back it out of current price and open P&L points (long: current − open
