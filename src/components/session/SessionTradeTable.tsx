@@ -754,7 +754,7 @@ export default function SessionTradeTable({
                   </div>
                 )}
               </th>}
-              {showPostExit && <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap" title="Was your exit well-timed? A plain-language verdict from what the market did in the 30 min after you were out — 'exit right' (it reversed once you left), 'early' (it kept running your way — money left on the table), 'stop right' (a loss that kept going against you), or 'gave it back' (you had a real winner before it turned red).">Post-Exit</th>}
+              {showPostExit && <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap" title="Was your exit well-timed? A plain-language verdict from what the market did in the 15 min after you were out — 'exit right' (it reversed once you left), 'early' (it kept running your way — money left on the table), 'stop right' (a loss that kept going against you), or 'gave it back' (you had a real winner before it turned red).">Post-Exit</th>}
               <th className="w-8" />
             </tr>
           </thead>
@@ -989,7 +989,7 @@ export default function SessionTradeTable({
                     const ext = postExitByTradeId?.[t.id]
                     const v = postExitVerdict(t as VerdictTrade, ext)
                     if (!v) return <td className="py-1.5 pr-3 text-left text-gray-700">—</td>
-                    // The 30-min post-exit window hasn't fully filled — common
+                    // The 15-min post-exit window hasn't fully filled — common
                     // when the session was ended early (Pt 13 step 3). Flag the
                     // verdict as provisional rather than silently under-counting.
                     const partial = ext != null && ext.full_window === false
@@ -1006,7 +1006,7 @@ export default function SessionTradeTable({
                           {partial && (
                             <span
                               className="ml-1.5 align-middle text-[9px] font-normal text-amber-400/80 border border-amber-700/50 rounded px-1 py-0.5"
-                              title="The 30-minute post-exit window hasn't fully elapsed yet — this verdict is provisional and updates once it does."
+                              title="The 15-minute post-exit window hasn't fully elapsed yet — this verdict is provisional and updates once it does."
                             >
                               partial window
                             </span>

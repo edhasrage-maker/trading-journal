@@ -74,10 +74,10 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       if (value != null) liveAtrByTradeId[t.id] = value
     }
 
-    // Post-Exit Continuation @ 30 min — uses the same bar set we fetched for
-    // live ATR. For each trade with an exit, look at the 30 minutes after
-    // exit_time and record max continuation in trade direction and max
-    // reversal against it. Trade list displays "compared to what you took".
+    // Post-Exit Continuation (POST_EXIT_WINDOW_MIN after exit) — uses the same
+    // bar set we fetched for live ATR. For each trade with an exit, record max
+    // continuation in trade direction and max reversal against it. Trade list
+    // displays "compared to what you took".
     for (const t of trades) {
       if (!t.symbol) continue
       const bars = barsBySymbolDate.get(`${t.symbol}|${date}`)
@@ -86,7 +86,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         direction: t.direction,
         exit_price: t.exit_price,
         exit_time: t.exit_time,
-      }, 30)
+      })
       if (ext != null) postExitByTradeId[t.id] = ext
     }
   }

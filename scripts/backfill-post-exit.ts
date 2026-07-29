@@ -5,7 +5,7 @@
  *   node --experimental-strip-types scripts/backfill-post-exit.ts
  *
  * Self-contained (no '@/...' imports) so raw Node resolves it. Replicates
- * postExitExtension (src/lib/atr.ts) + fetchAllBars EXACTLY — 30-min window,
+ * postExitExtension (src/lib/atr.ts) + fetchAllBars EXACTLY — POST_EXIT_WINDOW_MIN (15-min) window,
  * direction-relative favorable/against points, micro→mini bar fallback.
  * Reads bars from ohlcv_bars, so only days with imported bars get populated.
  */
@@ -18,7 +18,7 @@ for (const l of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
 }
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
-const WINDOW_MIN = 30
+const WINDOW_MIN = 15 // keep in sync with POST_EXIT_WINDOW_MIN in src/lib/atr.ts (script stays self-contained)
 const MICRO_TO_MINI: Record<string, string> = { MNQ: 'NQ', MES: 'ES', MYM: 'YM', M2K: 'RTY' }
 const rootOf = (s: string) => s.replace(/\.[A-Z]+$/, '').replace(/[HMUZ]\d+$/, '')
 const miniSymbol = (s: string) => { const r = rootOf(s); const mini = MICRO_TO_MINI[r]; return mini ? s.replace(r, mini) : null }

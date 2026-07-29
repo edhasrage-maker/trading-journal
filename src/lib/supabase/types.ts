@@ -95,7 +95,7 @@ export interface Database {
           symbol: string | null
           high_during_position: number | null
           low_during_position: number | null
-          // Post-exit continuation (30-min window after exit), points, direction-
+          // Post-exit continuation (15-min window after exit; all stored rows recomputed 2026-07-29), points, direction-
           // relative. favorable = continued the trade's way; against = reversed.
           // Market-sense/directional-read signal, NOT an exit-timing grade.
           // Migration: 20260705_trades_post_exit.sql. Backfill: scripts/backfill-post-exit.ts.

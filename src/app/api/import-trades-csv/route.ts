@@ -6,7 +6,7 @@ import { isNinjaTraderGrid, parseNinjaTraderGrid } from '@/lib/ninjatrader-impor
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { excursionContainsFills } from '@/lib/excursion-guard'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
-import { liveAtr, postExitExtension } from '@/lib/atr'
+import { liveAtr, postExitExtension, POST_EXIT_WINDOW_MIN } from '@/lib/atr'
 import { clientError } from '@/lib/api-error'
 
 /**
@@ -91,7 +91,7 @@ async function applyGrossCommissions(
  * provides but cloud imports lack, from the central bar feed:
  *   - high/low-during-position (MFE/MAE source) — clipped from bars over the hold
  *   - entry_atr_1m (1-min Wilder ATR-10 at entry) — powers the ×ATR MFE/MAE unit
- *   - post_exit_favorable/against_pts (30-min continuation after exit)
+ *   - post_exit_favorable/against_pts (POST_EXIT_WINDOW_MIN continuation after exit)
  * The bars — not the trade log — are the source of truth. Runs once per symbol
  * root over the union window (extended back 60m so ATR-10 can seed, and forward
  * 30m so post-exit has its window). Best-effort: trades outside the bar coverage
@@ -127,7 +127,7 @@ async function backfillExcursionsFromBars(
     // Extend the window 60 min before the earliest entry so ATR-10 has enough
     // preceding 1-min bars to seed (Wilder needs period+1 bars strictly before
     // entry), and 30 min past the latest exit so post-exit has its full window.
-    const bars = await fetchBars(db, root, new Date(min - 60 * 60_000).toISOString(), new Date(max + 30 * 60_000).toISOString())
+    const bars = await fetchBars(db, root, new Date(min - 60 * 60_000).toISOString(), new Date(max + POST_EXIT_WINDOW_MIN * 60_000).toISOString())
     if (bars.length === 0) continue
     const parsed = bars.map(b => ({ t: Date.parse(b.ts), high: b.high, low: b.low }))
     for (const i of idxs) {
@@ -166,10 +166,10 @@ async function backfillExcursionsFromBars(
         const atr = liveAtr(bars, new Date(s), 10)
         if (atr != null) { r.entry_atr_1m = Math.round(atr * 100) / 100; atrFilled++ }
       }
-      // Post-exit continuation over the 30 min after exit (same source as the
-      // local Sierra import + backfill-post-exit script). Needs exit data.
+      // Post-exit continuation over POST_EXIT_WINDOW_MIN after exit (same source as
+      // the local Sierra import + backfill-post-exit script). Needs exit data.
       if (r.post_exit_favorable_pts == null && r.exit_time && r.exit_price != null && r.direction) {
-        const pe = postExitExtension(bars, { direction: r.direction, exit_price: r.exit_price, exit_time: r.exit_time }, 30)
+        const pe = postExitExtension(bars, { direction: r.direction, exit_price: r.exit_price, exit_time: r.exit_time })
         if (pe) {
           r.post_exit_favorable_pts = Math.round(pe.continued_favorable_pts * 100) / 100
           r.post_exit_against_pts = Math.round(pe.continued_against_pts * 100) / 100

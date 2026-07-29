@@ -826,7 +826,7 @@ ${regimeLine(atrRegimeBuckets, ['low volatility', 'normal', 'high volatility']) 
         const avgFav = peVals.reduce((s, v) => s + v.fav, 0) / n
         const avgAgainst = peVals.reduce((s, v) => s + v.against, 0) / n
         const held = peVals.filter(v => v.fav > v.against).length
-        return `  Scored ${n} trades (30-min window after exit).
+        return `  Scored ${n} trades (15-min window after exit).
   After exit, price continued YOUR direction by avg ${avgFav.toFixed(1)} pts vs reversed against you by avg ${avgAgainst.toFixed(1)} pts.
   Directional read kept working (continued your way) on ${held}/${n} (${Math.round((held / n) * 100)}%). Persistently more 'against' than 'favorable' = repeatedly on the wrong side (directional-bias problem). This is a MARKET-SENSE read — do NOT use it to grade exit timing; if early-exit is a stated edge, price continuing after exit is expected, not an error.`
       })()
@@ -904,7 +904,7 @@ ${maeBlock}
 ROUND-TRIP — GAVE-IT-BACK (a trade that ran ≥ ${giveBackRef} in favor — i.e. up a TYPICAL move for this trader — then round-tripped to breakeven-or-worse; this is a management/exit-discipline signal, NOT a disciplined early scratch and NOT a trade that was simply never green):
 ${roundTripBlock}
 
-POST-EXIT — MARKET SENSE / DIRECTIONAL READ (where price went in the 30 min AFTER you exited; a read on directional bias, NOT an exit-timing grade):
+POST-EXIT — MARKET SENSE / DIRECTIONAL READ (where price went in the 15 min AFTER you exited; a read on directional bias, NOT an exit-timing grade):
 ${postExitBlock}
 
 SETUP PERFORMANCE (by total PnL, top 10) — avgR realized; captured%/left$ = winners' $ MFE capture (TP2 headroom per setup):

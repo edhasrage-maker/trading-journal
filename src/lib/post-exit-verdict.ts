@@ -1,6 +1,7 @@
 /**
  * Post-exit verdict — plain-language read on the EXIT decision, judged by what
- * the market did in the 30 minutes after you were out (PostExitData). This is
+ * the market did in the 15 minutes after you were out (PostExitData,
+ * POST_EXIT_WINDOW_MIN). This is
  * the row-level face of "we grade your decisions, not your P&L".
  *
  * Spec: docs/post-exit-verdict-spec.md. Post-exit continuation is judged FIRST;
@@ -73,7 +74,10 @@ export function postExitVerdict(t: VerdictTrade, ext: PostExitData | null | unde
   const contMat = cont >= thresh
   const againstMat = against >= thresh
 
-  // Display magnitude: ×ATR first, R only as a fallback, then whole points.
+  // Display magnitude, used by EVERY branch (2026-07-29 — previously only the
+  // winner/"left" branch was ×ATR while the rest printed raw points, so mixed
+  // NQ/ES days made the column incomparable row to row): ×ATR first, R only as
+  // a fallback, then whole points.
   //
   // What happened AFTER the exit is a fact about the market, not about the
   // trader's risk, so R distorts it: two live trades minutes apart read 8.7R and
@@ -102,21 +106,21 @@ export function postExitVerdict(t: VerdictTrade, ext: PostExitData | null | unde
       return {
         glyph: '◐', tone: 'left',
         label: `early — left ${mag(cont)}${dollars}`,
-        title: `The market ran ${cont.toFixed(1)} pts further in your direction in the 30 min after you exited — you left ${mag(cont)}${dollars} on the table.${partialNote}`,
+        title: `The market ran ${cont.toFixed(1)} pts further in your direction in the 15 min after you exited — you left ${mag(cont)}${dollars} on the table.${partialNote}`,
       }
     }
     if (againstMat && confident(against)) {
       const verb = isLong ? 'dropped' : 'rallied'
       return {
         glyph: '✓', tone: 'good',
-        label: `exit right — ${verb} ${Math.round(against)}pts after`,
-        title: `You locked it in: the market ${verb} ${against.toFixed(1)} pts against your direction in the 30 min after exit.${partialNote}`,
+        label: `exit right — ${verb} ${mag(against)} after`,
+        title: `You locked it in: the market ${verb} ${against.toFixed(1)} pts against your direction in the 15 min after exit.${partialNote}`,
       }
     }
     return {
       glyph: '✓', tone: 'welltimed',
       label: 'well-timed — flat after',
-      title: `Clean exit — the market went essentially nowhere in the 30 min after you were out.${partialNote}`,
+      title: `Clean exit — the market went essentially nowhere in the 15 min after you were out.${partialNote}`,
     }
   }
 
@@ -125,15 +129,15 @@ export function postExitVerdict(t: VerdictTrade, ext: PostExitData | null | unde
     const verb = isLong ? 'falling' : 'rising'
     return {
       glyph: '✓', tone: 'good',
-      label: `stop right — kept ${verb} ${Math.round(against)}pts`,
-      title: `Getting out was correct: the idea stayed invalidated and the market kept ${verb} ${against.toFixed(1)} pts in the 30 min after exit.${partialNote}`,
+      label: `stop right — kept ${verb} ${mag(against)}`,
+      title: `Getting out was correct: the idea stayed invalidated and the market kept ${verb} ${against.toFixed(1)} pts in the 15 min after exit.${partialNote}`,
     }
   }
   if (contMat) {
     return {
       glyph: '◐', tone: 'left',
-      label: `early — recovered ${Math.round(cont)}pts after`,
-      title: `The market recovered ${cont.toFixed(1)} pts back in your direction in the 30 min after you exited — the exit may have been early.${partialNote}`,
+      label: `early — recovered ${mag(cont)} after`,
+      title: `The market recovered ${cont.toFixed(1)} pts back in your direction in the 15 min after you exited — the exit may have been early.${partialNote}`,
     }
   }
   // Flat after a loss — fall back to the intra-trade give-back read.
@@ -149,6 +153,6 @@ export function postExitVerdict(t: VerdictTrade, ext: PostExitData | null | unde
   return {
     glyph: '·', tone: 'flat',
     label: 'flat after',
-    title: `The market went essentially nowhere in the 30 min after exit.${partialNote}`,
+    title: `The market went essentially nowhere in the 15 min after exit.${partialNote}`,
   }
 }

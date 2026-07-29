@@ -69,7 +69,7 @@ function buildEvidence(t: GradableTrade): string {
     lines.push(`- Excursion while held: +${f1(mfe)} pts favorable / -${f1(mae)} pts adverse${xatr}`)
   }
   if (t.post_exit_favorable_pts != null || t.post_exit_against_pts != null) {
-    lines.push(`- After exit (~30m): ${f1(t.post_exit_favorable_pts)} pts continued your way / ${f1(t.post_exit_against_pts)} pts against`)
+    lines.push(`- After exit (~15m): ${f1(t.post_exit_favorable_pts)} pts continued your way / ${f1(t.post_exit_against_pts)} pts against`)
   }
   const exits = [...(t.exits_json ?? []).map(x => x?.price), t.exit_price].filter((p): p is number => typeof p === 'number' && Number.isFinite(p))
   if (e != null && dir && exits.length) {

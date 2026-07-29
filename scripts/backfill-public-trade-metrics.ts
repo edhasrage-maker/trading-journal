@@ -5,7 +5,7 @@
  * fills the two bar-derived fields that import leaves null when the day's bars
  * weren't in the DB yet:
  *   - entry_atr_1m               (Wilder ATR-10 at entry, liveAtr)
- *   - post_exit_favorable_pts    (postExitExtension, 30-min window)
+ *   - post_exit_favorable_pts    (postExitExtension, POST_EXIT_WINDOW_MIN window)
  *   - post_exit_against_pts
  * using src/lib/atr.ts's EXACT logic, so the numbers match the app.
  *
@@ -90,7 +90,7 @@ async function main() {
       if (atr != null) update.entry_atr_1m = r2(atr)
     }
     if (t.post_exit_favorable_pts == null) {
-      const pe = postExitExtension(bars, { direction: t.direction, exit_price: t.exit_price, exit_time: t.exit_time }, 30)
+      const pe = postExitExtension(bars, { direction: t.direction, exit_price: t.exit_price, exit_time: t.exit_time })
       if (pe) {
         update.post_exit_favorable_pts = r2(pe.continued_favorable_pts)
         update.post_exit_against_pts = r2(pe.continued_against_pts)

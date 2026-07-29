@@ -127,9 +127,14 @@ export function liveAtr(bars: AtrBar[], at: Date, period = 10): number | null {
 //   - "I cut at +1R — did it go to +3R after I was out?"
 //   - "I bailed early at -0.5R — did it stop me out, or recover?"
 //
-// Window default: 30 minutes. Public/future version may make this
-// configurable (see docs/PUBLIC_VERSION.md).
+// Window: POST_EXIT_WINDOW_MIN (15 minutes — founder decision 2026-07-29,
+// narrowed from 30 so the verdict reads the immediate aftermath, not the next
+// half-hour's unrelated swings). Every computation site should use the
+// default / constant rather than passing its own number.
 // ────────────────────────────────────────────────────────────────────────────
+
+/** Minutes after exit that post-exit continuation is measured over. */
+export const POST_EXIT_WINDOW_MIN = 15
 
 export interface PostExitData {
   /** How much further the market continued in the trade's direction after exit (>= 0, in price points per contract). */
@@ -153,7 +158,7 @@ interface PostExitTrade {
 export function postExitExtension(
   bars: AtrBar[],
   trade: PostExitTrade,
-  windowMinutes = 30,
+  windowMinutes = POST_EXIT_WINDOW_MIN,
 ): PostExitData | null {
   if (!trade.direction || trade.exit_price == null || !trade.exit_time) return null
   const exitMs = new Date(trade.exit_time).getTime()
