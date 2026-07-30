@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { TradeTag } from '@/lib/supabase/types'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { normalizeTradeLevels } from '@/lib/trade-geometry'
+import { solveBracket } from '@/lib/bracket-solve'
 import { MULTIPLIERS, symbolRoot } from '@/lib/futures-symbols'
 import { clientError } from '@/lib/api-error'
 
@@ -231,36 +232,12 @@ Return ONLY valid JSON with no other text:
     // multi-pane chartbook shows a different one per pane. A real case read
     // 27859 off that readout when the orders put the fill at 27855 — a 4-point
     // error that silently mis-stated R and made P&L irreconcilable.
-    const derivedEntry = (): number | null => {
-      const dir = data.direction
-      if (dir !== 'long' && dir !== 'short') return null
-      const isLong = dir === 'long'
-      const num = (v: unknown): number | null =>
-        typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.abs(v) : null
-      const cands: number[] = []
-      // Long: stop sits BELOW entry and target ABOVE, so entry = stop + d and
-      // entry = target − d. Short is the mirror.
-      const sp = typeof data.stop_price === 'number' ? data.stop_price : null
-      const spd = num(data.stop_points)
-      if (sp != null && spd != null) cands.push(isLong ? sp + spd : sp - spd)
-      const tp = typeof data.tp1_price === 'number' ? data.tp1_price : null
-      const tpd = num(data.tp1_points)
-      if (tp != null && tpd != null) cands.push(isLong ? tp - tpd : tp + tpd)
-      if (cands.length === 0) return null
-      // Both orders must agree (within a tick) before we trust the derivation.
-      if (cands.length === 2 && Math.abs(cands[0] - cands[1]) > 0.5) return null
-      return cands[0]
-    }
-    const solved = derivedEntry()
-    if (solved != null && Number.isFinite(solved)) {
-      // Prefer the solved value; it is arithmetic off two labels, not a reading
-      // of one. Only override when the model's entry actually disagrees.
-      if (typeof data.entry_price !== 'number' || Math.abs(data.entry_price - solved) > 0.5) {
-        data.entry_price = Math.round(solved * 100) / 100
-      }
-    }
-    delete data.stop_points
-    delete data.tp1_points
+    const firstPass = solveBracket(data)
+    data.entry_price = firstPass.entry_price
+    data.stop_price = firstPass.stop_price
+    data.tp1_price = firstPass.tp1_price
+    // stop_points / tp1_points are deliberately kept until AFTER the guards
+    // below — see the second solveBracket call.
 
     // Symbol guard — a Sierra window is full of text that looks symbol-ish: the
     // chart tab strip along the bottom ("NQ 1M FP", "NQ Daily VPs"), study
@@ -316,6 +293,25 @@ Return ONLY valid JSON with no other text:
         if (typeof data.stop_price === 'number' && Math.abs(data.stop_price - e) < 1e-6) data.stop_price = null
       }
     }
+
+    // Second bracket pass — the guards above NULL a level they judge bad, and
+    // until now nothing put one back. But a level whose axis price was misread
+    // is still fully determined by entry plus that order's own point distance,
+    // which is read from inside the order label and survives when the small
+    // axis number does not. So: guards reject, arithmetic restores.
+    //
+    // This is the fix for a live case where a short extracted entry 7415.50 and
+    // stop 7419.50 correctly but returned TP1 EMPTY, with the limit order
+    // plainly reading "(+12.50p)" — 7415.50 − 12.50 = 7403.00, never computed
+    // because the points figure was discarded before it could be used.
+    {
+      const secondPass = solveBracket(data)
+      data.entry_price = secondPass.entry_price
+      data.stop_price = secondPass.stop_price
+      data.tp1_price = secondPass.tp1_price
+    }
+    delete data.stop_points
+    delete data.tp1_points
 
     // Defensive: drop any suggested labels not in the allowed library so the UI doesn't
     // silently miss them, and so we never inject novel tag names.
