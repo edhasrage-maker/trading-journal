@@ -77,8 +77,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   // Bumped by BarWatcher when new bars import; forces LiveChart to re-fetch.
   const [barsVersion, setBarsVersion] = useState(0)
-  // ES/NQ instrument switcher for the chart (shared with intraday + EOD). Other
-  // chartSymbol uses (market-context auto-fill) stay on the day's default.
+  // ES/NQ instrument switcher for the chart (shared with intraday + EOD). The
+  // market-context auto-fill follows `activeSymbol` too — see the fetch below.
   const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(chartSymbol, initialTrades, date)
   // Ref to the LiveChart so analyze() can snapshot its canvas as a PNG when
   // the user hasn't pasted a Sierra screenshot. Falls back to text-only
@@ -218,6 +218,9 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // new bars (barsVersion) so realized stats land as the session prints. A
   // still-null field is un-marked so it retries on the next refresh.
   const statsAutoFilledRef = useRef<Set<string>>(new Set())
+  /** Which instrument the current auto-filled numbers came from, so a switch
+   *  can tell "our stale ES value" from "something the trader typed". */
+  const autoFillSymbolRef = useRef<string | null>(null)
   // Bar-native current price → drives the PD/GBX "in range?" flags (effect
   // below), replacing the fragile screenshot read of "current price".
   const [barCurrentPrice, setBarCurrentPrice] = useState<number | null>(null)
@@ -248,12 +251,18 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     atrWilder10: contextStats?.atr_at_ib_close ?? null,
     ibVs10dAvg: contextStats?.ib_vs_10d_avg ?? null,
   }), [session, contextStats])
+  // Market context is derived from the instrument the trader is actually
+  // looking at, NOT the day's default. Every verdict in the ledger is a ratio
+  // against that instrument's own baselines (ATR vs its 10-day ATR, IB vs its
+  // 10-day IB), so judging an ES session against NQ's baselines reported an
+  // ordinary day as "very compressed" purely because NQ's bars are several
+  // times larger. This effect re-runs on a symbol switch.
   useEffect(() => {
-    if (!chartSymbol || !date) return
+    if (!activeSymbol || !date) return
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch(`/api/bars/market-context?symbol=${encodeURIComponent(chartSymbol)}&date=${date}${session !== 'rth' ? `&session=${session}` : ''}`)
+        const res = await fetch(`/api/bars/market-context?symbol=${encodeURIComponent(activeSymbol)}&date=${date}${session !== 'rth' ? `&session=${session}` : ''}`)
         if (!res.ok) return
         const { stats } = await res.json() as { stats: DayContextStats | null }
         if (cancelled) return
@@ -274,23 +283,32 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           // computes it, so auto-fill it too (ratio, e.g. 1.22).
           ib_vs_10d_avg: stats.ib_vs_10d_avg,
         }
+        // Numbers this effect filled for a DIFFERENT instrument are stale, not
+        // trader input — a switch must replace them, or the form keeps NQ's ADR
+        // and ATR while the verdicts above read ES. Anything typed by hand is
+        // never overwritten: only fields we filled ourselves are re-derived.
+        const symbolChanged = autoFillSymbolRef.current !== null && autoFillSymbolRef.current !== activeSymbol
         setContext(prev => {
           const next = { ...prev }
           let changed = false
           for (const [k, v] of Object.entries(map)) {
-            if (statsAutoFilledRef.current.has(k)) continue
-            statsAutoFilledRef.current.add(k)
-            if (v == null) { statsAutoFilledRef.current.delete(k); continue }
+            if (v == null) continue
             const cur = (prev as Record<string, unknown>)[k]
-            if (cur == null || cur === '') { (next as Record<string, unknown>)[k] = v; changed = true }
+            const isEmpty = cur == null || cur === ''
+            const ourStaleValue = symbolChanged && statsAutoFilledRef.current.has(k)
+            if (!isEmpty && !ourStaleValue) continue
+            ;(next as Record<string, unknown>)[k] = v
+            statsAutoFilledRef.current.add(k)
+            changed = true
           }
           if (changed) autoFilledContextRef.current = true // programmatic fill — must not mark the form dirty
           return changed ? next : prev
         })
+        autoFillSymbolRef.current = activeSymbol
       } catch { /* best-effort — screenshot/manual entry still available */ }
     })()
     return () => { cancelled = true }
-  }, [chartSymbol, date, barsVersion, session])
+  }, [activeSymbol, date, barsVersion, session])
 
   // Persist the day-CHARACTER read (IB day-type Phase 2). Until now the
   // classification was recomputed on every prep open and thrown away; storing
