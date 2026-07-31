@@ -45,10 +45,11 @@ export async function recomputeDayStats(supabase: AnyClient, dayId: string): Pro
 
     const [tradesRes, ctxRes] = await Promise.all([
       supabase.from('trades').select(TRADE_COLS).eq('trading_day_id', dayId),
-      supabase.from('market_context').select('atr_1m').eq('trading_day_id', dayId).maybeSingle(),
+      // One context row per instrument now — maybeSingle() throws on two.
+      supabase.from('market_context').select('atr_1m').eq('trading_day_id', dayId).order('symbol', { ascending: true }).limit(1),
     ])
     const trades = (tradesRes?.data ?? []) as TradeForStats[]
-    const prepAtr = (ctxRes?.data?.atr_1m as number | null | undefined) ?? null
+    const prepAtr = ((ctxRes?.data as { atr_1m: number | null }[] | null)?.[0]?.atr_1m) ?? null
 
     const rollup = computeDayStats(day, trades, prepAtr)
     const { error } = await supabase

@@ -48,12 +48,14 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
 
   // ── Stage B: day-dependent + window-dependent queries, in parallel ──
   const [contextRes, tradesRes, windowTradesRes, windowCtxRes] = await Promise.all([
-    day ? supabase.from('market_context').select('*').eq('trading_day_id', day.id).single() : Promise.resolve({ data: null }),
+    // limit(1) not single(): a day can now hold one context row per
+    // instrument, and single()/maybeSingle() both throw on a second row.
+    day ? supabase.from('market_context').select('*').eq('trading_day_id', day.id).order('symbol', { ascending: true }).limit(1) : Promise.resolve({ data: null }),
     day ? supabase.from('trades').select('*').eq('trading_day_id', day.id).order('entry_time', { ascending: true }) : Promise.resolve({ data: [] as Trade[] }),
     reviewDayIds.length > 0 ? supabase.from('trades').select('*').in('trading_day_id', reviewDayIds) : Promise.resolve({ data: [] as Trade[] }),
     reviewDayIds.length > 0 ? supabase.from('market_context').select('trading_day_id, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m').in('trading_day_id', reviewDayIds) : Promise.resolve({ data: [] }),
   ])
-  const context = contextRes.data as MarketContext | null
+  const context = ((contextRes.data as MarketContext[] | null) ?? [])[0] ?? null
   const trades = (tradesRes.data ?? []) as Trade[]
   const windowTrades = (windowTradesRes.data ?? []) as Trade[]
   const windowCtxRaw = windowCtxRes.data

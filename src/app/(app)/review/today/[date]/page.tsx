@@ -40,10 +40,11 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   if (day) {
     const [tradesRes, ctxRes] = await Promise.all([
       supabase.from('trades').select('*').eq('trading_day_id', day.id).order('entry_time', { ascending: true }),
-      supabase.from('market_context').select('*').eq('trading_day_id', day.id).maybeSingle(),
+      // See prep/[date]: one row per instrument, so never single/maybeSingle.
+      supabase.from('market_context').select('*').eq('trading_day_id', day.id).order('symbol', { ascending: true }).limit(1),
     ])
     trades = (tradesRes.data ?? []) as Trade[]
-    marketContext = ctxRes.data as MarketContext | null
+    marketContext = ((ctxRes.data as MarketContext[] | null) ?? [])[0] ?? null
   }
 
   // Per-trade LIVE ATR: compute ATR-10 Wilder from 1-min bars at each trade's

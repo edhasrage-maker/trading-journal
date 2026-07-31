@@ -6,18 +6,27 @@ import { normalizeTagArray, type TradeTags } from '@/lib/supabase/types'
 import { signDayScreenshots, screenshotStoragePath, normalizeStoredScreenshot } from '@/lib/storage-url'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { clientError } from '@/lib/api-error'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
-export async function GET(_req: Request, { params }: { params: Promise<{ date: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ date: string }> }) {
   const { date } = await params
   const supabase: AnyClient = await createClient()
   const { data: day } = await supabase
     .from('trading_days').select('*').eq('date', date).single() as { data: TradingDay | null }
-  const { data: context } = await supabase
-    .from('market_context').select('*').eq('trading_day_id', day?.id ?? '').single() as { data: MarketContext | null }
+  // A day can hold one context row per instrument, so `.single()` would now
+  // throw the moment a second one exists. Take the caller's symbol when given
+  // and fall back to the first row otherwise, which keeps every existing
+  // single-instrument caller working unchanged.
+  const wanted = new URL(req.url).searchParams.get('symbol')
+  let ctxQuery = supabase
+    .from('market_context').select('*').eq('trading_day_id', day?.id ?? '')
+  if (wanted) ctxQuery = ctxQuery.eq('symbol', chartSeriesRoot(wanted))
+  const { data: contextRows } = await ctxQuery.order('symbol', { ascending: true }).limit(1) as { data: MarketContext[] | null }
+  const context = contextRows?.[0] ?? null
   await signDayScreenshots(supabase, day)
   return NextResponse.json({ day: day ?? null, context: context ?? null })
 }
@@ -108,9 +117,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
   }
 
   if (marketContext && day) {
+    // A day now holds one context row PER INSTRUMENT, so the conflict target
+    // must name both columns: it has to match market_context_day_symbol_idx
+    // exactly or Postgres rejects the upsert ("no unique or exclusion
+    // constraint matching the ON CONFLICT specification"). No user_id here —
+    // trading_day_id is a globally-unique uuid already owned by one user, which
+    // is why this index escapes the multi-tenant recomposition.
+    //
+    // The symbol is normalised to the price-series root and written EXPLICITLY
+    // rather than left to the column default, so an ES prep can never be
+    // silently stored as NQ.
+    const rawSymbol = (marketContext as { symbol?: string | null }).symbol
+    const ctxSymbol = rawSymbol ? chartSeriesRoot(rawSymbol) : 'NQ'
     const { error: ctxError } = await supabase
       .from('market_context')
-      .upsert({ trading_day_id: day.id, ...marketContext }, { onConflict: 'trading_day_id' }) as { error: { message: string } | null }
+      .upsert(
+        { trading_day_id: day.id, ...marketContext, symbol: ctxSymbol },
+        { onConflict: 'trading_day_id,symbol' },
+      ) as { error: { message: string } | null }
     if (ctxError) return NextResponse.json({ error: clientError(ctxError.message, 'Could not save market context.') }, { status: 500 })
   }
 

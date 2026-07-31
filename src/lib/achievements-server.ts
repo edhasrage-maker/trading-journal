@@ -64,10 +64,11 @@ export async function recomputeAndPersistDay(
     if (!day) return []
     const [tradesRes, ctxRes] = await Promise.all([
       supabase.from('trades').select('*').eq('trading_day_id', day.id),
-      supabase.from('market_context').select('day_range').eq('trading_day_id', day.id).maybeSingle(),
+      // One context row per instrument now — maybeSingle() throws on two.
+      supabase.from('market_context').select('day_range').eq('trading_day_id', day.id).order('symbol', { ascending: true }).limit(1),
     ])
     const pnlHistory = await fetchPnlHistory(supabase)
-    const dayRangePts = (ctxRes?.data?.day_range as number | null | undefined) ?? null
+    const dayRangePts = ((ctxRes?.data as { day_range: number | null }[] | null)?.[0]?.day_range) ?? null
     const ids = computeDayIds(day, (tradesRes?.data ?? []) as AchievementTrade[], pnlHistory, dayRangePts)
     await supabase.from('trading_days').update({ achievements_json: ids }).eq('id', day.id)
     return ids
