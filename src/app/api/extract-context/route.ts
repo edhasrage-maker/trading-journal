@@ -81,12 +81,29 @@ Return ONLY a JSON object with these exact keys (use null if not visible):
   "current_price": number or null
 }
 
-For pdh/pdl/onh/onl/ibh/ibl: these are almost never printed as numbers. They are horizontal LINE labels — the word "PDL" sits at the right edge with no value beside it, so the price has to be READ OFF THE CHART, not copied from text. For each one:
-  1. Find the label and note the exact height of ITS line.
-  2. Trace that line horizontally to the right-hand price axis.
-  3. Read the price by interpolating between the nearest axis tick above and below it.
-  A level can sit FAR from the candles — at the very top or bottom of the plot, or inside a shaded band — so do NOT treat a label near an edge as absent. PDL in particular is often the lowest thing on the chart, well below all price action, and is missed for exactly that reason.
-  If a label is visible but you cannot place it against the axis confidently, return null for it. A wrong level is worse than a missing one: pdh/pdl feed an "is price inside yesterday's range" check that silently flips on a bad value.
+For pdh/pdl/onh/onl/ibh/ibl: the label ("PDL", "IBH", …) names a horizontal LINE. The number is usually NOT written next to the label, so get it in this order:
+
+  METHOD 1 — highlighted price boxes on the scale (USE THIS WHENEVER PRESENT).
+  Many charts mark each drawn level with a filled/highlighted value box on the
+  right-hand price scale, at exactly the line's height, e.g. a box reading
+  "7399.00" level with the "PDL" label. When those boxes exist the price is
+  PRINTED — do not estimate. Match each level label to the highlighted box at the
+  SAME vertical position and copy that number verbatim. These boxes stand out
+  from the regular evenly-spaced axis ticks: they sit at irregular heights and
+  are shaded/inverted. A level whose box reads 7399.00 is 7399.00, even if the
+  nearest ordinary tick says 7400.00.
+
+  METHOD 2 — only if there are no highlighted boxes. Trace the level's line
+  horizontally to the price axis and interpolate between the nearest tick above
+  and below.
+
+  Either way: a level can sit FAR from the candles — top or bottom of the plot,
+  or inside a shaded band — so do NOT treat a label near an edge as absent. PDL
+  in particular is often the lowest thing on the chart, well below all price
+  action, and gets missed for exactly that reason.
+  If a label is visible but you cannot pin its value confidently, return null for
+  it. A wrong level is worse than a missing one: pdh/pdl feed an "is price inside
+  yesterday's range" check that silently flips on a bad value.
 
 For ib_10d_avg: extract the raw "IB AVG" value directly (e.g. if you see "IB AVG: 100.50", set ib_10d_avg to 100.50).
 For ib_vs_10d_avg: if you see "IB Range" and "IB AVG", compute IB Range / IB AVG as a ratio (e.g. 105 / 100.50 = 1.04).
