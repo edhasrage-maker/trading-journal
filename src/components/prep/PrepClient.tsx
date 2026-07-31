@@ -30,6 +30,7 @@ import { useChartInstruments } from '@/lib/use-chart-instruments'
 import BarWatcher from '@/components/charts/BarWatcher'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { deleteBlob } from '@/lib/storage'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
 import type { SessionLevels, SessionKind } from '@/lib/session-levels'
@@ -309,6 +310,21 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     })()
     return () => { cancelled = true }
   }, [activeSymbol, date, barsVersion, session])
+
+  // Keep the context row's instrument in step with the chart selection.
+  // Without this the switcher would recompute every verdict for ES while the
+  // row still said NQ — so saving an ES prep would overwrite the NQ context for
+  // that day instead of creating its own row. Programmatic, so it must not mark
+  // the form dirty.
+  useEffect(() => {
+    if (!activeSymbol) return
+    const root = chartSeriesRoot(activeSymbol)
+    setContext(prev => {
+      if ((prev.symbol ?? 'NQ') === root) return prev
+      autoFilledContextRef.current = true
+      return { ...prev, symbol: root }
+    })
+  }, [activeSymbol])
 
   // Persist the day-CHARACTER read (IB day-type Phase 2). Until now the
   // classification was recomputed on every prep open and thrown away; storing
