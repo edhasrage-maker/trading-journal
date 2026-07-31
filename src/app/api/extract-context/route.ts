@@ -81,6 +81,13 @@ Return ONLY a JSON object with these exact keys (use null if not visible):
   "current_price": number or null
 }
 
+For pdh/pdl/onh/onl/ibh/ibl: these are almost never printed as numbers. They are horizontal LINE labels — the word "PDL" sits at the right edge with no value beside it, so the price has to be READ OFF THE CHART, not copied from text. For each one:
+  1. Find the label and note the exact height of ITS line.
+  2. Trace that line horizontally to the right-hand price axis.
+  3. Read the price by interpolating between the nearest axis tick above and below it.
+  A level can sit FAR from the candles — at the very top or bottom of the plot, or inside a shaded band — so do NOT treat a label near an edge as absent. PDL in particular is often the lowest thing on the chart, well below all price action, and is missed for exactly that reason.
+  If a label is visible but you cannot place it against the axis confidently, return null for it. A wrong level is worse than a missing one: pdh/pdl feed an "is price inside yesterday's range" check that silently flips on a bad value.
+
 For ib_10d_avg: extract the raw "IB AVG" value directly (e.g. if you see "IB AVG: 100.50", set ib_10d_avg to 100.50).
 For ib_vs_10d_avg: if you see "IB Range" and "IB AVG", compute IB Range / IB AVG as a ratio (e.g. 105 / 100.50 = 1.04).
 For atr_1m: prefer ATR-10--1m value if multiple ATR values exist.
