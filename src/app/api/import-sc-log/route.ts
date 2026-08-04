@@ -8,6 +8,15 @@ import { computeStructure5mAlignment } from '@/lib/structure-5m'
 import { isOutsideRth } from '@/lib/rth'
 import { sessionUtcWindow, todayPT } from '@/lib/pt-time'
 import { buildDayRegimeSeries, buildRegimeSeriesFrom1mBars, regimeAtEntry, buildDayEntryMetrics, atrAtEntry, rvolAtEntry } from '@/lib/nq-front-month'
+import { followFade } from '@/lib/market-structure'
+
+/** Canonical 5m-structure confluence labels. MUST stay identical to the strings
+ *  in /api/trades/suggest-tags — a near-duplicate casing also exists in the
+ *  library, and only this exact pair is the detector's target. */
+const STRUCTURE_TAG: Record<'follow' | 'fade', string> = {
+  follow: 'Follow LTF structure',
+  fade: 'Fade LTF structure',
+}
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { TradingDay } from '@/lib/supabase/types'
 
@@ -307,19 +316,54 @@ export async function POST(req: Request) {
           console.warn(`[import-sc-log] structure_5m_regime: no series for ${d} (no .scid and no cloud NQ bars)`)
         } else {
           const { data: regimeTrades } = await supabase
-            .from('trades').select('id, entry_time, structure_5m_regime').eq('trading_day_id', day.id)
-          let regimeTagged = 0, regimeNull = 0, regimeErrors = 0
-          for (const t of (regimeTrades ?? []) as { id: string; entry_time: string | null; structure_5m_regime: string | null }[]) {
+            .from('trades').select('id, entry_time, direction, structure_5m_regime, tags_json').eq('trading_day_id', day.id)
+
+          // The follow/fade confluence is EXACT arithmetic over direction and
+          // regime, so it is written here as fact rather than left as an
+          // accept-to-add chip. /api/trades/suggest-tags still offers it, but
+          // that path needs a click per trade — which is why 3,649 trades ended
+          // up holding a decided regime and no structure tag until a backfill
+          // caught up (scripts/backfill-structure-tags.ts).
+          //
+          // Labels must already exist in the trader's library, so this degrades
+          // to a no-op rather than inventing one. Only bull/bear decide;
+          // neutral tags nothing.
+          const { data: structTagRows } = await supabase
+            .from('trade_tags').select('label').eq('category', 'confluences')
+            .in('label', [STRUCTURE_TAG.follow, STRUCTURE_TAG.fade]) as { data: { label: string }[] | null }
+          const haveLabel = new Set((structTagRows ?? []).map(r => r.label))
+
+          let regimeTagged = 0, regimeNull = 0, regimeErrors = 0, structTagged = 0
+          for (const t of (regimeTrades ?? []) as {
+            id: string; entry_time: string | null; direction: 'long' | 'short' | null
+            structure_5m_regime: string | null; tags_json: Record<string, string[] | string> | null
+          }[]) {
             if (!t.entry_time) continue
             const regime = regimeAtEntry(series, Date.parse(t.entry_time))
             if (!regime) { regimeNull++; continue }
             if (t.structure_5m_regime !== regime) {
               const { error: regErr } = await supabase.from('trades').update({ structure_5m_regime: regime }).eq('id', t.id)
-              if (regErr) { regimeErrors++; console.warn(`[import-sc-log] regime update failed for ${t.id}: ${regErr.message}`) }
-              else regimeTagged++
+              if (regErr) { regimeErrors++; console.warn(`[import-sc-log] regime update failed for ${t.id}: ${regErr.message}`); continue }
+              regimeTagged++
             }
+
+            if (!t.direction) continue
+            const ff = followFade(t.direction, regime)
+            if (ff !== 'follow' && ff !== 'fade') continue
+            const label = STRUCTURE_TAG[ff]
+            if (!haveLabel.has(label)) continue
+            const raw = t.tags_json?.confluences
+            const existing = Array.isArray(raw) ? raw : (typeof raw === 'string' && raw ? [raw] : [])
+            // Never add a second structure label, and never overwrite the
+            // trader's own call if they already made one.
+            if (existing.some(l => l === STRUCTURE_TAG.follow || l === STRUCTURE_TAG.fade)) continue
+            const { error: tagErr } = await supabase.from('trades')
+              .update({ tags_json: { ...(t.tags_json ?? {}), confluences: [...existing, label] } })
+              .eq('id', t.id)
+            if (tagErr) console.warn(`[import-sc-log] structure tag failed for ${t.id}: ${tagErr.message}`)
+            else structTagged++
           }
-          console.log(`[import-sc-log] structure_5m_regime (${regimeSource}): tagged=${regimeTagged}, no-regime=${regimeNull}, errors=${regimeErrors}`)
+          console.log(`[import-sc-log] structure_5m_regime (${regimeSource}): tagged=${regimeTagged}, no-regime=${regimeNull}, errors=${regimeErrors}, structure-tags=${structTagged}`)
         }
       } catch (e) {
         console.warn('[import-sc-log] regime tagging skipped:', e instanceof Error ? e.message : 'unknown')

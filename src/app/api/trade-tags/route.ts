@@ -9,6 +9,42 @@ import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-serve
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
+/**
+ * Renumber one category's tags into alphabetical order, 10 apart.
+ *
+ * Sorting lives in the DATA, not the queries: every read of `trade_tags` across
+ * the app already orders by `sort_order`, so keeping that column alphabetical
+ * makes the tag picker, settings page, prompts and pickers all alphabetical
+ * without touching a single query.
+ *
+ * Uses the request-scoped client, so RLS confines the rewrite to the caller's
+ * own tags — it can never renumber another trader's library. Case-insensitive
+ * and numeric-aware, so "9 EMA Hold" sorts before "20 EMA Hold" rather than
+ * after it, which is what a person expects and what a plain string sort gets
+ * wrong.
+ */
+async function alphabetize(supabase: AnyClient, category: TagCategory): Promise<TradeTag[]> {
+  const { data: rows } = await supabase
+    .from('trade_tags')
+    .select('*')
+    .eq('category', category) as { data: TradeTag[] | null }
+  if (!rows || rows.length === 0) return []
+
+  const collator = new Intl.Collator('en', { sensitivity: 'base', numeric: true })
+  const sorted = [...rows].sort((a, b) => collator.compare(a.label, b.label))
+
+  const updated: TradeTag[] = []
+  for (let i = 0; i < sorted.length; i++) {
+    const want = (i + 1) * 10
+    if (sorted[i].sort_order === want) { updated.push(sorted[i]); continue }
+    const { error } = await supabase
+      .from('trade_tags').update({ sort_order: want }).eq('id', sorted[i].id)
+    if (error) { updated.push(sorted[i]); continue }
+    updated.push({ ...sorted[i], sort_order: want })
+  }
+  return updated
+}
+
 export async function GET() {
   const supabase: AnyClient = await createClient()
   const { data } = await supabase.from('trade_tags').select('*').order('sort_order')
@@ -53,7 +89,10 @@ export async function POST(req: Request) {
   const existing = (existingRows ?? []).find(r => tagKey(r.label) === incomingKey) ?? null
   if (existing) return NextResponse.json({ tag: existing, created: false })
 
-  // Place after the current last chip in this category.
+  // Place after the current last chip, then renumber the category below so the
+  // new tag lands in its ALPHABETICAL slot rather than at the bottom. Every
+  // read of trade_tags orders by sort_order, so keeping that column sorted is
+  // what makes the whole app alphabetical — no query needs to change.
   const { data: maxRow } = await supabase
     .from('trade_tags')
     .select('sort_order')
@@ -70,5 +109,10 @@ export async function POST(req: Request) {
     .single() as { data: TradeTag | null; error: { message: string } | null }
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
 
-  return NextResponse.json({ tag: inserted, created: true })
+  // Best-effort: a failure here costs alphabetical order for one chip, which is
+  // not worth failing a successful tag creation over.
+  const reordered = await alphabetize(supabase, category)
+  const tag = reordered.find(t => t.id === inserted?.id) ?? inserted
+
+  return NextResponse.json({ tag, created: true })
 }
