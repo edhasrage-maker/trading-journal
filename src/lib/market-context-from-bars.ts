@@ -220,7 +220,33 @@ interface DayMetrics {
   rth_bar_count: number
 }
 
-/** Trailing-10 metrics per day, chronological. Mirrors the backfill exactly:
+/**
+ * Trailing-baseline lengths, in sessions. Today never counts toward its own.
+ *
+ * These were all 10. They are now per-metric, matched to the trader's Sierra
+ * studies by measurement against a live chart (ES, 2026-08-04) — a baseline that
+ * disagrees with the chart the trader watches all session is a number they stop
+ * believing, even when the maths is sound:
+ *
+ *   RVOL 20 — chart read 111.85; trailing-20 reproduces 111.5%, trailing-10 gives
+ *             103.8%.
+ *   ADR  14 — chart read 77.35; trailing-14 gives 77.14, trailing-10 gives 81.88
+ *             (the old value, which is why the app showed 81.9).
+ *   ATR  10 — chart's ATR-10-1min read 2.92 against the app's 2.9. Already agreed;
+ *             left alone.
+ *
+ * IB stays at 10 deliberately. The chart's IB Avg of 51.58 sits between
+ * trailing-5 (58.05) and trailing-10 (49.25) and matches no clean length, so
+ * there is nothing here to match it to — guessing a lookback to close a gap
+ * would be fitting noise. Today's IB SIZE already reproduces exactly (50.25),
+ * so the window definition is right; only the averaging length is unknown.
+ */
+const LOOKBACK_RVOL = 20
+const LOOKBACK_ADR = 14
+const LOOKBACK_ATR = 10
+const LOOKBACK_IB = 10
+
+/** Trailing metrics per day, chronological. Mirrors the backfill exactly:
  *  today never counts toward its own trailing average. */
 function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
   const sorted = Array.from(days.values())
@@ -248,14 +274,14 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
       .map(c => (c.length ? c[Math.min(barIdx, c.length - 1)] : null))
       .filter((v): v is number => v != null && v > 0)
     const volSoFar = d.rth_cum_vol.length ? d.rth_cum_vol[Math.min(barIdx, d.rth_cum_vol.length - 1)] : d.volume
-    const rvol = priorAtBar.length >= 10 ? (volSoFar / avg(priorAtBar)) * 100 : null
-    const adr = trailRange.length >= 10 ? avg(trailRange) : null
+    const rvol = priorAtBar.length >= LOOKBACK_RVOL ? (volSoFar / avg(priorAtBar)) * 100 : null
+    const adr = trailRange.length >= LOOKBACK_ADR ? avg(trailRange) : null
     const ibSize = (d.ib_high != null && d.ib_low != null) ? d.ib_high - d.ib_low : null
-    const ibVs10d = (ibSize != null && trailIb.length >= 10) ? ibSize / avg(trailIb) : null
-    const rvolAtIb = (trailIbVol.length >= 10 && trailIbVol.reduce((s, v) => s + v, 0) > 0)
+    const ibVs10d = (ibSize != null && trailIb.length >= LOOKBACK_IB) ? ibSize / avg(trailIb) : null
+    const rvolAtIb = (trailIbVol.length >= LOOKBACK_IB && trailIbVol.reduce((s, v) => s + v, 0) > 0)
       ? (d.ib_volume / avg(trailIbVol)) * 100 : null
-    const atrIb10d = trailAtrIb.length >= 10 ? avg(trailAtrIb) : null
-    const atrEod10d = trailAtrEod.length >= 10 ? avg(trailAtrEod) : null
+    const atrIb10d = trailAtrIb.length >= LOOKBACK_ATR ? avg(trailAtrIb) : null
+    const atrEod10d = trailAtrEod.length >= LOOKBACK_ATR ? avg(trailAtrEod) : null
 
     out.push({
       date: d.date,
@@ -282,8 +308,14 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
     if (d.ib_volume > 0) trailIbVol.push(d.ib_volume)
     if (d.atr_at_ib_close != null) trailAtrIb.push(d.atr_at_ib_close)
     if (d.atr_at_eod != null) trailAtrEod.push(d.atr_at_eod)
-    for (const a of [trailVol, trailRange, trailIb, trailIbVol, trailAtrIb, trailAtrEod]) if (a.length > 10) a.shift()
-    if (trailCumVol.length > 10) trailCumVol.shift()
+    // Each window is trimmed to ITS OWN length now, not a shared 10.
+    if (trailVol.length > LOOKBACK_RVOL) trailVol.shift()
+    if (trailCumVol.length > LOOKBACK_RVOL) trailCumVol.shift()
+    if (trailRange.length > LOOKBACK_ADR) trailRange.shift()
+    if (trailIb.length > LOOKBACK_IB) trailIb.shift()
+    if (trailIbVol.length > LOOKBACK_IB) trailIbVol.shift()
+    if (trailAtrIb.length > LOOKBACK_ATR) trailAtrIb.shift()
+    if (trailAtrEod.length > LOOKBACK_ATR) trailAtrEod.shift()
   }
   return out
 }
