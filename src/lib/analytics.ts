@@ -485,11 +485,19 @@ export function perLegMaxDollars(
     ? [...t.exits_json].sort((a, b) => a.time.localeCompare(b.time))
     : []
 
+  // Realized P&L is itself a favorable-excursion floor: a position cannot book
+  // more than the peak offered, so max-possible can never sit BELOW a positive
+  // pnl. Bar-window boundaries and clipped extremes occasionally understate the
+  // peak (137 live rows read capture > 100% before this floor, 2026-08-04);
+  // flooring keeps capture ≤ 100% by construction.
+  const pnlFloor = (maxUsd: number): number =>
+    typeof t.pnl === 'number' && t.pnl > 0 ? Math.max(maxUsd, t.pnl) : maxUsd
+
   // Single-leg trade — no scaling, defer to the simple captureComponents().
   if (legs.length === 0) {
     const xc = mfeMaePoints(t)
     if (!xc) return null
-    return Math.max(0, xc.mfe) * t.quantity * mult
+    return pnlFloor(Math.max(0, xc.mfe) * t.quantity * mult)
   }
 
   const isLong = t.direction === 'long'
@@ -520,7 +528,7 @@ export function perLegMaxDollars(
     windowStartTs = leg.time
   }
 
-  return totalMax
+  return pnlFloor(totalMax)
 }
 
 /** Walk bars in [startTs, endTs] inclusive, returning the highest high

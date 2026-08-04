@@ -315,14 +315,22 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       const sym = data.symbol as string | null | undefined
       const suggested = data.suggested_tags as TradeTags | null | undefined
 
+      // A Sierra-imported trade already carries the weighted-average FILL as
+      // entry_price (and fill-precise time/qty/direction). The chart read sees
+      // the ORDER line, which can differ from the fill by points — overwriting
+      // corrupted a live row (28128 avg fill → 28125 order price) and pushed its
+      // MFE capture over 100%. On imported trades the read only contributes the
+      // plan levels (stop/TP1) + tag suggestions the log doesn't carry.
+      const keepFills = !!trade?.sierra_trade_id
+
       setForm(f => {
         const next = {
           ...f,
-          ...(dirVal && { direction: dirVal }),
-          ...(sym && { symbol: sym }),
-          ...(entryPrice != null && { entry_price: String(entryPrice) }),
-          ...(entryTime && { entry_time: entryTime }),
-          ...(qty != null && { quantity: String(qty) }),
+          ...(dirVal && !keepFills && { direction: dirVal }),
+          ...(sym && !keepFills && { symbol: sym }),
+          ...(entryPrice != null && !keepFills && { entry_price: String(entryPrice) }),
+          ...(entryTime && !keepFills && { entry_time: entryTime }),
+          ...(qty != null && !keepFills && { quantity: String(qty) }),
           ...(suggested && { suggestedTags: suggested }),
         }
         // Place stop/TP1 on the correct side of entry for the EFFECTIVE direction.
@@ -331,7 +339,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
         // returns direction:null and the form is already 'long' (default / SC import).
         // When both extracted levels land, normalize (may swap) against next.direction.
         if (stopPrice != null && tp1Price != null) {
-          const rawEntry = entryPrice != null ? entryPrice : parseFloat(next.entry_price)
+          const rawEntry = entryPrice != null && !keepFills ? entryPrice : parseFloat(next.entry_price)
           const { stop, tp1 } = normalizeTradeLevels({
             direction: next.direction,
             entry: Number.isFinite(rawEntry) ? rawEntry : null,
