@@ -41,6 +41,14 @@ interface DayAggregate {
   rth_bar_count: number
   on_high: number | null
   on_low: number | null
+  /** Cumulative RTH volume after each RTH bar, indexed by bar number.
+   *
+   *  Exists so a session still in progress can be compared with prior days AT
+   *  THE SAME POINT of the day. Comparing today's running total against ten
+   *  COMPLETED days measures how far through the session we are, not how busy
+   *  the tape is — two hours into a 6.5-hour day that reads ~40% and calls a
+   *  normal morning "very quiet". */
+  rth_cum_vol: number[]
 }
 
 export interface DayContextStats {
@@ -122,6 +130,7 @@ function emptyAggregate(date: string): DayAggregate {
     rth_open: null, ib_close_price: null, atr_at_ib_close: null, atr_at_eod: null,
     last_close: null, rth_bar_count: 0,
     on_high: null, on_low: null,
+    rth_cum_vol: [],
   }
 }
 
@@ -174,6 +183,9 @@ function aggregateBars(bars: OneMinBar[]): Map<string, DayAggregate> {
       if (bar.high > agg.high) agg.high = bar.high
       if (bar.low < agg.low) agg.low = bar.low
       agg.rth_bar_count += 1
+      // Snapshot the running total so a partial day can be matched against
+      // prior days at the same bar index (see rth_cum_vol).
+      agg.rth_cum_vol.push(agg.volume)
       if (isIB) {
         if (agg.ib_high == null || bar.high > agg.ib_high) agg.ib_high = bar.high
         if (agg.ib_low == null || bar.low < agg.ib_low) agg.ib_low = bar.low
@@ -217,12 +229,26 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
 
   const trailVol: number[] = [], trailRange: number[] = [], trailIb: number[] = []
   const trailIbVol: number[] = [], trailAtrIb: number[] = [], trailAtrEod: number[] = []
+  // Prior days' cumulative-volume curves, so a day still in progress is measured
+  // against where those days stood at the SAME bar of the session.
+  const trailCumVol: number[][] = []
   const out: DayMetrics[] = []
 
   for (const d of sorted) {
     const range = d.high - d.low
     const avg = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length
-    const rvol = trailVol.length >= 10 ? (d.volume / avg(trailVol)) * 100 : null
+
+    // RVOL, time-matched. Take each prior day's volume through the same number
+    // of RTH bars as today has printed; on a COMPLETE day every curve is at its
+    // final value, so this is identical to the old whole-day ratio. Mid-session
+    // it stops reporting the clock: comparing a third of a session against ten
+    // finished ones returned ~40% and labelled a busy morning "very quiet".
+    const barIdx = Math.max(0, d.rth_bar_count - 1)
+    const priorAtBar = trailCumVol
+      .map(c => (c.length ? c[Math.min(barIdx, c.length - 1)] : null))
+      .filter((v): v is number => v != null && v > 0)
+    const volSoFar = d.rth_cum_vol.length ? d.rth_cum_vol[Math.min(barIdx, d.rth_cum_vol.length - 1)] : d.volume
+    const rvol = priorAtBar.length >= 10 ? (volSoFar / avg(priorAtBar)) * 100 : null
     const adr = trailRange.length >= 10 ? avg(trailRange) : null
     const ibSize = (d.ib_high != null && d.ib_low != null) ? d.ib_high - d.ib_low : null
     const ibVs10d = (ibSize != null && trailIb.length >= 10) ? ibSize / avg(trailIb) : null
@@ -248,11 +274,16 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
 
     trailVol.push(d.volume)
     trailRange.push(range)
+    // Only COMPLETE sessions become a baseline. A partial day in the trailing
+    // window would drag every later comparison down — the same error this
+    // change fixes, one level up.
+    if (d.rth_cum_vol.length >= 300) trailCumVol.push(d.rth_cum_vol)
     if (ibSize != null) trailIb.push(ibSize)
     if (d.ib_volume > 0) trailIbVol.push(d.ib_volume)
     if (d.atr_at_ib_close != null) trailAtrIb.push(d.atr_at_ib_close)
     if (d.atr_at_eod != null) trailAtrEod.push(d.atr_at_eod)
     for (const a of [trailVol, trailRange, trailIb, trailIbVol, trailAtrIb, trailAtrEod]) if (a.length > 10) a.shift()
+    if (trailCumVol.length > 10) trailCumVol.shift()
   }
   return out
 }
