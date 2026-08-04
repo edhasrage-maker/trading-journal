@@ -11,6 +11,8 @@ import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { behavioralProxiesPromptBlock } from '@/lib/behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from '@/lib/journal-language-heatmap'
 import { fetchOpenThread, coachingThreadPromptBlock } from '@/lib/coaching-thread'
+import { computeSessionFacts } from '@/lib/session-facts'
+import { checkFactClaims, checkPraiseContradictions } from '@/lib/ai-constraints'
 import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
@@ -151,6 +153,36 @@ async function handle(req: Request) {
   // factor, MFE capture, MAE heat, composite). Shared with the batch rescore
   // script via applyDeterministicOverrides so the two can't drift.
   applyDeterministicOverrides(parsed, trades, msg => console.log(`[analyze-eod] ${msg}`), rc)
+
+  // Trust-layer annotation (A9 + A10) — grade the model's NUMERIC claims
+  // against the deterministic session facts, and its praise against the
+  // trader's own mistake tags. Annotate-and-log only, NEVER block: a false
+  // positive must not cost a session, so violations ride on the saved
+  // analysis (fact_check) for the UI/audit and go to the server log.
+  // The audit that motivated this found ~half the specific numbers in one
+  // live analysis wrong — every field READ was right, every number
+  // CALCULATED in prose was suspect. checkFactClaims is that comparison,
+  // run on the raw model text so evidence quotes match what was written.
+  try {
+    const facts = computeSessionFacts(trades)
+    const mistakesByTrade = trades.map(t => {
+      const arr = (t.tags_json as { mistakes?: unknown } | null)?.mistakes
+      return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : []
+    })
+    const violations = [
+      ...checkFactClaims(text, facts),
+      ...checkPraiseContradictions(parsed.what_worked, mistakesByTrade),
+    ]
+    if (violations.length > 0) {
+      parsed.fact_check = { checked_at: new Date().toISOString(), violations }
+      console.warn(
+        `[analyze-eod] trust-layer: ${violations.length} violation(s) — ` +
+        violations.map(v => `${v.id}: ${v.message}`).join(' | '),
+      )
+    }
+  } catch (e) {
+    console.warn('[analyze-eod] trust-layer check skipped:', e instanceof Error ? e.message : e)
+  }
 
   return NextResponse.json(parsed)
 }

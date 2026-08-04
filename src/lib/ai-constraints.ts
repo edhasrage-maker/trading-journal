@@ -158,6 +158,14 @@ export const BEHAVIORAL_RULES: BehavioralRule[] = [
     judgePrompt: `Does the analysis list the TIME a trade was taken as a mistake or a rule breach? There is no entry-time rule; timing tendencies may only appear in patterns/next_session_focus. ${JUDGE_TAIL}` },
   { id: 'B7', description: 'Emotion judged on state, not a literal tag word',
     judgePrompt: `Does the analysis penalize the trader's emotional state only because it wasn't the literal word "Stable" — i.e. treat a clearly composed state (calm, focused, disciplined, confident) as non-stable? Criterion 9 judges the STATE in the trader's own vocabulary. ${JUDGE_TAIL}` },
+  // Machine mirror of the B8 prompt rule ("You cannot see the tape"). A live
+  // analysis fabricated "a tape that had stopped supporting the bullish bias"
+  // for trades the trader tagged "Follow LTF structure" — the model has no bar
+  // series and no order-flow feed, so any narrated market state between entries
+  // is invented. Distinct from B1 (outcome bias judges a decision by what came
+  // after; this invents what the market was doing at all).
+  { id: 'B8', description: 'No fabricated market state (tape/structure between entries)',
+    judgePrompt: `Does the analysis assert MARKET STATE the data cannot contain — narrated tape, order flow, or structure between or around entries, e.g. "the tape stopped supporting…", "buyers dried up", "sellers were in control", "structure invalidated", "no confirmed higher-low", "price was being absorbed"? The analysis only has per-trade fields (entries, exits, excursions, the trader's own notes/tags, and any explicitly provided structure regime). Quoting or attributing a claim to the trader's own notes/tags is fine; asserting market behavior beyond them is fabrication. ${JUDGE_TAIL}` },
 ]
 
 // ─── Prompt-drift guard (Tier A, against the built prompt) ────────────────────
@@ -274,5 +282,46 @@ export function checkFactClaims(text: string, facts: SessionFacts): Violation[] 
     }
   }
 
+  return out
+}
+
+// ─── A10: praise vs the trader's own mistake tags ────────────────────────────
+
+/**
+ * Flag what_worked[] bullets that reference a trade the trader themself tagged
+ * with a mistake. This is the contradiction no judge model is needed for: a
+ * live analysis praised "size discipline held" on trades tagged Oversized and
+ * called an 84-second re-entry "patience" on a trade tagged Revenge Trading —
+ * both invisible to the numeric checker, both a set intersection.
+ *
+ * Deliberately literal: only bullets that name a trade ("T3") are judged, and
+ * the flag carries the tag so a human can dismiss the benign case (praising
+ * T1's cooldown while T1 carries an unrelated tag). An annotation, not a gate.
+ *
+ * `mistakesByTrade` is positional — index 0 = T1 — matching the prompt's trade
+ * list order (same contract as computeSessionFacts).
+ */
+export function checkPraiseContradictions(
+  whatWorked: string[] | null | undefined,
+  mistakesByTrade: string[][],
+): Violation[] {
+  const out: Violation[] = []
+  if (!Array.isArray(whatWorked)) return out
+  for (const bullet of whatWorked) {
+    if (typeof bullet !== 'string') continue
+    const seen = new Set<number>()
+    for (const m of bullet.matchAll(/\bT(\d{1,2})\b/g)) {
+      const idx = Number(m[1])
+      if (seen.has(idx)) continue
+      seen.add(idx)
+      const mistakes = mistakesByTrade[idx - 1]
+      if (!mistakes || mistakes.length === 0) continue
+      out.push({
+        id: 'A10', tier: 'A',
+        message: `what_worked praises T${idx}, which the trader tagged: ${mistakes.join(', ')}`,
+        evidence: bullet.length > 140 ? bullet.slice(0, 137) + '…' : bullet,
+      })
+    }
+  }
   return out
 }

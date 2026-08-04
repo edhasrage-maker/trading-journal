@@ -10,7 +10,7 @@
  */
 import {
   checkRawOutput, checkStructural, checkPromptDrift,
-  CALC_TRACE_PATTERNS, PROMPT_ANCHORS, BEHAVIORAL_RULES,
+  CALC_TRACE_PATTERNS, PROMPT_ANCHORS, BEHAVIORAL_RULES, checkPraiseContradictions,
 } from '../src/lib/ai-constraints.ts'
 import { buildEodPrompt } from '../src/lib/eod-prompt.ts'
 import type { EodAiAnalysis } from '../src/lib/supabase/types.ts'
@@ -69,6 +69,29 @@ const genericMiss = checkPromptDrift(genericPrompt, genericAnchors)
 check('all owner-variant anchors present in owner prompt', ownerMiss.length === 0, ownerMiss.map(v => v.evidence).join('; '))
 check('all both-variant anchors present in generic prompt', genericMiss.length === 0, genericMiss.map(v => v.evidence).join('; '))
 check('every behavioral rule has a prompt anchor', BEHAVIORAL_RULES.every(r => PROMPT_ANCHORS.some(a => a.id === r.id)))
+
+console.log('checkPraiseContradictions (A10 — praise vs the trader\'s own mistake tags)')
+const mistakes3 = [[], ['Revenge Trading'], []]   // T1 clean, T2 tagged, T3 clean
+check('praising a mistake-tagged trade is flagged',
+  hasId(checkPraiseContradictions(['Waited patiently before T2 and re-entered with structure'], mistakes3), 'A10'))
+check('the flag names the tag',
+  checkPraiseContradictions(['T2 showed patience'], mistakes3).some(v => v.message.includes('Revenge Trading')))
+check('praising a clean trade passes',
+  !hasId(checkPraiseContradictions(['T1 and T3 were textbook entries'], mistakes3), 'A10'))
+check('bullets with no trade refs never flag',
+  !hasId(checkPraiseContradictions(['Size discipline held all session'], mistakes3), 'A10'))
+check('out-of-range refs never flag',
+  !hasId(checkPraiseContradictions(['T9 was great'], mistakes3), 'A10'))
+check('one bullet naming two tagged trades flags each once', (() => {
+  const v = checkPraiseContradictions(['T2 and T2 and T1 were all fine'], [[ 'FOMO' ], ['Oversized']])
+  return v.length === 2
+})())
+check('empty/absent what_worked is fine',
+  checkPraiseContradictions(undefined, mistakes3).length === 0)
+
+console.log('B8 judge rule (fabricated market state)')
+check('B8 exists in BEHAVIORAL_RULES', BEHAVIORAL_RULES.some(r => r.id === 'B8'))
+check('B8 judge prompt names the fabrication phrases', BEHAVIORAL_RULES.some(r => r.id === 'B8' && /buyers dried up/.test(r.judgePrompt)))
 
 console.log(failures === 0 ? '\nAll AI-constraint tests passed.' : `\n${failures} failure(s).`)
 process.exit(failures === 0 ? 0 : 1)

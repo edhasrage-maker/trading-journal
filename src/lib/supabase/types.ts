@@ -472,6 +472,14 @@ export interface EodAiAnalysis {
   analyzed_at?: string
   process?: ProcessVerdict
   execution?: ExecutionScore
+  /** Trust-layer annotation written by the live analyze path — A9 numeric
+   *  claims graded against the deterministic session facts, A10 praise vs the
+   *  trader's own mistake tags. Never blocks the analysis; absent when clean.
+   *  Shape mirrors Violation in src/lib/ai-constraints.ts. */
+  fact_check?: {
+    checked_at: string
+    violations: Array<{ id: string; tier: 'A' | 'B'; message: string; evidence?: string }>
+  }
 }
 
 /**
