@@ -13,7 +13,7 @@
 //
 // PURE + unit-tested (Intl formatting is deterministic given the input).
 
-import { DIVE_Z_MIN_DIRECTIONAL, welchZ } from './stats'
+import { DIVE_Z_MIN_DIRECTIONAL, severityImpactShare, welchZ } from './stats'
 import { type DeepDiveResult, type DiveSegment, type Investigation, fmtUsd, fmtPct } from './types'
 
 export interface TimeOfDayTrade {
@@ -197,6 +197,9 @@ export function analyzeTimeOfDay(trades: TimeOfDayTrade[], opts: TimeOfDayOption
   }
 
   const { trim, impact, z, droppedN } = bestTrim
+  // Severity base: gross |P&L| across the whole analyzed window — the trader's
+  // own scale, not a fixed dollar bar.
+  const grossAbsAll = buckets.reduce((s, b) => s + b.pnls.reduce((x, p) => x + Math.abs(p), 0), 0)
   const boundaryLabel = `${clockLabel(trim.boundary)}${tz ? ` ${tz}` : ''}`
   const keptN = trim.kept.reduce((s, b) => s + b.pnls.length, 0)
   const keptNet = trim.kept.reduce((s, b) => s + b.net, 0)
@@ -212,7 +215,7 @@ export function analyzeTimeOfDay(trades: TimeOfDayTrade[], opts: TimeOfDayOption
     id: 'time-of-day',
     title: 'Your session clock',
     headline: `Everything you trade ${window} is a net ${fmtUsd(-impact)} — cutting it models ${fmtUsd(impact)} without touching the rest of your day.`,
-    severity: Math.min(1, Math.min(1, impact / 2500) * 0.6 + Math.min(1, z / 3.29) * 0.4),
+    severity: Math.min(1, severityImpactShare(impact, grossAbsAll) * 0.6 + Math.min(1, z / 3.29) * 0.4),
     segments,
     detail: [
       ...detail,

@@ -17,7 +17,7 @@
 
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { groupExitEvents, type ExitFill } from './exit-events'
-import { median, shareAbove } from './stats'
+import { median, severityImpactShare, shareAbove } from './stats'
 import { type DeepDiveResult, type DiveSegment, type Investigation, fmtUsd, fmtPct } from './types'
 
 export interface ScaleOutTrade {
@@ -107,6 +107,9 @@ export function analyzeScaleOutEv(trades: ScaleOutTrade[]): DeepDiveResult | nul
   const medianBeyondAtr = beyond.length >= Math.max(8, Math.floor(n / 3)) ? median(beyond) : null
 
   // Which plan won, and by how much over what they did?
+  // Severity base: what these same fills actually booked — so the impact term
+  // is a share of the trader's own scale, not a fixed dollar bar.
+  const grossAbs = sum(r => Math.abs(r.actual))
   const tp1Gain = allOutTp1 - actual
   const rideGain = allRide - actual
   const bestGain = Math.max(tp1Gain, rideGain)
@@ -141,7 +144,7 @@ export function analyzeScaleOutEv(trades: ScaleOutTrade[]): DeepDiveResult | nul
   // ── Verdict ────────────────────────────────────────────────────────────────
   // Scaling is -EV and taking it all at TP1 wins.
   if (tp1Gain >= rideGain && tp1Gain > 0) {
-    const severity = Math.min(1, Math.min(1, tp1Gain / 2500) * 0.6 + (1 - conversion) * 0.4)
+    const severity = Math.min(1, severityImpactShare(tp1Gain, grossAbs) * 0.6 + (1 - conversion) * 0.4)
     return {
       id: 'scale-out-ev',
       title: 'Is scaling out paying you?',
@@ -160,7 +163,7 @@ export function analyzeScaleOutEv(trades: ScaleOutTrade[]): DeepDiveResult | nul
 
   // Holding the whole position wins — the partials are the leak.
   if (rideGain > 0) {
-    const severity = Math.min(1, Math.min(1, rideGain / 2500) * 0.6 + conversion * 0.4)
+    const severity = Math.min(1, severityImpactShare(rideGain, grossAbs) * 0.6 + conversion * 0.4)
     return {
       id: 'scale-out-ev',
       title: 'Is scaling out paying you?',

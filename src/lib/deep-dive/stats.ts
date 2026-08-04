@@ -53,3 +53,18 @@ export function shareAbove(xs: number[], threshold = 0): number {
   if (!xs.length) return 0
   return xs.filter(x => x > threshold).length / xs.length
 }
+
+/**
+ * Impact term for dive severity: the modeled $ impact as a SHARE of the gross
+ * absolute P&L the dive analyzed, replacing the old fixed impact/$2,500 — which
+ * made severity a property of ACCOUNT SIZE (a 15-30 lot book systematically
+ * out-ranked a 1-2 lot book for the SAME behavioral leak). Locked design
+ * principle: claims rank relative to the trader's own scale; the raw $ figure
+ * stays in the copy. Saturates once the impact reaches SEVERITY_FULL_SHARE of
+ * the base.
+ */
+export const SEVERITY_FULL_SHARE = 0.25
+export function severityImpactShare(impactUsd: number, grossAbsUsd: number): number {
+  if (!(grossAbsUsd > 0) || !(impactUsd > 0)) return 0
+  return Math.min(1, impactUsd / grossAbsUsd / SEVERITY_FULL_SHARE)
+}

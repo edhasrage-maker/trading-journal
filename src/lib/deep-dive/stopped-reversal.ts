@@ -26,7 +26,7 @@
 // PURE + unit-tested. The caller measures; this only analyzes.
 
 import { symbolToMultiplier } from '@/lib/futures-symbols'
-import { median } from './stats'
+import { median, severityImpactShare } from './stats'
 import { type DeepDiveResult, type DiveSegment, type Investigation, fmtUsd, fmtPct } from './types'
 
 /** Path-ordered post-exit measurement for one trade. All distances are POINTS
@@ -217,7 +217,7 @@ export function analyzeStoppedReversal(trades: StopReversalTrade[]): DeepDiveRes
     id: 'stopped-reversal',
     title: 'Stopped, then reversed',
     headline: `${fmtPct(reversalRate * 100)} of your stop-outs reversed back through your entry within ${Math.round(horizonMin)} minutes — a ${best.atrFrac.toFixed(2)}×ATR wider stop models ${fmtUsd(best.deltaUsd)}.`,
-    severity: Math.min(1, Math.min(1, best.deltaUsd / 2500) * 0.6 + reversalRate * 0.4),
+    severity: Math.min(1, severityImpactShare(best.deltaUsd, Math.abs(totalLoss)) * 0.6 + reversalRate * 0.4),
     segments,
     detail,
     reframe: medAdverseAtr < 0.3
