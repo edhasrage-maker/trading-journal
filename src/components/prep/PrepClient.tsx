@@ -32,6 +32,7 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { deleteBlob } from '@/lib/storage'
+import { downscaleForVision } from '@/lib/downscale-image'
 import type { TradingDay, MarketContext, PrepNotes, AiAnalysis, PlanAssessment, TradePlan, Trade } from '@/lib/supabase/types'
 import type { SessionLevels, SessionKind } from '@/lib/session-levels'
 import type { DayContextStats } from '@/lib/market-context-from-bars'
@@ -768,6 +769,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
     setExtracting(true)
     try {
+      // Same guard as the intraday read: ultrawide captures exceed the vision
+      // API's image cap — downscale to reading resolution before upload.
+      const original = fileToSend
+      fileToSend = await downscaleForVision(fileToSend)
+      if (fileToSend !== original) filename = filename.replace(/\.\w+$/, '') + '.jpg'
       const formData = new FormData()
       formData.append('file', fileToSend, filename)
       const res = await fetch('/api/extract-context', { method: 'POST', body: formData })

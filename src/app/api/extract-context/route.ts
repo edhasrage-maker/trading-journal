@@ -15,6 +15,14 @@ export async function POST(req: Request) {
     const err = e as { message?: string; status?: number; error?: { type?: string; message?: string } }
     const detail = err?.error?.message ?? err?.message ?? 'unknown server error'
     console.error('[extract-context] failed:', err)
+    // Image-rejection 400s are actionable, not sensitive — name them instead
+    // of the scrubbed generic (backstop; the client downscales before upload).
+    if (err?.status === 400 && /image/i.test(String(detail))) {
+      return NextResponse.json(
+        { error: 'The screenshot was rejected by the image reader (usually too large). Re-paste it — it is downscaled automatically now — or crop to the relevant pane.' },
+        { status: 400 },
+      )
+    }
     return NextResponse.json({ error: clientError(detail), type: err?.error?.type, status: err?.status }, { status: 500 })
   }
 }
@@ -35,6 +43,14 @@ async function handle(req: Request) {
   if (!file) return NextResponse.json({ error: 'No file' }, { status: 400 })
 
   const buffer = await file.arrayBuffer()
+  // Vision API hard limit is ~5 MB per image; say so up front rather than
+  // letting the provider 400 surface as a scrubbed 500.
+  if (buffer.byteLength > 5_000_000) {
+    return NextResponse.json(
+      { error: `Screenshot is too large to read (${(buffer.byteLength / 1e6).toFixed(1)} MB). Re-paste it — it is downscaled automatically now — or crop to the relevant pane.` },
+      { status: 400 },
+    )
+  }
   const base64 = Buffer.from(buffer).toString('base64')
   const mediaType = normalizeAnthropicMediaType(file.type)
   if (!mediaType) {
@@ -121,7 +137,7 @@ Return ONLY the JSON, no other text.`,
     }],
   })
 
-  const text = message.content[0].type === 'text' ? message.content[0].text : '{}'
+  const text = message.content[0]?.type === 'text' ? message.content[0].text : '{}'
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     const data = jsonMatch ? JSON.parse(jsonMatch[0]) : {}

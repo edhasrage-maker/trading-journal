@@ -16,6 +16,7 @@ import { normalizeTradeLevels } from '@/lib/trade-geometry'
 import type { Trade, TradeTag, TradeTags, TagCategory } from '@/lib/supabase/types'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { suggestTagsFromText, mergeTradeTags } from '@/lib/suggest-tags'
+import { downscaleForVision } from '@/lib/downscale-image'
 
 interface Props {
   date: string
@@ -274,6 +275,12 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
     setExtracting(true)
     setError(null)
     try {
+      // Full-screen ultrawide captures blow past the vision API's 5 MB image
+      // cap and the deploy platform's ~4.5 MB body cap — downscale to the
+      // model's 2576px reading resolution before upload (no accuracy loss).
+      const original = fileToSend
+      fileToSend = await downscaleForVision(fileToSend)
+      if (fileToSend !== original) filename = filename.replace(/\.\w+$/, '') + '.jpg'
       const fd = new FormData()
       fd.append('file', fileToSend, filename)
       const res = await fetch('/api/extract-trade', { method: 'POST', body: fd })
