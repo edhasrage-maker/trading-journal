@@ -53,8 +53,11 @@ const winner: T = { ...base, entry_price: 100, stop_price: 90, quantity: 2, pnl:
 // Give-back loser: went +30pt favorable then closed −$60. Capture floors at 0.
 const giveBack: T = { ...base, entry_price: 100, stop_price: 90, quantity: 2, pnl: -60, high_during_position: 130, low_during_position: 88 } as T
 
-// CORRUPT winner: peak only +10pt ($40 ceiling) yet booked $100 → capture 2.5.
-// The helper leaves this unclamped (surfaces the bug); the render guard hides it.
+// CORRUPT winner: peak only +10pt ($40 ceiling) yet booked $100. POLICY CHANGE
+// 2026-08-04 (founder): capture can never exceed 100% — realized pnl is a
+// provably-correct lower bound on the peak no matter what corrupted the
+// denominator's inputs, so the components floor the denominator at pnl and
+// this reads 100%, not the old surfaced->hidden >1.
 const corrupt: T = { ...base, entry_price: 100, stop_price: 95, quantity: 2, pnl: 100, high_during_position: 110, low_during_position: 100 } as T
 
 // ── capture ──────────────────────────────────────────────────────────────────
@@ -68,7 +71,7 @@ console.log('capture:')
   check('give-back capture floored at 0', g === 0, `got ${g}`)
 
   const c = captureRatio(corrupt)
-  check('corrupt capture is >1 (bug surfaces, not silently clamped)', c != null && c > 1, `got ${c}`)
+  check('corrupt capture floors the denominator at pnl → exactly 1', c === 1, `got ${c}`)
 
   const comp = captureComponents(winner)
   check('captureComponents pnl ≤ mfeDollars for consistent winner', comp != null && comp.pnl <= comp.mfeDollars, JSON.stringify(comp))
@@ -87,7 +90,7 @@ eq('null → null', formatCapturePct(null), null)
 eq('undefined → null', formatCapturePct(undefined), null)
 eq('Infinity → null', formatCapturePct(Infinity), null)
 eq('NaN → null', formatCapturePct(NaN), null)
-eq('corrupt trade ratio → null (guard catches it)', formatCapturePct(captureRatio(corrupt)), null)
+eq('corrupt trade renders as 100%, never over and never hidden', formatCapturePct(captureRatio(corrupt)), '100%')
 
 // ── aggregate capture ─────────────────────────────────────────────────────────
 console.log('avgCaptureRatio:')
@@ -97,7 +100,7 @@ console.log('avgCaptureRatio:')
   check('clean aggregate passes render guard', formatCapturePct(clean.avg) != null, `got ${clean.avg}`)
 
   const dirty = avgCaptureRatio([corrupt])
-  check('aggregate built from corrupt trade is caught by render guard', formatCapturePct(dirty.avg) == null, `got ${dirty.avg}`)
+  check('aggregate over the floored trade renders 100%', formatCapturePct(dirty.avg) === '100%', `got ${dirty.avg}`)
 }
 
 // ── MAE heat ──────────────────────────────────────────────────────────────────

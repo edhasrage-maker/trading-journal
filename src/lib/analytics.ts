@@ -371,6 +371,17 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
   // 2026-06-09 migration. Falls back to the simple peak × full-qty
   // formula for trades that haven't been backfilled yet OR pre-2025
   // trades outside the CSV+SCID bar coverage window.
+  // Realized-P&L floor, applied to EVERY branch below: a position cannot book
+  // more than the peak offered, so a positive pnl is a hard lower bound on the
+  // max-possible dollars — capture can never exceed 100% by construction
+  // (founder invariant, 2026-08-04). Without this, the ceiling clamp below can
+  // push a floored stored value back under pnl on rows whose entry price
+  // disagrees with their tick extremes, and the impossible-row guard hides
+  // the trade's capture entirely.
+  const withPnlFloor = (mfeDollars: number): CaptureComponents => ({
+    pnl: t.pnl!,
+    mfeDollars: t.pnl! > 0 ? Math.max(mfeDollars, t.pnl!) : mfeDollars,
+  })
   const tx = t as TradeWithExcursion & { mfe_dollars_per_leg?: number | null; exits_json?: ExitLeg[] | null }
   if (tx.mfe_dollars_per_leg != null && tx.mfe_dollars_per_leg > 0) {
     // Clamp at the tick-precise full-position ceiling. A correct per-leg value
@@ -384,13 +395,13 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
       ? tx.exits_json.reduce((s, e) => s + (e?.qty ?? 0), 0)
       : 0
     const ceiling = xc.mfe * symbolToMultiplier(t.symbol ?? '') * (legQty > 0 ? legQty : t.quantity)
-    return { pnl: t.pnl, mfeDollars: ceiling > 0 ? Math.min(tx.mfe_dollars_per_leg, ceiling) : tx.mfe_dollars_per_leg }
+    return withPnlFloor(ceiling > 0 ? Math.min(tx.mfe_dollars_per_leg, ceiling) : tx.mfe_dollars_per_leg)
   }
   // Bars-free scaling-aware fallback for scaled-out trades that have neither a
   // backfilled per-leg value nor 1m bars (e.g. overnight/GBX). Avoids grading a
   // legitimate scale-out against an impossible hold-all-to-peak ceiling.
   const scaled = noBarsScaledMfeDollars(tx)
-  if (scaled != null) return { pnl: t.pnl, mfeDollars: scaled }
+  if (scaled != null) return withPnlFloor(scaled)
   const mult = symbolToMultiplier(t.symbol ?? '')
   // Use the qty actually TRADED (sum of exit fills) for the dollar ceiling, not
   // the trades.quantity field — they can disagree on mis-imported/edited rows
@@ -402,15 +413,16 @@ export function captureComponents(t: TradeWithExcursion): CaptureComponents | nu
   const qtyForMfe = exitQty > 0 ? exitQty : t.quantity
   const mfeDollars = xc.mfe * mult * qtyForMfe
   if (mfeDollars === 0) return null
-  return { pnl: t.pnl, mfeDollars }
+  return withPnlFloor(mfeDollars)
 }
 
 /** Per-trade capture ratio = pnl / peak-favorable-$, FLOORED at 0. A losing
  *  give-back captured 0% of its favorable move, not a negative percentage —
- *  "you gave it all back" reads as 0%, never -128%/-638%. The upper bound is
- *  left unclamped so a >100% reading still surfaces a data bug (e.g. a stale
- *  quantity) rather than being silently hidden. For per-trade display only —
- *  use captureComponents for group aggregation. */
+ *  "you gave it all back" reads as 0%, never -128%/-638%. Winners cannot
+ *  exceed 100% by construction since 2026-08-04: captureComponents floors the
+ *  denominator at realized pnl (you can't bank more than the peak), so the
+ *  old ">100% surfaces a data bug" reading no longer occurs. For per-trade
+ *  display only — use captureComponents for group aggregation. */
 export function captureRatio(t: TradeWithExcursion): number | null {
   const c = captureComponents(t)
   return c == null ? null : Math.max(0, c.pnl / c.mfeDollars)
