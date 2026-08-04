@@ -876,9 +876,17 @@ export default function EodClient({
             {/* Cloud build: the local Sierra-log button is hidden, so give a
                 direct jump to the Import page (CSV / Sierra .txt / template). */}
             {!LOCAL_FEATURES_ENABLED && (
+              // Promoted to a filled button when the day has NO trades: that is
+              // the one thing worth doing here, and as a grey chip among other
+              // grey chips it read as just another secondary action. Reverts to
+              // muted once trades exist, so it stops competing with the recap.
               <Link
                 href="/import"
-                className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2.5 py-1 hover:bg-gray-700 transition-colors"
+                className={`inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1 transition-colors ${
+                  trades.length === 0
+                    ? 'bg-blue-600 hover:bg-blue-500 text-white font-medium border border-blue-500'
+                    : 'bg-gray-800 border border-gray-700 text-gray-200 hover:bg-gray-700'
+                }`}
                 title="Import a trade log (CSV or Sierra Chart .txt)"
               >
                 <Upload className="w-3.5 h-3.5" /> Import

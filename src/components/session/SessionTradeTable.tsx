@@ -18,7 +18,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare, Upload } from 'lucide-react'
 import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaePoints, formatCapturePct, exitedAtExtreme, CAPTURE_AT_EXTREME_TOOLTIP, type BarLike } from '@/lib/analytics'
 import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { postExitVerdict, type VerdictTrade, type VerdictTone } from '@/lib/post-exit-verdict'
@@ -381,14 +381,30 @@ export default function SessionTradeTable({
 
   if (trades.length === 0) {
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500 text-sm">
+      // An empty day has exactly one thing worth doing, so say it as an action
+      // rather than burying a link mid-sentence. The old copy read as a
+      // statement of fact with "Import trade log" the same size as everything
+      // around it, and the import route was easy to miss entirely.
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center">
+        <p className="text-gray-400 text-sm">No trades logged for this day yet.</p>
         {LOCAL_FEATURES_ENABLED ? (
-          'No trades yet. Use the intraday tagging flow or import a trade log to populate this day.'
+          <p className="mt-1.5 text-gray-500 text-xs">
+            Use the intraday tagging flow, or import a trade log, to populate it.
+          </p>
         ) : (
           <>
-            No trades yet.{' '}
-            <Link href="/import" className="text-blue-400 hover:underline">Import trade log</Link>
-            {' '}or log one on the Intraday page to populate this day.
+            <div className="mt-4">
+              <Link
+                href="/import"
+                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-md px-4 py-2 transition-colors"
+              >
+                <Upload className="w-4 h-4" /> Import trade log
+              </Link>
+            </div>
+            <p className="mt-3 text-gray-500 text-xs">
+              Reads a Sierra Chart <span className="font-mono">.txt</span> or a broker CSV — or log
+              trades yourself on the Trade page.
+            </p>
           </>
         )}
       </div>
