@@ -249,23 +249,26 @@ export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepA
     process_v13_score: (() => {
       const p = day.eod_ai_analysis_json?.process
       if (!p?.per_rule) return null
-      const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5'] as const
+      // Tracked rails only (active_rails, when the analysis recorded it) — an
+      // untracked rail auto-passes and must not pad the score, and a trader
+      // who tracks 4 rails scores out of 4, not 5.
+      const ruleIds = (p.active_rails?.length ? p.active_rails : ['P1', 'P2', 'P3', 'P4', 'P5']) as readonly string[]
       let passCount = 0
       for (const id of ruleIds) {
-        const r = p.per_rule[id]
+        const r = p.per_rule[id as keyof typeof p.per_rule]
         if (!r) continue
         if (r.status === 'pass') passCount += 1
       }
-      return Math.round((passCount / 5) * 10)
+      return Math.round((passCount / ruleIds.length) * 10)
     })(),
     tapescore: tapeScoreFromAnalyses(day.eod_ai_analysis_json, day.ai_analysis_json?.score ?? null),
     process_breach_rules: (() => {
       const p = day.eod_ai_analysis_json?.process
       if (!p?.per_rule) return null
-      const ruleIds = ['P1', 'P2', 'P3', 'P4', 'P5'] as const
+      const ruleIds = (p.active_rails?.length ? p.active_rails : ['P1', 'P2', 'P3', 'P4', 'P5']) as readonly string[]
       const failed: string[] = []
       for (const id of ruleIds) {
-        const r = p.per_rule[id]
+        const r = p.per_rule[id as keyof typeof p.per_rule]
         if (!r) continue
         if (r.status === 'fail' || r.status === 'incomplete') failed.push(id)
       }

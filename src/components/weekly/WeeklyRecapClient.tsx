@@ -151,7 +151,7 @@ export default function WeeklyRecapClient({ weekStart, weekLabelText, dayCards, 
         <StatCard label="Trades" value={tradesTotal.toString()} positive={null} />
         <StatCard label="Win Rate" value={wrTotal != null ? `${wrTotal}%` : '—'} positive={wrTotal != null && wrTotal >= 50} />
         {mode === 'pro' && (
-          <StatCard label="Risk limits" value={daysWithVerdict > 0 ? `${compliantDays}/${daysWithVerdict}` : '—'} positive={daysWithVerdict > 0 && compliantDays >= daysWithVerdict - 1} hint="days ≥4/5 rails kept" />
+          <StatCard label="Risk limits" value={daysWithVerdict > 0 ? `${compliantDays}/${daysWithVerdict}` : '—'} positive={daysWithVerdict > 0 && compliantDays >= daysWithVerdict - 1} hint="days graded Compliant on the rails you track" />
         )}
         <StatCard label="Trading Days" value={dayCards.filter(c => c.trade_count > 0).length.toString()} positive={null} hint="with trades" />
       </div>

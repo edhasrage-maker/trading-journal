@@ -222,12 +222,17 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
 export function reconcileProcessHeadline(
   headline: string | null,
   perRule: ProcessVerdict['per_rule'] | undefined,
+  /** Rails this trader actually tracks (process.active_rails). Untracked rails
+   *  auto-pass and must not be counted or named; legacy rows omit the field
+   *  and keep the historical all-five behavior. */
+  activeRails?: RuleId[],
 ): string | null {
   if (!perRule) return headline
-  const failed = RULE_ORDER.filter(id => perRule[id]?.status === 'fail')
+  const rails = activeRails?.length ? activeRails : RULE_ORDER
+  const failed = rails.filter(id => perRule[id]?.status === 'fail')
   const computed = failed.length === 0
-    ? `All ${RULE_ORDER.length} safety rails held.`
-    : `${RULE_ORDER.length - failed.length} of ${RULE_ORDER.length} rails held — ${failed.join(', ')} flagged.`
+    ? `All ${rails.length} safety rails held.`
+    : `${rails.length - failed.length} of ${rails.length} rails held — ${failed.join(', ')} flagged.`
   if (!headline) return failed.length > 0 ? computed : null
   const saysAllHeld = /\ball\b[^.]*\b(held|clean|compliant|clear|intact)\b/i.test(headline) || /\bno (breach|violation)/i.test(headline)
   const saysBreach = /\b(breach|breached|violat|broke|blew|failed)\b/i.test(headline)
@@ -251,7 +256,12 @@ function ProcessCard({ process: p }: { process: ProcessVerdict }) {
   const fauxHeadline = !p.headline && p.notes
     ? p.notes.split(/(?<=[.!?])\s+/)[0]
     : null
-  const visible = reconcileProcessHeadline(p.headline ?? fauxHeadline, p.per_rule)
+  // Only render the rails this trader tracks — a removed rule (e.g. cooldown
+  // deleted in Settings → Trading Rules) must disappear entirely, not linger
+  // as a vestigial auto-PASS chip. Legacy rows without active_rails keep all 5.
+  const tracked = p.active_rails?.length ? RULE_ORDER.filter(id => p.active_rails!.includes(id)) : RULE_ORDER
+  const gridCols = ['', 'grid-cols-1', 'grid-cols-2', 'grid-cols-3', 'grid-cols-4', 'grid-cols-5'][tracked.length] ?? 'grid-cols-5'
+  const visible = reconcileProcessHeadline(p.headline ?? fauxHeadline, p.per_rule, tracked)
 
   return (
     <div className={`${bgColor} ${borderColor} border rounded-lg p-3 space-y-2`}>
@@ -260,8 +270,8 @@ function ProcessCard({ process: p }: { process: ProcessVerdict }) {
         <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Process</span>
         <span className={`ml-auto text-lg font-bold ${verdictColor}`}>{p.verdict}</span>
       </div>
-      <div className="grid grid-cols-5 gap-1">
-        {RULE_ORDER.map(id => (
+      <div className={`grid ${gridCols} gap-1`}>
+        {tracked.map(id => (
           <RuleChip key={id} id={id} status={p.per_rule?.[id]} />
         ))}
       </div>

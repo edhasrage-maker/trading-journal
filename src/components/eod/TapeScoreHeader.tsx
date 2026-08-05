@@ -48,7 +48,7 @@ export default function TapeScoreHeader({
   // New analyses carry an AI-written day headline; legacy rows fall back to
   // the deterministic sentence so every scored day still gets a verdict.
   const sentence = analysis?.headline?.trim() || tapeScoreDaySentence(result)
-  const { passCount, entry, capture } = result.components
+  const { passCount, railCount, entry, capture } = result.components
   const pnlCls = pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'
 
   return (
@@ -93,8 +93,8 @@ export default function TapeScoreHeader({
             <>
               {passCount != null && (
                 <Chip
-                  label={`Risk limits ${passCount}/5`}
-                  tone={passCount >= 5 ? 'good' : passCount === 4 ? 'mid' : 'bad'}
+                  label={`Risk limits ${passCount}/${railCount ?? 5}`}
+                  tone={passCount >= (railCount ?? 5) ? 'good' : passCount === (railCount ?? 5) - 1 ? 'mid' : 'bad'}
                   title="The five account risk rails: daily loss limit, size cap, no size-up after a loss, 90s cooldown, trade cap. These are guardrails, not a measure of trade quality."
                 />
               )}

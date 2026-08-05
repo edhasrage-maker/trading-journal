@@ -54,8 +54,13 @@ export interface TapeScoreResult {
     entry: number | null
     /** Profit capture, 0-100 (mfe_capture × 100) — the "Exit" axis. One of three equal axes (⅓). */
     capture: number | null
-    /** Safety rails passed, 0-5. Null on legacy-basis rows. */
+    /** Safety rails passed, 0..railCount. Null on legacy-basis rows. */
     passCount: number | null
+    /** How many rails this trader actually tracks (active_rails when the
+     *  analysis recorded it, else the historical 5). Display denominators
+     *  must use THIS, not a literal 5 — a trader who removed a rail is not
+     *  "4/5". Null when passCount is null. */
+    railCount: number | null
     /** Re-derived from passCount ≥ 4 — not the stored verdict, so
      *  pre-amendment rows judged under other thresholds stay comparable. */
     verdict: 'Compliant' | 'Breach' | null
@@ -177,7 +182,7 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
       band: tapeScoreBand(score),
       basis: 'legacy',
       capped: false,
-      components: { risk: null, entry: null, capture: null, passCount: null, verdict: null },
+      components: { risk: null, entry: null, capture: null, passCount: null, railCount: null, verdict: null },
     }
   }
 
@@ -212,6 +217,7 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
       entry: entry != null ? Math.round(entry) : null,
       capture: capture != null ? Math.round(capture) : null,
       passCount,
+      railCount: passCount != null ? railDenom : null,
       verdict,
     },
   }
