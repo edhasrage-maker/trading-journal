@@ -488,7 +488,7 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
           )}
           <TagPerformanceTable
             title="Structure (Follow / Fade)"
-            description="Pivot 5m market structure at entry — trading with vs against the HH-HL trend"
+            description="Pivot 5m market structure at entry — trading with vs against the confirmed trend (HH-HL up, LH-LL down); shorts in a downtrend count as Follow"
             data={structurePerf}
           />
           <TagPerformanceTable

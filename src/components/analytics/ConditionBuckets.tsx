@@ -86,32 +86,42 @@ const CONDITIONS: ConditionDef[] = [
   // `quintileBreaks` now derives the cuts from the trades on screen, so the
   // bands re-calibrate themselves and this can't rot again. The arrays below
   // survive only as a fallback for samples too thin to quintile.
+  // IB and ADR are DAY-level NQ-anchored context (one market_context row per
+  // day, computed from NQ bars) — every trade that day inherits them, ES
+  // included. They describe the day's market character with NQ as the proxy,
+  // so their point scale stays internally consistent regardless of the
+  // instrument traded; the titles say so out loud.
   {
     key: 'ib_size',
-    title: 'IB Size (points)',
-    description: 'Initial Balance range in raw points.',
+    title: 'IB Size (NQ points)',
+    description: 'The day\'s NQ Initial Balance range in raw points — a day-character measure. ES trades inherit the day\'s NQ context.',
     fallbackBreaks: [100, 150, 200, 250],
     format: n => n.toFixed(0),
   },
   {
     key: 'adr',
-    title: 'Average Daily Range',
-    description: 'ADR in points (RTH).',
+    title: 'Average Daily Range (NQ)',
+    description: 'The day\'s NQ ADR in points (RTH) — a day-character measure. ES trades inherit the day\'s NQ context.',
     fallbackBreaks: [220, 270, 320, 380],
     format: n => n.toFixed(0),
   },
   {
     key: 'atr_1m',
-    title: 'ATR-10 (at entry)',
-    description: 'Wilder ATR-10 on 1m bars, snapshotted at the minute of entry. Trades pre-2025 fall back to end-of-RTH ATR.',
-    // Re-quintiled 2026-07-27 (Pt 23). The 2026-06 breaks assumed p20=10.0 /
-    // p40=12.0 / p60=14.9; the tape quietened and those moved to 7.7 / 9.9 /
-    // 13.4, piling 41% of trades into the bottom bucket — two quintiles
-    // collapsed into one bar. Current quintiles p20=7.7 p40=9.9 p60=13.4 p80=18.9.
-    fallbackBreaks: [8, 10, 13, 19],
-    format: n => n.toFixed(0),
-    // Prefer per-trade entry-time ATR; fall back to day-level atr_1m when null.
-    resolve: t => t.entry_atr_1m ?? t.atr_1m,
+    title: 'ATR-10 (at entry, % of price)',
+    description: 'Wilder ATR-10 on 1m bars at the entry minute, as a share of the instrument\'s price — scale-free, so NQ and ES bucket together honestly (12 NQ pts and 3.2 ES pts both read ≈0.043%). Trades pre-2025 fall back to end-of-RTH ATR.',
+    // Normalized 2026-08-04: raw-point buckets dumped every ES trade into the
+    // bottom band (ES ATR ~4-5 pts vs NQ ~8-35 for the SAME relative vol), and
+    // the auto-quintiles would have slid the cuts down as the ES share grew.
+    // % of price is one comparable axis; fallback breaks ≈ the old NQ point
+    // breaks [8,10,13,19] at a ~25k index.
+    fallbackBreaks: [0.03, 0.04, 0.055, 0.08],
+    format: n => `${n.toFixed(3)}%`,
+    // Prefer per-trade entry-time ATR; fall back to day-level atr_1m when null
+    // (pre-2025 rows — all NQ, so the NQ-day fallback stays scale-correct).
+    resolve: t => {
+      const atr = t.entry_atr_1m ?? t.atr_1m
+      return atr != null && t.entry_price != null && t.entry_price > 0 ? (atr / t.entry_price) * 100 : null
+    },
   },
 ]
 
