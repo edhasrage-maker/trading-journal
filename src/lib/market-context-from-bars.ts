@@ -85,14 +85,19 @@ export interface DayContextStats {
   current_price: number | null     // last close on the target PT date
 }
 
+/** Built ONCE. Constructing an Intl.DateTimeFormat is expensive and this runs
+ *  per bar — a three-week window is ~30k calls, a multi-year analysis millions.
+ *  The options are constant, so there was never a reason to rebuild it. */
+const PT_PARTS_FMT = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Los_Angeles',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hour12: false,
+})
+
 /** UTC ms → America/Los_Angeles wall-clock parts. DST-aware via Intl. */
 function utcMsToPtParts(ms: number): { date: string; sec: number } {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  })
+  const fmt = PT_PARTS_FMT
   const p: Record<string, string> = {}
   for (const x of fmt.formatToParts(new Date(ms))) p[x.type] = x.value
   const hour = p.hour === '24' ? 0 : parseInt(p.hour)
