@@ -80,21 +80,47 @@ function pct(sorted: number[], p: number): number | null {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((p / 100) * (sorted.length - 1))))]
 }
 
+/** Month-sized date chunks. A single three-year range with deep .range() paging
+ *  made Postgres scan far enough in to hit its statement timeout — the previous
+ *  run lost a third of ES that way and silently compared it against a full NQ,
+ *  turning a regime difference into an apparent instrument difference. Each
+ *  chunk is a narrow, indexed scan instead. */
+function monthChunks(startIso: string, endIso: string): Array<[string, string]> {
+  const out: Array<[string, string]> = []
+  const start = new Date(startIso), end = new Date(endIso)
+  let cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1))
+  while (cur <= end) {
+    const next = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1))
+    const from = cur < start ? start : cur
+    const to = next > end ? end : next
+    out.push([from.toISOString(), to.toISOString()])
+    cur = next
+  }
+  return out
+}
+
 async function fetchBars(symbol: string, startIso: string, endIso: string): Promise<OneMinBar[]> {
   const PAGE = 1000
   const out: OneMinBar[] = []
-  for (let from = 0; from < 2_000_000; from += PAGE) {
-    const { data, error } = await sb
-      .from('ohlcv_bars')
-      .select('ts, open, high, low, close, volume')
-      .eq('symbol', symbol)
-      .gte('ts', startIso).lte('ts', endIso)
-      .order('ts', { ascending: true })
-      .range(from, from + PAGE - 1)
-    if (error) { console.error(symbol, error.message); break }
-    const rows = (data ?? []) as OneMinBar[]
-    out.push(...rows)
-    if (rows.length < PAGE) break
+  for (const [cFrom, cTo] of monthChunks(startIso, endIso)) {
+    for (let from = 0; from < 200_000; from += PAGE) {
+      const { data, error } = await sb
+        .from('ohlcv_bars')
+        .select('ts, open, high, low, close, volume')
+        .eq('symbol', symbol)
+        .gte('ts', cFrom).lt('ts', cTo)
+        .order('ts', { ascending: true })
+        .range(from, from + PAGE - 1)
+      if (error) {
+        // Surface it loudly: a swallowed timeout is what produced a truncated,
+        // silently-wrong comparison last time.
+        console.error(`\n  !! ${symbol} ${cFrom.slice(0, 7)} FAILED: ${error.message}`)
+        throw new Error(`fetch failed for ${symbol} ${cFrom.slice(0, 7)}`)
+      }
+      const rows = (data ?? []) as OneMinBar[]
+      out.push(...rows)
+      if (rows.length < PAGE) break
+    }
   }
   return out
 }
@@ -120,15 +146,30 @@ async function main() {
   const startIso = `${FROM}T00:00:00Z`
   const endIso = `${TO}T23:59:59Z`
   const result: Record<string, Record<string, number[]>> = {}
+  // Real parameter, not a hidden cap. The previous version divided the date
+  // count by a hard-coded 60, so handing it three years instead of five months
+  // bought almost no extra samples — n stayed near 50 either way.
+  const SAMPLES = Number(flag('--samples') ?? 150)
 
+  // Load both symbols FIRST, then sample only dates BOTH have. Comparing NQ
+  // over three years against ES over two measures the market, not the
+  // instruments.
+  const loaded: Record<string, { bars: OneMinBar[]; dates: string[] }> = {}
   for (const sym of ['NQ', 'ES']) {
     process.stdout.write(`\nloading ${sym} bars ${FROM}…${TO} … `)
     const bars = await fetchBars(sym, startIso, endIso)
-    console.log(`${bars.length} bars`)
-    if (bars.length === 0) continue
-
-    // Distinct PT session dates present in the pull.
     const dates = [...new Set(bars.map(b => b.ts.slice(0, 10)))].sort()
+    console.log(`${bars.length} bars, ${dates.length} dates`)
+    loaded[sym] = { bars, dates }
+  }
+  const common = loaded.NQ.dates.filter(d => new Set(loaded.ES.dates).has(d))
+  console.log(`\nshared dates across both symbols: ${common.length}`)
+  console.log(`  NQ-only: ${loaded.NQ.dates.length - common.length}   ES-only: ${loaded.ES.dates.length - common.length}`)
+
+  for (const sym of ['NQ', 'ES']) {
+    const bars = loaded[sym].bars
+    if (bars.length === 0) continue
+    const dates = common
     const acc: Record<string, number[]> = { barVol: [], rangeUsed: [], overnight: [], ib: [], rvol: [] }
 
     // contextStatsForDate recomputes over EVERY bar it is handed, so passing the
@@ -143,7 +184,7 @@ async function main() {
       const arr = byDate.get(d)
       if (arr) arr.push(b); else byDate.set(d, [b])
     }
-    const step = Math.max(1, Math.floor(dates.length / 60))
+    const step = Math.max(1, Math.floor(dates.length / SAMPLES))
     let used = 0
     for (let i = 0; i < dates.length; i += step) {
       const d = dates[i]
