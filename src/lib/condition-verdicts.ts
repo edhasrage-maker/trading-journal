@@ -60,8 +60,13 @@ export interface ConditionInputs {
   atr1m: number | null
   /** 10-day average of the 1-min ATR, in points — the "typical" baseline. */
   atrBaseline: number | null
-  /** ADR in points. */
+  /** ADR in points — the whole-day trailing average, also shown as a raw value. */
   adr: number | null
+  /** ADR measured at the same point of the session the day has reached. While a
+   *  session is still running, comparing its partial range against a WHOLE-day
+   *  ADR reports the hour rather than the day's character — the same defect RVOL
+   *  had. Falls back to `adr` when absent; equal to it on a completed day. */
+  adrAtNow?: number | null
   /** Overnight high/low in price. */
   onh: number | null
   onl: number | null
@@ -321,7 +326,9 @@ export function readConditions(i: ConditionInputs): ConditionRead {
   // Range used — realized only; hidden pre-session so prep mornings don't show
   // a meaningless 12%.
   const dayRange = num(i.dayRange)
-  const drPct = dayRange != null && adr != null && adr > 0 ? (dayRange / adr) * 100 : null
+  // Judge the ratio against the time-matched baseline; keep `adr` for display.
+  const adrForRatio = num(i.adrAtNow) ?? adr
+  const drPct = dayRange != null && adrForRatio != null && adrForRatio > 0 ? (dayRange / adrForRatio) * 100 : null
   const drBand = drPct != null ? band(drPct, RANGE_USED_BANDS) : null
   if (drPct != null && drBand) {
     chips.push({

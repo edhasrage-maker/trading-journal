@@ -59,6 +59,7 @@ function ptClock(): string {
 export default function PrepHero({
   context,
   atrBaseline,
+  adrAtNow,
   prepNotes,
   onPrepNotesChange,
   eyebrow,
@@ -68,6 +69,9 @@ export default function PrepHero({
 }: {
   context: Partial<MarketContext>
   atrBaseline: number | null
+  /** Time-matched ADR — must be the SAME denominator the ledger uses, or the
+   *  hero and the ledger print different words for one session. */
+  adrAtNow?: number | null
   prepNotes: PrepNotes
   onPrepNotesChange: (v: PrepNotes) => void
   /** e.g. "FRI JUL 25 · NQ" */
@@ -103,6 +107,7 @@ export default function PrepHero({
     atr1m: atr,
     atrBaseline,
     adr,
+    adrAtNow,
     onh: numOr(context.onh),
     onl: numOr(context.onl),
     dayRange,

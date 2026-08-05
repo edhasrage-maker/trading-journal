@@ -105,11 +105,14 @@ const price = (v: number | null) => (v == null ? null : v.toLocaleString('en-US'
 export default function PrepLedger({
   context,
   atrBaseline,
+  adrAtNow,
   drAdrAuto,
   ibDayType,
 }: {
   context: Partial<MarketContext>
   atrBaseline: number | null
+  /** Time-matched ADR for the range-used ratio while a session is running. */
+  adrAtNow?: number | null
   /** Server-computed DR/ADR fallback for days whose day_range hasn't been read
    *  off a screenshot yet. */
   drAdrAuto: number | null
@@ -126,14 +129,16 @@ export default function PrepLedger({
   const dayRange = numOr(context.day_range)
 
   // One shared read so every verdict word here matches the hero's.
-  const read = readConditions({ rvol, atr1m: atr, atrBaseline, adr, onh, onl, dayRange, ibRatio })
+  const read = readConditions({ rvol, atr1m: atr, atrBaseline, adr, adrAtNow, onh, onl, dayRange, ibRatio })
   const chipFor = (label: string) => read.chips.find(c => c.label === label)
 
   const onPct = onh != null && onl != null && adr != null && adr > 0
     ? Math.round(((onh - onl) / adr) * 100)
     : null
-  const drPct = dayRange != null && adr != null && adr > 0
-    ? Math.round((dayRange / adr) * 100)
+  // Same denominator the verdict used, or the percentage and the word disagree.
+  const adrForRatio = adrAtNow ?? adr
+  const drPct = dayRange != null && adrForRatio != null && adrForRatio > 0
+    ? Math.round((dayRange / adrForRatio) * 100)
     : drAdrAuto != null ? Math.round(drAdrAuto * 100) : null
 
   const overnight = chipFor('Overnight range')

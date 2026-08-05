@@ -49,6 +49,10 @@ interface DayAggregate {
    *  the tape is — two hours into a 6.5-hour day that reads ~40% and calls a
    *  normal morning "very quiet". */
   rth_cum_vol: number[]
+  /** Running RTH range (high−low so far) after each RTH bar. Same purpose as
+   *  rth_cum_vol: a session in progress has to be judged against where prior
+   *  days stood at the SAME point, not against their finished ranges. */
+  rth_cum_range: number[]
 }
 
 export interface DayContextStats {
@@ -60,6 +64,11 @@ export interface DayContextStats {
   ib_size: number | null
   ib_vs_10d_avg: number | null
   adr: number | null
+  /** ADR measured at the SAME point of the session today has reached — the
+   *  honest denominator for "range used" while a day is still running. Equals
+   *  `adr` once the session completes. `adr` itself stays whole-day because it
+   *  is also DISPLAYED, and a shrinking headline ADR would read as a bug. */
+  adr_at_now: number | null
   atr_1m: number | null            // Wilder ATR-10 at EOD (12:59 PT)
   rvol_at_ib_close: number | null  // percent vs trailing-10 avg IB volume
   atr_at_ib_close: number | null
@@ -136,6 +145,7 @@ function emptyAggregate(date: string): DayAggregate {
     last_close: null, rth_bar_count: 0,
     on_high: null, on_low: null,
     rth_cum_vol: [],
+    rth_cum_range: [],
   }
 }
 
@@ -191,6 +201,7 @@ function aggregateBars(bars: OneMinBar[]): Map<string, DayAggregate> {
       // Snapshot the running total so a partial day can be matched against
       // prior days at the same bar index (see rth_cum_vol).
       agg.rth_cum_vol.push(agg.volume)
+      agg.rth_cum_range.push(agg.high - agg.low)
       if (isIB) {
         if (agg.ib_high == null || bar.high > agg.ib_high) agg.ib_high = bar.high
         if (agg.ib_low == null || bar.low < agg.ib_low) agg.ib_low = bar.low
@@ -213,6 +224,7 @@ interface DayMetrics {
   ib_size: number | null
   ib_vs_10d_avg: number | null
   adr: number | null
+  adr_at_now: number | null
   atr_1m: number | null
   rvol_at_ib_close: number | null
   atr_at_ib_close: number | null
@@ -268,6 +280,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
   // Prior days' cumulative-volume curves, so a day still in progress is measured
   // against where those days stood at the SAME bar of the session.
   const trailCumVol: number[][] = []
+  const trailCumRange: number[][] = []
   const out: DayMetrics[] = []
 
   for (const d of sorted) {
@@ -286,6 +299,14 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
     const volSoFar = d.rth_cum_vol.length ? d.rth_cum_vol[Math.min(barIdx, d.rth_cum_vol.length - 1)] : d.volume
     const rvol = priorAtBar.length >= LOOKBACK_RVOL ? (volSoFar / avg(priorAtBar)) * 100 : null
     const adr = trailRange.length >= LOOKBACK_ADR ? avg(trailRange) : null
+    // Time-matched ADR: prior days' range through the SAME bar of the session.
+    // "Range used" had the identical defect RVOL did — a partial day's range
+    // over a full-day ADR reports the hour, not the day's character, and reads
+    // low every morning. On a complete day this equals `adr` exactly.
+    const priorRangeAtBar = trailCumRange
+      .map(c => (c.length ? c[Math.min(barIdx, c.length - 1)] : null))
+      .filter((v): v is number => v != null && v > 0)
+    const adrAtNow = priorRangeAtBar.length >= LOOKBACK_ADR ? avg(priorRangeAtBar) : null
     const ibSize = (d.ib_high != null && d.ib_low != null) ? d.ib_high - d.ib_low : null
     const ibVs10d = (ibSize != null && trailIb.length >= LOOKBACK_IB) ? ibSize / avg(trailIb) : null
     const rvolAtIb = (trailIbVol.length >= LOOKBACK_IB && trailIbVol.reduce((s, v) => s + v, 0) > 0)
@@ -295,7 +316,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
 
     out.push({
       date: d.date,
-      rvol, ib_size: ibSize, ib_vs_10d_avg: ibVs10d, adr,
+      rvol, ib_size: ibSize, ib_vs_10d_avg: ibVs10d, adr, adr_at_now: adrAtNow,
       atr_1m: d.atr_at_eod,
       rvol_at_ib_close: rvolAtIb,
       atr_at_ib_close: d.atr_at_ib_close,
@@ -314,6 +335,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
     // window would drag every later comparison down — the same error this
     // change fixes, one level up.
     if (d.rth_cum_vol.length >= 300) trailCumVol.push(d.rth_cum_vol)
+    if (d.rth_cum_range.length >= 300) trailCumRange.push(d.rth_cum_range)
     if (ibSize != null) trailIb.push(ibSize)
     if (d.ib_volume > 0) trailIbVol.push(d.ib_volume)
     if (d.atr_at_ib_close != null) trailAtrIb.push(d.atr_at_ib_close)
@@ -321,6 +343,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
     // Each window is trimmed to ITS OWN length now, not a shared 10.
     if (trailVol.length > LOOKBACK_RVOL) trailVol.shift()
     if (trailCumVol.length > LOOKBACK_RVOL) trailCumVol.shift()
+    if (trailCumRange.length > LOOKBACK_ADR) trailCumRange.shift()
     if (trailRange.length > LOOKBACK_ADR) trailRange.shift()
     if (trailIb.length > LOOKBACK_IB) trailIb.shift()
     if (trailIbVol.length > LOOKBACK_IB) trailIbVol.shift()
@@ -410,6 +433,7 @@ export function contextStatsForDate(
       ib_size: target.ib_size,
       ib_vs_10d_avg: target.ib_vs_10d_avg,
       adr: target.adr,
+      adr_at_now: target.adr_at_now,
       atr_1m: target.atr_1m,
       rvol_at_ib_close: target.rvol_at_ib_close,
       atr_at_ib_close: target.atr_at_ib_close,
@@ -431,7 +455,7 @@ export function contextStatsForDate(
     base = {
       date,
       realized: false,
-      rvol: null, ib_size: null, ib_vs_10d_avg: null,
+      rvol: null, ib_size: null, ib_vs_10d_avg: null, adr_at_now: null,
       adr: last.adr, atr_1m: last.atr_1m,
       rvol_at_ib_close: null, atr_at_ib_close: null, meanHL10: null,
       atr_10d_avg: last.atr_10d_avg, atr_eod_10d_avg: last.atr_eod_10d_avg,

@@ -1091,6 +1091,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       <PrepHero
         context={context as Partial<MarketContext>}
         atrBaseline={atrBaseline}
+        adrAtNow={contextStats?.adr_at_now ?? null}
         prepNotes={prepNotes}
         onPrepNotesChange={setPrepNotes}
         eyebrow={eyebrow}
@@ -1239,6 +1240,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           <PrepLedger
             context={context as Partial<MarketContext>}
             atrBaseline={atrBaseline}
+            adrAtNow={contextStats?.adr_at_now ?? null}
             drAdrAuto={drAdrAuto}
             ibDayType={ibDayType}
           />
