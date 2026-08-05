@@ -312,20 +312,43 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     return () => { cancelled = true }
   }, [activeSymbol, date, barsVersion, session])
 
-  // Keep the context row's instrument in step with the chart selection.
-  // Without this the switcher would recompute every verdict for ES while the
-  // row still said NQ — so saving an ES prep would overwrite the NQ context for
-  // that day instead of creating its own row. Programmatic, so it must not mark
-  // the form dirty.
+  // Keep the context row's instrument — and its NUMBERS — in step with the
+  // chart selection.
+  //
+  // Every field below is a price or a volatility figure for one instrument, so
+  // when the selected instrument changes they are all wrong, not merely stale.
+  // Both auto-fill paths (bar stats, and chart levels) only write into EMPTY
+  // fields, and a row loaded from the database is not empty — so on opening an
+  // ES chart against a saved NQ row the prep showed ES levels on the chart and
+  // NQ's PDH/IBH/ADR in the panel beneath it. Clearing them lets both paths
+  // repopulate for the instrument actually selected.
+  //
+  // Only auto-filled/derived market data is cleared. Nothing the trader typed
+  // as their own read (notes, plans, day type) is touched.
+  const INSTRUMENT_SCOPED_FIELDS = useMemo(() => [
+    'pdh', 'pdl', 'onh', 'onl', 'ibh', 'ibl', 'rth_open', 'ib_close_price',
+    'ib_size', 'ib_10d_avg', 'ib_vs_10d_avg', 'ib_atr_ratio', 'ib_meanhl10',
+    'ib_size_band', 'ib_regime',
+    'adr', 'adr_flag', 'atr_1m', 'atr_10d_avg', 'atr_at_ib_close', 'atr_flag',
+    'rvol', 'rvol_at_ib_close', 'rvol_flag',
+    'day_range', 'gbx_pct_adr', 'price_in_pd_range', 'price_in_gbx_range',
+  ], [])
   useEffect(() => {
     if (!activeSymbol) return
     const root = chartSeriesRoot(activeSymbol)
     setContext(prev => {
-      if ((prev.symbol ?? 'NQ') === root) return prev
-      autoFilledContextRef.current = true
-      return { ...prev, symbol: root }
+      const prevRoot = prev.symbol ? chartSeriesRoot(prev.symbol) : null
+      if (prevRoot === root) return prev
+      const next = { ...prev, symbol: root } as Record<string, unknown>
+      for (const k of INSTRUMENT_SCOPED_FIELDS) next[k] = null
+      // Let both fill paths run again for the newly-selected instrument.
+      statsAutoFilledRef.current.clear()
+      levelsAutoFilledRef.current.clear()
+      autoFillSymbolRef.current = root
+      autoFilledContextRef.current = true // programmatic — must not mark dirty
+      return next as typeof prev
     })
-  }, [activeSymbol])
+  }, [activeSymbol, INSTRUMENT_SCOPED_FIELDS])
 
   // Persist the day-CHARACTER read (IB day-type Phase 2). Until now the
   // classification was recomputed on every prep open and thrown away; storing
