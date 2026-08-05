@@ -44,6 +44,9 @@ function navTourAnchor(href: string): string | undefined {
 // local `.scid` files. `cloudOnly` items need the hosted service role.
 const settingsItems = [
   { href: '/settings/coaching', label: 'Player Profile', localOnly: false, cloudOnly: false, adminOnly: false },
+  // Cloud-only: the local owner build grades on the built-in v1.3 rubric and
+  // never reads scoring_profile_json, so showing an editor there would lie.
+  { href: '/settings/rules', label: 'Trading Rules', localOnly: false, cloudOnly: true, adminOnly: false },
   { href: '/settings/account', label: 'Account Settings', localOnly: false, cloudOnly: false, adminOnly: false },
   { href: '/settings/metrics', label: 'Metrics', localOnly: false, cloudOnly: false, adminOnly: false },
   { href: '/settings/tags', label: 'Tags', localOnly: false, cloudOnly: false, adminOnly: false },

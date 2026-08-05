@@ -46,7 +46,15 @@ function RailRow({ label, unit, v, set, onDismiss }: { label: string; unit: stri
 
 /** Step 3 — risk & rules. Writes the per-user scoring_profile the Coach Score
  *  grades against. Each rule is opt-in (toggle) so nothing is assumed. */
-export default function RulesStep({ onNext, onSkipAll }: { onNext: () => void; onSkipAll: () => void }) {
+export default function RulesStep({ onNext, onSkipAll, mode = 'wizard' }: {
+  onNext: () => void
+  onSkipAll: () => void
+  /** 'wizard' = first-run flow (Skip link, "Continue"); 'settings' = the
+   *  Settings → Trading Rules editor (no skip, "Save rules"). Same load/save
+   *  either way — the form prefills from the CURRENT profile, so saving from
+   *  settings keeps untouched rails intact. */
+  mode?: 'wizard' | 'settings'
+}) {
   const [risk, setRisk] = useState({ on: false, mode: 'R', value: '' })
   const [stop, setStop] = useState({ on: false, mode: 'atr', value: '' })
   const [tp, setTp] = useState({ on: false, text: '' })
@@ -301,11 +309,13 @@ export default function RulesStep({ onNext, onSkipAll }: { onNext: () => void; o
         </div>
       </div>
 
-      <div className="flex items-center justify-between pt-2">
-        <button type="button" onClick={onSkipAll} className="text-sm text-gray-500 hover:text-gray-300">Skip for now</button>
+      <div className={`flex items-center ${mode === 'wizard' ? 'justify-between' : 'justify-end'} pt-2`}>
+        {mode === 'wizard' && (
+          <button type="button" onClick={onSkipAll} className="text-sm text-gray-500 hover:text-gray-300">Skip for now</button>
+        )}
         <button type="button" onClick={save} disabled={saving}
           className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors inline-flex items-center gap-2">
-          {saving && <Loader2 className="w-4 h-4 animate-spin" />}Continue
+          {saving && <Loader2 className="w-4 h-4 animate-spin" />}{mode === 'wizard' ? 'Continue' : 'Save rules'}
         </button>
       </div>
     </div>
