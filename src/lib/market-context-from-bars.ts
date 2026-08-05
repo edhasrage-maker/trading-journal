@@ -235,8 +235,13 @@ interface DayMetrics {
  *
  *   RVOL 20 — chart read 111.85; trailing-20 reproduces 111.5%, trailing-10 gives
  *             103.8%.
- *   ADR  14 — chart read 77.35; trailing-14 gives 77.14, trailing-10 gives 81.88
- *             (the old value, which is why the app showed 81.9).
+ *   ADR  10 — the trader's study is 10, confirmed directly. An earlier revision
+ *             set this to 14 because trailing-14 (77.14) sat closest to the
+ *             chart's 77.35 while trailing-10 gives 81.88 — but that was fitted
+ *             to ONE day's reading, which is not evidence of a length. The ~5%
+ *             gap at 10 is real and still unexplained; it is NOT a lookback
+ *             difference, so something else in the range definition differs
+ *             (session bounds, excluded days, or the contract series).
  *   ATR  10 — chart's ATR-10-1min read 2.92 against the app's 2.9. Already agreed;
  *             left alone.
  *
@@ -247,7 +252,7 @@ interface DayMetrics {
  * so the window definition is right; only the averaging length is unknown.
  */
 const LOOKBACK_RVOL = 20
-const LOOKBACK_ADR = 14
+const LOOKBACK_ADR = 10
 const LOOKBACK_ATR = 10
 const LOOKBACK_IB = 10
 
