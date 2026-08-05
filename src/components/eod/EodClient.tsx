@@ -10,7 +10,7 @@ import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
 import CalibrationOverlay, { type CalibStep, type CalibDraft } from './CalibrationOverlay'
 import TradeArrowOverlay from './TradeArrowOverlay'
-import LiveChart from '@/components/charts/LiveChart'
+import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
@@ -456,10 +456,30 @@ export default function EodClient({
 
   // Mint (or reuse) a read-only coach-review link for this day and copy it.
   const [sharing, setSharing] = useState(false)
+  // Ref onto the live chart so Share can grab a PNG of it for the link preview.
+  const liveChartRef = useRef<LiveChartHandle | null>(null)
   const shareForReview = async () => {
     if (!day?.id) return
     setSharing(true)
     try {
+      // Capture the chart FIRST so the preview exists by the time the link is
+      // pasted — scrapers fetch within seconds. Best-effort: a failed capture
+      // must never stop the link being minted, it only costs the thumbnail.
+      // takeScreenshotPng grabs the chart canvas, which carries the arrows and
+      // the drawn zone/text annotations (both are chart primitives, not DOM).
+      if (chartView === 'live') {
+        try {
+          const shot = await liveChartRef.current?.takeScreenshotPng()
+          if (shot?.data) {
+            await fetch('/api/share/preview', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ date, dataUrl: `data:image/png;base64,${shot.data}` }),
+            })
+          }
+        } catch { /* thumbnail is optional; the link is not */ }
+      }
+
       const res = await fetch('/api/share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1110,6 +1130,7 @@ export default function EodClient({
 
       {chartView === 'live' ? (
         <LiveChart
+          ref={liveChartRef}
           date={date}
           symbol={activeSymbol}
           symbolOptions={symbolOptions}

@@ -41,7 +41,14 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
     if (!day) return base
 
     await signSharedScreenshots(token, day, [], PREVIEW_TTL_SEC)
-    const image = day.eod_chart_screenshot_url || day.chart_screenshot_url
+    // Prefer the chart snapshot taken when the day was shared. It lives in the
+    // PUBLIC share-previews bucket as a plain URL — no signing, no TTL to
+    // outlive — which matters because scrapers fetch anonymously and cache. The
+    // uploaded-screenshot fields stay as the fallback for days reviewed that
+    // way; days reviewed on the live chart have neither, which is what left
+    // these links with no thumbnail at all.
+    const shareShot = (day as TradingDay & { share_preview_url?: string | null }).share_preview_url
+    const image = shareShot || day.eod_chart_screenshot_url || day.chart_screenshot_url
     if (!image || !/^https?:\/\//i.test(image)) return base
 
     const title = `Session review — ${day.date}`
