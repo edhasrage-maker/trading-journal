@@ -259,9 +259,21 @@ function findingCopy(carryover: Carryover | null, tradeCount: number, label: str
 export function DashboardHero({ periods }: { periods: HeroPeriods }) {
   // Both default to THIS MONTH so the score and the leak read over the same
   // window out of the box (and match the simpler Highlights view, which shows
-  // this month too). Each picker still adjusts independently.
+  // this month too).
   const [scoreKey, setScoreKey] = usePersistentPeriod('dashboard-hero-score', 'month')
   const [findKey, setFindKey] = usePersistentPeriod('dashboard-hero-finding', 'month')
+  /**
+   * Changing the SCORE window carries the read with it. Setting the same window
+   * twice was pure friction: the two are read together — "here's the score, and
+   * here's what stood out over the same period" — so they agreeing is the normal
+   * case and disagreeing is the exception.
+   *
+   * Still one-way. The read's own picker keeps working, so a short window that
+   * has nothing to say ("your numbers sit inside your normal range") can be
+   * widened for the read alone without dragging the score off the month you're
+   * actually reviewing.
+   */
+  const setScoreAndRead = (k: HeroPeriodKey) => { setScoreKey(k); setFindKey(k) }
   const scoreData = periods[scoreKey]
   const findData = periods[findKey]
   const c = findingCopy(findData.carryover, findData.tradeCount, findData.findingLabel)
@@ -280,7 +292,7 @@ export function DashboardHero({ periods }: { periods: HeroPeriods }) {
               <span className="text-[11px] text-gray-500">· {scoreData.scoreLabel}</span>
               <ScoreBreakdownInfo period={scoreData.scorePeriod} />
             </div>
-            <PeriodPicker value={scoreKey} onChange={setScoreKey} />
+            <PeriodPicker value={scoreKey} onChange={setScoreAndRead} />
           </div>
           <ScoreCluster period={scoreData.scorePeriod} />
         </div>
