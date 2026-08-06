@@ -8,6 +8,8 @@ import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardSt
 import DashboardCharts from '@/components/dashboard/DashboardCharts'
 import DashboardModeSwitch from '@/components/dashboard/DashboardModeSwitch'
 import BeginnerDashboard from '@/components/dashboard/BeginnerDashboard'
+import AchievementCollection from '@/components/dashboard/AchievementCollection'
+import { achievementCounts } from '@/lib/achievements'
 import { formatCapturePct } from '@/lib/analytics'
 // Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
 // ATR from `ohlcv_bars` on every request. That path was retired in favor of
@@ -110,6 +112,9 @@ export default async function DashboardPage() {
       }
     }
   }
+  // Lifetime trophy-case counts — the full collection (all badges, ×N) that the
+  // dashboard owns. The EOD recap shows only the day's earns, not this strip.
+  const collectionCounts = achievementCounts(Array.from(achievementsByDayId.values()))
 
   // Fresh cache map: dayId → stored rollup, ONLY for rows at the current version.
   // A missing/errored stats query (pre-migration) leaves this empty → all dirty.
@@ -520,6 +525,13 @@ export default async function DashboardPage() {
           <DashboardStats days={statsDays} hideScoreHero />
         </div>
         <DashboardCharts days={statsDays} />
+
+        {/* Trophy case — the full achievement collection with lifetime counts.
+            The EOD recap shows only what a given day earned; the whole set of
+            badges lives here. */}
+        <div className="mt-8 pt-5 border-t border-gray-700">
+          <AchievementCollection counts={collectionCounts} />
+        </div>
 
         {/* Every session — toggle between the list and the calendar. */}
         <div className="mt-8 pt-5 border-t border-gray-700">
