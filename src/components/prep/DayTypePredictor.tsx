@@ -17,6 +17,12 @@ interface Props {
    *  as a strong prior so its regime/structural picks reflect today's IB. Null
    *  until the IB prints. */
   ibRead?: IbAiRead | null
+  /** The market context as it stands ON SCREEN, saved or not. Sent with the
+   *  request so the prediction can run before the prep has been saved — the
+   *  values are auto-filled from bars well before the trader hits Save. */
+  liveContext?: Record<string, unknown> | null
+  /** Prep notes as they stand on screen, same reasoning. */
+  liveNotes?: Record<string, unknown> | null
 }
 
 type Confidence = 'high' | 'medium' | 'low'
@@ -51,7 +57,7 @@ const AXIS_TITLES: Record<Axis, string> = {
  * label even when multiple clearly applied (e.g. a Trend Day on a High Action
  * session would surface only "Trend Day", losing the regime signal).
  */
-export default function DayTypePredictor({ date, currentDayTypes, onAccept, ibRead }: Props) {
+export default function DayTypePredictor({ date, currentDayTypes, onAccept, ibRead, liveContext, liveNotes }: Props) {
   const [loading, setLoading] = useState(false)
   const [response, setResponse] = useState<PredictResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -68,7 +74,17 @@ export default function DayTypePredictor({ date, currentDayTypes, onAccept, ibRe
       const res = await fetch('/api/predict-day-type', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, ibRead: ibRead ?? null }),
+        // Send what is ON SCREEN. The prediction previously read only the
+        // SAVED market context, so it refused to run until the prep had been
+        // saved — offering an action before the thing it depends on exists.
+        // The values are already auto-filled from bars by the time the button
+        // is visible; the server falls back to the stored row when omitted.
+        body: JSON.stringify({
+          date,
+          ibRead: ibRead ?? null,
+          context: liveContext ?? null,
+          notes: liveNotes ?? null,
+        }),
       })
       const data = await res.json()
       if (!res.ok) {

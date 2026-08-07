@@ -27,6 +27,11 @@ interface ReqBody {
   /** Deterministic IB read (bar-derived, validated on tagging history) passed
    *  from the prep client as a strong prior. Optional / null pre-IB. */
   ibRead?: IbAiRead | null
+  /** Market context as it stands ON SCREEN, saved or not. Preferred over the
+   *  stored row: it is current, and on an unsaved day there is no stored row. */
+  context?: MarketContext | null
+  /** Prep notes as they stand on screen, same reasoning. */
+  notes?: PrepNotes | null
 }
 
 interface DayTypeDef {
@@ -109,6 +114,11 @@ async function handle(req: Request) {
 
   const body = (await req.json()) as ReqBody
   const { date, ibRead } = body
+  // The prep page sends the market context and notes AS THEY STAND ON SCREEN.
+  // They are auto-filled from bars long before the trader saves, so requiring a
+  // saved row meant offering the action before the thing it depends on existed.
+  const liveContext = body.context ?? null
+  const liveNotes = body.notes ?? null
   if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'date must be YYYY-MM-DD' }, { status: 400 })
   }
@@ -122,22 +132,26 @@ async function handle(req: Request) {
     .eq('date', date)
     .single() as { data: { id: string; prep_notes_json: PrepNotes | null } | null }
 
-  if (!day) {
+  // An unsaved day is fine as long as the client sent what is on screen; only
+  // refuse when there is genuinely nothing to read from either source.
+  if (!day && liveContext == null && liveNotes == null) {
     return NextResponse.json(
-      // Name the ACTION, not the missing table. The prediction reads this day's
-      // SAVED market context, which does not exist until the prep is saved —
-      // and "fill out the prep first" reads as already-done to someone looking
-      // at a prep they have just filled out but not yet saved.
-      { error: 'Save this prep first — the prediction reads the saved market context for this day.' },
+      { error: 'Nothing to read yet — fill in the market context or prep notes, then try again.' },
       { status: 400 },
     )
   }
 
-  const { data: ctx } = await supabase
-    .from('market_context')
-    .select('*')
-    .eq('trading_day_id', day.id)
-    .single() as { data: MarketContext | null }
+  // On-screen values win: they are current, and the stored row may be stale or
+  // absent entirely on a day that has not been saved.
+  const { data: storedCtx } = day
+    ? await supabase
+        .from('market_context')
+        .select('*')
+        .eq('trading_day_id', day.id)
+        .order('symbol', { ascending: true })
+        .limit(1) as { data: MarketContext[] | null }
+    : { data: null }
+  const ctx: MarketContext | null = liveContext ?? storedCtx?.[0] ?? null
 
   // Pull the active day_type library + descriptions. This replaces the old
   // hardcoded 7-label list which kept leaking stale labels (Trend Day, Range
@@ -170,7 +184,7 @@ async function handle(req: Request) {
     )
   }
 
-  const notes = day.prep_notes_json ?? {}
+  const notes = liveNotes ?? day?.prep_notes_json ?? {}
   const hasAnyContext = ctx != null && (ctx.rvol != null || ctx.adr != null || ctx.ib_size != null || ctx.atr_1m != null)
   const hasAnyNotes = Object.values(notes).some(v => v != null && (typeof v === 'string' ? v.trim().length > 0 : true))
   if (!hasAnyContext && !hasAnyNotes) {

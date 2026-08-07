@@ -1231,6 +1231,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             date={date}
             currentDayTypes={dayTypes}
             ibRead={ibDayTypeAiRead(ibDayType)}
+            liveContext={context as unknown as Record<string, unknown>}
+            liveNotes={prepNotes as unknown as Record<string, unknown>}
             // Multi-axis predictor returns an array — dedupe-append to the
             // multi-select so structural + regime + flags all land in one click.
             onAccept={labels => setDayTypes(prev => {
