@@ -124,7 +124,11 @@ async function handle(req: Request) {
 
   if (!day) {
     return NextResponse.json(
-      { error: `No trading_day row for ${date}. Fill out the prep first.` },
+      // Name the ACTION, not the missing table. The prediction reads this day's
+      // SAVED market context, which does not exist until the prep is saved —
+      // and "fill out the prep first" reads as already-done to someone looking
+      // at a prep they have just filled out but not yet saved.
+      { error: 'Save this prep first — the prediction reads the saved market context for this day.' },
       { status: 400 },
     )
   }

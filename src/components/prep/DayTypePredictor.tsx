@@ -117,7 +117,12 @@ export default function DayTypePredictor({ date, currentDayTypes, onAccept, ibRe
 
   return (
     <div className="mt-3 space-y-2">
-      {!response && !error && (
+      {/* The button survives an error. It used to be REPLACED by the banner, so
+          a failed prediction removed the only way to retry — the action
+          disappeared at exactly the moment the user wanted to repeat it, and
+          the sole route back was spotting a small Dismiss link. An error is a
+          state of the action, not a substitute for it. */}
+      {!response && (
         <button
           type="button"
           onClick={predict}
@@ -128,7 +133,7 @@ export default function DayTypePredictor({ date, currentDayTypes, onAccept, ibRe
           {loading
             ? <Loader2 className="w-3 h-3 animate-spin" />
             : <Sparkles className="w-3 h-3" />}
-          {loading ? 'Analyzing…' : 'Predict day type (AI)'}
+          {loading ? 'Analyzing…' : error ? 'Try again' : 'Predict day type (AI)'}
         </button>
       )}
 
