@@ -245,8 +245,16 @@ interface DayMetrics {
  * disagrees with the chart the trader watches all session is a number they stop
  * believing, even when the maths is sound:
  *
- *   RVOL 20 — chart read 111.85; trailing-20 reproduces 111.5%, trailing-10 gives
- *             103.8%.
+ *   RVOL 10 — an earlier revision set this to 20 because trailing-20 reproduced
+ *             the chart's 111.85 (111.5%) where trailing-10 gave 103.8%. That was
+ *             the SAME single-day fit that produced the wrong ADR of 14, and it
+ *             also exceeded the ~15 trading days the market-context API fetches,
+ *             so RVOL silently went blank on the prep page.
+ *             Both gaps are better explained by one cause: the trader's baseline
+ *             day-set averages lower than ours. A lower baseline makes ADR read
+ *             lower AND RVOL read higher — exactly the two directions observed
+ *             (ADR 81.88 vs 77.35; RVOL 103.8 vs 111.85, and 103.8 x 1.055 =
+ *             109.5, near the chart). One fix, not two coincidences.
  *   ADR  10 — the trader's study is 10, confirmed directly. An earlier revision
  *             set this to 14 because trailing-14 (77.14) sat closest to the
  *             chart's 77.35 while trailing-10 gives 81.88 — but that was fitted
@@ -263,7 +271,7 @@ interface DayMetrics {
  * would be fitting noise. Today's IB SIZE already reproduces exactly (50.25),
  * so the window definition is right; only the averaging length is unknown.
  */
-const LOOKBACK_RVOL = 20
+const LOOKBACK_RVOL = 10
 const LOOKBACK_ADR = 10
 const LOOKBACK_ATR = 10
 const LOOKBACK_IB = 10
@@ -424,6 +432,12 @@ export function contextStatsForDate(
   if (metrics.length === 0) return null
 
   const target = metrics.find(m => m.date === date)
+  // Most recent COMPLETED day's EOD ATR, for carrying forward into a session
+  // that is still running (see atr_1m below).
+  const priorAtrEod = metrics
+    .filter(m => m.date < date && m.atr_1m != null)
+    .map(m => m.atr_1m as number)
+    .pop() ?? null
   let base: DayContextStats
   if (target) {
     base = {
@@ -434,7 +448,12 @@ export function contextStatsForDate(
       ib_vs_10d_avg: target.ib_vs_10d_avg,
       adr: target.adr,
       adr_at_now: target.adr_at_now,
-      atr_1m: target.atr_1m,
+      // atr_at_eod only exists at the 12:59 PT bar, so a session IN PROGRESS
+      // has none — the value would vanish at the open and reappear at the close.
+      // Carry the last completed day forward, exactly as the pre-session branch
+      // does, so the reference is continuous. Same basis either way, so the
+      // ratio against atr_eod_10d_avg stays valid.
+      atr_1m: target.atr_1m ?? priorAtrEod,
       rvol_at_ib_close: target.rvol_at_ib_close,
       atr_at_ib_close: target.atr_at_ib_close,
       meanHL10: null, // attached below from the active session's IB
