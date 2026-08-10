@@ -46,17 +46,20 @@ const VERDICT_CLS: Record<VerdictTone, string> = {
 }
 
 function Row({
-  label, value, chip, chipTone = 'dim',
+  label, value, chip, chipTone = 'dim', title,
 }: {
   label: string
   value: string | null
   chip?: string
   chipTone?: VerdictTone
+  /** Hover text — used where the number cannot be reproduced from the other
+   *  values on the panel and would otherwise look wrong. */
+  title?: string
 }) {
   const empty = value == null
   return (
     <div className="grid grid-cols-[1fr_auto_auto] gap-3 items-center py-1.5 border-t border-gray-800">
-      <span className="text-[13px] text-gray-400">{label}</span>
+      <span className="text-[13px] text-gray-400" title={title}>{label}</span>
       <span
         className={cn(
           'text-[14.5px] tabular-nums text-right min-w-[74px]',
@@ -202,6 +205,11 @@ export default function PrepLedger({
               value={rr != null ? `${rr.toFixed(1)}×` : null}
               chip={c?.word ?? 'pending'}
               chipTone={c?.tone ?? 'dim'}
+              // The denominator is NOT the "1-min ATR" shown a few rows down.
+              // Two different ATRs sat next to each other unlabelled, so dividing
+              // the IB by the visible one gave a different answer and the panel
+              // looked wrong. Name the basis where it is read.
+              title={'IB size ÷ meanHL10 — the mean High−Low of the LAST 10 IB 1-minute bars, not the Wilder ATR-10 shown under Volatility. The study this lens comes from is calibrated on that basis (chop < 7.7, expanded ≥ 13), so swapping in Wilder would change what the words mean.'}
             />
           )
         })()}
