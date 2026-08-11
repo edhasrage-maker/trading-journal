@@ -253,7 +253,7 @@ export default function PeriodRecapClient(p: RecapProps) {
         <div>
           <div className={cn('grid gap-3.5 pb-2 text-[12.5px] text-gray-500', GRID_COLS)}>
             <span>{p.scope === 'week' ? 'Day' : 'Week'}</span>
-            <span className="hidden sm:block">Read</span>
+            <span className="hidden sm:block">{p.scope === 'week' ? 'Read' : ''}</span>
             <span className="text-right">Trades</span>
             <span className="text-right hidden sm:block">Captured</span>
             <span className="text-right hidden md:block">Rails</span>
