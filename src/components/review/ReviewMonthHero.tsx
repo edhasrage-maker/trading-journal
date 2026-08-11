@@ -146,7 +146,7 @@ export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
 /** The TapeScore ring + the three axis scores (Risk / Entry / Exit) beside it.
  *  Scores only — the weighting and the session count live behind the ⓘ so the
  *  numbers read clean. Renders a quiet note when no day in the window was scored. */
-function ScoreCluster({ period }: { period: TapeScorePeriod }) {
+export function ScoreCluster({ period }: { period: TapeScorePeriod }) {
   if (period.score == null) {
     return <p className="text-[13px] text-gray-500 max-w-[36ch] leading-normal">No graded sessions in this window yet — run Analyze Session on a day to score it.</p>
   }

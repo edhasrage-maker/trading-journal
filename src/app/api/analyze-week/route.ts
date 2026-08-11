@@ -16,8 +16,6 @@
  *     what_worked: string[]
  *     what_didnt: string[]
  *     focus_next_week: string[]         // 2-3 actionable items
- *     weekly_grade: 'A' | 'B' | 'C' | 'D' | 'F'   // execution quality, not PnL
- *     grade_reasoning: string
  *     generated_at: string              // ISO timestamp
  *     model: string
  *   }
@@ -138,9 +136,7 @@ Respond with ONLY valid JSON in this exact structure (no markdown fences):
   "themes": ["<cross-day pattern 1 with specifics>", "<pattern 2>", "<3-5 total>"],
   "what_worked": ["<specific decision/setup/behavior that paid off>", "<up to 4 total>"],
   "what_didnt": ["<specific decision/setup/behavior that cost you>", "<up to 4 total>"],
-  "focus_next_week": ["<actionable item with specifics>", "<2-3 total>"],
-  "weekly_grade": "<A | B | C | D | F — grade EXECUTION quality, NOT PnL. Was the WAY you traded sound regardless of result?>",
-  "grade_reasoning": "<1-2 sentences explaining the grade>"
+  "focus_next_week": ["<actionable item with specifics>", "<2-3 total>"]
 }
 
 LENGTH DISCIPLINE:
@@ -148,7 +144,6 @@ LENGTH DISCIPLINE:
   - prior_week_overview: 2-3 sentences, under 60 words
   - week_comparison bullets: 1 sentence each, under 30 words, each leading with the dimension (e.g. "Setups:", "Capture:", "Execution:", "Compliance:", "Recurring:")
   - themes / what_worked / what_didnt / focus_next_week bullets: 1 sentence each, under 25 words
-  - grade_reasoning: 1-2 sentences
 
 Respond starting with { and ending with }.`
 

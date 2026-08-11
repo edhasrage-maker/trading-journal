@@ -35,6 +35,10 @@ export default function ReviewNav({
   const scopes = [
     { href: `/review/today/${todayDate}`, label: 'Today', match: '/review/today' },
     { href: `/review/week/${weekStart}`, label: 'Week', match: '/review/week' },
+    // The month scope pages through CLOSED books too, but lands on the current
+    // month for consistency with Today/Week. `/review/month` (bare) still
+    // redirects to the Dashboard, which owns the running windows.
+    { href: `/review/month/${todayDate.slice(0, 7)}`, label: 'Month', match: '/review/month/' },
   ]
 
   return (
