@@ -1310,7 +1310,7 @@ export default function EodClient({
       {/* Cloud build: no ffmpeg/filesystem, so recap runs in the browser —
           the user's recording is decoded client-side and never uploaded. */}
       {!LOCAL_FEATURES_ENABLED && (
-        <BrowserRecap trades={trades} date={date} />
+        <BrowserRecap trades={trades} date={date} onTradesChanged={refreshTrades} />
       )}
 
       {/* EOD Notes */}

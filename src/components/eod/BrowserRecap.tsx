@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare, SlidersHorizontal, Check, Copy, ChevronDown } from 'lucide-react'
 import { VideoFrameGrabber, parseObsFilenameStartMs } from '@/lib/browser-frames'
 import { createClient } from '@/lib/supabase/client'
-import type { Trade } from '@/lib/supabase/types'
+import type { Trade, DetectedLevels } from '@/lib/supabase/types'
 
 /**
  * Pull the AI text out of a `trades.recording_commentary` value, tolerant of
@@ -28,6 +28,32 @@ function savedCommentaryText(raw: unknown): string | null {
       } catch { /* fall through */ }
     }
     return s.length > 0 ? s : null
+  }
+  return null
+}
+
+/**
+ * Pull the levels the coach read off the entry frame out of a
+ * `trades.recording_commentary` value — same shape-tolerance as
+ * savedCommentaryText, since both live in that one jsonb column. Returns null
+ * for rows written before level detection existed, or when the frame showed no
+ * working orders.
+ */
+function savedDetectedLevels(raw: unknown): DetectedLevels | null {
+  if (raw == null) return null
+  const read = (o: unknown): DetectedLevels | null => {
+    if (!o || typeof o !== 'object') return null
+    const lvl = (o as { detected_levels?: unknown }).detected_levels
+    if (!lvl || typeof lvl !== 'object') return null
+    if (typeof (lvl as DetectedLevels).confidence !== 'string') return null
+    return lvl as DetectedLevels
+  }
+  if (typeof raw === 'object') return read(raw)
+  if (typeof raw === 'string') {
+    const s = raw.trim()
+    if (s.startsWith('{') && s.endsWith('}')) {
+      try { return read(JSON.parse(s)) } catch { return null }
+    }
   }
   return null
 }
@@ -71,6 +97,9 @@ interface Props {
   trades: Trade[]
   /** The EOD date (YYYY-MM-DD) — namespaces the persisted anchor. */
   date: string
+  /** Called after the recap writes to a trade (a level applied, or a level the
+   *  run filled in on its own) so the page re-reads the rows. */
+  onTradesChanged?: () => void
 }
 
 type AnchorSource = 'filename' | 'mtime' | 'pinned'
@@ -107,7 +136,7 @@ const fmtClock = (sec: number): string => {
     : `${m}:${String(ss).padStart(2, '0')}`
 }
 
-export default function BrowserRecap({ trades, date }: Props) {
+export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
   const [file, setFile] = useState<File | null>(null)
   const [grabber, setGrabber] = useState<VideoFrameGrabber | null>(null)
   const [duration, setDuration] = useState(0)
@@ -144,6 +173,13 @@ export default function BrowserRecap({ trades, date }: Props) {
   const [commentaryStage, setCommentaryStage] = useState<'idle' | 'uploading' | 'thinking'>('idle')
   const [commentaryError, setCommentaryError] = useState<string | null>(null)
   const [commentaryNote, setCommentaryNote] = useState<string | null>(null)
+  // Stop/target the coach read off each entry frame. Fresh from a run, or read
+  // back off the trades below when the run happened in an earlier session.
+  const [levels, setLevels] = useState<Record<string, DetectedLevels>>({})
+  /** id → which columns the last run filled in by itself, so we can say so. */
+  const [autoApplied, setAutoApplied] = useState<Record<string, string[]>>({})
+  /** `${tradeId}:${field}` while an Apply is in flight. */
+  const [applyingLevel, setApplyingLevel] = useState<string | null>(null)
 
   // Pin-to-trade scrubber state.
   const [pinning, setPinning] = useState(false)
@@ -166,6 +202,18 @@ export default function BrowserRecap({ trades, date }: Props) {
     for (const t of trades) {
       const txt = savedCommentaryText(t.recording_commentary)
       if (txt) out[t.id] = txt
+    }
+    return out
+  }, [trades])
+
+  // Same for the levels: a read from any earlier run is still worth showing, so
+  // the trader can apply it without burning another AI call on the same frames.
+  // A fresh run's levels (state) take precedence over what's stored.
+  const savedLevels = useMemo(() => {
+    const out: Record<string, DetectedLevels> = {}
+    for (const t of trades) {
+      const lvl = savedDetectedLevels(t.recording_commentary)
+      if (lvl) out[t.id] = lvl
     }
     return out
   }, [trades])
@@ -363,14 +411,45 @@ export default function BrowserRecap({ trades, date }: Props) {
       const data = await res.json()
       if (!res.ok) { setCommentaryError(data.error ?? 'Commentary failed'); return }
       setCommentary(prev => ({ ...prev, ...(data.commentary ?? {}) }))
+      setLevels(prev => ({ ...prev, ...(data.detected_levels ?? {}) }))
+      const applied = data.auto_applied ?? {}
+      setAutoApplied(Object.fromEntries(
+        Object.entries(applied).map(([id, fields]) => [id, Object.keys(fields as object)]),
+      ))
       if (data.note) setCommentaryNote(data.note)
+      // The run writes stop/target straight into the columns when it read them
+      // clearly, so re-read the trades or the page keeps showing them empty.
+      if (Object.keys(applied).length > 0) onTradesChanged?.()
     } catch (e) {
       setCommentaryError(e instanceof Error ? e.message : 'Network error')
     } finally {
       setCommentaryRunning(false)
       setCommentaryStage('idle')
     }
-  }, [frames, exitFrames, file])
+  }, [frames, exitFrames, file, onTradesChanged])
+
+  /** Write one read level into its column. Only offered while the column is
+   *  empty — the recap never overwrites a number the trader entered. */
+  const applyLevel = useCallback(async (tradeId: string, field: 'stop_price' | 'tp1_price', value: number) => {
+    setApplyingLevel(`${tradeId}:${field}`)
+    try {
+      const res = await fetch(`/api/trades/${tradeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      })
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string }
+        setCommentaryError(`Could not save that level: ${err.error ?? res.statusText}`)
+        return
+      }
+      onTradesChanged?.()
+    } catch (e) {
+      setCommentaryError(`Could not save that level: ${e instanceof Error ? e.message : 'network error'}`)
+    } finally {
+      setApplyingLevel(null)
+    }
+  }, [onTradesChanged])
 
   const inRangeCount = useMemo(() => {
     if (!anchor) return 0
@@ -734,6 +813,14 @@ export default function BrowserRecap({ trades, date }: Props) {
                     {commentary[t.id]}
                   </p>
                 )}
+
+                <ReadLevels
+                  trade={t}
+                  levels={levels[t.id] ?? savedLevels[t.id]}
+                  autoApplied={autoApplied[t.id]}
+                  applying={applyingLevel}
+                  onApply={applyLevel}
+                />
               </div>
             )
           })}
@@ -771,11 +858,122 @@ export default function BrowserRecap({ trades, date }: Props) {
                   )}
                 </div>
                 <p className="text-gray-200 leading-snug">{savedCommentary[t.id]}</p>
+                <ReadLevels
+                  trade={t}
+                  levels={savedLevels[t.id]}
+                  applying={applyingLevel}
+                  onApply={applyLevel}
+                />
               </div>
             )
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * The stop and target the coach read off this trade's entry frame, and the one
+ * click that puts them in the trade.
+ *
+ * Reading these was always part of the recap call — they just never made it out
+ * of the response, so the trader kept typing by hand what the coach had already
+ * read. What shows here depends on how sure the read was:
+ *
+ *   clear read  — already written into the empty column by the run itself
+ *   double-check — shown with a button, because it's right about two thirds of
+ *                  the time and the misses are large
+ *   hard to read — shown greyed with no button; better typed in by hand
+ *
+ * A level the trader already entered is never touched, and is flagged when it
+ * disagrees with the frame — that disagreement is usually interesting (the
+ * bracket got moved mid-trade), so it's surfaced rather than hidden.
+ */
+function ReadLevels({
+  trade, levels, autoApplied, applying, onApply,
+}: {
+  trade: Trade
+  levels: DetectedLevels | undefined
+  autoApplied?: string[]
+  applying: string | null
+  onApply: (tradeId: string, field: 'stop_price' | 'tp1_price', value: number) => void
+}) {
+  if (!levels) return null
+  if (levels.stop_price == null && levels.tp1_price == null && levels.tp2_price == null) return null
+
+  const readable = levels.confidence !== 'low'
+  const tone = levels.confidence === 'high'
+    ? { chip: 'text-emerald-300 border-emerald-800 bg-emerald-950/40', word: 'clear read' }
+    : levels.confidence === 'medium'
+      ? { chip: 'text-amber-300 border-amber-800 bg-amber-950/30', word: 'worth a check' }
+      : { chip: 'text-gray-400 border-gray-700 bg-gray-800/60', word: 'hard to read' }
+
+  /** Points from entry, so a wrong level is obvious at a glance. */
+  const fromEntry = (price: number): string => {
+    if (trade.entry_price == null) return ''
+    const away = Math.abs(price - trade.entry_price)
+    return ` · ${away.toFixed(2)} pts away`
+  }
+
+  const rows: Array<{
+    label: string
+    read: number | null
+    field: 'stop_price' | 'tp1_price' | null
+    saved: number | null
+  }> = [
+    { label: 'Stop', read: levels.stop_price, field: 'stop_price', saved: trade.stop_price ?? null },
+    { label: 'Target', read: levels.tp1_price, field: 'tp1_price', saved: trade.tp1_price ?? null },
+    { label: 'Second target', read: levels.tp2_price, field: null, saved: null },
+  ]
+
+  return (
+    <div className="px-2.5 pb-2.5 pt-2 border-t border-gray-800 space-y-1.5">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-blue-300/80">Levels on your chart</span>
+        <span className={`px-1.5 py-0.5 rounded border text-[10px] font-medium ${tone.chip}`}>{tone.word}</span>
+        {levels.reasoning && (
+          <span className="text-[10px] text-gray-600 truncate" title={levels.reasoning}>hover for what it saw</span>
+        )}
+      </div>
+
+      {rows.map(({ label, read, field, saved }) => {
+        if (read == null) return null
+        const applyKey = field ? `${trade.id}:${field}` : ''
+        const wasAutoApplied = !!field && !!autoApplied?.includes(field)
+        const alreadyMatches = saved != null && Math.abs(saved - read) < 1e-6
+        return (
+          <div key={label} className="flex items-center gap-2 text-[11px]">
+            <span className="text-gray-500 w-24 shrink-0">{label}</span>
+            <span className="font-mono text-gray-200">{read}</span>
+            <span className="text-gray-600 truncate">{fromEntry(read)}</span>
+            <span className="ml-auto shrink-0">
+              {field == null ? (
+                <span className="text-[10px] text-gray-600" title="There's no field for a second target — this is just for reference.">for reference</span>
+              ) : wasAutoApplied || alreadyMatches ? (
+                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400">
+                  <Check className="w-3 h-3" /> {wasAutoApplied ? 'filled in for you' : 'saved'}
+                </span>
+              ) : saved != null ? (
+                <span className="text-[10px] text-amber-400/80" title={`Your trade has ${saved}. The frame shows ${read} — did you move the bracket?`}>
+                  yours says {saved}
+                </span>
+              ) : readable ? (
+                <button
+                  type="button"
+                  disabled={applying !== null}
+                  onClick={() => onApply(trade.id, field, read)}
+                  className="px-2 py-0.5 rounded border border-dashed border-blue-700 text-blue-300 hover:bg-blue-900/40 disabled:opacity-50 text-[10px] transition-colors"
+                >
+                  {applying === applyKey ? 'Saving…' : 'Use this'}
+                </button>
+              ) : (
+                <span className="text-[10px] text-gray-600">too blurry to trust</span>
+              )}
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }
