@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { GitMerge, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2, ImagePlus, Flag, ArrowRight } from 'lucide-react'
+import { GitMerge, Trash2, ChevronDown, ChevronUp, Tag, X, Loader2, ImagePlus, Flag, ArrowRight, Pencil } from 'lucide-react'
 import TradeForm from './TradeForm'
 import SessionTradeTable from '@/components/session/SessionTradeTable'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
@@ -605,9 +605,10 @@ export default function IntradayClient({ date, initialTrades, allTags: initialAl
  * Paste-first hero (Pt 17, mockup 03). The screenshot dropzone is the primary
  * intraday surface: Ctrl+V (via the document listener in IntradayClient), drop
  * an image, or tap/click to pick one → the parent opens the Add form pre-seeded
- * with the file, and TradeForm auto-extracts on mount. Manual entry is the
- * demoted text link underneath. `compact` shrinks the hero once the day already
- * has trades so the list isn't pushed down.
+ * with the file, and TradeForm auto-extracts on mount. Manual entry sits under
+ * it as a secondary button — second in the hierarchy, but not hidden.
+ * `compact` shrinks the hero once the day already has trades so the list isn't
+ * pushed down.
  *
  * The card is a <label> wrapping a hidden file input, so a click/tap opens the
  * native picker on every platform (mobile photo library included) while drop and
@@ -669,12 +670,20 @@ function PasteDropZone({
           </div>
         </div>
       </label>
-      <p className="text-[11px] text-gray-600 mt-1.5 px-1">
-        Prefer typing?{' '}
-        <button type="button" onClick={onManual} className="text-blue-500 hover:text-blue-400 underline-offset-2 hover:underline">
+      {/* Typing a trade in is a normal thing to do — not everything worth
+          logging has a screenshot behind it. Pasting stays the headline, but
+          this is a real button rather than the 11px footnote it used to be,
+          which read as a disclaimer and was easy to miss entirely. */}
+      <div className="flex justify-center mt-3">
+        <button
+          type="button"
+          onClick={onManual}
+          className="inline-flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-gray-500 text-gray-200 text-sm font-medium rounded-lg px-3.5 py-2 transition-colors"
+        >
+          <Pencil className="w-4 h-4 text-gray-400" />
           Add a trade manually
         </button>
-      </p>
+      </div>
     </div>
   )
 }
