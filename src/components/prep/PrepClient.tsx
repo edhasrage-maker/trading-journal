@@ -816,17 +816,43 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         return
       }
 
-      // Merge extracted values — only overwrite fields that came back non-null/undefined
+      // BARS WIN. Anything already derived from 1-minute bars is exact; a value
+      // read off a chart image is an estimate of the same quantity, so letting
+      // the read overwrite it can only lose precision. It did: a correct
+      // IBL of 7763.50 was replaced by 7767.25 while IB Size stayed bar-derived
+      // at 30.50, leaving the panel disagreeing with itself (7794 − 7767.25 =
+      // 26.75). These two refs already record exactly which fields this session
+      // filled from bars, so they are the authority list. On an account with no
+      // bar coverage both are empty and the read still fills everything.
+      const barDerived = new Set<string>([
+        ...statsAutoFilledRef.current,
+        ...levelsAutoFilledRef.current,
+      ])
+
+      // A price that is not on the contract's tick grid cannot have been traded,
+      // so it is a misread rather than a number — ES and NQ both tick in 0.25.
+      // Reject instead of snapping: snapping turns an unreliable read into a
+      // confident-looking wrong price. This is what produced ONL 7747.55.
+      const PRICE_FIELDS = new Set(['pdh', 'pdl', 'onh', 'onl', 'ibh', 'ibl', 'rth_open', 'ib_close_price'])
+      const TICK = 0.25
+      const offGrid = (v: number) => Math.abs(v / TICK - Math.round(v / TICK)) > 1e-6
+
       const merged = { ...context } as Record<string, unknown>
-      let filled = 0
+      let filled = 0, keptFromBars = 0, rejected = 0
       for (const [key, val] of Object.entries(data)) {
-        if (val !== null && val !== undefined) {
-          merged[key] = val
-          filled++
-        }
+        if (val === null || val === undefined) continue
+        if (barDerived.has(key)) { keptFromBars++; continue }
+        if (PRICE_FIELDS.has(key) && typeof val === 'number' && offGrid(val)) { rejected++; continue }
+        merged[key] = val
+        filled++
       }
-      if (filled === 0) {
-        showToast('Auto-fill returned no values — Claude could not read this chart.', 'error')
+      if (filled === 0 && keptFromBars === 0) {
+        showToast(
+          rejected > 0
+            ? `Auto-fill read ${rejected} price${rejected === 1 ? '' : 's'} off the tick grid — discarded rather than guess.`
+            : 'Auto-fill returned no values — Claude could not read this chart.',
+          'error',
+        )
         return
       }
       // Derive GBX % of ADR from merged values if not already set
@@ -837,7 +863,16 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         merged.gbx_pct_adr = parseFloat(((onh - onl) / adr * 100).toFixed(2))
       }
       setContext(merged)
-      showToast(`Auto-filled ${filled} value${filled === 1 ? '' : 's'} from chart`, 'success')
+      // Say what was NOT taken as well as what was — silently keeping a
+      // bar-derived value looks like the read failed.
+      const notes = [
+        keptFromBars > 0 ? `${keptFromBars} kept from bars` : null,
+        rejected > 0 ? `${rejected} off-grid discarded` : null,
+      ].filter(Boolean).join(' · ')
+      showToast(
+        `Auto-filled ${filled} value${filled === 1 ? '' : 's'} from chart${notes ? ` (${notes})` : ''}`,
+        'success',
+      )
     } catch (e) {
       showToast(`Auto-fill failed: ${e instanceof Error ? e.message : 'unknown error'}`, 'error')
     } finally {
