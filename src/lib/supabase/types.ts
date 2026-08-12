@@ -361,14 +361,21 @@ export interface RecordingCommentaryData {
   model: string               // Which Claude model produced it (e.g. claude-sonnet-4-6)
   generated_at: string        // ISO timestamp of when this was saved
   detected_levels?: DetectedLevels  // Vision-extracted planned levels from the entry frame. Optional — old commentary rows predate this and the model can return all-null when no working orders were visible.
+  auto_applied?: string[]           // Columns this read filled by itself ('stop_price' / 'tp1_price'). Only ever a high-confidence read into an empty column — see autoApplicableFields in lib/frame-levels.
 }
 
-/** Vision-detected planned trade levels read off the entry frame of the OBS
- *  recording. Populated by /api/video/commentary alongside the text commentary
- *  (one Claude call returns both). Each price field is nullable — the model
- *  returns null rather than guess when a level isn't confidently readable.
- *  The user reviews and applies them to stop_price / tp1 / tp2 fields manually
- *  via the EOD UI; never auto-written. */
+/** Vision-detected planned trade levels read off the entry frame of the
+ *  recording. Populated by /api/recap/commentary (cloud) and
+ *  /api/video/commentary (local ffmpeg) alongside the text commentary — one
+ *  Claude call returns both. Each price field is nullable: the model returns
+ *  null rather than guess when a level isn't confidently readable, and
+ *  lib/frame-levels then nulls anything that fails a check against the trade's
+ *  real fill price.
+ *
+ *  A "high" read auto-fills an EMPTY stop_price / tp1_price column; anything
+ *  less certain is shown for the trader to apply with a click, and a value they
+ *  already entered is never overwritten. tp2 is informational only — there's no
+ *  column for it. */
 export interface DetectedLevels {
   entry_price: number | null
   stop_price: number | null

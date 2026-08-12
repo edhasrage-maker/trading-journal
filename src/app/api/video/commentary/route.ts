@@ -9,6 +9,11 @@ import { blockIfCloud } from '@/lib/local-features-guard'
 import { OBS_RECORDINGS_DIR } from '../list/route'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { followFade, type Regime } from '@/lib/market-structure'
+import {
+  FRAME_LEVELS_PROMPT_BLOCK, FRAME_LEVELS_SCHEMA, guardFrameLevels, autoApplicableFields,
+  type RawFrameLevels,
+} from '@/lib/frame-levels'
+import type { DetectedLevels } from '@/lib/supabase/types'
 
 const client = new Anthropic()
 
@@ -121,13 +126,20 @@ export async function POST(req: Request) {
   // the DB, not trusted from the client payload, so the prompt can CITE the
   // trader's own computed structure instead of the model narrating trend from
   // frames it can't fully see (the "finally a with-trend entry" failure mode).
+  //
+  // The same query pulls direction/entry/stop/tp1 from the DB rather than the
+  // client payload, because the level guard checks each vision read against the
+  // real fill and must never validate against a number the browser supplied.
   const regimeById = new Map<string, string>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rowById = new Map<string, any>()
   {
     const tradeIds = trades.map(t => t.id).filter(Boolean)
     if (tradeIds.length > 0) {
       const { data: regimeRows } = await supabase
-        .from('trades').select('id, structure_5m_regime').in('id', tradeIds)
+        .from('trades').select('id, structure_5m_regime, direction, entry_price, stop_price, tp1_price').in('id', tradeIds)
       for (const r of (regimeRows ?? []) as { id: string; structure_5m_regime: string | null }[]) {
+        rowById.set(r.id, r)
         if (r.structure_5m_regime) regimeById.set(r.id, r.structure_5m_regime)
       }
     }
@@ -267,11 +279,7 @@ For each trade you see frames of (an ENTRY frame and, when distinct, an EXIT fra
 
 1) Write 1–3 sentences of HONEST commentary tying what's visibly on screen — chart structure, key levels, order flow, where price was relative to the setup — to the trade the trader actually took. Be specific. If the entry frame doesn't support the tagged setup, say so. If price did something obvious between entry and exit that the trader missed, point it out. The trader is paying you to be direct, not encouraging.
 
-2) From the ENTRY frame ONLY (not the exit frame), identify the trader's PLANNED order levels by reading any horizontal lines / DOM order labels visible on the chart at that moment:
-   - entry_price: the price the order was waiting at
-   - stop_price: the working stop line (BELOW entry for longs, ABOVE for shorts). Sierra labels these as "Stop|Child-Client" with a "(-N.NNp)" suffix indicating distance — when you see "(-20.00p)" on a short, the stop is 20 points above entry.
-   - tp1_price / tp2_price: working limit / TP lines (ABOVE entry for longs, BELOW for shorts). TP1 is closer to entry.
-   CRITICAL: return null for any field you cannot confidently read off the price scale or a labeled order line. DO NOT GUESS. A null is far more useful than a hallucinated number — the trader will be using these to backfill missing data. levels_confidence is "high" only if every non-null field came from a clearly-labeled order line at a readable price; "medium" if inferred from line position; "low" if the chart was hard to read.${mistakeListBlock}${tilingExplainBlock}${structureRuleBlock}
+2) ${FRAME_LEVELS_PROMPT_BLOCK}${mistakeListBlock}${tilingExplainBlock}${structureRuleBlock}
 
 The image array above is ordered as follows:
 ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}
@@ -316,19 +324,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
                       type: 'array',
                       items: { type: 'string' },
                     },
-                    detected_levels: {
-                      type: 'object',
-                      properties: {
-                        entry_price: { type: ['number', 'null'] },
-                        stop_price: { type: ['number', 'null'] },
-                        tp1_price: { type: ['number', 'null'] },
-                        tp2_price: { type: ['number', 'null'] },
-                        confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
-                        reasoning: { type: 'string' },
-                      },
-                      required: ['entry_price', 'stop_price', 'tp1_price', 'tp2_price', 'confidence', 'reasoning'],
-                      additionalProperties: false,
-                    },
+                    detected_levels: FRAME_LEVELS_SCHEMA,
                   },
                   required: ['id', 'commentary', 'suggested_mistakes', 'detected_levels'],
                   additionalProperties: false,
@@ -352,20 +348,12 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
     // With structured outputs, the entire `text` IS the JSON — no need to
     // hunt for braces. Still wrap in try/catch in case Anthropic ever returns
     // a refusal or empty payload.
-    interface DetectedLevelsPayload {
-      entry_price: number | null
-      stop_price: number | null
-      tp1_price: number | null
-      tp2_price: number | null
-      confidence: 'high' | 'medium' | 'low'
-      reasoning: string
-    }
     let parsed: {
       trades?: Array<{
         id?: string
         commentary?: string
         suggested_mistakes?: string[]
-        detected_levels?: DetectedLevelsPayload
+        detected_levels?: RawFrameLevels
       }>
     }
     try {
@@ -379,7 +367,9 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
     }
     const commentary: Record<string, string> = {}
     const suggested: Record<string, string[]> = {}
-    const detectedLevels: Record<string, DetectedLevelsPayload> = {}
+    const detectedLevels: Record<string, DetectedLevels> = {}
+    // Columns a confident read filled by itself — see autoApplicableFields.
+    const autoApplied: Record<string, Partial<{ stop_price: number; tp1_price: number }>> = {}
     if (Array.isArray(parsed.trades)) {
       const librarySet = new Set(mistakeLibrary)
       for (const t of parsed.trades) {
@@ -392,8 +382,16 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
           const valid = t.suggested_mistakes.filter(s => typeof s === 'string' && librarySet.has(s))
           if (valid.length > 0) suggested[t.id] = valid
         }
-        if (t.detected_levels && typeof t.detected_levels === 'object') {
-          detectedLevels[t.id] = t.detected_levels
+        // Check every level against the trade's real fill before it can reach a
+        // column — a wrong stop silently corrupts R and heat.
+        const row = rowById.get(t.id)
+        const guarded = guardFrameLevels(t.detected_levels, row ?? {})
+        if (guarded) {
+          detectedLevels[t.id] = guarded.levels
+          if (row) {
+            const fields = autoApplicableFields(guarded.levels, row)
+            if (Object.keys(fields).length > 0) autoApplied[t.id] = fields
+          }
         }
       }
     }
@@ -407,6 +405,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
     try {
       const generatedAt = new Date().toISOString()
       const writes = Object.entries(commentary).map(([id, text]) => {
+        const applied = autoApplied[id]
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const update: Record<string, any> = {
           recording_commentary: {
@@ -418,12 +417,15 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
             // schema migration. Undefined when the model couldn't return a
             // detected_levels block (very rare under structured outputs).
             detected_levels: detectedLevels[id],
+            ...(applied ? { auto_applied: Object.keys(applied) } : {}),
             // Flag when the screenshot was auto-derived from the recording so
             // it's distinguishable from a manual capture.
             ...(autoScreenshots[id] ? { screenshot_source: 'obs' } : {}),
           },
         }
         if (autoScreenshots[id]) update.screenshot_url = autoScreenshots[id]
+        // A confidently-read level lands in the column in the same write.
+        if (applied) Object.assign(update, applied)
         return supabase.from('trades').update(update).eq('id', id)
       })
       // Fallback: any auto-screenshot whose trade got no commentary text still
@@ -445,6 +447,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
       commentary,
       suggested_mistakes: suggested,
       detected_levels: detectedLevels,
+      auto_applied: autoApplied,
       auto_screenshots: autoScreenshots,
       skipped,
       framesUsed: blocks.length - 1,

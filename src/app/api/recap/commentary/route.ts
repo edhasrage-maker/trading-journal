@@ -25,6 +25,14 @@
  * users). The excursion framing fed to the model is INTERPRETED (capture %,
  * $ left, heat vs stop, ×ATR) — never raw point averages, which the model skips.
  *
+ * Level detection: the same call reads the planned stop/target off each ENTRY
+ * frame (src/lib/frame-levels.ts holds the prompt + the guards, shared with the
+ * ffmpeg path). Every read is checked against the trade's REAL fill price and
+ * direction before it's trusted; a "high" read then writes straight into
+ * trades.stop_price / tp1_price, but ONLY where the column is still empty — a
+ * value the trader typed always wins, and anything less certain waits for them
+ * to click Apply in the UI. A wrong stop would silently corrupt R and heat.
+ *
  * Screenshot back-fill: a trade with no screenshot_url gets its ENTRY frame's
  * storage PATH written as screenshot_url (bare path — the bucket is private +
  * folder-RLS, so the server read boundary signs it; never a public URL, which
@@ -39,6 +47,11 @@ import { resolveAiModel } from '@/lib/ai-model'
 import { interpretExcursion } from '@/lib/trade-excursion'
 import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
+import {
+  FRAME_LEVELS_PROMPT_BLOCK, FRAME_LEVELS_SCHEMA, guardFrameLevels, autoApplicableFields,
+  type RawFrameLevels,
+} from '@/lib/frame-levels'
+import type { DetectedLevels } from '@/lib/supabase/types'
 
 const client = new Anthropic()
 
@@ -199,7 +212,7 @@ export async function POST(req: Request) {
   const ids = frames.map(f => f.id)
   const { data: tradeRows } = await supabase
     .from('trades')
-    .select('id, trading_day_id, direction, entry_price, exit_price, stop_price, quantity, pnl, symbol, entry_time, exit_time, tags_json, notes, screenshot_url, high_during_position, low_during_position, mfe_dollars_per_leg')
+    .select('id, trading_day_id, direction, entry_price, exit_price, stop_price, tp1_price, quantity, pnl, symbol, entry_time, exit_time, tags_json, notes, screenshot_url, high_during_position, low_during_position, mfe_dollars_per_leg')
     .in('id', ids)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tradesById = new Map<string, any>((tradeRows ?? []).map((t: any) => [t.id, t]))
@@ -349,11 +362,7 @@ For each trade you see frames of, do TWO things:
 
 1) Write 1–3 sentences of HONEST, INDEPENDENT commentary. LEAD with what you actually see on the chart — market structure (higher-highs/higher-lows vs lower-highs/lower-lows, break vs reclaim), where price sits relative to key levels / session levels / range extremes, and whether the entry is WITH or AGAINST the prevailing move. Then weigh the risk using the interpreted exit/heat line (it is already computed for you: capture % of the favorable move, $ left on the table, heat taken as a share of the planned stop / ×ATR) — if a trade captured little of a large favorable move, or took most of its stop in heat before working, SAY SO. ${orderFlowClause} If an EXIT frame is present and price did something obvious between entry and exit that the trader missed (ran further, reversed at a level), point it out. Use the per-trade session line to catch BEHAVIORAL patterns the isolated chart can't show — a quick re-entry right after a loss (possible revenge/tilt), the Nth consecutive trade in the same direction, or pressing deeper into a drawdown — and name it when the sequence shows it.
 
-2) From the ENTRY frame ONLY (not the exit frame), identify the trader's PLANNED order levels by reading the labeled horizontal ORDER LINES on the price scale (stop / target / entry lines drawn across the chart — NOT a DOM/depth ladder; do not describe these as being "on the DOM"):
-   - entry_price: the price the order was waiting at
-   - stop_price: the working stop line (BELOW entry for longs, ABOVE for shorts). Sierra labels these "Stop|Child-Client" with a "(-N.NNp)" distance suffix.
-   - tp1_price / tp2_price: working limit / TP lines (ABOVE entry for longs, BELOW for shorts). TP1 is closer to entry.
-   CRITICAL: return null for any field you cannot confidently read off the price scale or a labeled order line. DO NOT GUESS — a null is far more useful than a hallucinated number. levels_confidence is "high" only if every non-null field came from a clearly-labeled order line; "medium" if inferred from line position; "low" if the chart was hard to read.${mistakeListBlock}
+2) ${FRAME_LEVELS_PROMPT_BLOCK}${mistakeListBlock}
 
 The image array above is ordered as follows:
 ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n')}
@@ -384,19 +393,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
                     id: { type: 'string' },
                     commentary: { type: 'string' },
                     suggested_mistakes: { type: 'array', items: { type: 'string' } },
-                    detected_levels: {
-                      type: 'object',
-                      properties: {
-                        entry_price: { type: ['number', 'null'] },
-                        stop_price: { type: ['number', 'null'] },
-                        tp1_price: { type: ['number', 'null'] },
-                        tp2_price: { type: ['number', 'null'] },
-                        confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
-                        reasoning: { type: 'string' },
-                      },
-                      required: ['entry_price', 'stop_price', 'tp1_price', 'tp2_price', 'confidence', 'reasoning'],
-                      additionalProperties: false,
-                    },
+                    detected_levels: FRAME_LEVELS_SCHEMA,
                   },
                   required: ['id', 'commentary', 'suggested_mistakes', 'detected_levels'],
                   additionalProperties: false,
@@ -416,12 +413,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
       return NextResponse.json({ commentary: {}, suggested_mistakes: {}, skipped, framesUsed: blocks.length - 1, model, note: 'AI returned no text content.' })
     }
 
-    interface DetectedLevelsPayload {
-      entry_price: number | null; stop_price: number | null
-      tp1_price: number | null; tp2_price: number | null
-      confidence: 'high' | 'medium' | 'low'; reasoning: string
-    }
-    let parsed: { trades?: Array<{ id?: string; commentary?: string; suggested_mistakes?: string[]; detected_levels?: DetectedLevelsPayload }> }
+    let parsed: { trades?: Array<{ id?: string; commentary?: string; suggested_mistakes?: string[]; detected_levels?: RawFrameLevels }> }
     try { parsed = JSON.parse(text) }
     catch (parseErr) {
       console.error('[recap/commentary] JSON parse failed:', parseErr, '\nraw:', text.slice(0, 500))
@@ -430,7 +422,11 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
 
     const commentary: Record<string, string> = {}
     const suggested: Record<string, string[]> = {}
-    const detectedLevels: Record<string, DetectedLevelsPayload> = {}
+    const detectedLevels: Record<string, DetectedLevels> = {}
+    // Columns the read filled by itself — only ever a "high" read into an empty
+    // column (see autoApplicableFields). Returned so the UI can say so out loud
+    // instead of the number just appearing.
+    const autoApplied: Record<string, Partial<{ stop_price: number; tp1_price: number }>> = {}
     if (Array.isArray(parsed.trades)) {
       const librarySet = new Set(mistakeLibrary)
       for (const t of parsed.trades) {
@@ -440,7 +436,17 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
           const valid = t.suggested_mistakes.filter(s => typeof s === 'string' && librarySet.has(s))
           if (valid.length > 0) suggested[t.id] = valid
         }
-        if (t.detected_levels && typeof t.detected_levels === 'object') detectedLevels[t.id] = t.detected_levels
+        // Check the read against the trade's ACTUAL fill and direction before it
+        // goes anywhere near a column — a wrong stop silently corrupts R and heat.
+        const row = tradesById.get(t.id)
+        const guarded = guardFrameLevels(t.detected_levels, row ?? {})
+        if (guarded) {
+          detectedLevels[t.id] = guarded.levels
+          if (row) {
+            const fields = autoApplicableFields(guarded.levels, row)
+            if (Object.keys(fields).length > 0) autoApplied[t.id] = fields
+          }
+        }
       }
     }
 
@@ -454,6 +460,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
       const generatedAt = new Date().toISOString()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const writes: Array<Promise<any>> = Object.entries(commentary).map(([id, textOut]) => {
+        const applied = autoApplied[id]
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const update: Record<string, any> = {
           recording_commentary: {
@@ -462,10 +469,14 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
             model,
             generated_at: generatedAt,
             detected_levels: detectedLevels[id],
+            ...(applied ? { auto_applied: Object.keys(applied) } : {}),
             ...(backfillScreenshot[id] ? { screenshot_source: 'obs' } : {}),
           },
         }
         if (backfillScreenshot[id]) update.screenshot_url = backfillScreenshot[id]
+        // A confidently-read level lands in the column in the same write as the
+        // commentary — that's the whole point of reading the frame.
+        if (applied) Object.assign(update, applied)
         return supabase.from('trades').update(update).eq('id', id)
       })
       // A back-filled trade that got no commentary text still needs its
@@ -484,6 +495,7 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
       commentary,
       suggested_mistakes: suggested,
       detected_levels: detectedLevels,
+      auto_applied: autoApplied,
       auto_screenshots: backfillScreenshot,
       skipped,
       framesUsed: blocks.length - 1,

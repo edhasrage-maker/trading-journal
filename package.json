@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx scripts/test-derived-metrics.ts && tsx scripts/test-ai-constraints.ts && tsx scripts/test-coach-suggestions.ts && tsx scripts/test-trading-style.ts && tsx scripts/test-tilt-cascade.ts && tsx scripts/test-stopped-reversal.ts && tsx scripts/test-scale-out-ev.ts && tsx scripts/test-time-of-day.ts && tsx scripts/test-dive-registry.ts && tsx scripts/test-size-rails.ts && tsx scripts/test-session-facts.ts && tsx scripts/test-delta-by-price.ts && tsx scripts/test-suggest-tags.ts && tsx scripts/test-prep-carryover.ts && tsx scripts/test-bracket-solve.ts",
+    "test": "tsx scripts/test-derived-metrics.ts && tsx scripts/test-ai-constraints.ts && tsx scripts/test-coach-suggestions.ts && tsx scripts/test-trading-style.ts && tsx scripts/test-tilt-cascade.ts && tsx scripts/test-stopped-reversal.ts && tsx scripts/test-scale-out-ev.ts && tsx scripts/test-time-of-day.ts && tsx scripts/test-dive-registry.ts && tsx scripts/test-size-rails.ts && tsx scripts/test-session-facts.ts && tsx scripts/test-delta-by-price.ts && tsx scripts/test-suggest-tags.ts && tsx scripts/test-prep-carryover.ts && tsx scripts/test-bracket-solve.ts && tsx scripts/test-frame-levels.ts",
     "eval": "tsx scripts/eval-ai-output.ts"
   },
   "dependencies": {
