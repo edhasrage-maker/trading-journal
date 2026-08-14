@@ -17,6 +17,7 @@
  */
 
 import { MULTIPLIERS, symbolRoot } from './futures-symbols'
+import { anchorExcursionToFills } from './excursion-guard'
 
 /**
  * Favorable-excursion bar a trade must clear to count as "was up" for the
@@ -65,6 +66,9 @@ export interface TradeExcursionInput {
   symbol: string | null
   high_during_position: number | null
   low_during_position: number | null
+  /** Closing fill. Optional — used only to anchor the traded range, which the
+   *  exit price belongs inside as much as the entry does. */
+  exit_price?: number | null
   /** Scaling-aware best-case $ (peak per leg). Optional — callers without the
    *  backfill column (e.g. the EOD trades select) omit it, and the tick-precise
    *  full-position ceiling is used instead. */
@@ -129,13 +133,22 @@ export function interpretExcursion(t: TradeExcursionInput, roundTripAtr: number 
     : null
   const r = (mult != null && stopDist && t.quantity) ? pnl / (stopDist * t.quantity * mult) : null
 
+  // Anchor the traded range to the trade's own fills before measuring off it —
+  // the same rule analytics.mfeMaePoints applies, so the coach's excursion and
+  // the dashboard's can never disagree about the same trade. A feed that starts
+  // recording just after the entry tick otherwise leaves a long's high sitting
+  // below its entry.
+  const range = (t.high_during_position != null && t.low_during_position != null)
+    ? anchorExcursionToFills(t.high_during_position, t.low_during_position, t.entry_price, t.exit_price)
+    : null
+
   // Favorable excursion in points — the best in-trade move in the trade's favor.
   // Computed once (no stop needed) and reused for $, R, and ×ATR below.
   let mfePts: number | null = null
-  if (t.entry_price != null && t.direction) {
+  if (t.entry_price != null && t.direction && range) {
     mfePts = t.direction === 'short'
-      ? (t.low_during_position != null ? Math.max(0, t.entry_price - t.low_during_position) : null)
-      : (t.high_during_position != null ? Math.max(0, t.high_during_position - t.entry_price) : null)
+      ? Math.max(0, t.entry_price - range.low)
+      : Math.max(0, range.high - t.entry_price)
   }
 
   // Dollar-basis best case (primary; no stop needed). Clamp the per-leg MFE-$ at
@@ -163,10 +176,10 @@ export function interpretExcursion(t: TradeExcursionInput, roundTripAtr: number 
 
   // MAE / heat taken (adverse excursion in points; % needs a stop).
   let maePts: number | null = null
-  if (t.entry_price != null && t.direction) {
+  if (t.entry_price != null && t.direction && range) {
     maePts = t.direction === 'short'
-      ? (t.high_during_position != null ? Math.max(0, t.high_during_position - t.entry_price) : null)
-      : (t.low_during_position != null ? Math.max(0, t.entry_price - t.low_during_position) : null)
+      ? Math.max(0, range.high - t.entry_price)
+      : Math.max(0, t.entry_price - range.low)
   }
   const maePct = (maePts != null && stopDist && stopDist > 0) ? maePts / stopDist : null
 

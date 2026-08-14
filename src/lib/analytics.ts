@@ -1,5 +1,6 @@
 import type { Trade, TradeTags, TradingDay, MarketContext } from '@/lib/supabase/types'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { anchorExcursionToFills } from '@/lib/excursion-guard'
 
 /**
  * Pure aggregation helpers for the Journal + Analytics views.
@@ -159,18 +160,25 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
   if (t.entry_price == null || t.direction == null) return null
   if (t.high_during_position == null || t.low_during_position == null) return null
   const isLong = t.direction === 'long'
+  // Measure against a window that contains the trade's own fills. A feed can
+  // start recording just after the entry tick, leaving a stored high a tick
+  // BELOW a long's entry — a range that excludes a price the position provably
+  // traded at. anchorExcursionToFills repairs that noise and deliberately
+  // leaves a genuinely contradictory window alone (see excursion-guard).
+  const { high, low } = anchorExcursionToFills(
+    t.high_during_position,
+    t.low_during_position,
+    t.entry_price,
+    (t as { exit_price?: number | null }).exit_price,
+  )
   // Floor both at 0: MFE/MAE are *excursion magnitudes* and are non-negative by
   // definition. A trade that never traded below entry (long) has MAE = 0, not a
   // negative "adverse" move. Without the floor, a never-adverse trade subtracts
   // from the day's MAE average and can cancel out real heat from other trades
   // (e.g. one long whose recorded low sits ABOVE entry contributed −55 pts of
   // "MAE", erasing the day's actual adverse excursion). Same reasoning for MFE.
-  const mfe = Math.max(0, isLong
-    ? t.high_during_position - t.entry_price
-    : t.entry_price - t.low_during_position)
-  const mae = Math.max(0, isLong
-    ? t.entry_price - t.low_during_position
-    : t.high_during_position - t.entry_price)
+  const mfe = Math.max(0, isLong ? high - t.entry_price : t.entry_price - low)
+  const mae = Math.max(0, isLong ? t.entry_price - low : high - t.entry_price)
   return { mfe, mae }
 }
 

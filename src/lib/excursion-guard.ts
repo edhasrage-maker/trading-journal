@@ -55,3 +55,41 @@ export function excursionContainsFills(
   }
   return true
 }
+
+/**
+ * Widen [low, high] so it actually contains the trade's own fills.
+ *
+ * The window spans entry through exit, so both fills are prices the position
+ * demonstrably traded at — they belong inside it by definition. Feeds don't
+ * always agree: Sierra's high/low-during-position starts recording just after
+ * the fill, and a 1-minute bar can miss the exact entry tick, so a stored high
+ * can sit a tick BELOW the entry on a long. That is the same sub-tolerance
+ * noise `excursionContainsFills` already calls expected and harmless — and the
+ * honest way to resolve it is to include the fill, not to keep a range that
+ * excludes a price we know traded.
+ *
+ * Beyond `tolerance` the range is returned UNTOUCHED. A fill 300 points outside
+ * its window is the wrong-contract case, not noise; stretching the range to
+ * swallow it would manufacture a vast excursion and, worse, hide the
+ * contradiction that the downstream integrity guards look for.
+ *
+ * Pure. Callers keep the raw stored values as provenance and anchor on read.
+ */
+export function anchorExcursionToFills(
+  high: number,
+  low: number,
+  entryPrice: number | null | undefined,
+  exitPrice: number | null | undefined,
+  tolerance: number = EXCURSION_TOLERANCE_POINTS,
+): { high: number; low: number } {
+  if (!Number.isFinite(high) || !Number.isFinite(low)) return { high, low }
+  if (!excursionContainsFills(high, low, entryPrice, exitPrice, tolerance)) return { high, low }
+  let hi = high, lo = low
+  for (const p of [entryPrice, exitPrice]) {
+    const v = Number(p)
+    if (p == null || !Number.isFinite(v)) continue
+    if (v > hi) hi = v
+    if (v < lo) lo = v
+  }
+  return { high: hi, low: lo }
+}

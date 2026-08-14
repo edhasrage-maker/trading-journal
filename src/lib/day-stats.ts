@@ -89,7 +89,12 @@ export interface DayStatsRollup {
 // v3 (2026-07-24): TapeScore amendment 7 re-weighted the three axes to equal
 // thirds (was 50/30/20). Same components, new blend — every cached composite
 // must recompute or the ring shows the old risk-dominant number.
-export const STATS_VERSION = 3
+// v4 (2026-08-14): excursions are now measured against a window anchored to the
+// trade's own fills (src/lib/excursion-guard.ts). A stop-out's recorded high/low
+// stopped just short of the price it was stopped AT, so heat was understated on
+// exactly the trades where heat matters most — avg_mae/avg_heat move on those
+// days, and every cached row must recompute to agree with a fresh one.
+export const STATS_VERSION = 4
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
