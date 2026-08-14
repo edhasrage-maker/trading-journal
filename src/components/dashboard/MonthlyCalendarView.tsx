@@ -190,6 +190,67 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd }: Pr
   )
 }
 
+/**
+ * The day's TapeScore grade as a small dial — a ring filled to grade/10 with
+ * the number inside.
+ *
+ * It replaced a bare digit in this corner, which sat opposite the date and read
+ * as a second date: two 1–2 digit numbers in one row with nothing saying which
+ * was which. A ring can't be mistaken for a calendar number.
+ *
+ * The arc is the point, not decoration. Every other signal in the cell already
+ * has a second channel — P&L has the green/red cell tint behind it — leaving
+ * grade as the only one carried by a digit alone. Filling the ring gives a bad
+ * run a shape: thin arcs down a column read before any number does.
+ *
+ * 19px, and the two-digit case (a perfect 10) sets smaller so it still fits
+ * inside the ring rather than touching it.
+ */
+function GradeDial({ grade }: { grade: number }) {
+  const stroke =
+    grade >= 9 ? 'stroke-green-400'
+    : grade >= 7 ? 'stroke-blue-400'
+    : grade >= 5 ? 'stroke-yellow-400'
+    : 'stroke-red-400'
+  const text =
+    grade >= 9 ? 'fill-green-300'
+    : grade >= 7 ? 'fill-blue-300'
+    : grade >= 5 ? 'fill-yellow-300'
+    : 'fill-red-300'
+
+  const R = 7.4
+  const C = 2 * Math.PI * R
+  // Clamped so an out-of-range grade can't wrap the ring past full.
+  const filled = C * Math.max(0, Math.min(1, grade / 10))
+
+  return (
+    <svg
+      viewBox="0 0 19 19"
+      className="w-[19px] h-[19px] shrink-0"
+      role="img"
+      aria-label={`TapeScore grade ${grade} out of 10`}
+    >
+      <circle cx="9.5" cy="9.5" r={R} fill="none" strokeWidth="2.2" className="stroke-gray-700" />
+      <circle
+        cx="9.5" cy="9.5" r={R} fill="none" strokeWidth="2.2" strokeLinecap="round"
+        strokeDasharray={`${filled} ${C - filled}`}
+        transform="rotate(-90 9.5 9.5)"
+        className={stroke}
+      />
+      {/* Size set inline rather than via a text-[…] utility: this is an SVG
+          <text>, where the px value is a user-space unit inside the 19×19
+          viewBox, not a page font size. */}
+      <text
+        x="9.5" y="9.5" textAnchor="middle" dominantBaseline="central"
+        className={`${text} font-mono font-bold`}
+        style={{ fontSize: grade > 9 ? 7 : 8.5 }}
+      >
+        {grade}
+      </text>
+    </svg>
+  )
+}
+
 function DayCell({
   date,
   cursor,
@@ -227,57 +288,43 @@ function DayCell({
     return `${sign}$${abs.toFixed(0)}`
   }
 
-  const gradeText = (g: number) =>
-    g >= 9 ? 'text-green-300'
-    : g >= 7 ? 'text-blue-300'
-    : g >= 5 ? 'text-yellow-300'
-    : 'text-red-300'
-
   const grade = inMonth ? data?.overall_grade ?? null : null
 
   const content = (
-    <div className={`relative aspect-square overflow-hidden p-1.5 rounded-md border transition-colors ${cellStyle} ${todayRing}`}>
-      {/* Day number — top-right */}
-      <div className={`absolute top-1 right-1.5 text-[11px] font-medium ${
-        !inMonth ? 'text-gray-700'
-        : isToday ? 'text-blue-300 font-semibold'
-        : 'text-gray-400'
-      }`}>
-        {dom}
+    // A flex COLUMN with a reserved header row, not a box with the date
+    // absolutely positioned over a centred stack. Previously the two shared
+    // space and only avoided each other when the numbers happened to be short;
+    // a five-character loss ran into the date. Now the body starts below the
+    // header by construction.
+    <div className={`aspect-square overflow-hidden px-1.5 pt-1 pb-1.5 rounded-md border transition-colors flex flex-col ${cellStyle} ${todayRing}`}>
+      {/* Header — grade dial (left) opposite the date (right). */}
+      <div className="flex items-center gap-1 min-h-[17px]">
+        {inMonth && hasTrades && grade != null && <GradeDial grade={grade} />}
+        <span className={`ml-auto text-[11px] leading-none font-semibold ${
+          !inMonth ? 'text-gray-700 font-medium'
+          : isToday ? 'text-blue-300'
+          : 'text-gray-400'
+        }`}>
+          {dom}
+        </span>
       </div>
 
-      {/* Center stack. Mobile: just the PnL on one line (the cell is already
-          tinted green/red by PnL sign, so win/loss still reads at a glance).
-          Desktop (sm+): grade as the focal point with supporting stats below. */}
+      {/* Body — P&L leads, trades · win rate supports.
+          Mobile keeps P&L and the dial and drops the supporting line: at that
+          width it's the first thing to become unreadable, and the dial already
+          carries the grade without needing to be read. */}
       {inMonth && hasTrades && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 px-0.5 sm:pt-3 sm:pb-1 sm:px-1">
-          {/* Grade — large, middle (desktop only; too big for the tight mobile cell) */}
-          <div className={`hidden sm:block text-2xl font-bold font-mono leading-none ${grade != null ? gradeText(grade) : 'text-gray-700'}`}>
-            {grade != null ? grade : '—'}
-          </div>
-          {/* Supporting label + secondary stats — desktop only. */}
-          <div className="hidden sm:block text-[8px] text-gray-500 uppercase tracking-wider -mt-0.5 mb-0.5">Grade</div>
-
-          {/* Trades */}
-          <div className="hidden sm:block text-[10px] text-gray-400 leading-tight">
-            {data.trade_count} trade{data.trade_count === 1 ? '' : 's'}
-          </div>
-
-          {/* Win rate */}
-          {data.win_rate != null && (
-            <div className="hidden sm:block text-[10px] text-gray-500 leading-tight">
-              {data.win_rate.toFixed(0)}%
-            </div>
-          )}
-
-          {/* PnL — the one thing kept on mobile; single line, no wrap. */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-1">
           {pnl != null && (
-            <div className={`text-[11px] sm:text-xs font-mono font-bold leading-tight whitespace-nowrap sm:mt-0.5 ${
+            <span className={`text-[13px] sm:text-[15px] font-mono font-bold leading-none tabular-nums tracking-tight whitespace-nowrap ${
               pnl > 0 ? 'text-green-300' : pnl < 0 ? 'text-red-300' : 'text-gray-300'
             }`}>
               {fmtPnlShort(pnl)}
-            </div>
+            </span>
           )}
+          <span className="hidden sm:block text-[9px] font-mono text-gray-500 leading-none tabular-nums">
+            {data.trade_count}t{data.win_rate != null ? ` · ${data.win_rate.toFixed(0)}%` : ''}
+          </span>
         </div>
       )}
     </div>
