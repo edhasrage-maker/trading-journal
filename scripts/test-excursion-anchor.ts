@@ -57,8 +57,13 @@ console.log('\nMISSING PRICES CANNOT CONTRADICT A WINDOW')
 }
 
 console.log('\nBOTH READERS AGREE ON THE SAME TRADE')
+
+/** The fields TradeLike requires but this math never reads. */
+const REST = { entry_time: null, tags_json: {}, trading_day_id: '' }
+
 {
   const trade = {
+    ...REST,
     id: 't1', direction: 'long' as const, entry_price: 7820, exit_price: 7817,
     stop_price: 7815, pnl: -150, quantity: 10, symbol: 'MESU6.CME',
     high_during_position: 7819.75, low_during_position: 7817,
@@ -74,6 +79,7 @@ console.log('\nBOTH READERS AGREE ON THE SAME TRADE')
   // A winner whose exit printed past the recorded high: the exit IS a traded
   // price, so the favorable excursion must reach it.
   const trade = {
+    ...REST,
     id: 't2', direction: 'long' as const, entry_price: 100, exit_price: 105,
     stop_price: 98, pnl: 250, quantity: 10, symbol: 'MESU6.CME',
     high_during_position: 104, low_during_position: 99,
