@@ -46,22 +46,25 @@ const RULE_DESCRIPTIONS: Record<RuleId, string> = {
 const RULE_ORDER: RuleId[] = ['P1', 'P2', 'P3', 'P4', 'P5']
 
 /**
- * What to CALL each tracked rail on screen.
+ * What each rail is CALLED on the chip — short enough to read at a glance.
  *
- * P1–P5 are fixed internal ids, so a trader who doesn't track one — say the
- * cooldown — used to read "P1 P2 P3 P5" and be left wondering what happened to
- * the fourth. The gap carried no meaning: it was an artifact of which rules
- * exist in the code, not of anything about their trading.
+ * These used to be the bare ids P1–P5, which cost the reader twice. You had to
+ * remember which number meant what, and dropping a rail you don't track left a
+ * gap ("P1 P2 P3 P5") that looked like a rule had gone missing or failed
+ * quietly, when it only reflected which rules exist internally.
  *
- * So the chips are numbered by POSITION in the rails you actually keep. Four
- * rails always read P1–P4. The underlying id still drives the label, the
- * description and the per-rule status, and the tooltip names it, so a day
- * graded when you tracked a different set of rails is still readable.
+ * Naming them fixes both at once, and a name can't go stale the way a position
+ * can: "Cooldown" means the same thing on every day of your history, whereas a
+ * renumbered "P4" would mean the cooldown before you stopped tracking it and
+ * the trade cap after. Keep these to roughly ten characters — five have to sit
+ * side by side. The fuller wording lives in RULE_LABELS, on hover.
  */
-function displayNumbers(tracked: RuleId[]): Record<string, string> {
-  const out: Record<string, string> = {}
-  tracked.forEach((id, i) => { out[id] = `P${i + 1}` })
-  return out
+const RULE_CHIPS: Record<RuleId, string> = {
+  P1: 'Loss limit',
+  P2: 'Size cap',
+  P3: 'No size-up',
+  P4: 'Cooldown',
+  P5: 'Trade cap',
 }
 
 export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled, latestTradeUpdate }: Props) {
@@ -249,12 +252,11 @@ export function reconcileProcessHeadline(
   if (!perRule) return headline
   const rails = activeRails?.length ? activeRails : RULE_ORDER
   const failed = rails.filter(id => perRule[id]?.status === 'fail')
-  // Name the flagged rails the same way the chips do, or the line would cite a
-  // "P5" that appears nowhere on the card.
-  const shown = displayNumbers(rails)
+  // Name the flagged rails the way the chips do, or the line would cite a "P5"
+  // that appears nowhere on the card.
   const computed = failed.length === 0
     ? `All ${rails.length} safety rails held.`
-    : `${rails.length - failed.length} of ${rails.length} rails held — ${failed.map(id => shown[id]).join(', ')} flagged.`
+    : `${rails.length - failed.length} of ${rails.length} rails held — ${failed.map(id => RULE_CHIPS[id]).join(', ')} flagged.`
   if (!headline) return failed.length > 0 ? computed : null
   const saysAllHeld = /\ball\b[^.]*\b(held|clean|compliant|clear|intact)\b/i.test(headline) || /\bno (breach|violation)/i.test(headline)
   const saysBreach = /\b(breach|breached|violat|broke|blew|failed)\b/i.test(headline)
@@ -293,8 +295,8 @@ function ProcessCard({ process: p }: { process: ProcessVerdict }) {
         <span className={`ml-auto text-lg font-bold ${verdictColor}`}>{p.verdict}</span>
       </div>
       <div className={`grid ${gridCols} gap-1`}>
-        {tracked.map((id, i) => (
-          <RuleChip key={id} id={id} shownAs={`P${i + 1}`} status={p.per_rule?.[id]} />
+        {tracked.map(id => (
+          <RuleChip key={id} id={id} status={p.per_rule?.[id]} />
         ))}
       </div>
       {visible && (
@@ -318,7 +320,7 @@ function ProcessCard({ process: p }: { process: ProcessVerdict }) {
   )
 }
 
-function RuleChip({ id, shownAs, status }: { id: RuleId; shownAs: string; status: RuleStatus | undefined }) {
+function RuleChip({ id, status }: { id: RuleId; status: RuleStatus | undefined }) {
   const s = status?.status ?? 'incomplete'
   const cls = s === 'pass'
     ? 'bg-green-900/40 text-green-300 border-green-800/60'
@@ -331,14 +333,15 @@ function RuleChip({ id, shownAs, status }: { id: RuleId; shownAs: string; status
   // description, only the label, and (b) had a ~500ms delay that made the
   // 5-chip strip feel sluggish.
   return (
-    <div className={`relative group ${cls} text-center text-[10px] font-mono py-1 rounded border cursor-help`}>
-      {shownAs}
+    // Sans, not mono: these are words now, and mono's wide glyphs cost the room
+    // five chips need to sit side by side. The label truncates on its own span —
+    // an overflow-hidden chip would clip the popup nested inside it.
+    <div className={`relative group ${cls} text-center text-[10px] leading-tight px-1 py-1.5 rounded border cursor-help`}>
+      <span className="block truncate">{RULE_CHIPS[id]}</span>
       <div className="invisible group-hover:visible absolute z-30 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-gray-950 border border-gray-700 rounded-lg shadow-xl p-3 text-left pointer-events-none">
         <div className="flex items-baseline justify-between gap-2 mb-1.5">
-          {/* Named by the rule, not the position — the position shifts when you
-              stop tracking a rail, the rule doesn't. */}
           <span className="text-xs font-bold text-white">
-            {shownAs} — {RULE_LABELS[id]}
+            {RULE_LABELS[id]}
           </span>
           <span className={`text-[10px] font-mono uppercase ${statusColor}`}>{s}</span>
         </div>
