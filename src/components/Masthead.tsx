@@ -191,12 +191,23 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   // On a dated route the tabs stick to THAT date. Otherwise Prep points at
   // today (where you start today's prep) while the review tabs follow the
   // anchor, so they don't land on an empty today.
+  //
+  // `review/today` belongs in this list: the day recap used to live at
+  // /eod/<date>, and when it moved under Review the pattern here was never
+  // widened — so every dated recap page quietly dropped the date and threw you
+  // back to today the moment you clicked another tab. Keep this in step with
+  // the day-level routes; week and month are deliberately absent, since their
+  // date is a period start, not the day you're looking at.
   const urlDate = (() => {
-    const m = /^\/(?:prep|intraday|eod)\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
+    const m = /^\/(?:prep|intraday|eod|review\/today)\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
     return m ? m[1] : null
   })()
   const prepDate = urlDate ?? today
   const reviewDate = urlDate ?? anchor ?? today
+  // Review keeps the day too, so Prep → Trade → Review is one day's loop rather
+  // than three sections each with their own idea of the date. With no date in
+  // play it stays bare, and /review picks the session to open on its own.
+  const reviewHref = urlDate ? `/review/today/${urlDate}` : '/review'
 
   // `match` is the prefix that lights the item up — kept separate from href so
   // the dated links (/prep/2026-07-25) still match their section.
@@ -210,7 +221,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
     { href: '/dashboard', label: 'Dashboard', match: '/dashboard' },
     { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
-    { href: '/review', label: 'Review', match: '/review' },
+    { href: reviewHref, label: 'Review', match: '/review' },
     { href: '/analytics', label: 'Patterns', match: '/analytics' },
   ]
 
@@ -222,7 +233,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
     { href: '/dashboard', label: 'Home', match: '/dashboard' },
     { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
-    { href: '/review', label: 'Review', match: '/review' },
+    { href: reviewHref, label: 'Review', match: '/review' },
   ]
   const moreNav = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome' }] : []),
