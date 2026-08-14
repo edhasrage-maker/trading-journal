@@ -8,7 +8,7 @@ import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, Che
 import type { TapeScoreResult } from '@/lib/tapescore'
 import AchievementCoin from '@/components/AchievementCoin'
 import { ACHIEVEMENT_CATALOG, type AchievementId } from '@/lib/achievements'
-import { formatCapturePct, CAPTURE_MISMATCH_TOOLTIP } from '@/lib/analytics'
+import { formatCapturePct, CAPTURE_MISMATCH_TOOLTIP, captureBlankReason } from '@/lib/analytics'
 
 export interface DayRowData {
   id: string
@@ -636,10 +636,14 @@ function DayRowItem({
           capture: (
             <td key="capture" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
               {(() => {
-                if (day.avg_capture == null) return <span className="text-gray-700">—</span>
+                // A blank here and a 0% two rows down mean opposite things —
+                // no move to capture vs. a move kept none of. Say which.
+                if (day.avg_capture == null) {
+                  return <span className="text-gray-700 cursor-help" title={captureBlankReason(day.avg_mfe_pts)}>—</span>
+                }
                 const pct = formatCapturePct(day.avg_capture)
                 return pct == null
-                  ? <span className="text-gray-700" title={CAPTURE_MISMATCH_TOOLTIP}>—</span>
+                  ? <span className="text-gray-700 cursor-help" title={CAPTURE_MISMATCH_TOOLTIP}>—</span>
                   : pct
               })()}
             </td>

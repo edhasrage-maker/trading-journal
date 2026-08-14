@@ -632,6 +632,26 @@ export const CAPTURE_EXTREME_EPSILON = 0.15
 /** The tooltip shown in place of an out-of-bounds capture/conversion value. */
 export const CAPTURE_MISMATCH_TOOLTIP = 'Unavailable — data mismatch'
 
+/**
+ * Why a day shows NO capture figure — as opposed to a capture of 0%.
+ *
+ * The two sit side by side in the same column and read as near-identical, but
+ * they mean opposite things. 0% says a favorable move existed and none of it
+ * was kept. A blank says there was no favorable move at all: capture is
+ * realized ÷ peak favorable, so with a zero denominator the question has no
+ * answer. Printing 0% there would blame the trader for missing a move that
+ * never happened.
+ */
+export function captureBlankReason(avgMfePts: number | null | undefined): string {
+  if (avgMfePts == null) {
+    return 'No capture figure — these trades have no high/low data behind them yet.'
+  }
+  if (avgMfePts <= 0) {
+    return 'No capture figure — price never went your way on this day, so there was nothing to capture. That is different from 0%, which means there was a favorable move and none of it was kept.'
+  }
+  return 'No capture figure — every trade’s favorable move was too small to measure against.'
+}
+
 /** Shown when a perfect exit's capture is clamped to 100%. */
 export const CAPTURE_AT_EXTREME_TOOLTIP =
   'You exited at the best price this trade reached — capture shown as 100%.'
