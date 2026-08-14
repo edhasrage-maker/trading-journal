@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { format, parseISO } from 'date-fns'
+import { weekStartFor } from '@/lib/week-dates'
 import { cn } from '@/lib/utils'
 
 /**
@@ -32,13 +34,39 @@ export default function ReviewNav({
 }) {
   const pathname = usePathname()
 
+  // The day you are actually LOOKING AT, read off the URL.
+  //
+  // The scope props are resolved server-side from the database — the most
+  // recent session — which is the right answer when you arrive at Review cold.
+  // It is the wrong answer the moment you page back to an older day: every
+  // scope tab kept pointing at the newest session, so reviewing the 3rd and
+  // clicking any tab threw you back to the 14th. The URL knows which day you
+  // are on; trust it, and fall back to the props only when it carries no date
+  // (the month view, which is not about a particular day).
+  const viewed = (() => {
+    const day = /^\/review\/today\/(\d{4}-\d{2}-\d{2})/.exec(pathname)?.[1]
+    if (day) return { day, week: weekStartFor(day) }
+    const week = /^\/review\/week\/(\d{4}-\d{2}-\d{2})/.exec(pathname)?.[1]
+    // From a week you have no single day — open its Monday, which is that
+    // week's first session rather than an unrelated one.
+    if (week) return { day: week, week }
+    return null
+  })()
+  const dayHref = viewed?.day ?? todayDate
+  const weekHref = viewed?.week ?? weekStart
+
+  // "Today" is only honest when it IS today. Pointing at another day, the tab
+  // names that day instead — the date stays visible rather than the nav
+  // silently holding one you can't see.
+  const onToday = dayHref === todayDate
+  const dayLabel = onToday ? 'Today' : format(parseISO(dayHref), 'EEE MMM d')
+
   const scopes = [
-    { href: `/review/today/${todayDate}`, label: 'Today', match: '/review/today' },
-    { href: `/review/week/${weekStart}`, label: 'Week', match: '/review/week' },
-    // The month scope pages through CLOSED books too, but lands on the current
-    // month for consistency with Today/Week. `/review/month` (bare) still
-    // redirects to the Dashboard, which owns the running windows.
-    { href: `/review/month/${todayDate.slice(0, 7)}`, label: 'Month', match: '/review/month/' },
+    { href: `/review/today/${dayHref}`, label: dayLabel, match: '/review/today' },
+    { href: `/review/week/${weekHref}`, label: 'Week', match: '/review/week' },
+    // The month scope pages through CLOSED books too. `/review/month` (bare)
+    // still redirects to the Dashboard, which owns the running windows.
+    { href: `/review/month/${dayHref.slice(0, 7)}`, label: 'Month', match: '/review/month/' },
   ]
 
   return (
@@ -58,7 +86,9 @@ export default function ReviewNav({
             )}
           >
             {label}
-            {label === 'Today' && pending && (
+            {/* The dot means TODAY's session is unfinished, so it only belongs
+                on the day tab while that tab still points at today. */}
+            {match === '/review/today' && onToday && pending && (
               <span
                 aria-label="session awaiting completion"
                 className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 ml-1.5 align-middle"
