@@ -660,6 +660,43 @@ export function captureBlankReason(avgMfePts: number | null | undefined): string
   return 'No capture figure — every trade’s favorable move was too small to measure against.'
 }
 
+/** Shown on a 0% that came from having no favorable move at all. */
+export const CAPTURE_NO_MOVE_TOOLTIP =
+  'Price never went your way here, so there was no move to capture. Shown as 0% because you banked none of it — but left out of your capture average, which measures how well you EXIT, and was never tested here.'
+
+/**
+ * The text for one capture cell, and the tooltip that explains it.
+ *
+ * Capture is realized ÷ peak favorable, so a trade that never traded in your
+ * favor has no denominator and the ratio comes back null. Rendering that as a
+ * dash was accurate and useless: a dash is what missing data looks like, and
+ * "you captured nothing" is a perfectly true thing to say about the day.
+ *
+ * So it reads 0%. What does NOT happen is that 0% joining the capture average —
+ * the ratio stays null upstream, which is what keeps it out. Capture grades
+ * exits; a day price never went your way is an ENTRY problem, and letting it
+ * score as a failed exit would point the metric at the wrong mistake.
+ *
+ * Every capture surface goes through here so the day rollup, the recap and the
+ * per-trade table can't each pick a different answer.
+ */
+export function formatCaptureCell(
+  ratio: number | null | undefined,
+  mfePts: number | null | undefined,
+  opts?: { exitedAtExtreme?: boolean },
+): { text: string; title: string | undefined } {
+  if (ratio != null) {
+    const pct = formatCapturePct(ratio, opts)
+    return pct == null
+      ? { text: '—', title: CAPTURE_MISMATCH_TOOLTIP }
+      : { text: pct, title: undefined }
+  }
+  if (mfePts != null && mfePts <= 0) {
+    return { text: '0%', title: CAPTURE_NO_MOVE_TOOLTIP }
+  }
+  return { text: '—', title: captureBlankReason(mfePts) }
+}
+
 /** Shown when a perfect exit's capture is clamped to 100%. */
 export const CAPTURE_AT_EXTREME_TOOLTIP =
   'You exited at the best price this trade reached — capture shown as 100%.'

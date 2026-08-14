@@ -31,7 +31,7 @@ import { dayAchievements, type AchievementId } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import { useSessionClock } from '@/lib/use-session-clock'
-import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, formatCapturePct, CAPTURE_MISMATCH_TOOLTIP, type BarLike } from '@/lib/analytics'
+import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, formatCaptureCell, mfeMaePoints, type BarLike } from '@/lib/analytics'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import { buildHighlights } from '@/lib/trade-highlights'
 import type {
@@ -660,6 +660,18 @@ export default function EodClient({
   // so they compute on stop-less fills too.
   const captureStats = useMemo(() => avgCaptureRatio(trades), [trades])
   const ratioStats = useMemo(() => avgMfeMaeRatio(trades), [trades])
+  // Average favorable move, in points — lets the capture stat tell "nothing was
+  // offered" apart from "no data", and read 0% rather than a bare dash on a day
+  // price never went the trader's way (see formatCaptureCell).
+  const avgMfePts = useMemo(() => {
+    let sum = 0, n = 0
+    for (const t of trades) {
+      const xc = mfeMaePoints(t)
+      if (!xc) continue
+      sum += xc.mfe; n++
+    }
+    return n > 0 ? sum / n : null
+  }, [trades])
   // Entry-efficiency (avg MFE vs MAE in ATR units) for the verdict card. Prefers
   // the per-trade live ATR, falls back to stored entry_atr_1m; bar-derived, so it
   // works on a fills-only import with no planned stops.
@@ -971,12 +983,17 @@ export default function EodClient({
                 <HelpCircle className="w-3 h-3" />
               </button>
             </div>
-            <div className={`font-mono text-sm ${captureStats.avg == null ? 'text-gray-500'
-              : captureStats.avg < 0 ? 'text-red-400 font-bold'
-              : 'text-gray-400'}`}
-              title={captureStats.avg != null && formatCapturePct(captureStats.avg) == null ? CAPTURE_MISMATCH_TOOLTIP : undefined}>
-              {captureStats.avg == null ? '—' : (formatCapturePct(captureStats.avg) ?? '—')}
-            </div>
+            {(() => {
+              const cell = formatCaptureCell(captureStats.avg, avgMfePts)
+              return (
+                <div className={`font-mono text-sm ${cell.text === '—' ? 'text-gray-500'
+                  : captureStats.avg != null && captureStats.avg < 0 ? 'text-red-400 font-bold'
+                  : 'text-gray-400'} ${cell.title ? 'cursor-help' : ''}`}
+                  title={cell.title}>
+                  {cell.text}
+                </div>
+              )
+            })()}
             {mfeInfoOpen && (
               <div
                 ref={mfeInfoRef}
