@@ -171,6 +171,33 @@ Coverage: stop logged on 151/154, capture computable on 149/154.
 
 ---
 
+## 3a. The grader (step 3, `scripts/screenshot-coach-grade.ts`)
+
+One `claude-sonnet-5` call per trade, `effort: medium`, structured output.
+In: the screenshot, the CLAIM (tags + notes), and a packaged TRUTH block —
+derived fields plus pre-computed bands; the raw bar strip is withheld so
+the model can't quote 360 bar numbers as findings. Out: frame gate + four
+axes (`agree | diverge | n_a`, the claim element compared, one sentence) and
+an optional `TapeScore suggested:` line.
+
+Two honesty checks run deterministically on every grade, before any label
+exists:
+
+- **Over-claim:** every number in every sentence must exist in the truth the
+  model was handed (or be one of the rubric's own thresholds / timeframe
+  tokens). A number that isn't there is a fabrication and the record is
+  flagged. First smoke test flagged "5m" and "0.5 ATR" — the checker's error,
+  fixed by allow-listing the SYSTEM prompt's own constants.
+- **Gate violation:** a non-`n_a` axis on a frame the model itself gated.
+
+3-trade smoke test (2026-08-15): 0 over-claims, 0 gate violations. `n_a`
+dominated — entry-location and structure both `n_a` on all three because
+the claims named no level and two had null 5m alignment — which is the
+designed behaviour, not a gap. One real diverge: a manual close 3.25 pts
+above the logged stop followed by 1.22 ATR of favourable post-exit travel.
+Same trade read `exit=n_a` on a prior pass, so medium-effort variance is
+real; labels will show whether it matters.
+
 ## 4. Output contract
 
 Per axis: a verdict and **one factual sentence containing numbers taken from
