@@ -121,6 +121,10 @@ export interface Database {
           // the object format landed — kept in the type so the client can
           // safely read those rows until the one-shot normalizer cleans them up.
           recording_commentary: RecordingCommentaryData | string | null
+          /** Trader verdict (+ later the coach's tape read). Migration:
+           *  20260814_trade_review.sql. Optional in the type because rows
+           *  read from a pre-migration DB simply lack the key. */
+          review_json?: TradeReview | null
           created_at: string
           updated_at: string
         }
@@ -351,6 +355,25 @@ export interface TradeExit {
   time: string  // ISO-8601
   price: number
   qty: number
+}
+
+/** The trader's own call on a trade, made in the weekly Game film catalog.
+ *  Deliberately three words and one line — this is a LABEL, not an essay: the
+ *  set of these is what the screenshot-coach gets graded against. */
+export interface TradeVerdict {
+  call: 'good' | 'mistake' | 'unsure'
+  note: string
+  /** ISO timestamp of the (last) save. */
+  at: string
+}
+
+/** trades.review_json — the trade's review, in parts. `verdict` is the
+ *  trader's; `tape_read` is RESERVED for the coach's screenshot-vs-tape read
+ *  (not written yet). Written read-merge by /api/trades/[id]/review so the two
+ *  parts never clobber each other. Migration: 20260814_trade_review.sql. */
+export interface TradeReview {
+  verdict?: TradeVerdict
+  tape_read?: Record<string, unknown>
 }
 
 /** AI-generated OBS recording commentary saved per-trade so it survives

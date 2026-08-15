@@ -156,6 +156,11 @@ create table if not exists trades (
   -- number pinned to a chart other people are reading.
   -- Migration: 20260728_trade_highlighted.sql.
   highlighted boolean not null default false,
+  -- Trader's own verdict on the trade from the weekly Game film catalog
+  -- ({ verdict: { call: good|mistake|unsure, note, at } }) and, later, the
+  -- coach's screenshot-vs-tape read. Read-merged by /api/trades/[id]/review.
+  -- Migration: 20260814_trade_review.sql.
+  review_json jsonb,
   exits_json jsonb, -- array of partial exits: [{ time: ISO-8601, price: number, qty: number }, ...]; null/empty -> fall back to single exit_time/exit_price avg
   tags_json jsonb default '{}',
   -- tags_json shape:

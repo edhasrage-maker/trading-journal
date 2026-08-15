@@ -5,7 +5,10 @@ import { weekTradingDays, weekEnd, weekLabel, weekStartFor, previousWeekStart, n
 import { todayPT } from '@/lib/pt-time'
 import { displayDayTypes } from '@/lib/day-type-display'
 import { computeCarryover, type Carryover } from '@/lib/prep-carryover'
-import type { TradeWithExcursion } from '@/lib/analytics'
+import { rMultiple, captureRatio, type TradeWithExcursion } from '@/lib/analytics'
+import { resolveScreenshotUrls } from '@/lib/storage-url'
+import type { FilmFrame } from '@/components/review/GameFilm'
+import type { TradeReview } from '@/lib/supabase/types'
 import {
   loadPeriodDays, loadPeriodTrades, summarizePeriod, summarizeCommitments, comparisonRows,
   type PeriodDay, type PeriodSummary,
@@ -91,6 +94,9 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
 
   const vs = comparisonRows(prevSummary, summary, 'week')
 
+  // Game film — every screenshot this week, in entry order, signed once.
+  const film = await buildFilm(supabase, days, tradedDayIds)
+
   // Pager: never forward past the current week.
   const currentWeek = weekStartFor(todayPT())
   const next = nextWeekStart(weekStart)
@@ -127,8 +133,96 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
       initialSynthesis={recap?.ai_synthesis_json ?? null}
       initialNotes={recap?.notes_md ?? ''}
       migrationPending={!!migrationPending}
+      film={film}
     />
   )
+}
+
+/** The week's screenshot catalog. One query for the week's trades (lean
+ *  fields + review_json), one batched sign for the storage URLs. Trades
+ *  without a screenshot are counted, not shown. */
+async function buildFilm(
+  supabase: AnyClient,
+  days: PeriodDay[],
+  tradedDayIds: string[],
+): Promise<{ frames: FilmFrame[]; missing: number; migrationPending: boolean }> {
+  if (tradedDayIds.length === 0) return { frames: [], missing: 0, migrationPending: false }
+
+  interface Row {
+    id: string
+    trading_day_id: string
+    entry_time: string | null
+    entry_price: number | null
+    stop_price: number | null
+    quantity: number | null
+    direction: 'long' | 'short' | null
+    pnl: number | null
+    symbol: string | null
+    high_during_position: number | null
+    low_during_position: number | null
+    tags_json: { setups?: string[] } | null
+    screenshot_url: string | null
+    review_json?: TradeReview | null
+  }
+  const SELECT_BASE = 'id, trading_day_id, entry_time, entry_price, stop_price, quantity, direction, pnl, symbol, high_during_position, low_during_position, tags_json, screenshot_url'
+
+  // review_json may not exist yet (pre-migration) — that query errors with
+  // 42703; fall back to the same select without it and flag the gap.
+  let rows: Row[] = []
+  let migrationPending = false
+  {
+    const first = await supabase
+      .from('trades')
+      .select(`${SELECT_BASE}, review_json`)
+      .in('trading_day_id', tradedDayIds)
+      .order('entry_time', { ascending: true }) as { data: Row[] | null; error: { code?: string } | null }
+    if (first.error) {
+      migrationPending = true
+      const second = await supabase
+        .from('trades')
+        .select(SELECT_BASE)
+        .in('trading_day_id', tradedDayIds)
+        .order('entry_time', { ascending: true }) as { data: Row[] | null }
+      rows = second.data ?? []
+    } else {
+      rows = first.data ?? []
+    }
+  }
+
+  const withShot = rows.filter(r => !!r.screenshot_url)
+  const missing = rows.length - withShot.length
+  if (withShot.length === 0) return { frames: [], missing, migrationPending }
+
+  const signed = await resolveScreenshotUrls(supabase, withShot.map(r => r.screenshot_url))
+  const dayById = new Map(days.map(d => [d.rollup.id, d.rollup]))
+
+  const frames: FilmFrame[] = []
+  withShot.forEach((r, i) => {
+    const src = signed[i]
+    if (!src) return
+    const day = dayById.get(r.trading_day_id)
+    const date = day?.date ?? null
+    const entry = r.entry_time ? new Date(r.entry_time) : null
+    const cap = captureRatio(r as unknown as TradeWithExcursion)
+    frames.push({
+      tradeId: r.id,
+      src,
+      day: date ? format(parseISO(date), 'EEE MMM d') : '',
+      time: entry
+        ? entry.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false }) + ' PT'
+        : '',
+      href: date ? `/review/today/${date}` : '#',
+      symbol: r.symbol,
+      direction: r.direction,
+      pnl: r.pnl,
+      r: rMultiple(r as unknown as TradeWithExcursion),
+      capture: cap != null ? Math.round(cap * 100) : null,
+      setups: Array.isArray(r.tags_json?.setups) ? r.tags_json!.setups!.filter(Boolean) : [],
+      read: day && day.day_types.length > 0 ? displayDayTypes(day.day_types) : null,
+      verdict: r.review_json?.verdict ?? null,
+    })
+  })
+  return { frames, missing, migrationPending }
 }
 
 /** Weekly hero: the engine's finding when it clears, otherwise honest process

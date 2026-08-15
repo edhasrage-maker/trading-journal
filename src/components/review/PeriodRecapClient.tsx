@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { useUiMode } from '@/lib/ui-mode'
 import { GhostButton } from '@/components/ui/Section'
 import { ScoreCluster } from '@/components/review/ReviewMonthHero'
+import GameFilm, { type FilmFrame } from '@/components/review/GameFilm'
 import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { EvidenceBar } from '@/lib/prep-carryover'
 import type { RecapVsRow } from '@/lib/period-recap'
@@ -104,6 +105,8 @@ export interface RecapProps {
   /** True when the recap table hasn't been migrated yet — notes/synthesis
    *  still render but saving explains what's missing instead of failing mute. */
   migrationPending: boolean
+  /** Week only: the screenshot catalog. */
+  film?: { frames: FilmFrame[]; missing: number; migrationPending: boolean }
 }
 
 const STATE_META: Record<FindingState, { label: string; cls: string }> = {
@@ -294,6 +297,13 @@ export default function PeriodRecapClient(p: RecapProps) {
           })}
         </div>
       </RecapSection>
+
+      {/* Game film — the week's screenshots, your call on each */}
+      {p.film && (
+        <RecapSection title="Game film" hint="every screenshot this week — flip through, make the call">
+          <GameFilm frames={p.film.frames} missing={p.film.missing} migrationPending={p.film.migrationPending} />
+        </RecapSection>
+      )}
 
       {/* Against the prior period */}
       {p.vs && (
