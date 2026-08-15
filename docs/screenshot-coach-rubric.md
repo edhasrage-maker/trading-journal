@@ -55,6 +55,38 @@ reliability gets measured before it is trusted.
 
 Population: 43 OBS auto-captures, 111 manual saves, 154/154 with an image.
 
+### Calibration (measured, `scripts/screenshot-coach-frame-gate.ts`)
+
+The 14 proven-pre-exit trades are a **positive control**: the model must not
+report a finished trade on an image that provably predates its exit. Run on
+`claude-sonnet-5` (first Sonnet with 2576px vision), `effort: low`, structured
+output, prompt asks only ordinal facts anchored on the entry marker — never a
+price.
+
+| Pass | Control false alarms | What changed |
+|---|---|---|
+| v1 | **4 / 14** | Every false alarm cited a P&L readout as proof of completion. Sierra paints the *open* P&L on the live position line — a dollar figure is what an open trade looks like. Definitional bug in the prompt, not a vision failure. |
+| v2 | **0 / 14** (held across two runs) | Prompt states P&L is not evidence; completion needs entry + a separate exit marker or a flat tag. On 16 unknowns (8 OBS / 8 manual): 15 "no", 1 "unknown", zero "yes". |
+
+Two limits, so this is not over-read:
+
+- **No negative control.** Zero false alarms proves the gate does not *invent*
+  a finished trade. It cannot prove the gate would *catch* one — no screenshot
+  in the set is provably post-exit. v1→v2 fixed over-claiming; whether v2 now
+  under-claims is unmeasured. The 8 OBS shots all reading "not completed" fits
+  both "OBS captures at entry" and "the model can't see completion"; only a
+  known-completed screenshot separates them.
+- **Jitter at `effort: low`.** Between the two v2 runs, entry-marker visibility
+  flipped on 2/14 controls and `chart_right_of_entry` on 3/14. Nothing crossed
+  into "completed=yes", so the safety property is stable and the descriptive
+  fields are not. Production: higher effort or two votes.
+
+Descriptively (no ground truth): entry marker visible on 86–88% regardless of
+source, always at *medium* confidence, never high; price scale, footprint pane
+and drawn annotations read as present on 100% — the layout is uniform enough
+that those fields don't discriminate. Footprint reads are stored unscored in
+`frame-gate-reads.jsonl` for the axis-3 confirmation decision.
+
 ---
 
 ## 3. The axes
