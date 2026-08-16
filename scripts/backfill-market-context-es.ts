@@ -15,13 +15,17 @@
  * table: 455 NQ, 10 ES, 18 garbage. Every downstream consumer keyed on
  * (trading_day_id, symbol) inherits the gap.
  *
- * STEP 1 — ES rows. For every owner trading day with an ES/MES trade and no
- * populated ES context row: read ES 1-minute bars from the shared ohlcv_bars
- * feed (22-day lookback for the trailing-10 baselines), run the SAME two
- * engines the prep page runs — computeSessionLevels() for PDH/PDL/ON/IB and
- * contextStatsForDate() for RVOL/ADR/ATR/IB-size, plus classifyIbDayType()
- * for the IB character — and upsert on (trading_day_id, symbol='ES'). Nothing
- * is reimplemented here; a second implementation would drift from the live one.
+ * STEP 1 — a context row per traded (day, instrument). For every owner
+ * trading day and every instrument (NQ or ES root) traded on it, where no
+ * POPULATED context row exists for that instrument (an all-null row counts as
+ * missing): read that instrument's 1-minute bars from the shared ohlcv_bars
+ * feed (22-day lookback for the trailing-10 baselines), run the SAME engines
+ * the prep page runs — computeSessionLevels() for PDH/PDL/ON/IB,
+ * contextStatsForDate() for RVOL/ADR/ATR/IB-size, classifyIbDayType() for the
+ * IB character — and upsert on (trading_day_id, symbol). Nothing is
+ * reimplemented here; a second implementation would drift from the live one.
+ * Both directions matter: the first pass found ES-traded days holding only an
+ * NQ row; the harness re-run found an NQ-traded day holding only an ES row.
  *
  * STEP 2 — garbage symbols. A row whose symbol isn't NQ or ES gets its
  * instrument INFERRED from its own level values against that day's NQ and ES
@@ -120,7 +124,15 @@ async function main() {
 
   const trades = await pageAll<{ trading_day_id: string; symbol: string | null }>(() =>
     sb.from('trades').select('trading_day_id, symbol').eq('user_id', USER_ID).not('symbol', 'is', null))
-  const esDays = new Set(trades.filter(t => t.symbol && chartSeriesRoot(t.symbol) === 'ES').map(t => t.trading_day_id))
+  // Every (day, instrument) pair the owner actually traded. Both directions
+  // matter: the first pass found ES-traded days with only an NQ row; the
+  // harness re-run then found an NQ-traded day (2026-08-14) with only an ES
+  // row — the mirror image. A trade needs a context row for ITS instrument.
+  const pairs = new Map<string, { dayId: string; inst: string }>()
+  for (const t of trades) {
+    const inst = t.symbol ? chartSeriesRoot(t.symbol) : null
+    if (inst && CLEAN.has(inst)) pairs.set(`${t.trading_day_id}|${inst}`, { dayId: t.trading_day_id, inst })
+  }
 
   // Filter on user_id, not `.in(dayIds)` — hundreds of uuids in a GET query
   // string is a 400. Belt-and-braces: keep only rows whose day we know.
@@ -136,20 +148,23 @@ async function main() {
   }
   const populated = (c: CtxRow | undefined) => !!c && (c.pdh != null || c.ibh != null || c.onh != null)
 
-  console.log(`owner trading days ${days.length} · ES-traded days ${esDays.size} · context rows ${ctx.length} (garbage ${garbage.length})\n`)
+  const pairList = Array.from(pairs.values()).sort((a, b) => (dayDate.get(a.dayId)! < dayDate.get(b.dayId)! ? -1 : 1))
+  const nES = pairList.filter(p => p.inst === 'ES').length
+  console.log(`owner trading days ${days.length} · traded (day,instrument) pairs ${pairList.length} (ES ${nES}, NQ ${pairList.length - nES}) · context rows ${ctx.length} (garbage ${garbage.length})\n`)
 
-  // ── STEP 1: ES rows ─────────────────────────────────────────────────────
-  console.log('STEP 1 — ES context rows')
+  // ── STEP 1: a context row per traded (day, instrument) ──────────────────
+  console.log('STEP 1 — context rows per traded instrument')
   const esWrites: Array<{ date: string; row: Record<string, unknown> }> = []
   const esSkipped: Record<string, number> = {}
   const skip = (why: string) => { esSkipped[why] = (esSkipped[why] ?? 0) + 1 }
 
-  for (const dayId of Array.from(esDays).sort((a, b) => (dayDate.get(a)! < dayDate.get(b)! ? -1 : 1))) {
-    const date = dayDate.get(dayId)!
-    if (!FORCE && populated(ctxBy.get(`${dayId}|ES`))) { skip('already populated'); continue }
+  for (const { dayId, inst } of pairList) {
+    const date = dayDate.get(dayId)
+    if (!date) { skip('day not owned'); continue }
+    if (!FORCE && populated(ctxBy.get(`${dayId}|${inst}`))) { skip('already populated'); continue }
 
-    const bars = await fetchBars('ES', date)
-    if (bars.length < 300) { skip('no/short ES bars'); continue }
+    const bars = await fetchBars(inst, date)
+    if (bars.length < 300) { skip(`no/short ${inst} bars`); continue }
 
     const { levels } = computeSessionLevels(bars, date)
     // contextStatsForDate wants OneMinBar (volume: number); the feed's volume
@@ -166,7 +181,7 @@ async function main() {
     const row = {
       trading_day_id: dayId,
       user_id: USER_ID,
-      symbol: 'ES',
+      symbol: inst,
       pdh: round(levels.pdh), pdl: round(levels.pdl),
       ibh: round(levels.ibh), ibl: round(levels.ibl),
       onh: round(levels.onh), onl: round(levels.onl),
@@ -183,9 +198,9 @@ async function main() {
       ib_size_band: ibCols?.ib_size_band ?? null,
     }
     esWrites.push({ date, row })
-    console.log(`  ${date}  PDH ${row.pdh} PDL ${row.pdl}  IB ${row.ibl}–${row.ibh}  ON ${row.onl}–${row.onh}  ADR ${row.adr} ATR ${row.atr_1m} RVOL ${row.rvol}  ${row.ib_regime ?? '—'}/${row.ib_size_band ?? '—'}`)
+    console.log(`  ${date} ${inst}  PDH ${row.pdh} PDL ${row.pdl}  IB ${row.ibl}–${row.ibh}  ON ${row.onl}–${row.onh}  ADR ${row.adr} ATR ${row.atr_1m} RVOL ${row.rvol}  ${row.ib_regime ?? '—'}/${row.ib_size_band ?? '—'}`)
   }
-  console.log(`  → ${APPLY ? 'writing' : 'would write'} ${esWrites.length} ES rows; skipped ${JSON.stringify(esSkipped)}\n`)
+  console.log(`  → ${APPLY ? 'writing' : 'would write'} ${esWrites.length} rows; skipped ${JSON.stringify(esSkipped)}\n`)
 
   if (APPLY && esWrites.length) {
     for (const w of esWrites) {

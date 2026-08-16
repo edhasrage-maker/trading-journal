@@ -273,17 +273,16 @@ async function main() {
 
   // Keyed by day AND instrument root: a day can carry both an NQ and an ES
   // context row, and taking whichever came back first would hang NQ levels off
-  // an ES trade. The bare day key stays as a last resort.
+  // an ES trade. There is deliberately NO day-only fallback (see the strict
+  // match note at the lookup site).
   const { data: ctxRows } = await sb.from('market_context')
     .select('trading_day_id, symbol, pdh, pdl, ibh, ibl, onh, onl, atr_1m, adr, rvol')
     .in('trading_day_id', dayIds)
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const ctxByDaySym = new Map<string, Record<string, any>>()
-  const ctxByDay = new Map<string, Record<string, any>>()
   for (const c of ctxRows ?? []) {
     const k = `${c.trading_day_id}|${c.symbol ? barSymbol(c.symbol) : ''}`
     if (!ctxByDaySym.has(k)) ctxByDaySym.set(k, c)
-    if (!ctxByDay.has(c.trading_day_id)) ctxByDay.set(c.trading_day_id, c)
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -383,9 +382,15 @@ async function main() {
     //  wrong yardstick for "was this at a level": at ~1.5pt on ES it makes an
     //  ordinary 13-point gap read as nine ATR. Distance is reported in both,
     //  and the day-scale one is the one that means "near".
-    const ctx = ctxByDaySym.get(`${t.trading_day_id}|${barSymbol(symbol)}`)
-      ?? ctxByDay.get(t.trading_day_id) ?? {}
-    const adr: number | null = Number.isFinite(ctx.adr) ? ctx.adr : null
+    // STRICT instrument match. The earlier day-keyed fallback let an ES row
+    // serve an NQ trade: its levels were (rightly) dropped by the scale guard,
+    // but its ADR was still borrowed as the proximity denominator, and
+    // `context_matched` read true because VWAP — computed from the trade's
+    // OWN bars — always survives. A context row for another instrument is
+    // not partial context; it is no context.
+    const ctxRow = ctxByDaySym.get(`${t.trading_day_id}|${barSymbol(symbol)}`) ?? null
+    const ctx = ctxRow ?? {}
+    const adr: number | null = ctxRow && Number.isFinite(ctxRow.adr) ? ctxRow.adr : null
     const inAdr = (pts: number | null): number | null =>
       pts == null || adr == null || adr <= 0 ? null : round(pts / adr, 3)
     const vwapAtEntry = usableBars ? vwaps[entryIdx] : null
@@ -634,8 +639,10 @@ async function main() {
            *  several MES days the only row is NQ — so a level set that does
            *  not match is dropped, and axis 1 must return n/a rather than
            *  compare an ES entry to NQ levels. */
-          context_symbol: ctx.symbol ?? null,
-          context_matched: levels.length > 0,
+          context_symbol: ctxRow?.symbol ?? null,
+          /** A populated context row exists for THIS trade's instrument. VWAP
+           *  doesn't count — it comes from the trade's own bars, not the row. */
+          context_matched: ctxRow != null && levels.some(l => l.name !== 'VWAP'),
         },
         structure: {
           alignment_5m: t.structure_5m_alignment ?? null,
