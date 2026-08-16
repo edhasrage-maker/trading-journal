@@ -589,10 +589,16 @@ async function main() {
          *  storage upload, whichever is earlier. NOT a capture time. */
         written_at_mins_after_entry: minsFromEntry,
         written_at_mins_after_exit: minsFromExit,
-        /** The ONLY thing the metadata can establish: written before the exit,
-         *  so the image cannot contain post-exit bars. `false` means UNKNOWN,
-         *  not "hindsight" — see the note above. */
-        proven_pre_exit: minsFromExit != null && minsFromExit <= 0,
+        /** Two independent proofs that the image predates the exit:
+         *   - metadata: written before the exit, so it cannot contain
+         *     post-exit bars (the only thing a write time can establish);
+         *   - construction: OBS auto-captures fire AT ENTRY (owner-confirmed
+         *     2026-08-16; the full recording holds the exit, but the still
+         *     is the entry frame). Write time is irrelevant for those.
+         *  `false` means UNKNOWN, not "hindsight" — see the note above. */
+        proven_pre_exit: isObs === true || (minsFromExit != null && minsFromExit <= 0),
+        pre_exit_basis: isObs === true ? 'obs_fires_at_entry'
+          : (minsFromExit != null && minsFromExit <= 0) ? 'written_before_exit' : null,
         bytes: shotPath ? (sizeOf.get(shotPath) ?? null) : null,
       },
 
@@ -680,7 +686,9 @@ async function main() {
   }
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const frameTimed = records.filter(r => (r.frame as any).written_at_mins_after_exit != null)
-  const provenPre = frameTimed.filter(r => (r.frame as any).proven_pre_exit).length
+  const provenPre = records.filter(r => (r.frame as any).proven_pre_exit).length
+  const provenByObs = records.filter(r => (r.frame as any).pre_exit_basis === 'obs_fires_at_entry').length
+  const provenByWrite = records.filter(r => (r.frame as any).pre_exit_basis === 'written_before_exit').length
   const obsCount = records.filter(r => (r.frame as any).capture_source === 'obs').length
   const manualCount = records.filter(r => (r.frame as any).capture_source === 'manual').length
   const noBars = records.filter(r => ((r.truth as any).bars.strip as unknown[]).length === 0)
@@ -716,8 +724,8 @@ async function main() {
     `  OBS auto-capture              ${obsCount}`,
     `  manual save                   ${manualCount}`,
     `  with a write time at all      ${frameTimed.length}`,
-    `  PROVEN written pre-exit       ${provenPre} / ${frameTimed.length}  << the only safe metadata verdict`,
-    `  write time unknown/post-exit  ${frameTimed.length - provenPre}  << UNKNOWN, not hindsight`,
+    `  PROVEN pre-exit               ${provenPre} / ${n}   (${provenByObs} OBS fire at entry, ${provenByWrite} written before exit)`,
+    `  unknown                       ${n - provenPre}   << manual saves with a post-exit write time; UNKNOWN, not hindsight`,
     `  >> Write times arrive in BATCHES (entries 16 min apart share one file`,
     `     epoch to the second) and OBS rows run 14 min to 26 h after entry, so`,
     `     no write time is a capture time. The gate must be a VISION call on how`,

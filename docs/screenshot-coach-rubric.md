@@ -42,16 +42,26 @@ they arrive in batches: five 2026-08-14 trades with entries spread over 16
 minutes carry file epochs landing within seconds of each other. OBS rows are
 written anywhere from 14 minutes to 26 hours after the entry.
 
-A write time bounds the capture in one direction only — `capture ≤ write` — so:
+A write time bounds the capture in one direction only — `capture ≤ write`. And
+**OBS auto-captures fire at entry** (owner-confirmed 2026-08-16; the recording
+holds the exit but the still is the entry frame), which is proof by
+construction, independent of any timestamp. So:
 
 | Evidence | Verdict |
 |---|---|
-| written before the exit | **proven pre-exit** (14 of 151 in the owner's set) |
-| anything else | **unknown** — NOT "hindsight" |
+| OBS capture | **proven pre-exit** (43) |
+| manual save written before the exit | **proven pre-exit** (14) |
+| manual save written after | **unknown** (97) — NOT "hindsight" |
 
-So the gate is a **vision** call: how much chart sits to the right of the entry
-marker relative to the visible window. Confidence-tiered like Pt 18, and its
-reliability gets measured before it is trusted.
+**What the gate is for — revised.** It was framed as a hindsight-image
+detector. That over-weighted it: the coach never takes a number from the
+image, every axis compares tags to bars, and the truth block already
+separates pre-entry facts from post-exit ones — so an image showing bars past
+the exit cannot contaminate a verdict. What remains is a **usability** check:
+is this a chart of this trade with a visible entry marker. Calibrated on the
+14 write-time controls (0/14 false alarms across two runs, after a v1 that
+mistook open-P&L readouts for closed trades). No negative control exists and,
+given the revised purpose, none is needed.
 
 Population: 43 OBS auto-captures, 111 manual saves, 154/154 with an image.
 
@@ -239,7 +249,12 @@ to levels ~22,000 points away.
 
 ## 5. Data problems found
 
-Surfaced by building the harness, all real, none yet fixed:
+Surfaced by building the harness. Items 1–2 have a fix script:
+`scripts/backfill-market-context-es.ts` (dry-run by default, `--apply` to
+write; owner-scoped). Dry run 2026-08-16: 8 ES rows to write (10 ES-traded
+days already had one), 18 garbage rows → all relabel to NQ (each is the sole
+row for its day, so no merges/deletes). Expected effect: reference-level
+coverage 134 → ~150 of 154. Items 3–5 are guarded, not fixed.
 
 1. **`market_context.symbol` is polluted.** Valid values are `NQ` (455 rows) and
    `ES` (10). The rest are parse garbage from the screenshot-extraction path:
