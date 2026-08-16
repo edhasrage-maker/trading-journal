@@ -249,12 +249,20 @@ to levels ~22,000 points away.
 
 ## 5. Data problems found
 
-Surfaced by building the harness. Items 1–2 have a fix script:
+Surfaced by building the harness. Items 1–2 are FIXED (2026-08-16) by
 `scripts/backfill-market-context-es.ts` (dry-run by default, `--apply` to
-write; owner-scoped). Dry run 2026-08-16: 8 ES rows to write (10 ES-traded
-days already had one), 18 garbage rows → all relabel to NQ (each is the sole
-row for its day, so no merges/deletes). Expected effect: reference-level
-coverage 134 → ~150 of 154. Items 3–5 are guarded, not fixed.
+write; owner-scoped; a row per traded (day, instrument) in both directions,
+plus garbage-symbol relabel by inferring the instrument from level values).
+Applied in two passes: 8 ES rows + 18 relabels, then 2 NQ rows (a
+never-populated day, and an ES-prepped day with MNQ trades). Result:
+reference-level coverage **134 → 153 of 154**; zero garbage symbols remain
+in the table. The one left is item 3. Items 3–5 are guarded, not fixed.
+
+The second pass also exposed a harness bug: a day-keyed fallback let an ES
+context row serve an NQ trade — levels dropped by the scale guard, but its
+ADR still borrowed as the denominator, and `context_matched` reading true
+because VWAP (from the trade's own bars) always survives. Now a strict
+(day, instrument) match with no fallback.
 
 1. **`market_context.symbol` is polluted.** Valid values are `NQ` (455 rows) and
    `ES` (10). The rest are parse garbage from the screenshot-extraction path:
