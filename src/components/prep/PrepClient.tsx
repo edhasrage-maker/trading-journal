@@ -1366,17 +1366,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           </Section>
         )}
 
-        <Section title="Trade plans" sub="your playbook — TapeScore names the gap, not a score">
-          <TradePlansSection
-            plans={prepNotes.trade_plans ?? []}
-            onChange={plans => setPrepNotes({ ...prepNotes, trade_plans: plans })}
-            planAssessments={(aiAnalysis as AiAnalysis | null)?.plan_assessments as PlanAssessment[] | undefined}
-          />
-        </Section>
-
-        {/* Your read — you commit your bias, observations and mood here: AFTER
-            annotating the chart, day type and market context above, but BEFORE
-            the AI's TapeScore read below, which grades what you've written. */}
+        {/* Your read comes BEFORE the plans: the bias is the premise the plans
+            are built on, so writing plans first invites back-filling a read to
+            justify them. Order of the page is the order of the thinking —
+            chart and context above, read here, plans from it, then the AI's
+            grade below. */}
         <Section title="Your read" sub="your call — TapeScore grades it below">
           <PrepNotesForm
             part="read"
@@ -1387,6 +1381,14 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             ibSize={context.ib_size as number | null}
             showAdvanced={isAdmin}
             beginner={false}
+          />
+        </Section>
+
+        <Section title="Trade plans" sub="your playbook — TapeScore names the gap, not a score">
+          <TradePlansSection
+            plans={prepNotes.trade_plans ?? []}
+            onChange={plans => setPrepNotes({ ...prepNotes, trade_plans: plans })}
+            planAssessments={(aiAnalysis as AiAnalysis | null)?.plan_assessments as PlanAssessment[] | undefined}
           />
         </Section>
 
