@@ -137,10 +137,19 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
       return pts > m ? pts : m
     }, 0)
     const ratio = bestCapturePts / dayRangePts
-    if (ratio >= T.gameWinnerCapture) {
+    // A single trade CANNOT capture more than the full session range. A ratio
+    // materially over 100% means dayRangePts and the trade are in different
+    // instruments/units (a day can carry a per-symbol market_context — e.g. an
+    // ES-scale 19.5-pt range measured against an NQ trade's ~130-pt range) or
+    // span different sessions, so the comparison is invalid — do NOT award.
+    // The small epsilon tolerates a genuine full-range capture nicked by
+    // rounding; the displayed % clamps to 100 so the copy is never impossible.
+    const GW_MAX_RATIO = 1.02
+    if (ratio >= T.gameWinnerCapture && ratio <= GW_MAX_RATIO) {
+      const pct = Math.min(Math.round(ratio * 100), 100)
       earned.push({
         id: 'game_winner', ...ACHIEVEMENT_CATALOG.game_winner,
-        blurb: `Your best trade caught ${Math.round(ratio * 100)}% of the day's ${Math.round(dayRangePts)}-pt range.`,
+        blurb: `Your best trade caught ${pct}% of the day's ${Math.round(dayRangePts)}-pt range.`,
       })
     }
   }
