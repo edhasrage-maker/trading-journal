@@ -20,7 +20,7 @@ const DIR = join(process.cwd(), 'evals', 'screenshot-coach')
 const OUT = argVal('out') ?? join(DIR, 'review-sheet.html')
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const grades = readFileSync(join(DIR, 'grades.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as any)
+const grades = readFileSync(join(DIR, 'reads.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as any)
 const tradesFile = ['labelled-trades.jsonl', 'unlabelled-trades.jsonl']
   .map(f => join(DIR, f)).find(p => { try { readFileSync(p); return true } catch { return false } })!
 const trades = new Map(readFileSync(tradesFile, 'utf8').trim().split('\n').map(l => { const r = JSON.parse(l); return [r.trade_id, r] as [string, any] }))
