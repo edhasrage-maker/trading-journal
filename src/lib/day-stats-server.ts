@@ -19,6 +19,7 @@ import {
   computeDayStats, toStoredStats, STATS_VERSION,
   type DayForStats, type TradeForStats,
 } from './day-stats'
+import { pickMarketContext } from './market-context-select'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -45,11 +46,13 @@ export async function recomputeDayStats(supabase: AnyClient, dayId: string): Pro
 
     const [tradesRes, ctxRes] = await Promise.all([
       supabase.from('trades').select(TRADE_COLS).eq('trading_day_id', dayId),
-      // One context row per instrument now — maybeSingle() throws on two.
-      supabase.from('market_context').select('atr_1m').eq('trading_day_id', dayId).order('symbol', { ascending: true }).limit(1),
+      // One context row per instrument — fetch all + pick by the day's traded
+      // instrument. Picking the wrong one badly skews the ×ATR fallback (ES
+      // atr_1m ~2 vs NQ ~10). See src/lib/market-context-select.ts.
+      supabase.from('market_context').select('symbol, atr_1m').eq('trading_day_id', dayId),
     ])
     const trades = (tradesRes?.data ?? []) as TradeForStats[]
-    const prepAtr = ((ctxRes?.data as { atr_1m: number | null }[] | null)?.[0]?.atr_1m) ?? null
+    const prepAtr = pickMarketContext((ctxRes?.data as { symbol: string | null; atr_1m: number | null }[] | null) ?? [], trades)?.atr_1m ?? null
 
     const rollup = computeDayStats(day, trades, prepAtr)
     const { error } = await supabase

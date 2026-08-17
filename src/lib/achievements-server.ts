@@ -10,6 +10,7 @@
 //   - /api/achievements/backfill    (one-shot history sweep)
 
 import { dayAchievementIds, type AchievementId, type AchievementTrade } from './achievements'
+import { pickMarketContext } from './market-context-select'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -64,12 +65,16 @@ export async function recomputeAndPersistDay(
     if (!day) return []
     const [tradesRes, ctxRes] = await Promise.all([
       supabase.from('trades').select('*').eq('trading_day_id', day.id),
-      // One context row per instrument now — maybeSingle() throws on two.
-      supabase.from('market_context').select('day_range').eq('trading_day_id', day.id).order('symbol', { ascending: true }).limit(1),
+      // One context row per instrument — fetch all + pick the one matching the
+      // day's traded instrument, so Game Winner measures the trade against the
+      // SAME market's range (an NQ capture vs an ES range reads a false >100%).
+      supabase.from('market_context').select('symbol, day_range').eq('trading_day_id', day.id),
     ])
+    const trades = (tradesRes?.data ?? []) as AchievementTrade[]
     const pnlHistory = await fetchPnlHistory(supabase)
-    const dayRangePts = ((ctxRes?.data as { day_range: number | null }[] | null)?.[0]?.day_range) ?? null
-    const ids = computeDayIds(day, (tradesRes?.data ?? []) as AchievementTrade[], pnlHistory, dayRangePts)
+    const ctxRow = pickMarketContext((ctxRes?.data as { symbol: string | null; day_range: number | null }[] | null) ?? [], trades)
+    const dayRangePts = ctxRow?.day_range ?? null
+    const ids = computeDayIds(day, trades, pnlHistory, dayRangePts)
     await supabase.from('trading_days').update({ achievements_json: ids }).eq('id', day.id)
     return ids
   } catch (e) {

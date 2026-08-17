@@ -6,6 +6,7 @@ import { configuredAtr } from '@/lib/atr-config'
 import { getAtrConfig, getGiveBackAtr } from '@/lib/atr-config-server'
 import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
 import { achievementCounts } from '@/lib/achievements'
+import { pickMarketContext } from '@/lib/market-context-select'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,11 +41,13 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   if (day) {
     const [tradesRes, ctxRes] = await Promise.all([
       supabase.from('trades').select('*').eq('trading_day_id', day.id).order('entry_time', { ascending: true }),
-      // See prep/[date]: one row per instrument, so never single/maybeSingle.
-      supabase.from('market_context').select('*').eq('trading_day_id', day.id).order('symbol', { ascending: true }).limit(1),
+      // One row per instrument — fetch them ALL and pick the one matching what
+      // the day was actually traded in (an NQ day must read NQ context, not
+      // whichever symbol sorts first). See src/lib/market-context-select.ts.
+      supabase.from('market_context').select('*').eq('trading_day_id', day.id),
     ])
     trades = (tradesRes.data ?? []) as Trade[]
-    marketContext = ((ctxRes.data as MarketContext[] | null) ?? [])[0] ?? null
+    marketContext = pickMarketContext((ctxRes.data as MarketContext[] | null) ?? [], trades)
   }
 
   // Per-trade LIVE ATR: compute ATR-10 Wilder from 1-min bars at each trade's
