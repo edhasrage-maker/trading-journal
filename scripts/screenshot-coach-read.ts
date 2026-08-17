@@ -274,30 +274,34 @@ function checkPrices(reads: PriceRead[], r: any): PriceCheck[] {
 }
 
 // ── PASS 3: write-up ──────────────────────────────────────────────────────
-const WRITE_SYSTEM = `You are the coach's voice. You already read this trader's chart blind (your BLIND READ below), and each element of that read has been checked against the 1-minute bar record (VERIFICATION). Now write the read as it stands after the check.
+const WRITE_SYSTEM = `You are a trading coach looking at one of this trader's trades. You have already read the chart blind (BLIND READ), every element of that read has been checked against the 1-minute bar record (VERIFICATION), and you have the tape's own account of the trade (TRUTH) — including CONTEXT: where the entry sat in the prior day's and the session's volume profile, what the 5-minute swing structure had already done, whether volatility was quiet or active, whether the IB was chop, and how many times this trader had already tried the same idea at this price.
+
+Your job is a JUDGMENT — was this a good trade or not — and the reasons, said the way an experienced trader would say it to a colleague. Not a description of the trade. Not a check of what the trader thought. A verdict on the trade as the tape shows it.
+
+What "good" means here: the trade was placed where the context gave it a reason to work — at an edge of value or a real level rather than in the middle of a node; with the swing structure or against it at a genuine reversal spot; when there was range to be had, not when ATR had already gone quiet and the IB was chop; as a first or second look, not the fifth attempt at the same idea. A trade that made money can still be a bad trade; a stopped-out trade can be a good one. Judge the placement, not the P&L. Say "not a good trade" when it wasn't. Say "good trade" when it was. Say "mixed" only when the context genuinely cuts both ways, and say which way.
 
 Rules:
-1. Elements the bars CONTRADICTED are wrong. Drop them from your read and state the tape's version instead. Do not hedge them, do not narrate the correction ("not a short as first read", "rather than X as I thought") — the reader never saw your first read and does not need to. Elements marked partial or unverifiable may be mentioned only as what the chart showed, labelled as unverified.
+1. Elements the bars CONTRADICTED are wrong. State the tape's version; do not hedge, do not narrate the correction, and never attribute your own blind read to the trader ("the label you saw", "what you thought was IBH +100%") — the trader never saw your read. Elements marked partial or unverifiable may be mentioned only as what the chart showed.
 2. Every number you write must be copied from TRUTH, or be a price read in VERIFICATION.price_reads whose status is "confirmed" (or a drawn_level marked unverifiable — call it the trader's own line and use its dist_atr_from_entry / touches). Give units (ATR, ADR, pts, %, R). A contradicted price read is a misread — never mention it. Nothing else off the image.
-3. No causal stories. Never say why the trader did something, never infer an emotion or state of mind, never say what they should have felt or done. State what the chart showed, what the tape did, and where they differ. You are describing, not advising.
-3b. dropped is a terse list — "level_in_play: IBH +100%", "stop_order 30207 (recorded 30212)" — one short item per dropped element, no sentences.
-4. The trader's tags are REFERENCE ONLY. Your read is primary. After your read, ONE line on the tags — but only on the elements the bars can judge: direction, level, structure, timing. If a tag CONTRADICTS a confirmed element, say so plainly. If the tags only cite order-flow or a setup name the bars cannot see, that is NOT a disagreement — say "Your tags add order-flow context the tape can't check; nothing in them conflicts with this read." If they match, say "Your tags match this read." Do not adopt their vocabulary or framing.
-
-Length: read = 2–3 sentences. tags_vs_read = 1 sentence. Plain, specific, no headers.`
+3. Talk about the TRADE, not the trader's mind. "You bought into the middle of the prior day's value area with ATR at 0.6x its typical and the IB in chop, on the third long attempt in 40 minutes — that's not a good trade" is right. "You were frustrated" or "you got greedy" is not — you can't see that. Reasons are context facts, each with its number.
+4. Lead with the verdict. Then two or three sentences of reasons, in order of weight — the thing that most decides the verdict first. Outcome is not a reason: capture %, R multiple and P&L never make a trade good or bad here — a 3R winner into the middle of a node in chop is still not a good trade, and a stopped-out first touch of a real level with structure is still a good one. Mention the outcome only under rule 6. Plain, direct, second person, no headers, no bullet points, no hedging language ("somewhat", "arguably", "it could be said"). If the context is genuinely thin (no profile, no structure read, no attempts), say the verdict rests on less and name what's missing.
+5. dropped is a terse list — "level_in_play: IBH +100%", "stop_order 30207 (recorded 30212)" — one short item per dropped element, no sentences.
+6. If the exit is itself a finding (closed with 0% captured and price then ran 2 ATR your way; or a runner held past a level that had already rejected), say so with the numbers, as a separate sentence after the verdict's reasons. If it isn't, leave the outcome out entirely.
+7. footprint_observation is words only — what the pane showed — never a number of any kind.`
 
 const WRITE_SCHEMA = {
   type: 'object',
   properties: {
-    read: { type: 'string', description: 'The coach\'s read of the trade after the bar check, 2-3 sentences, numbers only from TRUTH.' },
-    dropped: { type: 'array', items: { type: 'string' }, description: 'Elements of the blind read that the bars contradicted and you dropped, e.g. "level_in_play: IB high".' },
-    tags_vs_read: { type: 'string', description: 'One sentence: where the trader\'s tags disagree with the verified read, or that they match.' },
+    verdict: { type: 'string', enum: ['good', 'not_good', 'mixed'] },
+    read: { type: 'string', description: 'Verdict first, then the reasons — 3 to 5 sentences total, second person, numbers only from TRUTH or confirmed price reads.' },
+    dropped: { type: 'array', items: { type: 'string' } },
     footprint_observation: { type: ['string', 'null'], description: 'What the footprint pane showed, labelled as unverified. Null if no pane or nothing notable.' },
   },
-  required: ['read', 'dropped', 'tags_vs_read', 'footprint_observation'],
+  required: ['verdict', 'read', 'dropped', 'footprint_observation'],
   additionalProperties: false,
 } as const
 
-interface WriteUp { read: string; dropped: string[]; tags_vs_read: string; footprint_observation: string | null }
+interface WriteUp { verdict: 'good' | 'not_good' | 'mixed'; read: string; dropped: string[]; footprint_observation: string | null }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function packageTruth(r: any) {
@@ -309,6 +313,7 @@ function packageTruth(r: any) {
     location: { context_matched: t.location.context_matched, nearest: t.location.nearest, band: locBand(t.location.nearest?.dist_adr ?? null),
       vwap: t.location.vwap, ema9: t.location.ema9, ema20: t.location.ema20, touches_before_entry: t.location.touches_before_entry },
     structure: { alignment_5m: t.structure.alignment_5m },
+    context: t.context ?? {},
     chase: { run_before_entry_pts: t.chase.run_before_entry_pts, run_before_entry_atr: t.chase.run_before_entry_atr, band: chaseBand(t.chase.run_before_entry_atr) },
     exit: { realized_pts: t.exit.realized_pts, r_multiple: t.exit.r_multiple, risk_pts: t.exit.risk_pts, mfe_pts: t.exit.mfe_pts, mfe_atr: t.exit.mfe_atr,
       mae_atr: t.exit.mae_atr, capture_pct: t.exit.capture_pct, post_exit_favorable_atr: t.exit.post_exit_favorable_atr,
@@ -351,7 +356,8 @@ function overclaims(w: WriteUp, truthPkg: unknown, claimText: string, ver: Verif
       if (!matches(a)) bad.push(`${label}: ${n}`)
     }
   }
-  check('read', w.read); check('tags_vs_read', w.tags_vs_read); check('footprint', w.footprint_observation)
+  check('read', w.read)
+  if (w.footprint_observation && numbersIn(w.footprint_observation).length) bad.push(`footprint: contains numbers (${numbersIn(w.footprint_observation).join(', ')})`)
   return bad
 }
 
@@ -387,7 +393,6 @@ function writeText(r: any, blind: BlindRead, ver: Verification, truthPkg: unknow
     ``, `BLIND READ (yours, from the image alone):`, JSON.stringify(blind, null, 1),
     ``, `VERIFICATION (each element vs the bar record):`, JSON.stringify(ver, null, 1),
     ``, `TRUTH (bar-derived; the only source of numbers):`, JSON.stringify(truthPkg, null, 1),
-    ``, `TRADER'S TAGS — REFERENCE ONLY, low weight, do not adopt their framing:`, JSON.stringify(r.claim, null, 1),
   ].join('\n')
 }
 
@@ -440,7 +445,8 @@ async function main() {
 
     // Pass 1 — image only. Medium: this is the read that gets checked, and the
     // gate calibration showed descriptive fields jitter at low.
-    const blind = await jsonCall<BlindRead>({ image, text: BLIND_PROMPT, schema: BLIND_SCHEMA, effort: 'medium' })
+    let blind = await jsonCall<BlindRead>({ image, text: BLIND_PROMPT, schema: BLIND_SCHEMA, effort: 'medium' })
+    if ('error' in blind && blind.error === 'unparseable json') blind = await jsonCall<BlindRead>({ image, text: BLIND_PROMPT, schema: BLIND_SCHEMA, effort: 'medium' })
     if ('error' in blind) { out.push({ trade_id: r.trade_id, date: r.date, error: `blind: ${blind.error}` }); console.log(`[${i + 1}] ${r.date} ERROR ${blind.error}`); continue }
 
     // Pass 2 — code.
@@ -483,7 +489,7 @@ async function main() {
     if (write) {
       console.log(`        ${write.read}`)
       if (write.dropped.length) console.log(`        dropped: ${write.dropped.join('; ')}`)
-      console.log(`        tags: ${write.tags_vs_read}`)
+      console.log(`        VERDICT ${write.verdict.toUpperCase()}`)
     }
   }
 
@@ -511,8 +517,9 @@ async function main() {
     `  footprint reads are reported unverified (no bar counterpart): ${ok.filter(o => (o.blind as BlindRead).footprint !== 'no_pane' && (o.blind as BlindRead).footprint !== 'nothing_notable').length} / ${ok.length} claimed a signal`,
     ...priceLines(ok),
     ``,
-    `TAGS vs COACH`,
-    `  reads where the trader's tags CONFLICT with a bar-confirmed element: ${ok.filter(o => !/match|nothing .{0,40}conflict|no conflict|don't conflict|do not conflict|line up|align/i.test((o.write as WriteUp).tags_vs_read)).length} / ${ok.length}`,
+    `VERDICTS`,
+    `  good ${ok.filter(o => (o.write as WriteUp).verdict === 'good').length}  not_good ${ok.filter(o => (o.write as WriteUp).verdict === 'not_good').length}  mixed ${ok.filter(o => (o.write as WriteUp).verdict === 'mixed').length}`,
+    `  P&L-positive trades called not_good: ${ok.filter(o => (o.write as WriteUp).verdict === 'not_good' && ((o.pnl as number) ?? 0) > 0).length}  ·  losers called good: ${ok.filter(o => (o.write as WriteUp).verdict === 'good' && ((o.pnl as number) ?? 0) < 0).length}   (both should be non-zero if it judges placement, not P&L)`,
   ]
   const anchoredSet = new Set(anchored)
   const withLabel = ok.filter(o => o.label && !anchoredSet.has(o.trade_id as string))

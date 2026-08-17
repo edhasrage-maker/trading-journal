@@ -146,7 +146,7 @@ async function fetchBars(symbol: string, startIso: string, endIso: string): Prom
  *  Wilder ATR seed, and to let a level's touch count start from the overnight. */
 async function fetchDayBars(symbol: string, date: string): Promise<{ bars: Bar[]; symbolUsed: string | null }> {
   const start = new Date(`${date}T00:00:00Z`)
-  start.setUTCDate(start.getUTCDate() - 1)
+  start.setUTCDate(start.getUTCDate() - 9)     // prior week's high/low needs last week's bars
   const end = new Date(`${date}T00:00:00Z`)
   end.setUTCDate(end.getUTCDate() + 1)
   const startIso = start.toISOString()
@@ -230,6 +230,113 @@ function storagePathOf(value: string): string | null {
   return value
 }
 
+// ── context features ────────────────────────────────────────────────────────
+//  These are what a coach's judgment is actually made of: where in the
+//  volume distribution the entry sat, what the swing structure had already
+//  done, whether volatility had gone quiet, how many times the same idea had
+//  been tried. All bar-derived, all in bar space.
+
+interface Profile { poc: number; vah: number; val: number; bucket: number; vol: Map<number, number>; total: number; median: number }
+
+/** Volume profile over `bars`: bar volume spread evenly across [low, high] in
+ *  `bucket`-wide bins; value area = 70% of volume grown outward from the POC. */
+function volumeProfile(bars: Bar[], bucket: number): Profile | null {
+  const vol = new Map<number, number>()
+  let total = 0
+  for (const b of bars) {
+    const v = b.volume ?? 0
+    if (v <= 0 || !Number.isFinite(b.high) || !Number.isFinite(b.low)) continue
+    const lo = Math.floor(b.low / bucket), hi = Math.floor(b.high / bucket)
+    const n = hi - lo + 1
+    for (let k = lo; k <= hi; k++) vol.set(k, (vol.get(k) ?? 0) + v / n)
+    total += v
+  }
+  if (!total || vol.size < 3) return null
+  const keys = Array.from(vol.keys()).sort((a, b) => a - b)
+  let pocK = keys[0]
+  for (const k of keys) if ((vol.get(k) ?? 0) > (vol.get(pocK) ?? 0)) pocK = k
+  // grow value area
+  let acc = vol.get(pocK) ?? 0, lo = pocK, hi = pocK
+  while (acc < total * 0.7) {
+    const up = vol.get(hi + 1) ?? 0, dn = vol.get(lo - 1) ?? 0
+    if (up === 0 && dn === 0) break
+    if (up >= dn) { hi++; acc += up } else { lo--; acc += dn }
+  }
+  const sorted = keys.map(k => vol.get(k) ?? 0).sort((a, b) => a - b)
+  return { poc: (pocK + 0.5) * bucket, vah: (hi + 1) * bucket, val: lo * bucket, bucket, vol, total, median: sorted[Math.floor(sorted.length / 2)] }
+}
+
+/** Where a price sits in a profile, in words the coach can use. */
+function profilePosition(p: Profile, price: number, atr: number | null): { zone: string; node: string; poc: number; vah: number; val: number; vol_at_price_vs_median: number | null } {
+  const band = atr ? 0.15 * atr : p.bucket
+  const zone = Math.abs(price - p.poc) <= band ? 'at POC'
+    : Math.abs(price - p.vah) <= band ? 'at VAH'
+    : Math.abs(price - p.val) <= band ? 'at VAL'
+    : price > p.vah ? 'above value'
+    : price < p.val ? 'below value'
+    : price > p.poc ? 'inside value, upper half' : 'inside value, lower half'
+  const v = p.vol.get(Math.floor(price / p.bucket)) ?? 0
+  const ratio = p.median > 0 ? v / p.median : null
+  const node = ratio == null ? 'unknown' : ratio >= 1.5 ? 'HVN' : ratio <= 0.5 ? 'LVN' : 'average'
+  return { zone, node, poc: round(p.poc)!, vah: round(p.vah)!, val: round(p.val)!, vol_at_price_vs_median: round(ratio, 2) }
+}
+
+/** 5-minute swing structure over the bars before `entryIdx`. Aggregates 1m→5m,
+ *  finds pivots (high above 2 neighbours each side / low below), then reads the
+ *  last two highs and last two lows: HH/LH, HL/LL. */
+function swingStructure(bars: Bar[], entryIdx: number, lookback5m = 36): {
+  label: string; last_highs: number[]; last_lows: number[]; pattern: string
+} | null {
+  const from = Math.max(0, entryIdx - lookback5m * 5)
+  const slice = bars.slice(from, entryIdx + 1)
+  const five: Array<{ h: number; l: number }> = []
+  for (let i = 0; i + 4 < slice.length; i += 5) {
+    const w = slice.slice(i, i + 5)
+    five.push({ h: Math.max(...w.map(b => b.high)), l: Math.min(...w.map(b => b.low)) })
+  }
+  if (five.length < 8) return null
+  const highs: number[] = [], lows: number[] = []
+  for (let i = 2; i < five.length - 2; i++) {
+    if (five[i].h > five[i - 1].h && five[i].h > five[i - 2].h && five[i].h >= five[i + 1].h && five[i].h >= five[i + 2].h) highs.push(five[i].h)
+    if (five[i].l < five[i - 1].l && five[i].l < five[i - 2].l && five[i].l <= five[i + 1].l && five[i].l <= five[i + 2].l) lows.push(five[i].l)
+  }
+  const h2 = highs.slice(-2), l2 = lows.slice(-2)
+  const hh = h2.length === 2 ? (h2[1] > h2[0] ? 'HH' : 'LH') : null
+  const hl = l2.length === 2 ? (l2[1] > l2[0] ? 'HL' : 'LL') : null
+  const pattern = [hh, hl].filter(Boolean).join('+') || 'unclear'
+  const label = hh === 'HH' && hl === 'HL' ? 'up (HH+HL)'
+    : hh === 'LH' && hl === 'LL' ? 'down (LH+LL)'
+    : hh && hl ? `mixed (${pattern})` : 'unclear'
+  return { label, last_highs: h2.map(v => round(v)!), last_lows: l2.map(v => round(v)!), pattern }
+}
+
+/** Prior week's high/low from the bars whose PT date falls in the Mon–Fri
+ *  before `date`'s week. */
+function priorWeekHL(bars: Bar[], date: string): { pwh: number; pwl: number } | null {
+  const [y, m, d] = date.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  const dow = dt.getUTCDay()                          // 0 Sun … 6 Sat
+  const thisMon = new Date(dt); thisMon.setUTCDate(dt.getUTCDate() - ((dow + 6) % 7))
+  const prevMon = new Date(thisMon); prevMon.setUTCDate(thisMon.getUTCDate() - 7)
+  const iso = (x: Date) => x.toISOString().slice(0, 10)
+  const start = iso(prevMon), end = iso(thisMon)   // [prevMon, thisMon)
+  let hi = -Infinity, lo = Infinity, n = 0
+  for (const b of bars) {
+    const { date: bd } = ptParts(new Date(b.ts).getTime())
+    if (bd >= start && bd < end) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low; n++ }
+  }
+  return n > 100 ? { pwh: hi, pwl: lo } : null
+}
+
+function sessionPhase(sec: number): string {
+  if (sec < 6 * 3600 + 30 * 60) return 'pre-open'
+  if (sec < 7 * 3600 + 30 * 60) return 'IB (first hour)'
+  if (sec < 9 * 3600) return 'morning'
+  if (sec < 11 * 3600) return 'midday'
+  if (sec < 13 * 3600) return 'afternoon'
+  return 'post-close'
+}
+
 // ── the record ──────────────────────────────────────────────────────────────
 interface LevelRef {
   name: string
@@ -280,6 +387,19 @@ async function main() {
     return
   }
 
+  // All of the owner's trades on these days (not just the screenshot ones) —
+  // "you took five attempts here" needs the siblings, screenshot or not.
+  const { data: sibRows } = await sb.from('trades')
+    .select('id, trading_day_id, entry_time, direction, entry_price, pnl, symbol')
+    .eq('user_id', USER_ID)
+    .not('entry_time', 'is', null)
+  const sibsByDay = new Map<string, Array<{ id: string; ms: number; direction: string | null; entry_price: number | null; pnl: number | null; symbol: string | null }>>()
+  for (const x of (sibRows ?? []) as Array<{ id: string; trading_day_id: string; entry_time: string; direction: string | null; entry_price: number | null; pnl: number | null; symbol: string | null }>) {
+    const arr = sibsByDay.get(x.trading_day_id) ?? []
+    arr.push({ id: x.id, ms: new Date(x.entry_time).getTime(), direction: x.direction, entry_price: x.entry_price, pnl: x.pnl, symbol: x.symbol })
+    sibsByDay.set(x.trading_day_id, arr)
+  }
+
   // ── 2. day + context lookups ──────────────────────────────────────────────
   const dayIds = Array.from(new Set(rows.map(t => t.trading_day_id).filter(Boolean)))
   const { data: days } = await sb.from('trading_days').select('id, date').in('id', dayIds)
@@ -290,7 +410,7 @@ async function main() {
   // an ES trade. There is deliberately NO day-only fallback (see the strict
   // match note at the lookup site).
   const { data: ctxRows } = await sb.from('market_context')
-    .select('trading_day_id, symbol, pdh, pdl, ibh, ibl, onh, onl, atr_1m, adr, rvol')
+    .select('trading_day_id, symbol, pdh, pdl, ibh, ibl, onh, onl, atr_1m, adr, rvol, atr_10d_avg, ib_regime, ib_size_band, ib_size')
     .in('trading_day_id', dayIds)
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const ctxByDaySym = new Map<string, Record<string, any>>()
@@ -418,6 +538,7 @@ async function main() {
     // been confirmed even when right. Derived from the IB range, so they are
     // exactly as reliable as ibh/ibl.
     const ibRange = ctx.ibh != null && ctx.ibl != null ? ctx.ibh - ctx.ibl : null
+    const pw = usableBars ? priorWeekHL(bars, date) : null
     const candidates: Array<[string, number | null]> = [
       ['IB high', ctx.ibh ?? null], ['IB low', ctx.ibl ?? null],
       ['PDH', ctx.pdh ?? null], ['PDL', ctx.pdl ?? null],
@@ -426,6 +547,7 @@ async function main() {
       ['IBH +100%', ibRange != null ? ctx.ibh + ibRange : null],
       ['IBL -50%', ibRange != null ? ctx.ibl - ibRange * 0.5 : null],
       ['IBL -100%', ibRange != null ? ctx.ibl - ibRange : null],
+      ['PWH', pw?.pwh ?? null], ['PWL', pw?.pwl ?? null],
       ['VWAP', vwapAtEntry],
       ['EMA 9', ema9AtEntry], ['EMA 20', ema20AtEntry],
     ]
@@ -509,6 +631,70 @@ async function main() {
         // negative run would mean the extreme sat the wrong side of the entry
         // bar — impossible now that both are bar-space.
         chasePts = round(Math.max(0, isLong ? entryBar - ext : ext - entryBar))
+      }
+    }
+
+    // ── truth: context — what a judgment is made of ───────────────────────
+    let context: Record<string, unknown> = {}
+    if (usableBars && entryBar != null) {
+      const bucket = atr ? Math.max(0.25, Math.round((atr / 20) * 4) / 4) : 1
+      const entryBarMs = new Date(bars[entryIdx].ts).getTime()
+      const { sec: entrySec } = ptParts(entryBarMs)
+      // Prior RTH session's profile (the "value" the day opened against).
+      const prevRth: Bar[] = [], todaySoFar: Bar[] = []
+      for (let i = 0; i <= entryIdx; i++) {
+        const b = bars[i]; const { date: bd, sec } = ptParts(new Date(b.ts).getTime())
+        const rth = sec >= 6 * 3600 + 30 * 60 && sec < 13 * 3600
+        if (bd < date && rth) prevRth.push(b)
+        else if (bd === date && sec >= 6 * 3600 + 30 * 60) todaySoFar.push(b)
+      }
+      // keep only the LAST prior RTH date
+      let lastPrevDate = ''
+      for (const b of prevRth) { const { date: bd } = ptParts(new Date(b.ts).getTime()); if (bd > lastPrevDate) lastPrevDate = bd }
+      const prevProfile = volumeProfile(prevRth.filter(b => ptParts(new Date(b.ts).getTime()).date === lastPrevDate), bucket)
+      const dayProfile = todaySoFar.length >= 20 ? volumeProfile(todaySoFar, bucket) : null
+
+      // ATR regime: entry ATR vs the trader's typical. market_context.atr_10d_avg
+      // is often null (the ES/NQ backfill didn't write it), so the baseline is
+      // taken from the bars themselves: median Wilder ATR over the prior days'
+      // RTH bars in the fetched window (~7 sessions).
+      let atr10d: number | null = Number.isFinite(ctx.atr_10d_avg) ? ctx.atr_10d_avg : null
+      if (atr10d == null && atrs.length) {
+        const prior: number[] = []
+        for (let i = 0; i < entryIdx; i++) {
+          const a = atrs[i]; if (a == null) continue
+          const { date: bd, sec } = ptParts(new Date(bars[i].ts).getTime())
+          if (bd < date && sec >= 6 * 3600 + 30 * 60 && sec < 13 * 3600) prior.push(a)
+        }
+        if (prior.length > 200) { prior.sort((x, y) => x - y); atr10d = prior[Math.floor(prior.length / 2)] }
+      }
+      const atrRegime = atr && atr10d ? round(atr / atr10d, 2) : null
+
+      // Attempts: same session, same direction, earlier, entry within 0.15 ADR
+      // (or 3 ATR if no ADR) of THIS entry. Contract space, so compare to the
+      // trade's own entry price and only against same-root siblings.
+      const sibs = sibsByDay.get(t.trading_day_id) ?? []
+      const near = adr ? 0.15 * adr : (atr ? 3 * atr : 0)
+      const attempts = sibs.filter(x => x.id !== t.id && x.ms < entryMs && x.direction === t.direction
+        && x.entry_price != null && x.symbol && barSymbol(x.symbol) === barSymbol(symbol)
+        && Math.abs(x.entry_price - entry) <= near)
+      const attemptsMins = attempts.length ? round((entryMs - Math.min(...attempts.map(x => x.ms))) / 60000, 0) : null
+      const attemptsPnl = attempts.length ? round(attempts.reduce((s2, x) => s2 + (x.pnl ?? 0), 0), 0) : null
+
+      const swings = swingStructure(bars, entryIdx)
+      const withStructure = swings && swings.label.startsWith('up') ? (isLong ? 'with' : 'against')
+        : swings && swings.label.startsWith('down') ? (isLong ? 'against' : 'with') : null
+
+      context = {
+        session_phase: sessionPhase(entrySec),
+        atr_vs_typical: atrRegime,               // entry ATR ÷ median prior-session RTH ATR; <0.8 quiet, >1.2 active
+        ib_regime: ctx.ib_regime ?? null,          // chop / mid / expanded (IB size vs its own ATR)
+        ib_size_band: ctx.ib_size_band ?? null,    // small / normal / large vs 10d avg
+        prior_day_profile: prevProfile ? profilePosition(prevProfile, entryBar, atr) : null,
+        session_profile_at_entry: dayProfile ? profilePosition(dayProfile, entryBar, atr) : null,
+        swing_structure_5m: swings ? { ...swings, trade_is: withStructure } : null,
+        attempts_before: { count: attempts.length, span_minutes: attemptsMins, pnl_of_prior_attempts: attemptsPnl },
+        prior_week: pw ? { pwh: round(pw.pwh), pwl: round(pw.pwl), entry_vs_pwh_atr: inAtr(pw.pwh - entryBar), entry_vs_pwl_atr: inAtr(entryBar - pw.pwl) } : null,
       }
     }
 
@@ -683,6 +869,7 @@ async function main() {
         structure: {
           alignment_5m: t.structure_5m_alignment ?? null,
         },
+        context,
         chase: {
           leg_origin_price: legOrigin,
           run_before_entry_pts: chasePts,

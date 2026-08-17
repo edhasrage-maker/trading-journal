@@ -48,7 +48,8 @@ async function main() {
       .flatMap(k => (claim[k] as string[]).map(v => `<span class="tag">${esc(v)}</span>`)).join(' ')
     const b = g.blind as Record<string, string> | undefined
     const ver = g.verification as Record<string, { status: string; truth: string | null }> | undefined
-    const w = g.write as { read: string; dropped: string[]; tags_vs_read: string; footprint_observation: string | null } | null
+    const w = g.write as { verdict: 'good' | 'not_good' | 'mixed'; read: string; dropped: string[]; footprint_observation: string | null } | null
+    const VLABEL: Record<string, string> = { good: 'good trade', not_good: 'not a good trade', mixed: 'mixed' }
     const VCLS: Record<string, string> = { confirmed: 'v-agree', contradicted: 'v-diverge', partial: 'v-partial', unverifiable: 'v-na', not_read: 'v-na' }
     const ELEM: Record<string, string> = { direction: 'direction', level_in_play: 'level in play', with_or_against: 'with / against 5m', timing: 'timing', footprint: 'footprint' }
     const PCLS: Record<string, string> = { confirmed: 'v-agree', contradicted: 'v-diverge', unverifiable: 'v-na' }
@@ -62,9 +63,9 @@ async function main() {
       <div class="blind"><span class="lbl">blind read</span> ${esc(b?.trade_type)} · ${esc(b?.note)}</div>
       <table class="ver"><tr><th></th><th>image said</th><th>bars</th><th>bar truth</th></tr>${verRows}</table>
       ${priceRows ? `<table class="ver prices"><tr><th>price read off image</th><th>price</th><th>check</th><th>against</th></tr>${priceRows}</table>` : ''}
+      <div class="verdict v-${w.verdict}">${VLABEL[w.verdict]}</div>
       <div class="readtxt">${esc(w.read)}</div>
-      ${w.dropped.length ? `<div class="dropped">dropped after check: ${esc(w.dropped.join(' · '))}</div>` : ''}
-      <div class="tags-vs"><span class="lbl">your tags</span> ${esc(w.tags_vs_read)}</div>
+      ${w.dropped.length ? `<div class="dropped">image reads the bars threw out: ${esc(w.dropped.join(' · '))}</div>` : ''}
       ${w.footprint_observation ? `<div class="fp"><span class="lbl">footprint (unverified)</span> ${esc(w.footprint_observation)}</div>` : ''}` : `<div class="err">error: ${esc(g.error)}</div>`
     const near = t.location.nearest
     cards.push(`
@@ -78,7 +79,7 @@ async function main() {
       <img src="${img}" alt="trade screenshot">
       <div class="cols">
         <div class="col">
-          <h4>Your claim</h4>
+          <h4>Your tags <span class="muted" style="text-transform:none;letter-spacing:0">(not shown to the coach)</span></h4>
           <div class="tags">${tags || '<i>no tags</i>'}</div>
           ${claim.read ? `<p class="read">“${esc(claim.read)}”</p>` : '<p class="read muted">no note</p>'}
           <h4>Tape</h4>
@@ -91,6 +92,15 @@ async function main() {
             <tr><td>MFE / MAE</td><td>${fmt(t.exit.mfe_atr)} / ${fmt(t.exit.mae_atr)} ATR</td></tr>
             <tr><td>capture / R</td><td>${fmt(t.exit.capture_pct)}% / ${fmt(t.exit.r_multiple)}R</td></tr>
             <tr><td>post-exit 15m</td><td>+${fmt(t.exit.post_exit_favorable_atr)} / −${fmt(t.exit.post_exit_against_atr)} ATR</td></tr>
+          </table>
+          <h4 style="margin-top:10px">Context</h4>
+          <table>
+            <tr><td>session profile</td><td>${t.context?.session_profile_at_entry ? `${esc(t.context.session_profile_at_entry.zone)} · ${esc(t.context.session_profile_at_entry.node)} (${t.context.session_profile_at_entry.vol_at_price_vs_median}× median)` : '—'}</td></tr>
+            <tr><td>prior-day profile</td><td>${t.context?.prior_day_profile ? `${esc(t.context.prior_day_profile.zone)} · POC ${t.context.prior_day_profile.poc} · VA ${t.context.prior_day_profile.val}–${t.context.prior_day_profile.vah}` : '—'}</td></tr>
+            <tr><td>5m swings</td><td>${t.context?.swing_structure_5m ? `${esc(t.context.swing_structure_5m.label)} · trade is ${esc(t.context.swing_structure_5m.trade_is ?? '—')}` : '—'}</td></tr>
+            <tr><td>ATR vs typical · IB</td><td>${fmt(t.context?.atr_vs_typical)}× · ${fmt(t.context?.ib_regime)} / ${fmt(t.context?.ib_size_band)}</td></tr>
+            <tr><td>attempts before</td><td>${t.context?.attempts_before ? `${t.context.attempts_before.count}${t.context.attempts_before.count ? ` in ${t.context.attempts_before.span_minutes} min, ${t.context.attempts_before.pnl_of_prior_attempts >= 0 ? '+' : ''}$${t.context.attempts_before.pnl_of_prior_attempts}` : ''}` : '—'}</td></tr>
+            <tr><td>prior week H/L</td><td>${t.context?.prior_week ? `${t.context.prior_week.pwh} / ${t.context.prior_week.pwl}` : '—'}</td></tr>
           </table>
         </div>
         <div class="col coach">
@@ -133,10 +143,11 @@ async function main() {
   table.ver tr.v-partial td:first-child{border-left-color:var(--amber)}table.ver .st{font-weight:600}
   table.ver tr.v-agree .st{color:var(--green)}table.ver tr.v-diverge .st{color:var(--red)}table.ver tr.v-partial .st{color:var(--amber)}table.ver .tr{color:var(--mute)}
   .readtxt{font-size:14px;line-height:1.5;margin:0 0 8px;padding:8px 10px;background:#12151c;border-left:3px solid var(--blue)}
-  .dropped{font-size:12px;color:var(--mute);margin-bottom:8px}.tags-vs{font-size:13px;margin-bottom:6px}.fp{font-size:12.5px;color:var(--mute)}
+  .dropped{font-size:12px;color:var(--mute);margin-bottom:8px}.fp{font-size:12.5px;color:var(--mute)}
+  .verdict{font-weight:700;text-transform:uppercase;letter-spacing:.06em;font-size:12px;margin:8px 0 4px}.verdict.v-good{color:var(--green)}.verdict.v-not_good{color:var(--red)}.verdict.v-mixed{color:var(--amber)}
 </style></head><body>
 <h1>Screenshot coach — review sheet</h1>
-<p class="sub">${cards.length} trades · the coach read each chart BLIND (no tags), then every element of that read was checked against the bars: green = bars confirm · red = bars contradict (dropped from the read) · amber = partly · grey = bars can't say. Prices the coach read off the image are each looked up in the bar record or the recorded fills; only confirmed ones may be spoken. The written read is what survives the check. Your tags were shown to it only afterwards, as reference. These ${cards.length} trades are now excluded from calibration scoring.</p>
+<p class="sub">${cards.length} trades · the coach read each chart BLIND (no tags), then every element of that read was checked against the bars: green = bars confirm · red = bars contradict (dropped from the read) · amber = partly · grey = bars can't say. Prices the coach read off the image are each looked up in the bar record or the recorded fills; only confirmed ones may be spoken. Then the coach gives a verdict on the trade's PLACEMENT — value area, node, swing structure, volatility, attempts — not its P&L. Your tags are shown here for you; the coach never sees them. These ${cards.length} trades are now excluded from calibration scoring.</p>
 ${cards.join('\n')}
 </body></html>`
   writeFileSync(OUT, html, 'utf8')
