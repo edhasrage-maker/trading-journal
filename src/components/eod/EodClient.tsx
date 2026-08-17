@@ -906,8 +906,13 @@ export default function EodClient({
               </>
             )}
             {/* Cloud build: the local Sierra-log button is hidden, so give a
-                direct jump to the Import page (CSV / Sierra .txt / template). */}
-            {!LOCAL_FEATURES_ENABLED && (
+                direct jump to the Import page (CSV / Sierra .txt / template).
+                While the session is still live the banner below owns both ways
+                of getting trades in, at equal weight — a small grey chip up here
+                competing with a big button down there made importing look like
+                an afterthought and made the button beside it look like the
+                import. */}
+            {!LOCAL_FEATURES_ENABLED && !sessionStillLive && (
               // Promoted to a filled button when the day has NO trades: that is
               // the one thing worth doing here, and as a grey chip among other
               // grey chips it read as just another secondary action. Reverts to
@@ -919,9 +924,11 @@ export default function EodClient({
                     ? 'bg-blue-600 hover:bg-blue-500 text-white font-medium border border-blue-500'
                     : 'bg-gray-800 border border-gray-700 text-gray-200 hover:bg-gray-700'
                 }`}
-                title="Import a trade log (CSV or Sierra Chart .txt)"
+                title="Bring in a whole session from a file (CSV or Sierra Chart .txt)"
               >
-                <Upload className="w-3.5 h-3.5" /> Import
+                {/* Same words as the live banner's button — one action, one
+                    name, wherever it appears. */}
+                <Upload className="w-3.5 h-3.5" /> Import trade log
               </Link>
             )}
             {/* Coach-review share: read-only public link to this day's chart. */}
@@ -1081,15 +1088,30 @@ export default function EodClient({
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-white">Session still live — your recap unlocks at the close.</p>
             <p className="text-[13px] text-gray-400 mt-0.5">
-              Scores, verdicts, and the AI read stay out of sight while the market is open. Keep logging on Intraday; end early with &ldquo;I&rsquo;m done&rdquo; when you&rsquo;re finished.
+              Scores, verdicts, and the AI read stay out of sight while the market is open. Keep logging on Trade; end early with &ldquo;I&rsquo;m done&rdquo; when you&rsquo;re finished.
             </p>
           </div>
-          <Link
-            href={`/intraday/${date}`}
-            className="shrink-0 self-start sm:self-center inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-[#1b1408] text-sm font-semibold rounded-lg px-3.5 py-2 transition-colors"
-          >
-            Log trades →
-          </Link>
+          {/* The two ways trades get in, side by side and equally weighted:
+              bring in a file, or add them one at a time. The primary used to
+              read "Log trades", which sat next to nothing and was mistaken for
+              the importer — "Add trades" is the plain opposite of "Import". */}
+          <div className="shrink-0 self-start sm:self-center flex items-center gap-2">
+            {!LOCAL_FEATURES_ENABLED && (
+              <Link
+                href="/import"
+                className="inline-flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-sm font-medium rounded-lg px-3.5 py-2 transition-colors"
+                title="Bring in a whole session from a file (CSV or Sierra Chart .txt)"
+              >
+                <Upload className="w-4 h-4" /> Import trade log
+              </Link>
+            )}
+            <Link
+              href={`/intraday/${date}`}
+              className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-[#1b1408] text-sm font-semibold rounded-lg px-3.5 py-2 transition-colors"
+            >
+              Add trades →
+            </Link>
+          </div>
         </div>
       ) : (
         /* One TapeScore hero (Ruleset amendment 5): 0-100 ring + day verdict
