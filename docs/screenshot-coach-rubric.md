@@ -1,8 +1,11 @@
-# Screenshot coach — grading rubric (v1)
+# Screenshot coach — rubric (v3: the coach's own read, verified)
 
-Per-trade "tape vs your read": the trader's screenshot and tags are the CLAIM,
-the 1-minute bars are the TRUTH, and the coach reports where they agree and
-where they diverge. Owner-only for v1.
+Per-trade "tape vs your read". Since 2026-08-16 (§3a): the coach reads the
+screenshot BLIND, verifies every element of that read against the bar record,
+and speaks only what survives; the trader's tags are a low-weight reference
+checked afterwards. Sections 1–3 below describe the earlier claim-first
+framing and the bar-side axes, which the verified read still uses as its
+truth. Owner-only for v1.
 
 Status: rubric agreed, harness built and validated against 154 real trades.
 **Not scoreable yet** — see [Blocked on labels](#blocked-on-labels).
@@ -19,15 +22,18 @@ diverge from the tape is the *stated* read: the setup tags, the confluence
 tags, and the `notes` text. So the model is given both blocks and may only ever
 quote numbers from `truth`.
 
-**Vision is trusted for ordinal facts, never for prices.** This is measured, not
-assumed — the Pt 18 frame-level work found high-confidence stop reads landed
-8/10 exact while low-confidence reads landed 1/10 with a median 6-point miss.
-The image may be asked whether a drawn line sits above or below the entry
-marker, whether the footprint pane is on, whether annotations exist. It is never
-asked what a price is.
+**The image is never trusted unverified — on categories or on prices.**
+Superseded framing was "never ask the image for a price". The trader's
+correction (2026-08-16): any price the image proposes can be *looked up* — the
+1-minute bar record knows every visible bar's range at every visible minute,
+the harness knows every session level's exact price, and the DB knows the
+fill and bracket. So the rule became: the image may propose a price only as
+an anchored read (with its minute, or as a labelled level, or as a bracket
+tag), every one is checked, and only confirmed reads may be spoken. See §3a
+for the measured reliability per kind of read.
 
-**Every number in the output comes from bars.** If a fact isn't in `truth`, the
-coach doesn't get to state it.
+**Every number in the output is either from bars or a confirmed image read.**
+If a fact can't be checked, the coach doesn't get to state it.
 
 ---
 
@@ -181,32 +187,73 @@ Coverage: stop logged on 151/154, capture computable on 149/154.
 
 ---
 
-## 3a. The grader (step 3, `scripts/screenshot-coach-grade.ts`)
+## 3a. The coach (`scripts/screenshot-coach-read.ts`) — its own read, verified
 
-One `claude-sonnet-5` call per trade, `effort: medium`, structured output.
-In: the screenshot, the CLAIM (tags + notes), and a packaged TRUTH block —
-derived fields plus pre-computed bands; the raw bar strip is withheld so
-the model can't quote 360 bar numbers as findings. Out: frame gate + four
-axes (`agree | diverge | n_a`, the claim element compared, one sentence) and
-an optional `TapeScore suggested:` line.
+**Redirected 2026-08-16.** The first grader treated the trader's tags as the
+claim and only asked whether the bars supported it — so an untagged trade got
+nothing, and the trader's view framed every verdict. The trader's direction:
+the coach should look at the image and form its OWN read, bump that against
+the SCID/bar truth to verify itself, and treat the tags as a low-weight
+reference to be checked, never as the frame. That grader is retired
+(`screenshot-coach-grade.ts`, in git history).
 
-Two honesty checks run deterministically on every grade, before any label
-exists:
+Three passes per trade, two model calls (`claude-sonnet-5`, effort medium):
 
-- **Over-claim:** every number in every sentence must exist in the truth the
-  model was handed (or be one of the rubric's own thresholds / timeframe
-  tokens). A number that isn't there is a fabrication and the record is
-  flagged. First smoke test flagged "5m" and "0.5 ATR" — the checker's error,
-  fixed by allow-listing the SYSTEM prompt's own constants.
-- **Gate violation:** a non-`n_a` axis on a frame the model itself gated.
+1. **Blind read** — image only; no tags, no note, no bars. Categorical: which
+   labelled level the entry sits at, which way the 5m structure runs,
+   with/against, fresh/extended, trade type, footprint. Plus **anchored price
+   reads** — position line, bracket-order tags, axis level labels, drawn
+   levels, and any specific bar extreme *with its x-axis minute*.
+2. **Verify** — code, no model. Each categorical element is mapped onto the
+   harness truth: confirmed / contradicted / partial / unverifiable. Each
+   price read is *looked up*: position/stop/target against the recorded
+   fills; level labels against the known session-level prices; bar extremes
+   against the 1-minute bar at that minute (inside its range or not); drawn
+   levels range-checked and described by distance-from-entry and touch
+   count. Contract-vs-continuous basis is applied before any bar comparison.
+3. **Write-up** — image + blind read + verification + truth + tags marked
+   REFERENCE ONLY. Contradicted elements are dropped, not hedged, and not
+   narrated ("not a short as first read" is banned). Numbers only from truth
+   or confirmed price reads. One line on the tags, and only on bar-judgeable
+   elements — order-flow tags the bars can't see are "not checkable", not a
+   disagreement. No suggestions: the "TapeScore suggested" lines were being
+   manufactured from the band vocabulary and contradicted each other across
+   trades, so they are gone.
 
-3-trade smoke test (2026-08-15): 0 over-claims, 0 gate violations. `n_a`
-dominated — entry-location and structure both `n_a` on all three because
-the claims named no level and two had null 5m alignment — which is the
-designed behaviour, not a gap. One real diverge: a manual close 3.25 pts
-above the logged stop followed by 1.22 ATR of favourable post-exit travel.
-Same trade read `exit=n_a` on a prior pass, so medium-effort variance is
-real; labels will show whether it matters.
+**Sierra conventions the blind read must know** (found by looking at the
+images the model got wrong): the position line reads `+N | P/L` (long) or
+`-N | P/L` (short); the order tags are the *bracket* and carry the OPPOSITE
+side letter (a long is bracketed by two `S|…` orders); `IBL -100%` /
+`IBH +50%` are IB *extension* levels, not IBL/IBH. Before this, direction
+read wrong 4/8; after, 7/7.
+
+**Measured on 7–8 trades per pass (small n, directional):**
+
+| image read | held vs bars |
+|---|---|
+| direction | 7/7 (canary — the fill knows anyway) |
+| level in play | 3/5 judged + 2 partial |
+| with/against 5m | 3/3 judged |
+| timing fresh/extended | 3/4 judged (was 1/5 before the price-read change) |
+| footprint | unverifiable by construction; claimed on 2/7 after calibration (was 8/8) |
+| price: position line | 6/7 exact |
+| price: stop tag / target tag | 5/7 / 7/8 exact |
+| price: axis level label | 6/13 exact |
+
+Every miss above was caught and dropped before the coach spoke. Reading the
+price on the position line also made the model *find* the position line —
+the categorical reads sharpened as a side-effect of anchoring.
+
+Honesty checks (deterministic): fabricated numbers — every number in the
+prose must exist in truth, a confirmed price read, the verification text, or
+the trader's own tag names, with rounding tolerance; and every contradicted
+element must appear in the write-up's own `dropped` list. Zero real
+fabrications across three v2/v3 passes; the checker's own false positives
+("5m", "0.5 ATR", "IBL -50%", "20 EMA", 92 for 92.3%) were each fixed.
+
+Harness additions for this: IB extension levels (±50/±100%) and 1-minute
+EMA 9/20 at the entry bar in the truth; moving lines (VWAP, EMAs) excluded
+from "nearest" and reported on the side.
 
 ## 4. Output contract
 

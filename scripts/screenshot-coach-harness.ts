@@ -188,6 +188,20 @@ function atrSeries(bars: Bar[]): Array<number | null> {
 /** Session VWAP anchored at the RTH open (06:30 PT) of `date`, per bar index.
  *  Null for bars before the open — an overnight-anchored VWAP is a different
  *  reference and would quietly mean something else. */
+/** EMA of 1-minute closes, per bar index. The trader's footprint pane runs a
+ *  9 and a 20 EMA on the 1-minute; the coach may read an entry as sitting on
+ *  one, so the truth has to carry where they were at the entry bar. */
+function emaSeries(bars: Bar[], period: number): Array<number | null> {
+  const k = 2 / (period + 1)
+  let ema: number | null = null
+  return bars.map((b, i) => {
+    if (i < period - 1) return null
+    if (ema == null) { ema = bars.slice(0, period).reduce((s, x) => s + x.close, 0) / period; return ema }
+    ema = b.close * k + ema * (1 - k)
+    return ema
+  })
+}
+
 function vwapSeries(bars: Bar[], date: string): Array<number | null> {
   let pv = 0, vol = 0
   return bars.map(b => {
@@ -369,6 +383,8 @@ async function main() {
 
     const atrs = bars.length ? atrSeries(bars) : []
     const vwaps = bars.length ? vwapSeries(bars, date) : []
+    const ema9s = bars.length ? emaSeries(bars, 9) : []
+    const ema20s = bars.length ? emaSeries(bars, 20) : []
     const barAtr = entryIdx >= 0 ? atrs[entryIdx] : null
     const atr: number | null = t.entry_atr_1m ?? barAtr
     const atrSource = t.entry_atr_1m != null ? 'entry_atr_1m' : (barAtr != null ? 'bars' : 'none')
@@ -394,11 +410,24 @@ async function main() {
     const inAdr = (pts: number | null): number | null =>
       pts == null || adr == null || adr <= 0 ? null : round(pts / adr, 3)
     const vwapAtEntry = usableBars ? vwaps[entryIdx] : null
+    const ema9AtEntry = usableBars ? ema9s[entryIdx] : null
+    const ema20AtEntry = usableBars ? ema20s[entryIdx] : null
+    // IB EXTENSIONS. The trader's chart labels IBH +50/+100% and IBL −50/−100%
+    // and the coach's blind read of an entry sitting on "IBL −100%" was
+    // scored against a truth that didn't carry it — the read could not have
+    // been confirmed even when right. Derived from the IB range, so they are
+    // exactly as reliable as ibh/ibl.
+    const ibRange = ctx.ibh != null && ctx.ibl != null ? ctx.ibh - ctx.ibl : null
     const candidates: Array<[string, number | null]> = [
       ['IB high', ctx.ibh ?? null], ['IB low', ctx.ibl ?? null],
       ['PDH', ctx.pdh ?? null], ['PDL', ctx.pdl ?? null],
       ['ON high', ctx.onh ?? null], ['ON low', ctx.onl ?? null],
+      ['IBH +50%', ibRange != null ? ctx.ibh + ibRange * 0.5 : null],
+      ['IBH +100%', ibRange != null ? ctx.ibh + ibRange : null],
+      ['IBL -50%', ibRange != null ? ctx.ibl - ibRange * 0.5 : null],
+      ['IBL -100%', ibRange != null ? ctx.ibl - ibRange : null],
       ['VWAP', vwapAtEntry],
+      ['EMA 9', ema9AtEntry], ['EMA 20', ema20AtEntry],
     ]
     const levels: LevelRef[] = []
     if (usableBars && entryBar != null) {
@@ -425,8 +454,14 @@ async function main() {
     // across it, so it wins the proximity contest on most trades (58 of 154)
     // and buries the structural level the trade was actually about. It stays
     // in `all`, and its side is reported on its own.
-    const nearest = levels.find(l => l.name !== 'VWAP') ?? null
+    // Moving lines (VWAP, EMAs) are excluded from "nearest" for the same
+    // reason as VWAP always was: price lives on them, so they win proximity
+    // on most trades and bury the structural level. Reported on the side.
+    const MOVING = new Set(['VWAP', 'EMA 9', 'EMA 20'])
+    const nearest = levels.find(l => !MOVING.has(l.name)) ?? null
     const vwapRef = levels.find(l => l.name === 'VWAP') ?? null
+    const ema9Ref = levels.find(l => l.name === 'EMA 9') ?? null
+    const ema20Ref = levels.find(l => l.name === 'EMA 20') ?? null
 
     // How many times before entry did price visit that level? Counted with
     // HYSTERESIS — price must clear the band by a full ATR before the next
@@ -631,6 +666,7 @@ async function main() {
         location: {
           nearest: nearest,
           vwap: vwapRef,
+          ema9: ema9Ref, ema20: ema20Ref,
           all: levels,
           touches_before_entry: touchesBefore,
           /** Which market_context row backed these levels, and whether it is
@@ -642,7 +678,7 @@ async function main() {
           context_symbol: ctxRow?.symbol ?? null,
           /** A populated context row exists for THIS trade's instrument. VWAP
            *  doesn't count — it comes from the trade's own bars, not the row. */
-          context_matched: ctxRow != null && levels.some(l => l.name !== 'VWAP'),
+          context_matched: ctxRow != null && levels.some(l => !MOVING.has(l.name)),
         },
         structure: {
           alignment_5m: t.structure_5m_alignment ?? null,
