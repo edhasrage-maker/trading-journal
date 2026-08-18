@@ -94,7 +94,12 @@ function ViewToggle({ compact = false }: { compact?: boolean }) {
           title={VIEW_TOGGLE_TITLES[m]}
           aria-pressed={mode === m}
           className={cn(
-            'whitespace-nowrap transition-colors border-b-2 pb-0.5',
+            // The active underline is 2px of border over 2px of padding, which
+            // made these buttons 4px taller than every plain-text sibling in the
+            // cluster. items-center then centred that taller box and left
+            // Import, Dark and Account sitting low against them. -mb-1 hangs the
+            // underline below the line box so all four share a text baseline.
+            'whitespace-nowrap transition-colors border-b-2 pb-0.5 -mb-1',
             compact ? 'text-[11.5px]' : 'text-[12.5px]',
             mode === m
               ? 'text-gray-100 font-semibold border-blue-500'
