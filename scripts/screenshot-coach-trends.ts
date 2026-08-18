@@ -83,6 +83,12 @@ function observe(rs: Rec[], label: string): Obs[] {
   const bySw: Record<string, Rec[]> = {}
   for (const r of rs) { const v = r.truth.context?.swing_structure_5m?.trade_is; if (v) (bySw[v] ??= []).push(r) }
   bucketLine('swing', bySw, (k, b) => `${k === 'with' ? 'with' : 'against'} the 5-minute swing structure (${k === 'with' ? 'HH+HL or LH+LL in your favour' : 'you faded a structure that had already made its swings'}): ${b.length} of ${n}`)
+  // 2b. session momentum — offsides (against a level rejection + swing that agreed)
+  const byMo: Record<string, typeof rs> = {}
+  for (const r of rs) { const v = r.truth.context?.session_momentum?.trade_is; if (v) (byMo[v] ??= []).push(r) }
+  bucketLine('momentum', byMo, (k, b) => k === 'offsides'
+    ? `offsides — against the session's momentum (a level rejected, price travelled, and you traded back into it): ${b.length} of ${n}`
+    : `with the session's momentum: ${b.length} of ${n}`)
 
   // 3. attempts
   const first = rs.filter(r => (r.truth.context?.attempts_before?.count ?? 0) === 0)

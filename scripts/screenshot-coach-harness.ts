@@ -310,6 +310,147 @@ function swingStructure(bars: Bar[], entryIdx: number, lookback5m = 36): {
   return { label, last_highs: h2.map(v => round(v)!), last_lows: l2.map(v => round(v)!), pattern }
 }
 
+// ── session momentum — the SEQUENCE the 2×2 swing pattern throws away ──────
+//  Owner's ask (2026-08-18): "on 08/17 we rejected from PWH/IBH, sold off, and
+//  I still went long; on 08/18 we rejected from PWL, then held above IBL for a
+//  higher low, and I shorted — offsides trades, I didn't follow the market's
+//  momentum." The swing_structure_5m feature saw one HH and one LL on 08-17,
+//  called it "mixed" and the coach went silent on structure. Order matters:
+//  test a reference level → reject → travel → the trade goes back INTO it.
+//
+//  Two events, read from the session's bars before entry:
+//   • last REJECTION: the most recent visit to a structural level (touch
+//     within the 0.05 ADR "at" band) that price then LEFT by ≥1.5 ATR without
+//     ever closing through the level. Direction = the way it left.
+//   • last SWING: the type of the most recent completed 5m pivot — HH/LH for a
+//     high, HL/LL for a low — which is what "held above IBL for a HL" means.
+//  bias = the direction they agree on (confirmed) or the more recent one
+//  (unconfirmed). trade_is = with | offsides. A first touch of a real level is
+//  reported as MITIGATION, not silence: a fade at a level has a reason, a
+//  fade in the middle of a node doesn't — the coach weighs, the harness names.
+interface SessionMomentum {
+  bias: 'up' | 'down' | null
+  confirmed: boolean
+  last_rejection: { level: string; price: number; direction: 'up' | 'down'; minutes_before_entry: number; travel_pts: number; travel_atr: number | null; retraced_pct_at_entry: number | null } | null
+  last_swing: { type: 'HH' | 'LH' | 'HL' | 'LL'; price: number; minutes_before_entry: number } | null
+  trade_is: 'with' | 'offsides' | null
+  mitigation: string | null
+  label: string
+}
+const MOMENTUM_FROM_SEC = 5 * 3600 + 30 * 60      // 05:30 PT — pre-open ramp counts, the Asian session doesn't
+const IB_DONE_SEC = 7 * 3600 + 30 * 60            // IB-derived levels don't exist before 07:30 PT
+const REJECT_TRAVEL_ATR = 1.5
+function sessionMomentum(
+  bars: Bar[], entryIdx: number, date: string, levels: LevelRef[], atr: number | null, adr: number | null,
+  isLong: boolean, mitigation: string | null,
+): SessionMomentum | null {
+  if (entryIdx < 2 || atr == null || atr <= 0) return null
+  const entryMs = new Date(bars[entryIdx].ts).getTime()
+  const secOf = (i: number) => ptParts(new Date(bars[i].ts).getTime())
+  let start = entryIdx
+  while (start > 0) { const p = secOf(start - 1); if (p.date !== date || p.sec < MOMENTUM_FROM_SEC) break; start-- }
+  if (entryIdx - start < 10) return null
+  const minsBefore = (i: number) => Math.round((entryMs - new Date(bars[i].ts).getTime()) / 60000)
+  const band = adr && adr > 0 ? 0.05 * adr : atr
+  const MOVING = new Set(['VWAP', 'EMA 9', 'EMA 20'])
+  const isIb = (name: string) => name.startsWith('IB')
+
+  // ── rejections ──
+  type Rej = { level: string; price: number; direction: 'up' | 'down'; endIdx: number; travel: number; ext: number }
+  const rejections: Rej[] = []
+  for (const L of levels) {
+    if (MOVING.has(L.name)) continue
+    const px = L.price
+    let inside = false, fromBelow = false, clusterEnd = -1
+    const visits: Array<{ fromBelow: boolean; endIdx: number }> = []
+    for (let i = start; i < entryIdx; i++) {
+      if (isIb(L.name) && secOf(i).sec < IB_DONE_SEC) continue
+      const b = bars[i]
+      const touching = b.high >= px - band && b.low <= px + band
+      if (touching) {
+        if (!inside) { inside = true; fromBelow = (i > 0 ? bars[i - 1].close : b.open) < px }
+        clusterEnd = i
+      } else if (inside) {
+        inside = false
+        visits.push({ fromBelow, endIdx: clusterEnd })
+      }
+    }
+    for (const v of visits) {
+      let ext = v.fromBelow ? Infinity : -Infinity, broke = false
+      for (let i = v.endIdx + 1; i < entryIdx; i++) {
+        const b = bars[i]
+        if (v.fromBelow) { ext = Math.min(ext, b.low); if (b.close > px + band) { broke = true; break } }
+        else { ext = Math.max(ext, b.high); if (b.close < px - band) { broke = true; break } }
+      }
+      if (broke || !Number.isFinite(ext)) continue
+      const travel = v.fromBelow ? px - ext : ext - px
+      if (travel >= REJECT_TRAVEL_ATR * atr) rejections.push({ level: L.name, price: px, direction: v.fromBelow ? 'down' : 'up', endIdx: v.endIdx, travel, ext })
+    }
+  }
+  let lastRej: SessionMomentum['last_rejection'] = null
+  if (rejections.length) {
+    rejections.sort((a, b) => b.endIdx - a.endIdx)
+    const top = rejections[0]
+    // Levels that reject together ("PWH/IBH area") are one event: same
+    // direction, visit ended within 10 bars of the latest.
+    const group = rejections.filter(r => r.direction === top.direction && top.endIdx - r.endIdx <= 10)
+    const names = Array.from(new Set(group.map(r => r.level)))
+    const travel = Math.max(...group.map(r => r.travel))   // THIS visit's travel — an earlier visit to the same level is a different event
+    // How much of that travel price had already given back by the entry bar —
+    // a rejection 44% retraced is a dip price is climbing out of, not a leg.
+    const entryClose = bars[entryIdx].close
+    const given = top.direction === 'down' ? entryClose - top.ext : top.ext - entryClose
+    const retraced = travel > 0 ? Math.max(0, Math.min(100, (given / travel) * 100)) : null
+    lastRej = { level: names.join('/'), price: round(top.price)!, direction: top.direction, minutes_before_entry: minsBefore(top.endIdx), travel_pts: round(travel)!, travel_atr: round(travel / atr), retraced_pct_at_entry: round(retraced, 0) }
+  }
+
+  // ── last completed 5m swing ──
+  const five: Array<{ h: number; l: number; idx: number }> = []
+  for (let i = start; i + 4 < entryIdx; i += 5) {
+    const w = bars.slice(i, i + 5)
+    five.push({ h: Math.max(...w.map(b => b.high)), l: Math.min(...w.map(b => b.low)), idx: i + 4 })
+  }
+  type Piv = { kind: 'H' | 'L'; price: number; idx: number }
+  const pivots: Piv[] = []
+  for (let i = 2; i < five.length - 2; i++) {
+    if (five[i].h > five[i - 1].h && five[i].h > five[i - 2].h && five[i].h >= five[i + 1].h && five[i].h >= five[i + 2].h) pivots.push({ kind: 'H', price: five[i].h, idx: five[i].idx })
+    if (five[i].l < five[i - 1].l && five[i].l < five[i - 2].l && five[i].l <= five[i + 1].l && five[i].l <= five[i + 2].l) pivots.push({ kind: 'L', price: five[i].l, idx: five[i].idx })
+  }
+  let lastSwing: SessionMomentum['last_swing'] = null
+  if (pivots.length >= 2) {
+    const last = pivots[pivots.length - 1]
+    const prevSame = [...pivots].reverse().find(p => p !== last && p.kind === last.kind)
+    if (prevSame) {
+      const type = last.kind === 'H' ? (last.price > prevSame.price ? 'HH' : 'LH') : (last.price > prevSame.price ? 'HL' : 'LL')
+      lastSwing = { type, price: round(last.price)!, minutes_before_entry: minsBefore(last.idx) }
+    }
+  }
+
+  // ── bias ──
+  const rejBias = lastRej?.direction ?? null
+  const swingBias = lastSwing ? (lastSwing.type === 'HH' || lastSwing.type === 'HL' ? 'up' : 'down') : null
+  // Structure holds until a swing prints the other way. A rejection that
+  // disagrees with the last completed swing is a PULLBACK until it makes a
+  // LH/LL (or HH/HL) of its own — 08-18 09:23: ON low "rejected" 3.8 ATR down
+  // but the HL above IBL still stood and price had already retraced 44% of
+  // the dip by entry; the owner called that short offsides, and it was.
+  let bias: 'up' | 'down' | null = null, confirmed = false, pullback = false
+  if (rejBias && swingBias) {
+    if (rejBias === swingBias) { bias = rejBias; confirmed = true }
+    else { bias = swingBias; pullback = true }
+  } else bias = rejBias ?? swingBias
+  const tradeIs = bias ? ((isLong && bias === 'up') || (!isLong && bias === 'down') ? 'with' : 'offsides') : null
+
+  const swingWord = (t: string) => t === 'HH' ? 'higher high' : t === 'LH' ? 'lower high' : t === 'HL' ? 'higher low' : 'lower low'
+  const parts: string[] = []
+  if (lastRej) parts.push(`${pullback ? 'pulled back from' : 'rejected'} ${lastRej.level} — left it ${lastRej.minutes_before_entry} min before entry and travelled ${lastRej.travel_atr} ATR ${lastRej.direction} since${lastRej.retraced_pct_at_entry != null && lastRej.retraced_pct_at_entry >= 25 ? `, ${lastRej.retraced_pct_at_entry}% of that already given back by entry` : ''}`)
+  if (lastSwing) parts.push(`last completed 5m swing a ${swingWord(lastSwing.type)} (${lastSwing.minutes_before_entry} min before entry)`)
+  const biasTxt = bias ? `momentum ${bias}${confirmed ? ' (rejection and swing agree)' : pullback ? ' by structure — the pullback has not printed a swing against it yet' : ' (one signal only)'}` : 'no momentum read'
+  const tradeTxt = tradeIs ? `${isLong ? 'long' : 'short'} is ${tradeIs === 'with' ? 'WITH momentum' : 'OFFSIDES'}${tradeIs === 'offsides' && mitigation ? ` — but ${mitigation}` : ''}` : ''
+  const label = [parts.join('; '), biasTxt, tradeTxt].filter(Boolean).join(' — ')
+  return { bias, confirmed, last_rejection: lastRej, last_swing: lastSwing, trade_is: tradeIs, mitigation: tradeIs === 'offsides' ? mitigation : null, label }
+}
+
 /** Prior week's high/low from the bars whose PT date falls in the Mon–Fri
  *  before `date`'s week. */
 function priorWeekHL(bars: Bar[], date: string): { pwh: number; pwl: number } | null {
@@ -684,6 +825,11 @@ async function main() {
       const swings = swingStructure(bars, entryIdx)
       const withStructure = swings && swings.label.startsWith('up') ? (isLong ? 'with' : 'against')
         : swings && swings.label.startsWith('down') ? (isLong ? 'against' : 'with') : null
+      // A fade AT a real level on its first touch is a fade with a reason —
+      // named as mitigation so the coach can weigh it against "offsides".
+      const firstTouch = nearest && nearest.dist_adr != null && nearest.dist_adr <= 0.05 && (touchesBefore ?? 0) <= 1
+        ? `it is the first touch of ${nearest.name}` : null
+      const momentum = sessionMomentum(bars, entryIdx, date, levels, atr, adr, isLong, firstTouch)
 
       context = {
         session_phase: sessionPhase(entrySec),
@@ -693,6 +839,7 @@ async function main() {
         prior_day_profile: prevProfile ? profilePosition(prevProfile, entryBar, atr) : null,
         session_profile_at_entry: dayProfile ? profilePosition(dayProfile, entryBar, atr) : null,
         swing_structure_5m: swings ? { ...swings, trade_is: withStructure } : null,
+        session_momentum: momentum,
         attempts_before: { count: attempts.length, span_minutes: attemptsMins, pnl_of_prior_attempts: attemptsPnl },
         prior_week: pw ? { pwh: round(pw.pwh), pwl: round(pw.pwl), entry_vs_pwh_atr: inAtr(pw.pwh - entryBar), entry_vs_pwl_atr: inAtr(entryBar - pw.pwl) } : null,
       }
