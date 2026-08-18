@@ -4,6 +4,7 @@ import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { normalizeTagArray, type Trade, type TradingDay, type MarketContext, type TradeTags, type EodAiAnalysis } from '@/lib/supabase/types'
 import { rMultiple as rMultipleNum } from '@/lib/analytics'
+import { anchorExcursionToFills } from '@/lib/excursion-guard'
 import { resolveTagCategories } from '@/lib/tag-categories'
 import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
 
@@ -43,15 +44,51 @@ function rMultiple(t: Trade): string {
   return r == null ? '' : r.toFixed(3)
 }
 
-/** MFE / MAE in points, direction-aware. Long: MFE = high-entry, MAE = entry-low. */
-function mfeMaePts(t: Pick<Trade, 'entry_price' | 'direction' | 'high_during_position' | 'low_during_position'>): { mfe: string; mae: string } {
+/** MFE / MAE in points, direction-aware. Long: MFE = high-entry, MAE = entry-low.
+ *  Anchored to the trade's own fills first, exactly as the app measures them,
+ *  so a CSV row and the screen never disagree about the same trade. */
+function mfeMaePts(
+  t: Pick<Trade, 'entry_price' | 'direction' | 'high_during_position' | 'low_during_position'> & { exit_price?: number | null },
+): { mfe: string; mae: string } {
   if (t.entry_price == null || t.direction == null || t.high_during_position == null || t.low_during_position == null) {
     return { mfe: '', mae: '' }
   }
+  const { high, low } = anchorExcursionToFills(
+    t.high_during_position, t.low_during_position, t.entry_price, t.exit_price,
+  )
   const isLong = t.direction === 'long'
-  const mfe = isLong ? t.high_during_position - t.entry_price : t.entry_price - t.low_during_position
-  const mae = isLong ? t.entry_price - t.low_during_position : t.high_during_position - t.entry_price
+  const mfe = Math.max(0, isLong ? high - t.entry_price : t.entry_price - low)
+  const mae = Math.max(0, isLong ? t.entry_price - low : high - t.entry_price)
   return { mfe: mfe.toFixed(2), mae: mae.toFixed(2) }
+}
+
+/**
+ * One imported (Tradezella) trade, as stored. A different table with a
+ * different shape: `trade_date`/`open_at` rather than entry_time, `side` rather
+ * than direction, `net_pnl` rather than pnl — and no stop, target, notes or
+ * screenshot, because the broker export it came from never carried them.
+ */
+interface HistoricalTradeRow {
+  id: string
+  trade_date: string | null
+  open_at: string | null
+  close_at: string | null
+  symbol: string | null
+  side: string | null
+  quantity: number | null
+  entry_price: number | null
+  exit_price: number | null
+  net_pnl: number | null
+  realized_rr: number | null
+  price_mfe: number | null
+  price_mae: number | null
+  high_during_position: number | null
+  low_during_position: number | null
+  mfe_dollars_per_leg: number | null
+  entry_atr_1m: number | null
+  entry_rvol: number | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tags_json: any
 }
 
 const TRADE_HEADERS = [
@@ -68,6 +105,11 @@ const TRADE_HEADERS = [
   // Per-day EOD AI scores joined in (scalar only — full breakdown in the days export)
   'day_process_verdict', 'day_process_pass_count', 'day_execution_composite',
   'sierra_trade_id', 'screenshot_url', 'notes',
+  // 'native' (logged here) or 'imported' (came from a broker/Tradezella
+  // export). Imported rows have no stop, target, notes or screenshot — the
+  // source never carried them — so blanks in those columns are absence of
+  // data, not absence of a stop.
+  'source',
 ]
 
 const DAY_HEADERS = [
@@ -169,8 +211,18 @@ export async function GET(req: Request) {
   }
 
   // ── PER-TRADE EXPORT (default) ───────────────────────────────────────────
-  const [tradesRaw, daysRaw, ctxRaw] = await Promise.all([
+  // `trades` is only what was logged HERE. Everything before the trader started
+  // using the app lives in `historical_trades` (broker/Tradezella imports) — for
+  // this book that is 915 rows against 229, so exporting `trades` alone silently
+  // handed back a fifth of the history and called it the trade log.
+  const [tradesRaw, histRaw, daysRaw, ctxRaw] = await Promise.all([
     fetchAll(supabase, 'trades', '*', ['entry_time', 'id']) as Promise<Trade[]>,
+    fetchAll(
+      supabase,
+      'historical_trades',
+      'id, trade_date, open_at, close_at, symbol, side, quantity, entry_price, exit_price, net_pnl, realized_rr, price_mfe, price_mae, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, entry_rvol, tags_json',
+      ['trade_date', 'id'],
+    ).catch(() => [] as HistoricalTradeRow[]) as Promise<HistoricalTradeRow[]>,
     fetchAll(supabase, 'trading_days', 'id, date, day_type, eod_ai_analysis_json', ['id']) as Promise<Array<Pick<TradingDay, 'id' | 'date' | 'day_type'> & { eod_ai_analysis_json: EodAiAnalysis | null }>>,
     fetchAll(supabase, 'market_context', 'trading_day_id, symbol, rvol, ib_size, ib_vs_10d_avg, adr, atr_1m', ['trading_day_id']) as Promise<Pick<MarketContext, 'trading_day_id' | 'symbol' | 'rvol' | 'ib_size' | 'ib_vs_10d_avg' | 'adr' | 'atr_1m'>[]>,
   ])
@@ -178,6 +230,12 @@ export async function GET(req: Request) {
   const trades = tradesRaw
   const dayById = new Map(daysRaw.map(d => [d.id, d]))
   const ctxByDay = new Map(ctxRaw.map(c => [c.trading_day_id, c]))
+  // Imported trades carry a date but no trading_day_id, so the same day-level
+  // context reaches them by date when the trader also prepped that session.
+  const dayByDate = new Map(daysRaw.map(d => [d.date, d]))
+  const ctxByDate = new Map(
+    daysRaw.map(d => [d.date, ctxByDay.get(d.id)]).filter((e): e is [string, typeof ctxRaw[number]] => e[1] != null),
+  )
 
   // Custom tag categories (Pt 16) become EXTRA COLUMNS AT THE END. Appending
   // rather than interleaving keeps the shipped column order byte-stable, so a
@@ -188,6 +246,10 @@ export async function GET(req: Request) {
   ).map(c => c.key).filter(k => !TRADE_HEADERS.includes(k))
 
   const lines: string[] = [[...TRADE_HEADERS, ...extraCategories].join(',')]
+  // Native and imported rows are built separately and merged, so collect them
+  // with a sort key rather than appending straight to `lines` — otherwise the
+  // file would run through the recent history and then start again in 2025.
+  const rows: Array<{ key: string; row: string }> = []
 
   for (const t of trades) {
     const day = dayById.get(t.trading_day_id)
@@ -244,12 +306,92 @@ export async function GET(req: Request) {
       t.sierra_trade_id ?? '',
       t.screenshot_url ?? '',
       t.notes ?? '',
+      'native',
       // Custom categories, in the same order as the appended headers.
       ...extraCategories.map(c => joinTags((tags as Record<string, unknown>)[c])),
     ].map(csvCell).join(',')
 
-    lines.push(row)
+    rows.push({ key: `${day.date}T${t.entry_time ?? ''}`, row })
   }
+
+  // ── Imported history ─────────────────────────────────────────────────────
+  // Mapped onto the same columns, with genuinely-absent fields left blank
+  // rather than reconstructed. Stop price is the notable one: analytics
+  // back-solves it from realized_rr to keep Avg R comparable, but an export is
+  // read as a record of what happened, and a synthesised stop in a column
+  // labelled stop_price would be indistinguishable from one the trader set.
+  // realized_rr itself IS recorded, so it goes straight to r_multiple.
+  for (const h of histRaw) {
+    const date = h.trade_date ?? (h.open_at ? h.open_at.slice(0, 10) : null)
+    if (!date) continue
+    if (fromParam && date < fromParam) continue
+    if (toParam && date > toParam) continue
+
+    const day = dayByDate.get(date)
+    const ctx = ctxByDate.get(date)
+    const tags = (h.tags_json ?? {}) as TradeTags
+    const joinTags = (value: unknown) => normalizeTagArray(value).join('; ')
+    const direction = h.side === 'long' || h.side === 'short' ? h.side : ''
+    // Same excursion basis as a native row wherever the high/low were
+    // backfilled; otherwise the importer's own point figures.
+    const excursion = mfeMaePts({
+      entry_price: h.entry_price,
+      direction: direction === '' ? null : direction,
+      high_during_position: h.high_during_position,
+      low_during_position: h.low_during_position,
+      exit_price: h.exit_price,
+    })
+    const mfe = excursion.mfe !== '' ? excursion.mfe : (h.price_mfe != null ? h.price_mfe.toFixed(2) : '')
+    const mae = excursion.mae !== '' ? excursion.mae : (h.price_mae != null ? h.price_mae.toFixed(2) : '')
+    const eod = day?.eod_ai_analysis_json
+
+    const row = [
+      date,
+      h.open_at ?? '',
+      h.close_at ?? '',
+      h.symbol ?? '',
+      direction,
+      h.quantity ?? '',
+      h.entry_price ?? '',
+      '',                       // stop_price — never exported by the source
+      '',                       // tp1_price — likewise
+      h.exit_price ?? '',
+      h.net_pnl ?? '',
+      h.realized_rr != null ? h.realized_rr.toFixed(3) : '',
+      mfe,
+      mae,
+      h.mfe_dollars_per_leg ?? '',
+      h.entry_atr_1m ?? '',
+      h.entry_rvol ?? '',
+      '',                       // structure_5m_alignment — not computed for imports
+      joinTags(tags.setups),
+      joinTags(tags.confluences),
+      joinTags(tags.order_flow),
+      joinTags(tags.trade_management),
+      joinTags(tags.mistakes),
+      joinTags(tags.emotions),
+      joinTags(tags.day_type),
+      day?.day_type ?? '',
+      ctx?.rvol ?? '',
+      ctx?.ib_size ?? '',
+      ctx?.ib_vs_10d_avg ?? '',
+      ctx?.adr ?? '',
+      ctx?.atr_1m ?? '',
+      eod?.process?.verdict ?? '',
+      passCount(eod),
+      eod?.execution?.composite != null ? eod.execution.composite.toFixed(3) : '',
+      '',                       // sierra_trade_id
+      '',                       // screenshot_url
+      '',                       // notes
+      'imported',
+      ...extraCategories.map(c => joinTags((tags as Record<string, unknown>)[c])),
+    ].map(csvCell).join(',')
+
+    rows.push({ key: `${date}T${h.open_at ?? ''}`, row })
+  }
+
+  rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+  for (const r of rows) lines.push(r.row)
 
   const csv = lines.join('\r\n') + '\r\n'
   const today = new Date().toISOString().slice(0, 10)
