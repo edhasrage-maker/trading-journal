@@ -12,6 +12,7 @@ import { behavioralProxiesPromptBlock } from '@/lib/behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from '@/lib/journal-language-heatmap'
 import { fetchOpenThread, coachingThreadPromptBlock } from '@/lib/coaching-thread'
 import { computeSessionFacts } from '@/lib/session-facts'
+import { computeTraderBaselines, baselinesPromptBlock } from '@/lib/trader-baselines'
 import { checkFactClaims, checkPraiseContradictions } from '@/lib/ai-constraints'
 import { clientError } from '@/lib/api-error'
 
@@ -116,11 +117,31 @@ async function handle(req: Request) {
     console.warn('[analyze-eod] coaching thread skipped:', e)
   }
 
+  // The trader's own historical baselines — how each tag / heat band has actually
+  // performed across their book. Without these the analysis could only describe the
+  // tags it was handed, which is exactly why it read as a recap of its own input.
+  // Best-effort: no baselines simply means no baseline citations.
+  let baselinesBlock = ''
+  try {
+    const sb = await createClient()
+    const { data: book } = await sb
+      .from('trades')
+      .select('id, pnl, entry_price, stop_price, tp1_price, exit_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position')
+      .not('stop_price', 'is', null)
+      .order('entry_time', { ascending: false })
+      .limit(400) as { data: Parameters<typeof computeTraderBaselines>[0] | null }
+    if (book && book.length > 0) {
+      baselinesBlock = baselinesPromptBlock(computeTraderBaselines(book))
+    }
+  } catch (e) {
+    console.warn('[analyze-eod] baselines skipped:', e instanceof Error ? e.message : 'unknown')
+  }
+
   const prompt = profileContextBlock(traderProfile)
     + behavioralProxiesPromptBlock(trades, sessionEndedAt)
     + journalBlock
     + coachingBlock
-    + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage, scoringProfile, isLocalOwner: LOCAL_FEATURES_ENABLED })
+    + buildEodPrompt({ trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage, scoringProfile, isLocalOwner: LOCAL_FEATURES_ENABLED, baselinesBlock })
 
   const userContent: Anthropic.MessageParam['content'] = hasImage
     ? [

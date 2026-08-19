@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Brain, AlertTriangle, CheckCircle, Loader2, TrendingUp, Target, ShieldCheck, ShieldX, Activity, RefreshCw } from 'lucide-react'
+import { Brain, Loader2, ShieldCheck, ShieldX, Activity, RefreshCw } from 'lucide-react'
 import type { EodAiAnalysis, ProcessVerdict, ExecutionScore, RuleId, RuleStatus } from '@/lib/supabase/types'
 import { useUiMode } from '@/lib/ui-mode'
 import AiDisclaimer from '@/components/AiDisclaimer'
@@ -74,6 +74,15 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
   // v1.3-era analyses populate `process` + `execution`. Pre-v1.3 rows only
   // have the legacy `score`. UI prefers v1.3 when present, falls back otherwise.
   const hasV13 = !!(analysis?.process || analysis?.execution)
+  // The three narrative arrays, flattened into one ranked list with a tone
+  // marker each. Wins first, then costs, then cross-trade patterns — the order
+  // a coach would say them in. Empty arrays contribute nothing, which is the
+  // whole point: the layout can no longer demand content.
+  const tapeAdds: Array<{ text: string; tone: 'up' | 'down' | 'flat' }> = [
+    ...(analysis?.what_worked ?? []).map(text => ({ text, tone: 'up' as const })),
+    ...(analysis?.mistakes ?? []).map(text => ({ text, tone: 'down' as const })),
+    ...(analysis?.patterns ?? []).map(text => ({ text, tone: 'flat' as const })),
+  ].filter(x => typeof x.text === 'string' && x.text.trim().length > 0)
   // Stale = a trade was modified after the analysis ran. The verdict was
   // computed against an older snapshot of the data, so any per-rule reason
   // that cites missing fields (no stop, no setup tag) may be silently wrong
@@ -156,75 +165,45 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
             <p className="text-sm text-gray-300 leading-relaxed pb-3 border-b border-gray-800">{analysis.summary}</p>
           )}
 
-          {/* What worked */}
-          {analysis.what_worked && analysis.what_worked.length > 0 && (
+          {/* What the tape adds — ONE ranked list.
+              What worked / Mistakes / Patterns were three headed sections, so a
+              thin day still rendered three headings and the model padded each to
+              fill them. Merged into one tone-marked list: a heading can't demand
+              content it doesn't have, and a one-line day shows one line. Old
+              stored analyses render unchanged — the merge is here, not in the
+              schema, so nothing had to be migrated or re-run. */}
+          {tapeAdds.length > 0 && (
             <div>
-              <div className="flex items-center gap-1.5 mb-2">
-                <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-                <span className="text-xs font-semibold text-green-500 uppercase tracking-wider">What Worked</span>
-              </div>
-              <ul className="space-y-1">
-                {analysis.what_worked.map((s, i) => (
-                  <li key={i} className="text-sm text-gray-300 flex gap-2">
-                    <span className="text-green-500 mt-0.5">•</span>
-                    {s}
+              <div className="text-xs text-gray-500 mb-2">What the tape adds</div>
+              <ul className="space-y-1.5">
+                {tapeAdds.map((item, i) => (
+                  <li key={i} className="text-sm text-gray-300 grid grid-cols-[14px_1fr] gap-2 items-start">
+                    <span
+                      aria-hidden
+                      className={`text-[11px] leading-5 ${
+                        item.tone === 'up' ? 'text-green-500' : item.tone === 'down' ? 'text-red-500' : 'text-gray-600'
+                      }`}
+                    >
+                      {item.tone === 'up' ? '▲' : item.tone === 'down' ? '▼' : '•'}
+                    </span>
+                    <span className="leading-relaxed">{item.text}</span>
                   </li>
                 ))}
               </ul>
             </div>
           )}
 
-          {/* Mistakes */}
-          {analysis.mistakes && analysis.mistakes.length > 0 && (
-            <div>
-              <div className="flex items-center gap-1.5 mb-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
-                <span className="text-xs font-semibold text-red-500 uppercase tracking-wider">Mistakes</span>
-              </div>
-              <ul className="space-y-1">
-                {analysis.mistakes.map((m, i) => (
-                  <li key={i} className="text-sm text-gray-300 flex gap-2">
-                    <span className="text-red-500 mt-0.5">•</span>
-                    {m}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Patterns */}
-          {analysis.patterns && analysis.patterns.length > 0 && (
-            <div>
-              <div className="flex items-center gap-1.5 mb-2">
-                <TrendingUp className="w-3.5 h-3.5 text-blue-400" />
-                <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">Patterns Across Trades</span>
-              </div>
-              <ul className="space-y-1">
-                {analysis.patterns.map((p, i) => (
-                  <li key={i} className="text-sm text-gray-300 flex gap-2">
-                    <span className="text-blue-400 mt-0.5">→</span>
-                    {p}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Next session focus */}
+          {/* Tomorrow — one line on a small day, a short list on a big one. */}
           {analysis.next_session_focus && analysis.next_session_focus.length > 0 && (
-            <div className="bg-yellow-950/30 border border-yellow-800/50 rounded-lg p-3">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Target className="w-3.5 h-3.5 text-yellow-400" />
-                <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wider">Focus Tomorrow</span>
-              </div>
-              <ul className="space-y-1">
-                {analysis.next_session_focus.map((f, i) => (
-                  <li key={i} className="text-sm text-gray-200 flex gap-2">
-                    <span className="text-yellow-400 mt-0.5">▸</span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
+            <div className="flex gap-3 items-baseline pt-1">
+              <span className="text-[13px] font-bold text-blue-400 flex-shrink-0">Tomorrow</span>
+              {analysis.next_session_focus.length === 1 ? (
+                <span className="text-sm text-gray-200 leading-relaxed">{analysis.next_session_focus[0]}</span>
+              ) : (
+                <ul className="space-y-1 text-sm text-gray-200 leading-relaxed">
+                  {analysis.next_session_focus.map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+              )}
             </div>
           )}
 

@@ -318,12 +318,16 @@ export interface BuildEodPromptInput {
    *  public un-onboarded tester is NOT graded against the founder's rails. Defaults
    *  to `true` so the local rescore script stays byte-identical without opting in. */
   isLocalOwner?: boolean
+  /** Rendered `baselinesPromptBlock()` — how this trader's tags/heat bands have
+   *  actually performed over their book. Without it the analysis can only
+   *  restate the tags it was given, which is what made it read as a recap. */
+  baselinesBlock?: string
 }
 
 /** Returns the full text prompt that gets sent to Claude. */
 export function buildEodPrompt({
   trades, eodNotes, prepNotes, prepAnalysis, marketContext, hasImage = false, scoringProfile,
-  isLocalOwner = true,
+  isLocalOwner = true, baselinesBlock = '',
 }: BuildEodPromptInput): string {
   const ruleset = loadRulesetMarkdown()
   const useV13 = ruleset.length > 0
@@ -789,6 +793,19 @@ CRITICAL weighting rules:
   const rulesetSection = ownerPath ? `${v13Block}${legacyFrameworkBlock}` : genericRulesetBlock(scoringProfile ?? {}, rc)
   const useStructuredSchema = ownerPath ? useV13 : true
 
+  // Line budget scales with the day. The old schema asked for "up to 4 + 5 + 4 + 3"
+  // no matter what, and "up to N" reads as a target — so a ONE-trade day came back
+  // with fourteen bullets, most of them restating the trader's own tags, plus three
+  // "patterns across trades" on a day that had no across-trade anything.
+  const n = trades.length
+  const lineBudget = {
+    worked: n <= 1 ? 1 : n <= 3 ? 2 : 3,
+    mistakes: n <= 1 ? 1 : n <= 3 ? 2 : 3,
+    patterns: n < 3 ? 0 : n <= 5 ? 2 : 3,
+    focus: n <= 3 ? 1 : 2,
+  }
+  const totalLines = lineBudget.worked + lineBudget.mistakes + lineBudget.patterns + lineBudget.focus
+
   return `You are an objective trading coach reviewing a trader's completed session${hasImage ? ' and the day\'s chart' : ''}.
 ${rulesetSection}
 ${chartInstructions}
@@ -820,15 +837,17 @@ ${sessionFactsBlock(computeSessionFacts(trades))}
 
 Trader's EOD Reflection:
 ${eodNotes?.trim() || '(none provided)'}
-
+${baselinesBlock ? `\n${baselinesBlock}\n` : ''}
 ${useStructuredSchema ? `Respond with ONLY valid JSON in this exact structure (no markdown, no code fences):
 {
   "summary": "<2-3 sentences on the session — call out the process verdict AND a one-line execution read>",
   "headline": "<1 sentence ≤14 words — the DAY'S verdict in plain language: decision quality, never P&L. This sits under the day's single TapeScore number. NEVER use the word 'Compliance'; say 'rules held' / 'a rule slipped' / 'rules broke down'.>",
-  "what_worked": ["<concrete behavior/decision that was a win>", "<up to 4 total>"],
-  "mistakes": ["<recurring or specific bad decision — cite trades by number/time>", "<up to 5 total>"],
-  "patterns": ["<setup/timing/management pattern across trades>", "<up to 4 total>"],
-  "next_session_focus": ["<actionable focus item for tomorrow>", "<up to 3 total>"],
+  "what_worked": ["<concrete behavior/decision that was a win — see THE EARNING TEST>", "<${lineBudget.worked} MAX for this ${trades.length}-trade day>"],
+  "mistakes": ["<specific bad decision — cite trades by number/time>", "<${lineBudget.mistakes} MAX for this ${trades.length}-trade day>"],
+  "patterns": [${lineBudget.patterns === 0
+    ? '/* EMPTY ARRAY — this day has fewer than 3 trades, so there is no across-trade pattern to find. Return []. */'
+    : `"<pattern ACROSS the day's trades>", "<${lineBudget.patterns} MAX>"`}],
+  "next_session_focus": ["<the single most useful thing to carry into tomorrow>", "<${lineBudget.focus} MAX>"],
   "process": {
     "verdict": "Compliant" | "Breach",
     "per_rule": {
@@ -870,12 +889,46 @@ ${useStructuredSchema ? `Respond with ONLY valid JSON in this exact structure (n
 
 Be direct. If the day was a Breach, say so plainly — don't soften it with "but the PnL was good." If the day was Compliant with poor execution, name that too — process compliance doesn't excuse sloppy execution. Magnitude doesn't matter for process; even a +$50 breach is still a breach.
 
+══ THE EARNING TEST — apply to EVERY line of what_worked / mistakes / patterns ══
+This day has ${n} trade${n === 1 ? '' : 's'}. You get AT MOST ${totalLines} lines in total across those
+three arrays plus next_session_focus. Fewer is better. Returning two excellent lines
+beats returning eight, and an empty array is a valid, honest answer.
+
+A line may ONLY be written if it passes this test:
+
+  Does it tell the trader something their own tags and notes do NOT already say?
+
+The trader tagged their own mistakes, emotions, setups and management, and wrote
+their own reflection. All of that is INPUT, above. Telling it back to them is the
+single most common failure of this analysis. Concretely, these are BANNED:
+
+  BANNED — "Emotion tagged Stable throughout"            (they set that tag)
+  BANNED — "Faded HTF Area/Move tagged: entering into..." (they set that tag)
+  BANNED — "Greedy (Price Almost Hit TP) tagged"          (they set that tag)
+  BANNED — "Recognized the Wk-VWAP area as a reason to exit" (they wrote that in notes)
+  BANNED — any line whose content is a restatement, paraphrase, or approving
+           echo of a tag the trader set or a point they made in their reflection.
+
+A line PASSES if it contains at least one of:
+  • a number from the trade data that the trader did not write down themselves
+    (an exact gap, an excursion, a duration, a price distance), or
+  • a comparison against THIS TRADER'S OWN BASELINES (the block above: n, avg R,
+    win %, net $ for a tag / heat band / control group), or
+  • a contradiction between what the trader claimed and what the tape recorded.
+
+That last one is not only allowed, it is valuable. If the trader's note says "zero
+MAE" and the recorded max adverse excursion is 1.75 points, SAY SO — plainly, without
+accusation, and note that both can be true if the drawdown came after the peak. The
+recorded number is the one the score uses, so a mismatch is worth surfacing.
+
+Do NOT pad. If only one line passes the test, return one line.
+
 LENGTH DISCIPLINE — the response must be valid JSON, so keep prose tight:
   • Per-rule reasons: 1 short sentence max (under 25 words). Cite specifics, don't argue.
   • process.headline + execution.headline: 1 sentence, ≤15 words. The "why this score" in plain English. Always visible — make every word count.
   • Top-level headline: 1 sentence, ≤14 words, the day in plain language. Never the word "Compliance", never a P&L number.
   • process.notes + execution.notes: 2-3 sentences MAX, behind a "Show details" toggle. Diagnostic narrative, NOT a calculation trace. Forbidden in notes: per-trade arithmetic ("T1 MAE = 19.25"), criterion lists ("setup_in_playbook=1.0..."), composite formulas ("0.35*0.41+..."), "Reporting X = Y" lines. The numbers are already in the chips and breakdown object — re-narrating them wastes user attention.
-  • what_worked / mistakes / patterns / next_session_focus bullets: 1 sentence each.
+  • what_worked / mistakes / patterns / next_session_focus bullets: 1 sentence each, and every one must pass THE EARNING TEST above.
   • Do NOT wrap the JSON in markdown fences (no \`\`\`json). The whole response should start with { and end with }.` : `Respond with ONLY valid JSON in this exact structure (no markdown, no code fences):
 {
   "summary": "<2-3 sentences on overall session quality>",
