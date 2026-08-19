@@ -401,7 +401,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         current={sortColumn}
         direction={sortDirection}
         onSort={setSort}
-        align="right"
+        align="center"
         className="pr-3 whitespace-nowrap"
         thProps={dragProps('pnl')}
       />
@@ -673,7 +673,7 @@ function DayRowItem({
             </td>
           ),
           pnl: (
-            <td key="pnl" className={`py-2 pr-3 text-right font-mono font-medium text-xs ${pnlColor} ${cellBg}`}>
+            <td key="pnl" className={`py-2 pr-3 text-center font-mono font-medium text-xs ${pnlColor} ${cellBg}`}>
               {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}`}
             </td>
           ),
