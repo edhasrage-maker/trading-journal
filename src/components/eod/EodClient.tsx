@@ -23,7 +23,8 @@ import TapeScoreHeader from './TapeScoreHeader'
 import RecordingCommentary from './RecordingCommentary'
 import BrowserRecap from './BrowserRecap'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
-import MfeMaeEfficiency from './MfeMaeEfficiency'
+import HeatBaseline from './HeatBaseline'
+import { heatOf, type HeatBaseline as HeatBaselineData } from '@/lib/heat-baseline'
 import BehavioralProxiesPanel from './BehavioralProxiesPanel'
 import AchievementBadges from '@/components/AchievementBadges'
 import AchievementShowcase from '@/components/eod/AchievementShowcase'
@@ -31,7 +32,7 @@ import { dayAchievements, type AchievementId } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import { useSessionClock } from '@/lib/use-session-clock'
-import { avgCaptureRatio, avgMfeMaeAtr, avgMfeMaeRatio, formatCaptureCell, mfeMaePoints, type BarLike } from '@/lib/analytics'
+import { avgCaptureRatio, avgMfeMaeRatio, formatCaptureCell, mfeMaePoints, type BarLike } from '@/lib/analytics'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import { buildHighlights } from '@/lib/trade-highlights'
 import type {
@@ -61,6 +62,10 @@ interface Props {
    *  computed from trading_days.achievements_json). Powers the showcase ×N
    *  badges + collection strip. Omit / zeros before the backfill runs. */
   achievementCounts?: Record<AchievementId, number>
+  /** How the trader's trades historically split by heat (did the MAE stay
+   *  inside half the planned risk?). Server-computed over the trailing book;
+   *  null when it's too thin to claim anything. */
+  heatBaseline?: HeatBaselineData | null
   /** The trader's round-trip "was up" multiple (×ATR) from Settings → ATR
    *  measurement. Defaults to 1× when unset / pre-migration. */
   giveBackAtr?: number
@@ -89,6 +94,7 @@ export default function EodClient({
   postExitByTradeId,
   pnlHistory,
   achievementCounts,
+  heatBaseline = null,
   giveBackAtr = 1,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
@@ -672,10 +678,19 @@ export default function EodClient({
     }
     return n > 0 ? sum / n : null
   }, [trades])
-  // Entry-efficiency (avg MFE vs MAE in ATR units) for the verdict card. Prefers
-  // the per-trade live ATR, falls back to stored entry_atr_1m; bar-derived, so it
-  // works on a fills-only import with no planned stops.
-  const mfeMaeAtrStats = useMemo(() => avgMfeMaeAtr(trades, liveAtrByTradeId), [trades, liveAtrByTradeId])
+  // Where today sits on the heat split. Only closed on when the day has exactly
+  // ONE measurable trade — with several, "today's went to X%" would be an
+  // average masquerading as a fact, and the baseline stands on its own.
+  const { todayHeatPct, todayWon } = useMemo(() => {
+    const measured = trades
+      .map(t => ({ heat: heatOf(t), pnl: t.pnl }))
+      .filter((x): x is { heat: number; pnl: number | null } => x.heat != null)
+    if (measured.length !== 1) return { todayHeatPct: null, todayWon: undefined }
+    return {
+      todayHeatPct: measured[0].heat * 100,
+      todayWon: measured[0].pnl != null ? measured[0].pnl > 0 : undefined,
+    }
+  }, [trades])
   // Round-trip / "gave it back" rollup for the day — trades that were up ≥1×ATR
   // then closed ≤ BE. Same shared excursion layer + live ATR the coach uses, so
   // the panel line and the coach's read can't drift. Hidden by the panel when 0.
@@ -1126,15 +1141,10 @@ export default function EodClient({
         />
       )}
 
-      {/* Differentiator, promoted above the fold (alpha-readiness item 23):
-          lead the recap with the plain-language entry-efficiency read + the
-          behavioral flags — the sharpest, most-unique panels in the product —
-          right under the score, before the chart and trade table. Both panels
-          self-suppress (return null) on days with too little data, so an empty
-          day shows nothing here. The per-trade post-exit column stays in
-          TradeList below. Reorder, not rebuild — same components as before. */}
-      <MfeMaeEfficiency mfe={mfeMaeAtrStats.mfe} mae={mfeMaeAtrStats.mae} count={mfeMaeAtrStats.count} roundTrip={roundTripStats} />
-
+      {/* The behavioral flags stay promoted above the fold (alpha-readiness
+          item 23) — self-suppressing, so an empty day shows nothing. The heat
+          read that used to sit beside it moved down to the trade table, where
+          the MAE column it interprets actually lives. */}
       <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} />
 
       {/* Chart area — toggle between legacy screenshot+calibration and the
@@ -1284,6 +1294,16 @@ export default function EodClient({
           </div>
         </div>
       )}
+
+      {/* The line that makes the table's MAE column mean something: the
+          trader's own inside-half vs past-half split. Sits directly above the
+          table it interprets — the number itself is already in the MAE cell. */}
+      <HeatBaseline
+        baseline={heatBaseline}
+        todayHeatPct={todayHeatPct}
+        todayWon={todayWon}
+        roundTrip={roundTripStats}
+      />
 
       <TradeList
         trades={trades}

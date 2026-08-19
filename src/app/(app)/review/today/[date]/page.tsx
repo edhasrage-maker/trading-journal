@@ -1,5 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import EodClient from '@/components/eod/EodClient'
+import { computeHeatBaseline } from '@/lib/heat-baseline'
+
+/** Trailing trades scanned for the heat baseline. Wide enough that the split
+ *  is stable, small enough to stay one cheap indexed read. */
+const HEAT_BASELINE_WINDOW = 300
 import CommitmentResolution from '@/components/review/CommitmentResolution'
 import { fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from '@/lib/atr'
 import { configuredAtr } from '@/lib/atr-config'
@@ -19,13 +24,23 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   // atrCfg = the trader's chosen ATR measurement (drives the ATR@ column);
   // giveBackAtr = their "was up" multiple; tags = the tag library; pnlHistory +
   // achievements are all-days rollups. All independent → one round-trip stage.
-  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes] = await Promise.all([
+  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes, heatRes] = await Promise.all([
     getAtrConfig(supabase),
     getGiveBackAtr(supabase),
     supabase.from('trading_days').select('*').eq('date', date).maybeSingle(),
     supabase.from('trade_tags').select('*').order('sort_order'),
     supabase.from('trading_days').select('date, eod_pnl').not('eod_pnl', 'is', null).order('date', { ascending: true }),
     supabase.from('trading_days').select('achievements_json'),
+    // Trailing book for the heat baseline (how far a trade drifts toward the
+    // stop before it resolves). Lean projection — no blobs, no tags — and
+    // only rows that can produce a reading at all.
+    supabase
+      .from('trades')
+      .select('id, pnl, entry_price, stop_price, quantity, direction, symbol, high_during_position, low_during_position')
+      .not('stop_price', 'is', null)
+      .not('high_during_position', 'is', null)
+      .order('entry_time', { ascending: false })
+      .limit(HEAT_BASELINE_WINDOW),
   ])
   const day = dayRes.data as TradingDay | null
   const tags = tagsRes.data as TradeTag[] | null
@@ -34,6 +49,11 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   // so counts stay undefined (showcase falls back to "First time!").
   const achRows = achRes.error ? null : (achRes.data as { achievements_json: string[] | null }[] | null)
   const counts = achRows ? achievementCounts(achRows.map(r => r.achievements_json)) : undefined
+  // Null when the book is too thin to say anything honest — the line then
+  // simply doesn't render.
+  const heatBaseline = heatRes.error
+    ? null
+    : computeHeatBaseline((heatRes.data ?? []) as Parameters<typeof computeHeatBaseline>[0])
 
   // ── Stage B: day-dependent trades + market context, in parallel ──
   let trades: Trade[] = []
@@ -121,6 +141,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         liveAtrByTradeId={liveAtrByTradeId}
         postExitByTradeId={postExitByTradeId}
         pnlHistory={pnlHistory}
+        heatBaseline={heatBaseline}
         achievementCounts={counts}
         giveBackAtr={giveBackAtr}
       />
