@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Loader2, Save, X, ScanLine, Sparkles, Film } from 'lucide-react'
 import PinPlacement, { type PinType, type Pin } from './PinPlacement'
 import FrameNudge from '@/components/FrameNudge'
+import MicButton from '@/components/voice/MicButton'
 import BrowserFrameNudge from '@/components/BrowserFrameNudge'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 // PinType / Pin still used by the legacy pin-position fields kept in FormState
@@ -645,7 +646,16 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
 
         {/* Notes */}
         <div>
-          <label className="block text-xs text-gray-400 mb-1">Notes</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-xs text-gray-400">Notes</label>
+            {/* Written mid-session with a position on, when talking beats
+                typing. Appends finished phrases, so the field stays editable
+                between them. */}
+            <MicButton
+              onText={text => set('notes', form.notes.trim() ? `${form.notes.trimEnd()} ${text}` : text)}
+              title="Dictate notes"
+            />
+          </div>
           <textarea rows={2} spellCheck autoCorrect="on" placeholder="Execution notes, observations..."
             value={form.notes} onChange={e => set('notes', e.target.value)}
             onBlur={compact ? undefined : suggestTagsFromNotes}

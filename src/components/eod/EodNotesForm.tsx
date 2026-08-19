@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Save, Loader2 } from 'lucide-react'
+import MicButton from '@/components/voice/MicButton'
 
 interface Props {
   date: string
@@ -24,6 +25,12 @@ export default function EodNotesForm({
   const [pnl, setPnl] = useState<string>(initialPnl != null ? String(initialPnl) : '')
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+
+  /** Append a finished spoken phrase, spaced off whatever is already there. */
+  const appendDictation = (text: string) => {
+    setNotes(cur => (cur.trim() ? `${cur.trimEnd()} ${text}` : text))
+    setDirty(true)
+  }
 
   const save = async () => {
     setSaving(true)
@@ -72,9 +79,14 @@ export default function EodNotesForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Day Notes
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-300">
+            Day Notes
+          </label>
+          {/* The longest thing anyone types in the app, written at the end of a
+              session when typing it out is the last thing you want to do. */}
+          <MicButton onText={appendDictation} title="Dictate your day notes" />
+        </div>
         <textarea
           value={notes}
           onChange={e => { setNotes(e.target.value); setDirty(true) }}
