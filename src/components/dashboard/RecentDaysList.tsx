@@ -88,11 +88,14 @@ type SortDirection = 'asc' | 'desc'
  *  factors at a glance — MFE:MAE ratio and capture % — the read people found
  *  most interesting, so it's no longer a click deep. */
 type ReorderableColumnId = 'tapescore' | 'trades' | 'win_rate' | 'mfe_mae' | 'capture' | 'pnl'
-const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'trades', 'win_rate', 'mfe_mae', 'capture', 'pnl']
+const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trades', 'win_rate', 'mfe_mae', 'capture']
 /** Highlights: lean, fixed, non-reorderable. */
-const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'trades', 'win_rate', 'pnl']
+const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trades', 'win_rate']
 // v3: v2 carried the now-removed `day_type` id; bump so stale saved orders reset.
-const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v3'
+// v4: the default order changed (P&L moved up beside TapeScore). The key is
+// versioned because the held order is persisted — without a bump, anyone who
+// has ever used this table keeps the old arrangement and never sees the change.
+const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v4'
 
 /** MFE:MAE ratio for the cell — "2.4:1", "∞" when a day never went adverse,
  *  "—" when either leg is missing. */
@@ -445,7 +448,11 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
             <tr className="text-xs text-gray-500 border-b border-gray-800">
               {/* Selection checkbox column — Detailed only. */}
               {isPro && <th className="font-normal py-2 pl-2 pr-1 w-8" />}
-              <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3" />
+              {/* Every data column is a fixed width; Date was the only one
+                  without, so auto table layout handed it all the leftover space
+                  and left a gulf between the date and the first number. Give it
+                  a width of its own and the slack spreads across the row. */}
+              <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3 w-40 whitespace-nowrap" />
               {/* Data columns. In Detailed these are draggable (held order lives
                   in columnOrder state, persisted to localStorage); Highlights
                   uses a fixed lean set. Date stays pinned (row identity); the
