@@ -910,16 +910,40 @@ single most common failure of this analysis. Concretely, these are BANNED:
            echo of a tag the trader set or a point they made in their reflection.
 
 A line PASSES if it contains at least one of:
-  • a number from the trade data that the trader did not write down themselves
-    (an exact gap, an excursion, a duration, a price distance), or
   • a comparison against THIS TRADER'S OWN BASELINES (the block above: n, avg R,
-    win %, net $ for a tag / heat band / control group), or
+    win %, net $ for a setup family / day type / participation / range used /
+    opening-range regime / tag / heat band / control group), or
+  • a fact about WHERE the trade sat in the day's structure — the levels in the
+    market context (PDH/PDL, ONH/ONL, IB high/low and its extensions, VWAP),
+    where entry and exit fell relative to them, what the opening range did, or
+    what the volume-profile / day-type read implies, or
+  • a number from the trade data the trader did not write down themselves
+    (an exact gap, an excursion, a duration, a price distance), or
   • a contradiction between what the trader claimed and what the tape recorded.
 
 That last one is not only allowed, it is valuable. If the trader's note says "zero
 MAE" and the recorded max adverse excursion is 1.75 points, SAY SO — plainly, without
 accusation, and note that both can be true if the drawdown came after the peak. The
 recorded number is the one the score uses, so a mismatch is worth surfacing.
+
+══ COVERAGE — do not spend the whole analysis on one lens ══
+Excursion arithmetic (MFE, MAE, capture, heat, R) is ONE lens, and it is the lens
+this analysis over-reaches for. **At most ONE line may be primarily about MFE/MAE
+or capture.** The remaining lines must come from somewhere else:
+
+  • the SETUP FAMILY — how this trade compares to the trader's other trades of the
+    same setup (the baselines above give n, avg R and win % per family),
+  • the MARKET — day type, participation (RVOL), how much of the average range the
+    day used, opening-range regime, and how the trader performs in that regime,
+  • STRUCTURE — the actual levels in the market context and where the trade sat
+    relative to them,
+  • BEHAVIOUR over time — a tag's lifetime cost, the coaching thread's standing
+    directives, what changed versus the trader's recent sessions.
+
+If the market context or level data needed for a structural point is missing, say
+nothing about structure rather than inventing it. Prefer the dimension where the
+trader's own numbers differ most from their overall baseline — that is where the
+information is.
 
 Do NOT pad. If only one line passes the test, return one line.
 

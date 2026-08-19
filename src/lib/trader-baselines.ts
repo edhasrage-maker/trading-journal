@@ -38,9 +38,18 @@ export interface BaselineRow {
 
 export interface TraderBaselines {
   overall: BaselineRow | null
+  /** How each SETUP FAMILY has performed — "how does this compare to my other
+   *  Supply & Demand trades" is the first question a trader asks. */
+  setups: BaselineRow[]
   mistakes: BaselineRow[]
   emotions: BaselineRow[]
   heat: BaselineRow[]
+  /** Market conditions: day type, participation, how much of the average range
+   *  the day used, IB regime. Answers "was today a market I do well in". */
+  dayTypes: BaselineRow[]
+  participation: BaselineRow[]
+  rangeUsed: BaselineRow[]
+  ibRegime: BaselineRow[]
   /** Trades finishing with no mistake tag at all — the natural control group. */
   clean: BaselineRow | null
   /** Targets: how often a trade got most of the way to TP1 and still missed. */
@@ -48,9 +57,20 @@ export interface TraderBaselines {
 }
 
 type BaselineTrade = TradeWithExcursion & {
+  trading_day_id?: string | null
   stop_price?: number | null
   tp1_price?: number | null
   exit_price?: number | null
+}
+
+/** Day-level conditions, keyed by trading_day_id. Optional: without it the
+ *  regime baselines are simply absent rather than guessed. */
+export interface DayConditions {
+  dayTypes: string[]
+  rvol: number | null
+  /** day_range / adr, as a percentage. */
+  rangeUsedPct: number | null
+  ibRegime: string | null
 }
 
 interface Scored {
@@ -60,6 +80,8 @@ interface Scored {
   heat: number | null
   mistakes: string[]
   emotions: string[]
+  setups: string[]
+  cond: DayConditions | null
 }
 
 function labelsOf(tags: unknown, key: keyof TradeTags): string[] {
@@ -80,7 +102,10 @@ function summarize(label: string, rows: Scored[]): BaselineRow | null {
   }
 }
 
-export function computeTraderBaselines(trades: BaselineTrade[]): TraderBaselines {
+export function computeTraderBaselines(
+  trades: BaselineTrade[],
+  conditionsByDayId?: Map<string, DayConditions>,
+): TraderBaselines {
   const scored: Scored[] = []
   let reached = 0, missed = 0, withTarget = 0
 
@@ -99,6 +124,8 @@ export function computeTraderBaselines(trades: BaselineTrade[]): TraderBaselines
       heat: xc ? xc.mae / riskPts : null,
       mistakes: labelsOf(t.tags_json, 'mistakes'),
       emotions: labelsOf(t.tags_json, 'emotions'),
+      setups: labelsOf(t.tags_json, 'setups'),
+      cond: (t.trading_day_id && conditionsByDayId?.get(t.trading_day_id)) || null,
     })
 
     // Near-miss on the planned target: how far the favorable excursion got
@@ -114,7 +141,15 @@ export function computeTraderBaselines(trades: BaselineTrade[]): TraderBaselines
     }
   }
 
-  const byLabel = (key: 'mistakes' | 'emotions'): BaselineRow[] => {
+  /** Group by a banded numeric condition (participation, range used). */
+  const byBand = (
+    bands: Array<{ label: string; test: (c: DayConditions) => boolean }>,
+  ): BaselineRow[] =>
+    bands
+      .map(b => summarize(b.label, scored.filter(s => s.cond != null && b.test(s.cond))))
+      .filter((r): r is BaselineRow => r != null && r.n >= MIN_TAG_N)
+
+  const byLabel = (key: 'mistakes' | 'emotions' | 'setups'): BaselineRow[] => {
     const groups = new Map<string, Scored[]>()
     for (const s of scored) {
       for (const label of s[key]) {
@@ -130,10 +165,39 @@ export function computeTraderBaselines(trades: BaselineTrade[]): TraderBaselines
       .sort((a, b) => Math.abs(b.avgR) - Math.abs(a.avgR))
   }
 
+  const dayTypeGroups = new Map<string, Scored[]>()
+  for (const s of scored) {
+    for (const label of s.cond?.dayTypes ?? []) {
+      const arr = dayTypeGroups.get(label) ?? []
+      arr.push(s)
+      dayTypeGroups.set(label, arr)
+    }
+  }
+
   return {
     overall: summarize('all trades with a stop set', scored),
+    setups: byLabel('setups'),
     mistakes: byLabel('mistakes'),
     emotions: byLabel('emotions'),
+    dayTypes: Array.from(dayTypeGroups.entries())
+      .map(([label, rows]) => summarize(label, rows))
+      .filter((r): r is BaselineRow => r != null && r.n >= MIN_TAG_N)
+      .sort((a, b) => Math.abs(b.avgR) - Math.abs(a.avgR)),
+    participation: byBand([
+      { label: 'RVOL under 100% (quiet)', test: c => c.rvol != null && c.rvol < 100 },
+      { label: 'RVOL 100-150% (normal)', test: c => c.rvol != null && c.rvol >= 100 && c.rvol < 150 },
+      { label: 'RVOL 150%+ (busy)', test: c => c.rvol != null && c.rvol >= 150 },
+    ]),
+    rangeUsed: byBand([
+      { label: 'day used under 80% of ADR', test: c => c.rangeUsedPct != null && c.rangeUsedPct < 80 },
+      { label: 'day used 80-120% of ADR', test: c => c.rangeUsedPct != null && c.rangeUsedPct >= 80 && c.rangeUsedPct < 120 },
+      { label: 'day used 120%+ of ADR', test: c => c.rangeUsedPct != null && c.rangeUsedPct >= 120 },
+    ]),
+    ibRegime: byBand([
+      { label: 'IB chop', test: c => c.ibRegime === 'chop' },
+      { label: 'IB mid', test: c => c.ibRegime === 'mid' },
+      { label: 'IB expanded', test: c => c.ibRegime === 'expanded' },
+    ]),
     heat: HEAT_BANDS
       .map(b => summarize(b.label, scored.filter(s => s.heat != null && s.heat >= b.lo && s.heat < b.hi)))
       .filter((r): r is BaselineRow => r != null && r.n >= MIN_TAG_N),
@@ -163,6 +227,21 @@ export function baselinesPromptBlock(b: TraderBaselines): string {
   ]
   if (b.clean && b.clean.n >= MIN_TAG_N) {
     lines.push('', 'Control group:', fmtRow(b.clean))
+  }
+  if (b.setups.length > 0) {
+    lines.push('', 'By SETUP FAMILY (how today\'s setup compares to the rest of that family):', ...b.setups.slice(0, 8).map(fmtRow))
+  }
+  if (b.dayTypes.length > 0) {
+    lines.push('', 'By DAY TYPE (most extreme first):', ...b.dayTypes.slice(0, 8).map(fmtRow))
+  }
+  if (b.participation.length > 0) {
+    lines.push('', 'By PARTICIPATION (RVOL):', ...b.participation.map(fmtRow))
+  }
+  if (b.rangeUsed.length > 0) {
+    lines.push('', 'By HOW MUCH RANGE THE DAY USED (day range / ADR):', ...b.rangeUsed.map(fmtRow))
+  }
+  if (b.ibRegime.length > 0) {
+    lines.push('', 'By OPENING RANGE REGIME:', ...b.ibRegime.map(fmtRow))
   }
   if (b.heat.length > 0) {
     lines.push('', 'By how close the trade came to the stop (max adverse excursion / planned risk):', ...b.heat.map(fmtRow))

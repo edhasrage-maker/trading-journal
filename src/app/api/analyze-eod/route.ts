@@ -12,7 +12,7 @@ import { behavioralProxiesPromptBlock } from '@/lib/behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from '@/lib/journal-language-heatmap'
 import { fetchOpenThread, coachingThreadPromptBlock } from '@/lib/coaching-thread'
 import { computeSessionFacts } from '@/lib/session-facts'
-import { computeTraderBaselines, baselinesPromptBlock } from '@/lib/trader-baselines'
+import { computeTraderBaselines, baselinesPromptBlock, type DayConditions } from '@/lib/trader-baselines'
 import { checkFactClaims, checkPraiseContradictions } from '@/lib/ai-constraints'
 import { clientError } from '@/lib/api-error'
 
@@ -126,12 +126,35 @@ async function handle(req: Request) {
     const sb = await createClient()
     const { data: book } = await sb
       .from('trades')
-      .select('id, pnl, entry_price, stop_price, tp1_price, exit_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position')
+      .select('id, trading_day_id, pnl, entry_price, stop_price, tp1_price, exit_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position')
       .not('stop_price', 'is', null)
       .order('entry_time', { ascending: false })
       .limit(400) as { data: Parameters<typeof computeTraderBaselines>[0] | null }
     if (book && book.length > 0) {
-      baselinesBlock = baselinesPromptBlock(computeTraderBaselines(book))
+      // Day-level conditions for the same window, so the baselines can answer
+      // "was today a market I do well in" — not just "how was the excursion".
+      const dayIds = Array.from(new Set(book.map(t => t.trading_day_id).filter((v): v is string => !!v)))
+      const conditions = new Map<string, DayConditions>()
+      if (dayIds.length > 0) {
+        const [dayRes, ctxRes] = await Promise.all([
+          sb.from('trading_days').select('id, day_types').in('id', dayIds),
+          sb.from('market_context').select('trading_day_id, rvol, adr, day_range, ib_regime').in('trading_day_id', dayIds),
+        ])
+        const ctxByDay = new Map(
+          ((ctxRes.data ?? []) as Array<{ trading_day_id: string; rvol: number | null; adr: number | null; day_range: number | null; ib_regime: string | null }>)
+            .map(c => [c.trading_day_id, c]),
+        )
+        for (const d of (dayRes.data ?? []) as Array<{ id: string; day_types: string[] | null }>) {
+          const c = ctxByDay.get(d.id)
+          conditions.set(d.id, {
+            dayTypes: Array.isArray(d.day_types) ? d.day_types : [],
+            rvol: c?.rvol ?? null,
+            rangeUsedPct: c?.adr && c.day_range != null && c.adr > 0 ? (c.day_range / c.adr) * 100 : null,
+            ibRegime: c?.ib_regime ?? null,
+          })
+        }
+      }
+      baselinesBlock = baselinesPromptBlock(computeTraderBaselines(book, conditions))
     }
   } catch (e) {
     console.warn('[analyze-eod] baselines skipped:', e instanceof Error ? e.message : 'unknown')
