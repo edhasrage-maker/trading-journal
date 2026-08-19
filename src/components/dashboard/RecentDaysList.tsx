@@ -97,6 +97,13 @@ const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trade
 // has ever used this table keeps the old arrangement and never sees the change.
 const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v4'
 
+/** Date earns a wider column than the numbers — it carries a weekday, a month
+ *  and a date, plus any achievement coins — but only just: a quarter more. */
+const DATE_COL_RATIO = 1.25
+/** Selection checkbox and delete columns (Detailed only), as a share of the
+ *  table. Both hold a single small control. */
+const PINNED_COL_PCT = 3.5
+
 /** MFE:MAE ratio for the cell — "2.4:1", "∞" when a day never went adverse,
  *  "—" when either leg is missing. */
 function mfeMaeRatio(mfe: number | null, mae: number | null): string {
@@ -334,7 +341,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         direction={sortDirection}
         onSort={setSort}
         align="center"
-        className="pr-3 w-24"
+        className="pr-3"
         titleAttr="One 0-100 score per day — rules kept, execution quality, and prep blended. Hover a score for its components."
         thProps={dragProps('tapescore')}
       />
@@ -348,7 +355,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         direction={sortDirection}
         onSort={setSort}
         align="center"
-        className="pr-3 w-16"
+        className="pr-3"
         thProps={dragProps('trades')}
       />
     ),
@@ -361,7 +368,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         direction={sortDirection}
         onSort={setSort}
         align="center"
-        className="pr-3 w-16"
+        className="pr-3"
         titleAttr="Share of the day's trades that closed green."
         thProps={dragProps('win_rate')}
       />
@@ -370,7 +377,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
       <th
         key="mfe_mae"
         {...dragProps('mfe_mae')}
-        className={`font-normal py-2 pr-3 text-center w-20 ${dragProps('mfe_mae').className ?? ''}`}
+        className={`font-normal py-2 pr-3 text-center ${dragProps('mfe_mae').className ?? ''}`}
         title="Average favorable excursion vs. average adverse excursion — how much room the trades gave you relative to the heat you took."
       >
         <span className="text-gray-500">MFE:MAE</span>
@@ -380,7 +387,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
       <th
         key="capture"
         {...dragProps('capture')}
-        className={`font-normal py-2 pr-3 text-center w-16 ${dragProps('capture').className ?? ''}`}
+        className={`font-normal py-2 pr-3 text-center ${dragProps('capture').className ?? ''}`}
         title="Of the best point the trades reached in your favor, how much you kept at exit, on average."
       >
         <span className="text-gray-500">Profit Captured</span>
@@ -395,12 +402,16 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         direction={sortDirection}
         onSort={setSort}
         align="right"
-        className="pr-3 w-24 whitespace-nowrap"
+        className="pr-3 whitespace-nowrap"
         thProps={dragProps('pnl')}
       />
     ),
   }
   const effectiveOrder = isPro ? columnOrder : BEGINNER_COLUMN_ORDER
+  // One share per data column, Date 1.25 shares. The two pinned columns
+  // (selection, delete) exist only in Detailed and are taken off the top.
+  const columnUnitPct =
+    (100 - (isPro ? PINNED_COL_PCT * 2 : 0)) / (effectiveOrder.length + DATE_COL_RATIO)
 
   return (
     <>
@@ -443,7 +454,18 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
           scroll via trackpad / shift-wheel if needed, but doesn't reserve a
           chunky bar at the bottom of the dashboard for no reason. */}
       <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <table className="w-full text-sm">
+        {/* Every data column gets the same slice and Date takes a quarter
+            more, so the row reads as an even rhythm instead of one wide date
+            column and a huddle of numbers. Percentages (not fixed widths) keep
+            it right at any window size, and the count adapts to the mode —
+            Highlights shows four data columns, Detailed six. */}
+        <table className="w-full text-sm table-fixed">
+          <colgroup>
+            {isPro && <col style={{ width: `${PINNED_COL_PCT}%` }} />}
+            <col style={{ width: `${columnUnitPct * DATE_COL_RATIO}%` }} />
+            {effectiveOrder.map(id => <col key={id} style={{ width: `${columnUnitPct}%` }} />)}
+            {isPro && <col style={{ width: `${PINNED_COL_PCT}%` }} />}
+          </colgroup>
           <thead>
             <tr className="text-xs text-gray-500 border-b border-gray-800">
               {/* Selection checkbox column — Detailed only. */}
@@ -452,7 +474,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
                   without, so auto table layout handed it all the leftover space
                   and left a gulf between the date and the first number. Give it
                   a width of its own and the slack spreads across the row. */}
-              <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3 w-40 whitespace-nowrap" />
+              <SortableTh label="Date" column="date" current={sortColumn} direction={sortDirection} onSort={setSort} align="left" className="pr-3 whitespace-nowrap" />
               {/* Data columns. In Detailed these are draggable (held order lives
                   in columnOrder state, persisted to localStorage); Highlights
                   uses a fixed lean set. Date stays pinned (row identity); the
