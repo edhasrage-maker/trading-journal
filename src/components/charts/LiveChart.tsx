@@ -1258,14 +1258,25 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         const planned = '#9ca3af'   // grey — intent, not outcome
         const stopCol = '#ef4444'
         const tgtCol = '#22c55e'
+        const x = sel.exit_price
+        // Did the trade end AT one of its own levels? Most losers close exactly
+        // on the stop, so drawing a separate Exit line there would stack two
+        // lines and two labels on one price. Instead the level itself goes
+        // SOLID to say it was reached, while an untouched level stays dashed —
+        // now the dash carries meaning: dashed = planned, solid = happened.
+        const hit = (level: number | null | undefined) =>
+          x != null && level != null && Math.abs(x - level) < 0.01
+        const stopHit = hit(sel.stop_price)
+        const targetHit = hit(sel.tp1_price)
+
         addTradeLine(sel.entry_price, 'Entry', planned, false, 2)
-        addTradeLine(sel.stop_price, 'Stop', stopCol, true)
-        addTradeLine(sel.tp1_price, 'Target', tgtCol, true)
-        // The actual close, solid and coloured by whether it paid — the one
-        // line here that is outcome rather than plan.
-        if (sel.exit_price != null && sel.exit_price !== sel.entry_price) {
-          const won = (sel.pnl ?? 0) > 0
-          addTradeLine(sel.exit_price, 'Exit', won ? tgtCol : stopCol, false)
+        addTradeLine(sel.stop_price, stopHit ? 'Stop · hit' : 'Stop', stopCol, !stopHit)
+        addTradeLine(sel.tp1_price, targetHit ? 'Target · hit' : 'Target', tgtCol, !targetHit)
+        // A close that landed on neither — the discretionary exit, or a stop
+        // that slipped past its price. That gap is the whole point of showing
+        // this, so it gets its own line.
+        if (x != null && !stopHit && !targetHit && x !== sel.entry_price) {
+          addTradeLine(x, 'Exit', (sel.pnl ?? 0) > 0 ? tgtCol : stopCol, false)
         }
       }
     }
