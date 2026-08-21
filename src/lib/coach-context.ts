@@ -18,6 +18,7 @@ import { fetchOpenThread, coachingThreadPromptBlock } from './coaching-thread'
 import { getGiveBackAtr } from './atr-config-server'
 import { followFade, type Regime } from './market-structure'
 import { tagKey } from './tradezella-import'
+import { symbolRoot } from './futures-symbols'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -471,11 +472,15 @@ NO TRADE DATA — the trader logged no trades in this window.
   // than a fixed 1×ATR anchor — the median + round-trip are computed after the loop.
   const mfeSamples: Array<{ atr: number; usd: number | null; pnl: number }> = []
 
+  // Per-instrument excursion + performance, keyed by symbol root (ES / NQ / ...).
+  const instrumentBuckets = new Map<string, { n: number; wins: number; pnl: number; rSum: number; rN: number; mfeAtrSum: number; mfeAtrN: number; mfe2: number; mfe3: number; capSum: number; capN: number }>()
+
   for (const t of trades) {
     const pnl = t.pnl ?? 0
     const isWin = pnl > 0   // isWin is simply pnl > 0 (same across both sources)
 
-    // Excursion / MFE / MAE / round-trip / ×ATR — NATIVE ONLY. Historical
+
+  // Excursion / MFE / MAE / round-trip / ×ATR — NATIVE ONLY. Historical
     // (Tradezella) rows lack the logged stop + tick-precise in-trade extremes
     // these need, so they feed only the counting/tag/PnL aggregations below.
     // `r` / `capPct` / `mfeUsd` stay null for historical → their setup-bucket
@@ -487,6 +492,24 @@ NO TRADE DATA — the trader logged no trades in this window.
       const ex = interpretExcursion(t, giveBackAtr)
       r = ex.r; capPct = ex.capPct; mfeUsd = ex.mfeUsd
       const { leftUsd, mfeR, maePts, maePct, mfeAtr, maeAtr } = ex
+
+      // Per-instrument accumulation. ES and NQ move differently in ATR terms,
+      // so an aggregate that blends them can't answer "how often do my ES
+      // trades reach 3x ATR" — a question the coach was being asked and had to
+      // refuse, even though `symbol` was on every row it fetched.
+      if (t.symbol) {
+        const root = symbolRoot(t.symbol)
+        let ib = instrumentBuckets.get(root)
+        if (!ib) { ib = { n: 0, wins: 0, pnl: 0, rSum: 0, rN: 0, mfeAtrSum: 0, mfeAtrN: 0, mfe2: 0, mfe3: 0, capSum: 0, capN: 0 }; instrumentBuckets.set(root, ib) }
+        ib.n++; ib.pnl += pnl; if (isWin) ib.wins++
+        if (r != null) { ib.rSum += r; ib.rN++ }
+        if (capPct != null) { ib.capSum += capPct; ib.capN++ }
+        if (mfeAtr != null) {
+          ib.mfeAtrSum += mfeAtr; ib.mfeAtrN++
+          if (mfeAtr >= 2) ib.mfe2++
+          if (mfeAtr >= 3) ib.mfe3++
+        }
+      }
 
       // Collect the MFE sample — round-trip/give-back is computed after the loop
       // against the trader's MEDIAN move, not the fixed 1×ATR anchor.
@@ -662,6 +685,24 @@ NO TRADE DATA — the trader logged no trades in this window.
   }
   breachDates.sort((a, b) => b.localeCompare(a))
 
+  // Per-instrument summary. Built here rather than inline in the template so
+  // the string stays readable — and so the coach can answer "how often do my ES
+  // trades reach 3x ATR" instead of refusing for want of a split it never had.
+  const instrumentLines = Array.from(instrumentBuckets.entries())
+    .sort((a, b) => b[1].n - a[1].n)
+    .map(([root, b]) => {
+      const parts = [`${b.n} trades`, fmt(b.pnl), `WR ${Math.round((b.wins / b.n) * 100)}%`]
+      if (b.rN > 0) parts.push(`avg ${(b.rSum / b.rN).toFixed(2)}R`)
+      if (b.mfeAtrN > 0) {
+        parts.push(`mean MFE ${(b.mfeAtrSum / b.mfeAtrN).toFixed(2)}x ATR`)
+        parts.push(`reached >=2x ATR ${Math.round((b.mfe2 / b.mfeAtrN) * 100)}% (${b.mfe2}/${b.mfeAtrN})`)
+        parts.push(`>=3x ATR ${Math.round((b.mfe3 / b.mfeAtrN) * 100)}% (${b.mfe3}/${b.mfeAtrN})`)
+      }
+      if (b.capN > 0) parts.push(`captured ${Math.round((b.capSum / b.capN) * 100)}%`)
+      return `  ${root}: ${parts.join(' - ')}`
+    })
+    .join('\n') || '  (no native trades with an instrument in window)'
+
   // Recent trades (newest first, capped at recentTradesLimit)
   const recent = trades.slice(0, recentTradesLimit).map(t => {
     const date = t._date || '?'
@@ -676,7 +717,8 @@ NO TRADE DATA — the trader logged no trades in this window.
     const mae = d?.maePct ?? null
     const mfeAtr = d?.mfeAtr ?? null
     const maeAtr = d?.maeAtr ?? null
-    return `${date}${src} ${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''}${mfeAtr != null ? ` mfe×ATR=${mfeAtr.toFixed(2)}` : ''}${maeAtr != null ? ` mae×ATR=${maeAtr.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
+    const sym = t.symbol ? symbolRoot(t.symbol) : null
+    return `${date}${src} ${sym ? sym + ' ' : ''}${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''}${mfeAtr != null ? ` mfe×ATR=${mfeAtr.toFixed(2)}` : ''}${maeAtr != null ? ` mae×ATR=${maeAtr.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
   }).join('\n')
 
   // Optional week-over-week comparison — only meaningful for the chatbox's
@@ -938,6 +980,9 @@ ${Array.from(followFadeBuckets.entries()).map(([k, b]) => `  ${k === 'follow' ? 
 
 5M STRUCTURE ALIGNMENT (EMA-20 read; separate from the pivot follow/fade above — sparser, native SC-log imports only):
 ${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no structure_5m_alignment values yet — sparse; use the pivot follow/fade above)'}
+
+BY INSTRUMENT (ES and NQ move differently in ATR terms — use this bucket; the instrument split IS available, never say it is not):
+${instrumentLines}
 
 RECENT TRADES (newest first, terse format, capped at ${recentTradesLimit}):
 ${recent}
