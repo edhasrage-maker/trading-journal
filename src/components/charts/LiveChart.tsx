@@ -1268,10 +1268,17 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           x != null && level != null && Math.abs(x - level) < 0.01
         const stopHit = hit(sel.stop_price)
         const targetHit = hit(sel.tp1_price)
+        // A level sitting exactly ON the entry is never a real level — it is a
+        // field left equal to the fill, and drawing it stacks a second label on
+        // the entry and claims a plan that was never made. Same guard the
+        // level extractor applies; this one is about not DRAWING a falsehood,
+        // so it leaves the stored value alone.
+        const real = (level: number | null | undefined) =>
+          level != null && sel.entry_price != null && Math.abs(level - sel.entry_price) >= 0.01
 
         addTradeLine(sel.entry_price, 'Entry', planned, false, 2)
-        addTradeLine(sel.stop_price, stopHit ? 'Stop · hit' : 'Stop', stopCol, !stopHit)
-        addTradeLine(sel.tp1_price, targetHit ? 'Target · hit' : 'Target', tgtCol, !targetHit)
+        if (real(sel.stop_price)) addTradeLine(sel.stop_price, stopHit ? 'Stop · hit' : 'Stop', stopCol, !stopHit)
+        if (real(sel.tp1_price)) addTradeLine(sel.tp1_price, targetHit ? 'Target · hit' : 'Target', tgtCol, !targetHit)
         // A close that landed on neither — the discretionary exit, or a stop
         // that slipped past its price. That gap is the whole point of showing
         // this, so it gets its own line.
