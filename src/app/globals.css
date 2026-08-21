@@ -367,6 +367,16 @@ html[data-theme="light"] {
   --ts-proc: #9A6C18;
 }
 
+/* ── Brand lockup ───────────────────────────────────────────────────────────
+   The wordmark's colour is baked into the SVG, so it can't follow a CSS
+   variable the way text does — the ASSET has to change with the ground. Both
+   are rendered and CSS shows the one that suits; that keeps it correct for a
+   logged-out visitor on a share link, where there is no JS state to read and a
+   swap after hydration would flash the wrong mark. */
+.brand-on-dark, .brand-on-light { display: block; }
+html[data-theme="light"] .brand-on-dark { display: none; }
+html:not([data-theme="light"]) .brand-on-light { display: none; }
+
 /* White text on a SOLID colour fill must stay white — those buttons keep their
    dark background in light mode, so the re-pointed --color-white would make
    them unreadable. Scoped to saturated fills only: bg-gray-* + text-white is a
