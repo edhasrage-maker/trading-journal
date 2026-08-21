@@ -188,17 +188,30 @@ function atrSeries(bars: Bar[]): Array<number | null> {
 /** Session VWAP anchored at the RTH open (06:30 PT) of `date`, per bar index.
  *  Null for bars before the open — an overnight-anchored VWAP is a different
  *  reference and would quietly mean something else. */
-/** EMA of 1-minute closes, per bar index. The trader's footprint pane runs a
- *  9 and a 20 EMA on the 1-minute; the coach may read an entry as sitting on
- *  one, so the truth has to carry where they were at the entry bar. */
-function emaSeries(bars: Bar[], period: number): Array<number | null> {
+/** EMA of 5-MINUTE closes, per 1-minute bar index. The trader's chart runs
+ *  its 9 and 20 EMA on the 5-minute (nobody plots a 1m EMA — the earlier 1m
+ *  version produced false contradictions against drawn EMA labels). Buckets
+ *  are wall-clock floor(ms/5min) so gaps don't skew alignment; within the
+ *  developing bucket the EMA is stepped with the current close, the way a
+ *  live 5m chart paints it. */
+function emaSeries5m(bars: Bar[], period: number): Array<number | null> {
   const k = 2 / (period + 1)
-  let ema: number | null = null
-  return bars.map((b, i) => {
-    if (i < period - 1) return null
-    if (ema == null) { ema = bars.slice(0, period).reduce((s, x) => s + x.close, 0) / period; return ema }
-    ema = b.close * k + ema * (1 - k)
-    return ema
+  const closed: number[] = []            // closes of completed 5m buckets
+  let emaClosed: number | null = null    // EMA over completed buckets only
+  let bucket = -1
+  let lastClose = 0
+  return bars.map(b => {
+    const bk = Math.floor(new Date(b.ts).getTime() / 300000)
+    if (bucket !== -1 && bk !== bucket) {
+      closed.push(lastClose)
+      if (emaClosed == null && closed.length === period)
+        emaClosed = closed.reduce((a, x) => a + x, 0) / period
+      else if (emaClosed != null)
+        emaClosed = lastClose * k + emaClosed * (1 - k)
+    }
+    bucket = bk
+    lastClose = b.close
+    return emaClosed == null ? null : b.close * k + emaClosed * (1 - k)
   })
 }
 
@@ -352,7 +365,7 @@ function sessionMomentum(
   if (entryIdx - start < 10) return null
   const minsBefore = (i: number) => Math.round((entryMs - new Date(bars[i].ts).getTime()) / 60000)
   const band = adr && adr > 0 ? 0.05 * adr : atr
-  const MOVING = new Set(['VWAP', 'EMA 9', 'EMA 20'])
+  const MOVING = new Set(['VWAP', 'Weekly VWAP', 'EMA 9', 'EMA 20'])
   const isIb = (name: string) => name.startsWith('IB')
 
   // ── rejections ──
@@ -467,6 +480,54 @@ function priorWeekHL(bars: Bar[], date: string): { pwh: number; pwl: number } | 
     if (bd >= start && bd < end) { if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low; n++ }
   }
   return n > 100 ? { pwh: hi, pwl: lo } : null
+}
+
+/** Prior week's full-session volume profile — the "weekly value" the trader's
+ *  chart marks (Weekly V-up/-down). Same Mon-Fri window as priorWeekHL; full
+ *  session, not RTH-only. The 08-19 critique session exposed the gap: the TP
+ *  was parked one tick above Weekly V-up and the truth couldn't say so. */
+/** VWAP anchored at the trade week's first session (Sunday 15:00 PT). The
+ *  trader's chart plots this as "Week VWAP" — the 08-19 TP was parked one
+ *  tick above it (the transcript's "weekly view up" was VWAP misheard). */
+function weeklyVwapSeries(bars: Bar[], date: string): Array<number | null> {
+  const [y, m, d] = date.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  const dow = dt.getUTCDay()
+  const thisMon = new Date(dt); thisMon.setUTCDate(dt.getUTCDate() - ((dow + 6) % 7))
+  const sun = new Date(thisMon); sun.setUTCDate(thisMon.getUTCDate() - 1)
+  const sunIso = sun.toISOString().slice(0, 10)
+  const monIso = thisMon.toISOString().slice(0, 10)
+  let pv = 0, vol = 0, started = false
+  return bars.map(b => {
+    const { date: bd, sec } = ptParts(new Date(b.ts).getTime())
+    if (!started) {
+      if ((bd === sunIso && sec >= 15 * 3600) || bd >= monIso) started = true
+      else return null
+    }
+    const typical = (b.high + b.low + b.close) / 3
+    const v = b.volume ?? 0
+    pv += typical * v; vol += v
+    return vol > 0 ? pv / vol : null
+  })
+}
+
+function weekProfile(bars: Bar[], date: string, bucket: number, which: 'prior' | 'developing', endIdx: number): { poc: number; vah: number; val: number } | null {
+  const [y, m, d] = date.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  const dow = dt.getUTCDay()
+  const thisMon = new Date(dt); thisMon.setUTCDate(dt.getUTCDate() - ((dow + 6) % 7))
+  const prevMon = new Date(thisMon); prevMon.setUTCDate(thisMon.getUTCDate() - 7)
+  const iso = (x: Date) => x.toISOString().slice(0, 10)
+  const start = which === 'prior' ? iso(prevMon) : iso(thisMon)
+  const end = which === 'prior' ? iso(thisMon) : '9999'
+  const wk = bars.filter((b, i) => {
+    if (which === 'developing' && i > endIdx) return false
+    const { date: bd } = ptParts(new Date(b.ts).getTime())
+    return bd >= start && bd < end
+  })
+  if (wk.length < 100) return null
+  const p = volumeProfile(wk, bucket)
+  return p ? { poc: p.poc, vah: p.vah, val: p.val } : null
 }
 
 function sessionPhase(sec: number): string {
@@ -644,8 +705,8 @@ async function main() {
 
     const atrs = bars.length ? atrSeries(bars) : []
     const vwaps = bars.length ? vwapSeries(bars, date) : []
-    const ema9s = bars.length ? emaSeries(bars, 9) : []
-    const ema20s = bars.length ? emaSeries(bars, 20) : []
+    const ema9s = bars.length ? emaSeries5m(bars, 9) : []
+    const ema20s = bars.length ? emaSeries5m(bars, 20) : []
     const barAtr = entryIdx >= 0 ? atrs[entryIdx] : null
     const atr: number | null = t.entry_atr_1m ?? barAtr
     const atrSource = t.entry_atr_1m != null ? 'entry_atr_1m' : (barAtr != null ? 'bars' : 'none')
@@ -680,6 +741,14 @@ async function main() {
     // exactly as reliable as ibh/ibl.
     const ibRange = ctx.ibh != null && ctx.ibl != null ? ctx.ibh - ctx.ibl : null
     const pw = usableBars ? priorWeekHL(bars, date) : null
+    const pwBucket = atr ? Math.max(0.25, Math.round((atr / 20) * 4) / 4) : 1
+    const pwProf = usableBars ? weekProfile(bars, date, pwBucket, 'prior', entryIdx) : null
+    // Developing week-to-date value — what the trader's chart labels Weekly
+    // V-up/-down (the 08-19 TP sat one tick above THIS vah; prior week's was
+    // 60 pts away). Monday of the trade's week through the entry bar.
+    const wkProf = usableBars ? weekProfile(bars, date, pwBucket, 'developing', entryIdx) : null
+    const wkVwaps = bars.length ? weeklyVwapSeries(bars, date) : []
+    const wkVwapAtEntry = usableBars ? wkVwaps[entryIdx] : null
     const candidates: Array<[string, number | null]> = [
       ['IB high', ctx.ibh ?? null], ['IB low', ctx.ibl ?? null],
       ['PDH', ctx.pdh ?? null], ['PDL', ctx.pdl ?? null],
@@ -689,7 +758,10 @@ async function main() {
       ['IBL -50%', ibRange != null ? ctx.ibl - ibRange * 0.5 : null],
       ['IBL -100%', ibRange != null ? ctx.ibl - ibRange : null],
       ['PWH', pw?.pwh ?? null], ['PWL', pw?.pwl ?? null],
+      ['PW VAH', pwProf?.vah ?? null], ['PW VAL', pwProf?.val ?? null], ['PW POC', pwProf?.poc ?? null],
+      ['WK VAH', wkProf?.vah ?? null], ['WK VAL', wkProf?.val ?? null], ['WK POC', wkProf?.poc ?? null],
       ['VWAP', vwapAtEntry],
+      ['Weekly VWAP', wkVwapAtEntry],
       ['EMA 9', ema9AtEntry], ['EMA 20', ema20AtEntry],
     ]
     const levels: LevelRef[] = []
@@ -720,7 +792,7 @@ async function main() {
     // Moving lines (VWAP, EMAs) are excluded from "nearest" for the same
     // reason as VWAP always was: price lives on them, so they win proximity
     // on most trades and bury the structural level. Reported on the side.
-    const MOVING = new Set(['VWAP', 'EMA 9', 'EMA 20'])
+    const MOVING = new Set(['VWAP', 'Weekly VWAP', 'EMA 9', 'EMA 20'])
     const nearest = levels.find(l => !MOVING.has(l.name)) ?? null
     const vwapRef = levels.find(l => l.name === 'VWAP') ?? null
     const ema9Ref = levels.find(l => l.name === 'EMA 9') ?? null
@@ -863,6 +935,28 @@ async function main() {
     const riskPts = t.stop_price != null ? round(Math.abs(entry - t.stop_price)) : null
     const rMultiple = riskPts != null && riskPts > 0 && realizedPts != null
       ? round(realizedPts / riskPts) : null
+    //  Where was TP1 parked, against the reference levels? Bar space via the
+    //  entry-bar anchor (tp is contract space, levels are bar space — the roll
+    //  basis does not cancel). "Parked at" a level = asking the auction for
+    //  exactness there; the 08-19 trade missed such a TP by two ticks, twice.
+    let tpRef: { level: string; dist_pts: number; dist_atr: number | null; side: string; band: string | null } | null = null
+    let tpMissedBy: number | null = null
+    if (t.tp1_price != null && entryBar != null && usableBars) {
+      const tpBar = entryBar + (t.tp1_price - entry)
+      const staticLvls = levels.filter(l => !['VWAP', 'EMA 9', 'EMA 20'].includes(l.name))
+      let best: { level: string; d: number; side: string } | null = null
+      for (const L of staticLvls) {
+        const d = tpBar - L.price
+        if (best == null || Math.abs(d) < Math.abs(best.d)) best = { level: L.name, d, side: d > 0 ? 'above' : d < 0 ? 'below' : 'at' }
+      }
+      if (best && atr) {
+        const dAtr = Math.abs(best.d) / atr
+        tpRef = { level: best.level, dist_pts: round(Math.abs(best.d))!, dist_atr: round(dAtr),
+          side: best.side, band: dAtr <= 0.15 ? 'parked_at' : dAtr <= 0.5 ? 'near' : null }
+      }
+      const tpPts = isLong ? t.tp1_price - entry : entry - t.tp1_price
+      if (mfePts != null && tpPts > 0 && mfePts < tpPts) tpMissedBy = round(tpPts - mfePts)
+    }
 
     // ── truth: bar strip ──────────────────────────────────────────────────
     //  +/-30 1-min bars around entry, plus the exit bar and the 15 minutes
@@ -1036,6 +1130,8 @@ async function main() {
           post_exit_favorable_atr: inAtr(t.post_exit_favorable_pts),
           post_exit_against_pts: round(t.post_exit_against_pts),
           post_exit_against_atr: inAtr(t.post_exit_against_pts),
+          tp1_vs_reference: tpRef,
+          tp1_missed_by_pts: tpMissedBy,
           scaled_out: Array.isArray(t.exits_json) && t.exits_json.length > 1,
           legs: Array.isArray(t.exits_json) ? t.exits_json.length : null,
         },
