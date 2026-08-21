@@ -162,6 +162,8 @@ const AGG_SYSTEM = `You are this trader's screenshot coach, looking across a SET
 
 ${XY_LENS}
 
+If an input is not a question about these trades (a shell command, a stray paste), say so in ONE sentence and suggest a question they could ask — do not speculate about tools or ask them to paste anything.
+
 For an aggregate read: lead with the ONE pattern that most costs (or makes) this trader money in this set, with its count and dollars/R. Then two or three more, each with counts, in weight order. Compare against the baseline only where the difference is the point. Plain, direct, second person, his register — one sharp line at most. End with the single thing you'd have them do differently next week — concrete, checkable, from the data.`
 
 async function say(messages: Array<{ role: 'user' | 'assistant'; content: string }>): Promise<string> {
@@ -238,7 +240,12 @@ ${agg ? `<div class="agg"><b>Coach — across the set:</b>\n\n${esc(agg)}</div>`
     const rl = createInterface({ input: process.stdin, output: process.stdout })
     let closed = false
     rl.on('close', () => { closed = true })
-    console.log('\nchat with the coach about this set — "exit" to leave\n')
+    console.log(`
+chat with the coach about these ${set.length} trades — plain-English trading questions, "exit" to leave. e.g.:
+  what did my best trades in this set have in common?
+  is my stop placement the problem here, or the entries?
+  which of these should I simply never have taken?
+`)
     const ask = () => { if (closed) return; rl.question('you> ', async q => {
       q = q.trim()
       if (!q || q === 'exit' || q === 'quit') { rl.close(); return }
