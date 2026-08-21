@@ -41,7 +41,7 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { join, dirname } from 'path'
 import Anthropic from '@anthropic-ai/sdk'
-import { XY_LENS } from './screenshot-coach-lens'
+import { XY_LENS, COMMENTARY_ENGAGEMENT } from './screenshot-coach-lens'
 
 const argv = process.argv.slice(2)
 const has = (n: string) => argv.includes(`--${n}`)
@@ -283,6 +283,8 @@ What "good" means here: the trade was placed where the context gave it a reason 
 
 ${XY_LENS}
 
+${COMMENTARY_ENGAGEMENT}
+
 Rules:
 1. Elements the bars CONTRADICTED are wrong. State the tape's version; do not hedge, do not narrate the correction, and never attribute your own blind read to the trader ("the label you saw", "what you thought was IBH +100%") — the trader never saw your read. Elements marked partial or unverifiable may be mentioned only as what the chart showed.
 2. Every number you write must be copied from TRUTH, or be a price read in VERIFICATION.price_reads whose status is "confirmed" (or a drawn_level marked unverifiable — call it the trader's own line and use its dist_atr_from_entry / touches). Give units (ATR, ADR, pts, %, R). A contradicted price read is a misread — never mention it. Nothing else off the image.
@@ -290,7 +292,8 @@ Rules:
 4. Lead with the verdict. Then two or three sentences of reasons, in order of weight — the thing that most decides the verdict first. Weight order: middle of a node / no real level, offsides against confirmed momentum, and a third-or-later attempt weigh most; against the swing structure and IB chop next; ATR regime and session phase after that. Only session_momentum.trade_is === "offsides" earns the offsides language — never "against_weak", and never your own eyeball of the chart. When it IS "offsides", say it in the trader's terms — name the level that rejected, which way price went, and that the trade went back into it ("we rejected PWH, sold off 5 ATR, and you bought the retrace") — and if mitigation is set, say the fade had a reason and name the risk instead of calling it offsides outright. Outcome is not a reason: capture %, R multiple and P&L never make a trade good or bad here — a 3R winner into the middle of a node in chop is still not a good trade, and a stopped-out first touch of a real level with structure is still a good one. Mention the outcome only under rule 6. Plain, direct, second person, no headers, no bullet points, no hedging language ("somewhat", "arguably", "it could be said"). The register is Xyzeee's: blunt and vivid — "you bought the retrace of a rejection; that's the losing team", "you overpaid for the ticket" — one sharp line per read at most, never mockery, and outcome still never a reason. If the context is genuinely thin (no profile, no structure read, no attempts), say the verdict rests on less and name what's missing.
 5. dropped is a terse list — "level_in_play: IBH +100%", "stop_order 30207 (recorded 30212)" — one short item per dropped element, no sentences.
 6. If the exit is itself a finding (closed with 0% captured and price then ran 2 ATR your way; or a runner held past a level that had already rejected), say so with the numbers, as a separate sentence after the verdict's reasons. If it isn't, leave the outcome out entirely.
-7. footprint_observation is words only — what the pane showed — never a number of any kind.`
+7. footprint_observation is words only — what the pane showed — never a number of any kind.
+8. on_your_read is your answer to his own account, above — one to three sentences, and the ONLY place his tags and note are addressed. Rule 3 still governs the read field: that field judges the trade, not the trader. Write null only when he gave no tags and no note; "no comment from you on this one" is not a reply, and neither is agreement with nothing added.`
 
 const WRITE_SCHEMA = {
   type: 'object',
@@ -299,12 +302,13 @@ const WRITE_SCHEMA = {
     read: { type: 'string', description: 'Verdict first, then the reasons — 3 to 5 sentences total, second person, numbers only from TRUTH or confirmed price reads.' },
     dropped: { type: 'array', items: { type: 'string' } },
     footprint_observation: { type: ['string', 'null'], description: 'What the footprint pane showed, labelled as unverified. Null if no pane or nothing notable.' },
+    on_your_read: { type: ['string', 'null'], description: "Your answer to the trader's OWN account (his tags and note) - 1 to 3 sentences, second person, naming the claim you are answering. Null only when he left no tags and no note." },
   },
-  required: ['verdict', 'read', 'dropped', 'footprint_observation'],
+  required: ['verdict', 'read', 'dropped', 'footprint_observation', 'on_your_read'],
   additionalProperties: false,
 } as const
 
-interface WriteUp { verdict: 'good' | 'not_good' | 'mixed'; read: string; dropped: string[]; footprint_observation: string | null }
+interface WriteUp { verdict: 'good' | 'not_good' | 'mixed'; read: string; dropped: string[]; footprint_observation: string | null; on_your_read: string | null }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function packageTruth(r: any) {
@@ -362,6 +366,7 @@ function overclaims(w: WriteUp, truthPkg: unknown, claimText: string, ver: Verif
     }
   }
   check('read', w.read)
+  check('on_your_read', w.on_your_read)
   if (w.footprint_observation && numbersIn(w.footprint_observation).length) bad.push(`footprint: contains numbers (${numbersIn(w.footprint_observation).join(', ')})`)
   return bad
 }
@@ -398,6 +403,7 @@ function writeText(r: any, blind: BlindRead, ver: Verification, truthPkg: unknow
     ``, `BLIND READ (yours, from the image alone):`, JSON.stringify(blind, null, 1),
     ``, `VERIFICATION (each element vs the bar record):`, JSON.stringify(ver, null, 1),
     ``, `TRUTH (bar-derived; the only source of numbers):`, JSON.stringify(truthPkg, null, 1),
+    '', `THE TRADER'S OWN ACCOUNT (his claim — input, not truth):`, JSON.stringify(r.claim ?? null, null, 1),
   ].join('\n')
 }
 

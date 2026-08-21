@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "coach-tool",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "scripts/screenshot-coach-tool.ts"],
+      "port": 5178
+    }
+  ]
+}
