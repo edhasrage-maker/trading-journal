@@ -1202,8 +1202,15 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       const dim = prefs.levelColor
       addLine(L.pdh, 'PDH', grey)
       addLine(L.pdl, 'PDL', grey)
-      addLine(L.pdhFull, 'PDH·F', dim, true)
-      addLine(L.pdlFull, 'PDL·F', dim, true)
+      // The full-session extreme only says something when it differs from the
+      // RTH one. On a day whose high came during RTH the two are the same
+      // price, and drawing both stacks "PDH" and "PDH·F" on one line — two
+      // labels implying two levels where the market only made one. Draw ·F
+      // solely when it actually sits somewhere else.
+      const same = (a: number | null | undefined, b: number | null | undefined) =>
+        a != null && b != null && Math.abs(a - b) < 0.01
+      if (!same(L.pdhFull, L.pdh)) addLine(L.pdhFull, 'PDH·F', dim, true)
+      if (!same(L.pdlFull, L.pdl)) addLine(L.pdlFull, 'PDL·F', dim, true)
       addLine(L.onh, 'ONH', grey)
       addLine(L.onl, 'ONL', grey)
       // IBH/IBL reflect the ACTIVE session's IB (per the session prop); label
