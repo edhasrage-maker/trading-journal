@@ -376,13 +376,28 @@ interface SessionMomentum {
   confirmed: boolean
   last_rejection: { level: string; price: number; direction: 'up' | 'down'; minutes_before_entry: number; travel_pts: number; travel_atr: number | null; retraced_pct_at_entry: number | null } | null
   last_swing: { type: 'HH' | 'LH' | 'HL' | 'LL'; price: number; minutes_before_entry: number } | null
-  trade_is: 'with' | 'offsides' | null
+  trade_is: 'with' | 'offsides' | 'against_weak' | null
+  offsides_basis: 'confirmed' | 'pullback' | null
+  not_offsides_because: string | null
   mitigation: string | null
   label: string
 }
 const MOMENTUM_FROM_SEC = 5 * 3600 + 30 * 60      // 05:30 PT — pre-open ramp counts, the Asian session doesn't
 const IB_DONE_SEC = 7 * 3600 + 30 * 60            // IB-derived levels don't exist before 07:30 PT
 const REJECT_TRAVEL_ATR = 1.5
+// ── the OFFSIDES gate (2026-08-21) ────────────────────────────────────────
+//  The first cut flagged 67 of 159 trades (42%). The owner's read: over-flagged,
+//  and it separated nothing (offsides won 45%, the book won 45%). The cause was
+//  that ANY disagreeing bias flagged — one-signal reads, hour-old rejections and
+//  2 ATR shoves included. "Offsides" has to mean the market gave a LIVE, DECISIVE
+//  answer and the trade took the other side; anything weaker is a direction note
+//  ('against_weak'), not a flag. Validated against the trades the owner named by
+//  hand — 08-17 08:43 long and the three 08-18 shorts ARE offsides, 08-19 08:44
+//  long is NOT: 42% -> 26% flagged, all four named still flagged, 08-19 still not.
+const OFFSIDES_REJ_MAX_AGE_MIN = 45   // an hour-old rejection is not the current answer
+const OFFSIDES_TRAVEL_ATR = 4         // confirmed: the leg has to be decisive, not a shove
+const OFFSIDES_RETRACE_MAX = 75       // confirmed: a leg already given back is spent
+const OFFSIDES_PULLBACK_RETRACE = 30  // pullback: the counter-leg has to be FAILING
 function sessionMomentum(
   bars: Bar[], entryIdx: number, date: string, levels: LevelRef[], atr: number | null, adr: number | null,
   isLong: boolean, mitigation: string | null,
@@ -482,16 +497,44 @@ function sessionMomentum(
     if (rejBias === swingBias) { bias = rejBias; confirmed = true }
     else { bias = swingBias; pullback = true }
   } else bias = rejBias ?? swingBias
-  const tradeIs = bias ? ((isLong && bias === 'up') || (!isLong && bias === 'down') ? 'with' : 'offsides') : null
+  // Retrace always cuts AGAINST the rejection leg — one principle, read with two
+  // signs. When the rejection IS the bias (confirmed), a leg that has been given
+  // back is spent and the flag weakens. When the rejection runs AGAINST the bias
+  // (pullback), the standing structure only still rules if that counter-leg is
+  // failing — 08-18 09:23 was 44% retraced by entry and the owner called that
+  // short offsides; a fresh, unretraced counter-leg is a market that may be
+  // turning, and calling the trade offsides there is a guess, not a read.
+  const agrees = bias ? ((isLong && bias === 'up') || (!isLong && bias === 'down')) : null
+  let offsidesBasis: SessionMomentum['offsides_basis'] = null
+  let notBecause: string | null = null
+  if (bias && agrees === false) {
+    const age = lastRej?.minutes_before_entry ?? null
+    const travel = lastRej?.travel_atr ?? null
+    const retr = lastRej?.retraced_pct_at_entry ?? null
+    if (!lastRej || !lastSwing) notBecause = 'only one momentum signal — a rejection with no swing, or a swing with no rejection'
+    else if (age != null && age > OFFSIDES_REJ_MAX_AGE_MIN) notBecause = `the rejection was ${age} min old by entry`
+    else if (confirmed) {
+      if (travel != null && travel < OFFSIDES_TRAVEL_ATR) notBecause = `the leg away from the level was only ${travel} ATR`
+      else if (retr != null && retr >= OFFSIDES_RETRACE_MAX) notBecause = `${retr}% of that leg was already given back by entry`
+      else offsidesBasis = 'confirmed'
+    } else if (retr == null || retr < OFFSIDES_PULLBACK_RETRACE) {
+      notBecause = `the move against that structure was still fresh (${retr ?? 0}% given back) — the market may be turning`
+    } else offsidesBasis = 'pullback'
+  }
+  const tradeIs: SessionMomentum['trade_is'] = !bias ? null : agrees ? 'with' : offsidesBasis ? 'offsides' : 'against_weak'
 
   const swingWord = (t: string) => t === 'HH' ? 'higher high' : t === 'LH' ? 'lower high' : t === 'HL' ? 'higher low' : 'lower low'
   const parts: string[] = []
   if (lastRej) parts.push(`${pullback ? 'pulled back from' : 'rejected'} ${lastRej.level} — left it ${lastRej.minutes_before_entry} min before entry and travelled ${lastRej.travel_atr} ATR ${lastRej.direction} since${lastRej.retraced_pct_at_entry != null && lastRej.retraced_pct_at_entry >= 25 ? `, ${lastRej.retraced_pct_at_entry}% of that already given back by entry` : ''}`)
   if (lastSwing) parts.push(`last completed 5m swing a ${swingWord(lastSwing.type)} (${lastSwing.minutes_before_entry} min before entry)`)
   const biasTxt = bias ? `momentum ${bias}${confirmed ? ' (rejection and swing agree)' : pullback ? ' by structure — the pullback has not printed a swing against it yet' : ' (one signal only)'}` : 'no momentum read'
-  const tradeTxt = tradeIs ? `${isLong ? 'long' : 'short'} is ${tradeIs === 'with' ? 'WITH momentum' : 'OFFSIDES'}${tradeIs === 'offsides' && mitigation ? ` — but ${mitigation}` : ''}` : ''
+  const side = isLong ? 'long' : 'short'
+  const tradeTxt = tradeIs === 'with' ? `${side} is WITH momentum`
+    : tradeIs === 'offsides' ? `${side} is OFFSIDES${mitigation ? ` — but ${mitigation}` : ''}`
+    : tradeIs === 'against_weak' ? `${side} is against that momentum, but not OFFSIDES — ${notBecause}`
+    : ''
   const label = [parts.join('; '), biasTxt, tradeTxt].filter(Boolean).join(' — ')
-  return { bias, confirmed, last_rejection: lastRej, last_swing: lastSwing, trade_is: tradeIs, mitigation: tradeIs === 'offsides' ? mitigation : null, label }
+  return { bias, confirmed, last_rejection: lastRej, last_swing: lastSwing, trade_is: tradeIs, offsides_basis: offsidesBasis, not_offsides_because: notBecause, mitigation: tradeIs === 'offsides' ? mitigation : null, label }
 }
 
 /** Prior week's high/low from the bars whose PT date falls in the Mon–Fri

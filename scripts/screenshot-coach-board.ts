@@ -107,6 +107,7 @@ function stats(list: Row[]): Record<string, string> {
   const pnl = list.reduce((s, r) => s + pnlOf(r), 0)
   const off = list.filter(r => ctx(r).session_momentum?.trade_is === 'offsides').length
   const withM = list.filter(r => ctx(r).session_momentum?.trade_is === 'with').length
+  const weak = list.filter(r => ctx(r).session_momentum?.trade_is === 'against_weak').length
   const rep = list.filter(r => (ctx(r).attempts_before?.count ?? 0) >= 2)
   const hvnMid = list.filter(r => filters['mid-node'](r))
   const caps = list.map(r => ex(r).capture_pct).filter((x: any) => x != null).sort((a: number, b: number) => a - b)
@@ -117,7 +118,7 @@ function stats(list: Row[]): Record<string, string> {
   const wr = (xs: Row[]) => xs.length ? `${xs.filter(r => pnlOf(r) > 0).length}/${xs.length}` : '0/0'
   return {
     'trades': `${n} — ${wins}/${n} won, ${pnl >= 0 ? '+' : ''}$${Math.round(pnl)}`,
-    'momentum': `${withM} with · ${off} offsides (offsides won ${wr(list.filter(r => ctx(r).session_momentum?.trade_is === 'offsides'))})`,
+    'momentum': `${withM} with · ${off} offsides (won ${wr(list.filter(r => ctx(r).session_momentum?.trade_is === 'offsides'))}) · ${weak} against a momentum read too weak to call offsides`,
     'repeat attempts (2nd+)': `${rep.length} of ${n} (won ${wr(rep)})`,
     'mid-node entries': `${hvnMid.length} of ${n} (won ${wr(hvnMid)})`,
     'median capture': caps.length ? `${caps[Math.floor(caps.length / 2)]}%  ·  ${zeroCap} took 0% of a ≥1 ATR move` : '—',
@@ -182,7 +183,7 @@ function card(r: Row): string {
   const m = ctx(r).session_momentum
   const cached = readsBy.get(r.trade_id)
   const chip = cached ? `<span class="chip v-${esc(cached.verdict)}">${esc(cached.verdict.replace('_', ' '))}${cached.vintage === 'v4' ? ' ·v4' : ''}</span>` : `<span class="chip v-none">unread</span>`
-  const momo = m?.trade_is === 'offsides' ? `<b class="off">OFFSIDES</b>` : m?.trade_is === 'with' ? 'with' : '—'
+  const momo = m?.trade_is === 'offsides' ? `<b class="off">OFFSIDES</b>` : m?.trade_is === 'with' ? 'with' : m?.trade_is === 'against_weak' ? 'against (weak)' : '—'
   const tpBits = [
     ex(r).tp1_vs_reference ? `${ex(r).tp1_vs_reference.dist_pts}pts ${esc(ex(r).tp1_vs_reference.side)} ${esc(ex(r).tp1_vs_reference.level)}` : null,
     ex(r).tp1_missed_by_pts != null ? `missed by ${ex(r).tp1_missed_by_pts}` : null,

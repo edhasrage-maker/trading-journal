@@ -87,7 +87,9 @@ function observe(rs: Rec[], label: string): Obs[] {
   const byMo: Record<string, typeof rs> = {}
   for (const r of rs) { const v = r.truth.context?.session_momentum?.trade_is; if (v) (byMo[v] ??= []).push(r) }
   bucketLine('momentum', byMo, (k, b) => k === 'offsides'
-    ? `offsides — against the session's momentum (a level rejected, price travelled, and you traded back into it): ${b.length} of ${n}`
+    ? `offsides — against a live, decisive session momentum (a level rejected, price travelled, and you traded back into it): ${b.length} of ${n}`
+    : k === 'against_weak'
+    ? `against the session's momentum, but the read was too weak to call it offsides: ${b.length} of ${n}`
     : `with the session's momentum: ${b.length} of ${n}`)
 
   // 3. attempts
