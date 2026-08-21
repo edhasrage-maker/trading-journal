@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import ThemeToggle from '@/components/ThemeToggle'
+import BrandLockup from '@/components/BrandLockup'
 
 /**
  * The app masthead — top text nav, no left rail.
@@ -56,22 +57,6 @@ const settingsItems = [
   { href: '/settings/sc-logs', label: 'SC Archives', localOnly: true, cloudOnly: false, adminOnly: true },
 ]
 
-/** Brand lockup — film-frame mark + Tape(light)/Score(bold) wordmark. */
-function Brand({ className }: { className?: string }) {
-  return (
-    <Link href="/dashboard" className={cn('flex items-center gap-2.5 flex-shrink-0', className)}>
-      {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
-      <img src="/brand/tapescore-favicon.svg" alt="" aria-hidden className="w-7 h-7" />
-      <span
-        className="text-[18px] tracking-tight text-gray-100 whitespace-nowrap"
-        style={{ fontFamily: 'var(--font-display)' }}
-      >
-        <span className="font-light">Tape</span><span className="font-bold">Score</span>
-      </span>
-      <span className="sr-only">TapeScore home</span>
-    </Link>
-  )
-}
 
 /** Highlights / Detailed Tape — the view toggle, text-only with an underline. */
 // Two invented labels sitting in the masthead with nothing to say what they do:
@@ -257,7 +242,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
     <>
       {/* ── Desktop masthead (md+) ─────────────────────────────────────── */}
       <header className="hidden md:flex fixed top-0 inset-x-0 z-40 h-[62px] items-center gap-8 px-8 bg-gray-950 border-b border-gray-800">
-        <Brand />
+        <BrandLockup href="/dashboard" />
 
         <nav className="flex items-center gap-0.5 flex-1 min-w-0">
           {navItems.map(({ href, label, match }) => {
@@ -360,7 +345,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
              Nav itself is the bottom tab bar, matching the mockup's narrow
              composition (masthead collapses, label + toggle kept). ──────── */}
       <div className="md:hidden fixed top-0 inset-x-0 h-14 z-30 flex items-center gap-3 px-4 bg-gray-950 border-b border-gray-800">
-        <Brand />
+        <BrandLockup href="/dashboard" />
         {activeLabel && (
           <span className="text-[13px] font-semibold text-gray-100 truncate">{activeLabel}</span>
         )}

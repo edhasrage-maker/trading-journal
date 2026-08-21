@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import LiveChart, { type ChartPrefs } from '@/components/charts/LiveChart'
+import BrandLockup from '@/components/BrandLockup'
 import ScreenshotLightbox from '@/components/intraday/ScreenshotLightbox'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
 import { chartSeriesRoot, symbolToMultiplier } from '@/lib/futures-symbols'
@@ -108,12 +109,9 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
     <div className="min-h-screen bg-gray-950 text-gray-200">
       <header className="border-b border-gray-800">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-          {/* Two assets, one shown — see .brand-on-* in globals.css. The
-              wordmark is near-white and was invisible on the light ground. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/tapescore-logo.svg" alt="TapeScore" className="brand-on-dark h-9 w-auto" />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/tapescore-logo-light.svg" alt="" aria-hidden className="brand-on-light h-9 w-auto" />
+          {/* The same lockup the app's own masthead uses, so a shared session
+              is unmistakably the same product. */}
+          <BrandLockup />
           <span className="text-xs font-mono uppercase tracking-widest text-blue-500">Shared for review</span>
         </div>
       </header>
