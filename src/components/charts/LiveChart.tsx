@@ -524,6 +524,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // Hover-to-show-trade (task 3). tradesRef keeps the crosshair handler (set up
   // once) reading the latest trades without re-subscribing.
   const [hover, setHover] = useState<HoverInfo | null>(null)
+  /** Trade pinned by clicking its arrow. Hover is too fleeting to study a plan
+   *  against what happened — you have to be able to let go of the mouse. Click
+   *  again, or on empty chart, to release it. */
+  const [pinnedTradeId, setPinnedTradeId] = useState<string | null>(null)
   const tradesRef = useRef<Trade[]>(trades)
   useEffect(() => { tradesRef.current = trades }, [trades])
   // While a trade row is hovered we drive the crosshair programmatically; this
@@ -685,10 +689,15 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
         activateArrow(id)
       } else {
         lastArrowClickRef.current = { id, t: now }
+        // Single click was inert. Now it pins the trade, holding its plan
+        // (entry/stop/target) on the price scale so it can be read without
+        // keeping the cursor still. Clicking the same arrow releases it.
+        setPinnedTradeId(cur => (cur === id ? null : id))
       }
       return
     }
     lastArrowClickRef.current = null
+    setPinnedTradeId(null)
     if (!hover) return
     suppressCrosshairRef.current = false
     chartRef.current?.clearCrosshairPosition()
@@ -1163,23 +1172,34 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     priceLinesRef.current = []
     levelLinesRef.current = []
     const L = levels?.levels
+    const hidden = new Set(prefs.hiddenLevels)
+    const addLine = (price: number | null | undefined, title: string, color: string, dashed = false) => {
+      if (price == null || !Number.isFinite(price)) return
+      if (hidden.has(title)) return
+      levelLinesRef.current.push({ key: title, price })
+      priceLinesRef.current.push(candleRef.current!.createPriceLine({
+        price,
+        color,
+        lineWidth: 1,
+        lineStyle: dashed ? 2 : 0,
+        axisLabelVisible: true,
+        title,
+      }))
+    }
+    /** A line belonging to the SELECTED trade rather than the session. Not
+     *  recorded in levelLinesRef and not subject to hiddenLevels: these appear
+     *  only while a trade is picked and vanish with it, so the right-click
+     *  "hide this level" affordance would have nothing to act on. */
+    const addTradeLine = (price: number | null | undefined, title: string, color: string, dashed: boolean, width: 1 | 2 = 1) => {
+      if (price == null || !Number.isFinite(price)) return
+      priceLinesRef.current.push(candleRef.current!.createPriceLine({
+        price, color, lineWidth: width, lineStyle: dashed ? 2 : 0,
+        axisLabelVisible: true, title,
+      }))
+    }
     if (L && prefs.showLevels) {
       const grey = prefs.levelColor
       const dim = prefs.levelColor
-      const hidden = new Set(prefs.hiddenLevels)
-      const addLine = (price: number | null | undefined, title: string, color: string, dashed = false) => {
-        if (price == null || !Number.isFinite(price)) return
-        if (hidden.has(title)) return
-        levelLinesRef.current.push({ key: title, price })
-        priceLinesRef.current.push(candleRef.current!.createPriceLine({
-          price,
-          color,
-          lineWidth: 1,
-          lineStyle: dashed ? 2 : 0,
-          axisLabelVisible: true,
-          title,
-        }))
-      }
       addLine(L.pdh, 'PDH', grey)
       addLine(L.pdl, 'PDL', grey)
       addLine(L.pdhFull, 'PDH·F', dim, true)
@@ -1218,8 +1238,37 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // and reveals labels: the entry shows DIR + size @ price, exits show
     // size @ price. Exits are GROUPED by display-TF time bucket so multiple
     // fills in the same bucket render as ONE arrow at the volume-weighted avg.
-    const hoveredId = hover?.trade?.id ?? hoverTradeId ?? null
+    const hoveredId = hover?.trade?.id ?? hoverTradeId ?? pinnedTradeId ?? null
     const fmtPx = (p: number) => (Number.isInteger(p) ? String(p) : String(+p.toFixed(2)))
+
+    // ── The picked trade's PLAN, drawn against what actually happened ────────
+    // Entry, stop and target are what the trader committed to before the trade
+    // resolved; the exit is where it really ended. Side by side on the price
+    // scale they answer the question the arrows alone can't: was this stop hit,
+    // or abandoned? Did price reach the target after an early exit? Was the
+    // target ever plausible given where price went?
+    //
+    // Only while a trade is picked — these would be noise across a whole
+    // session, and they are the one set of lines that belongs to a single trade
+    // rather than the day. Missing levels simply don't draw, which is itself
+    // informative: an imported trade with no stop shows entry and exit only.
+    if (hoveredId) {
+      const sel = trades.find(t => t.id === hoveredId)
+      if (sel) {
+        const planned = '#9ca3af'   // grey — intent, not outcome
+        const stopCol = '#ef4444'
+        const tgtCol = '#22c55e'
+        addTradeLine(sel.entry_price, 'Entry', planned, false, 2)
+        addTradeLine(sel.stop_price, 'Stop', stopCol, true)
+        addTradeLine(sel.tp1_price, 'Target', tgtCol, true)
+        // The actual close, solid and coloured by whether it paid — the one
+        // line here that is outcome rather than plan.
+        if (sel.exit_price != null && sel.exit_price !== sel.entry_price) {
+          const won = (sel.pnl ?? 0) > 0
+          addTradeLine(sel.exit_price, 'Exit', won ? tgtCol : stopCol, false)
+        }
+      }
+    }
     const arrows: TradeArrow[] = []
     // Parallel hit-targets (same time/price as each arrow) tagged with the trade
     // id, for double/right-click mapping.
@@ -1509,7 +1558,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // `highlights` is a dep because the chips are built in this same pass:
     // without it, toggling a highlight wouldn't repaint until something else
     // happened to invalidate the effect.
-  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId, session, highlights])
+  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId, pinnedTradeId, session, highlights])
 
   // Row-hover ↔ chart link: when a trade is hovered in the EOD list, drop the
   // crosshair on its entry (highlight where it was) and show the same
