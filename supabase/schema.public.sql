@@ -468,6 +468,16 @@ begin
     'chart_prefs', (
       select value from public.chart_prefs
       where user_id = v_owner and key = 'livechart-prefs-v2' limit 1
+    ),
+    -- Owner's drawings for this day. Without these the recipient sees a bare
+    -- chart: LiveChart's own /api/annotations fetch runs under the CALLER's
+    -- RLS, so it returns rows only for the owner. user_id below is redundant
+    -- with the day scope but stated anyway — this function runs with RLS
+    -- bypassed, so the WHERE clause IS the tenancy check.
+    'annotations', (
+      select coalesce(jsonb_agg(to_jsonb(a) order by a.created_at), '[]'::jsonb)
+      from public.chart_annotations a
+      where a.trading_day_id = v_day_id and a.user_id = v_owner
     )
   );
 end $$;

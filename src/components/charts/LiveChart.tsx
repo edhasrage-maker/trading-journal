@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2, Pencil, Type as TypeIcon, Highlighter } from 'lucide-react'
+import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2, Pencil, Type as TypeIcon, Highlighter, Eye, EyeOff } from 'lucide-react'
 import {
   createChart,
   CandlestickSeries,
@@ -68,7 +68,19 @@ interface Props {
   /** In read-only mode, the OWNER's appearance prefs (colors) to render with —
    *  so a shared chart shows the owner's scheme, not the viewer's. */
   prefsOverride?: Partial<ChartPrefs> | null
+  /** The OWNER's drawings, handed in rather than fetched. The self-fetch below
+   *  hits /api/annotations, which resolves the day under the CALLER's RLS — on
+   *  a share link that returns the owner's drawings only when the owner is the
+   *  one looking, and nothing for everyone else. Supply this (or pass readOnly)
+   *  and the self-fetch is skipped entirely, so what the owner sees on their own
+   *  share link is what a logged-out visitor sees. */
+  annotationsOverride?: SharedAnnotation[] | null
 }
+
+/** A stored annotation row as it arrives from the API / share payload. The
+ *  primitive's ChartAnnotation is the render shape; `symbol` rides along
+ *  because drawings are scoped per instrument as well as per day. */
+export type SharedAnnotation = ChartAnnotation & { symbol?: string | null }
 
 interface ApiBar {
   ts: string
@@ -312,7 +324,7 @@ export interface LiveChartHandle {
  *     to /settings/bars
  */
 const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
-  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onHighlightTrade, highlights, onDismissHover, onLevels, session = 'rth', readOnly = false, prefsOverride = null },
+  { date, symbol, trades, symbolOptions, onSymbolChange, height = 480, refreshKey = 0, hoverTradeId = null, onTradeActivate, onHighlightTrade, highlights, onDismissHover, onLevels, session = 'rth', readOnly = false, prefsOverride = null, annotationsOverride = null },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1641,7 +1653,20 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
 
   // ── Annotations: load, render, draw ────────────────────────────────────
   // Load saved zones for this (symbol, date). Best-effort — never blocks the chart.
+  //
+  // Read-only surfaces NEVER take this path. /api/annotations resolves the
+  // trading day for whoever is calling, so on a share link it hands the owner
+  // their drawings and every recipient an empty list — a bug that looks fixed
+  // from the owner's own browser. Read-only renders exactly what the payload
+  // carried, which is the same thing a logged-out visitor gets.
   useEffect(() => {
+    if (readOnly) {
+      const rows = annotationsOverride ?? []
+      // Mirror the API's own filter: with a symbol active, show that
+      // instrument's drawings only, so an NQ zone never bleeds onto ES.
+      setAnnotations(symbol ? rows.filter(a => a.symbol === symbol) : rows)
+      return
+    }
     let cancelled = false
     ;(async () => {
       try {
@@ -1653,7 +1678,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       } catch { /* annotations are best-effort */ }
     })()
     return () => { cancelled = true }
-  }, [date, symbol])
+  }, [date, symbol, readOnly, annotationsOverride])
 
   // Push annotations (with current selection) into the primitive on any change.
   useEffect(() => {
@@ -1958,6 +1983,28 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           </div>
         </div>
         <div className="flex items-center gap-3 text-[10px]">
+          {/* One click to strip the chart back to your own work. Session levels
+              (PDH/PDL/ONH/ONL/IBH/IBL/…) are the only thing this hides: your
+              drawings live on a separate primitive and the selected trade's
+              entry/stop/target/exit are drawn outside the level gate, so both
+              survive. Same pref as the Settings checkbox — this is the
+              affordance, not a second setting. */}
+          <button
+            type="button"
+            onClick={() => updatePref({ showLevels: !prefs.showLevels })}
+            aria-pressed={!prefs.showLevels}
+            title={prefs.showLevels
+              ? 'Hide session levels (PDH/ONH/IBH…) — your drawings and the selected trade stay'
+              : 'Session levels hidden — click to bring them back'}
+            className={`flex items-center gap-1 rounded px-1.5 py-0.5 border transition-colors ${
+              prefs.showLevels
+                ? 'border-transparent text-gray-500 hover:text-gray-200 hover:bg-gray-800'
+                : 'border-blue-700 bg-blue-950/60 text-blue-300 hover:bg-blue-900/60'
+            }`}
+          >
+            {prefs.showLevels ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+            Levels
+          </button>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.vwapColor }} />VWAP</span>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema9Color }} />EMA 9</span>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema20Color }} />EMA 20</span>

@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import SharedDayView from './SharedDayView'
 import type { Trade, TradingDay } from '@/lib/supabase/types'
-import type { ChartPrefs } from '@/components/charts/LiveChart'
+import type { ChartPrefs, SharedAnnotation } from '@/components/charts/LiveChart'
 
 export const dynamic = 'force-dynamic'
 
@@ -124,6 +124,10 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
   const day = (data?.day ?? null) as TradingDay | null
   const trades = (data?.trades ?? []) as Trade[]
   const chartPrefs = (data?.chart_prefs ?? null) as Partial<ChartPrefs> | null
+  // The owner's drawings, carried on the token-gated payload. They have to come
+  // through this door: the chart's own /api/annotations fetch is scoped to
+  // whoever is calling, so a recipient with no account gets an empty list.
+  const annotations = (data?.annotations ?? []) as SharedAnnotation[]
 
   // Trade/day screenshots are private-bucket storage paths; an anon visitor
   // can't sign them under folder RLS. The `share-sign` Edge Function validates
@@ -148,5 +152,5 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
     )
   }
 
-  return <SharedDayView day={day} trades={trades} chartPrefs={chartPrefs} />
+  return <SharedDayView day={day} trades={trades} chartPrefs={chartPrefs} annotations={annotations} />
 }

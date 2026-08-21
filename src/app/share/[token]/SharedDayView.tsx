@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import LiveChart, { type ChartPrefs } from '@/components/charts/LiveChart'
+import LiveChart, { type ChartPrefs, type SharedAnnotation } from '@/components/charts/LiveChart'
 import BrandLockup from '@/components/BrandLockup'
 import ScreenshotLightbox from '@/components/intraday/ScreenshotLightbox'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
@@ -49,7 +49,13 @@ function rMultiple(t: Trade): number | null {
   return risk > 0 ? t.pnl / risk : null
 }
 
-export default function SharedDayView({ day, trades, chartPrefs }: { day: TradingDay; trades: Trade[]; chartPrefs?: Partial<ChartPrefs> | null }) {
+export default function SharedDayView({ day, trades, chartPrefs, annotations }: {
+  day: TradingDay
+  trades: Trade[]
+  chartPrefs?: Partial<ChartPrefs> | null
+  /** The trader's own drawings for the day, from the share payload. */
+  annotations?: SharedAnnotation[] | null
+}) {
   // Most-common symbol on the day → the chart's default instrument.
   const defaultSymbol = useMemo(() => {
     const counts = new Map<string, number>()
@@ -71,6 +77,10 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
     () => buildHighlights(chartTrades, (day.eod_ai_analysis_json ?? null) as EodAiAnalysis | null),
     [chartTrades, day.eod_ai_analysis_json],
   )
+  // Stable identity for the drawings handed to the chart. LiveChart keys its
+  // annotation effect on this prop, so a fresh `[]` every render would re-set
+  // state on every commit and spin.
+  const sharedAnnotations = useMemo(() => annotations ?? [], [annotations])
   const [expanded, setExpanded] = useState<string | null>(null)
   const [hoverTradeId, setHoverTradeId] = useState<string | null>(null)
   // Enlarged screenshot (click a trade's screenshot to open full-screen).
@@ -141,6 +151,7 @@ export default function SharedDayView({ day, trades, chartPrefs }: { day: Tradin
             onDismissHover={() => setHoverTradeId(null)}
             highlights={sharedHighlights}
             prefsOverride={chartPrefs ?? null}
+            annotationsOverride={sharedAnnotations}
             readOnly
             height={520}
           />
