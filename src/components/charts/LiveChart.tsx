@@ -1271,7 +1271,16 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // session, and they are the one set of lines that belongs to a single trade
     // rather than the day. Missing levels simply don't draw, which is itself
     // informative: an imported trade with no stop shows entry and exit only.
-    if (hoveredId) {
+    // The candles on screen may be a DIFFERENT session: the requested day had
+    // no bars, so the server substituted the nearest one it has (the amber
+    // provenance pill says which). This day's fills belong to a tape that
+    // isn't drawn, so plotting them over it puts arrows and bracket lines at
+    // prices those candles never traded — they land off the visible range and
+    // read as a wrong-instrument or wrong-contract bug rather than as the
+    // missing-bars problem it actually is. Draw the substituted tape bare and
+    // let the pill speak.
+    const plotTrades = fallbackDate ? [] : trades
+    if (hoveredId && !fallbackDate) {
       const sel = trades.find(t => t.id === hoveredId)
       if (sel) {
         const planned = '#9ca3af'   // grey — intent, not outcome
@@ -1314,7 +1323,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // a chip stays glued to its arrow across timeframe changes and zoom rather
     // than drifting off a raw timestamp.
     const highlightAnchors: TradeHighlight[] = []
-    for (const t of trades) {
+    for (const t of plotTrades) {
       if (!t.entry_time || !t.direction) continue
       const isLong = t.direction === 'long'
       const entryPrice = t.entry_price ?? null
@@ -1396,7 +1405,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     if (chart) {
       for (const s of tradeLinesRef.current) chart.removeSeries(s)
       tradeLinesRef.current = []
-      for (const t of trades) {
+      for (const t of plotTrades) {
         if (!t.entry_time || !t.direction || t.entry_price == null) continue
         const isLong = t.direction === 'long'
         const entryMin = displayTimeFromMs(new Date(t.entry_time).getTime(), chartTfMins)
@@ -1595,7 +1604,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // `highlights` is a dep because the chips are built in this same pass:
     // without it, toggling a highlight wouldn't repaint until something else
     // happened to invalidate the effect.
-  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId, pinnedTradeId, session, highlights])
+  }, [displayBars, trades, levels, prefs, symbol, date, chartTfMins, hover?.trade?.id, hoverTradeId, pinnedTradeId, session, highlights, fallbackDate])
 
   // Row-hover ↔ chart link: when a trade is hovered in the EOD list, drop the
   // crosshair on its entry (highlight where it was) and show the same
@@ -2460,7 +2469,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             <div className="flex items-center gap-1.5 bg-gray-900/90 border border-amber-700/60 rounded-full px-3 py-1 shadow-lg">
               <Database className="w-3 h-3 text-amber-400" />
               <span className="text-[11px] text-gray-200">
-                Showing {shortDate(fallbackDate)} <span className="text-gray-400">({shortDate(date)} unavailable)</span>
+                Showing {shortDate(fallbackDate)} <span className="text-gray-400">({shortDate(date)} unavailable{trades.length > 0 ? ' — trades not drawn' : ''})</span>
               </span>
             </div>
           </div>

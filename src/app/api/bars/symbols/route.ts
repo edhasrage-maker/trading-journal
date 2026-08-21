@@ -31,10 +31,18 @@ export async function GET() {
     // Distinct-ish over a recent slice rather than the whole table: ohlcv_bars
     // holds millions of rows and the feed only carries a handful of roots, so a
     // short window names all of them for a fraction of the cost.
+    //
+    // ORDERED, because the caller treats position as meaning. useChartInstruments
+    // maps each product root to the FIRST symbol listed for it and charts that
+    // contract for every date, so an unordered limit made "which contract does
+    // the NQ chart load" depend on whatever 2,000 rows Postgres happened to
+    // return. Newest-first makes it the most recently fed contract — stable
+    // across calls, and the right one for current dates.
     supabase
       .from('ohlcv_bars')
       .select('symbol')
       .gte('ts', new Date(Date.now() - 14 * 86400_000).toISOString())
+      .order('ts', { ascending: false })
       .limit(2000),
   ])
 
