@@ -24,7 +24,7 @@ import RecordingCommentary from './RecordingCommentary'
 import BrowserRecap from './BrowserRecap'
 import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
 import HeatBaseline from './HeatBaseline'
-import { heatOf, type HeatBaseline as HeatBaselineData } from '@/lib/heat-baseline'
+import { summarizeTodayHeat, type HeatBaseline as HeatBaselineData } from '@/lib/heat-baseline'
 import BehavioralProxiesPanel from './BehavioralProxiesPanel'
 import AchievementBadges from '@/components/AchievementBadges'
 import AchievementShowcase from '@/components/eod/AchievementShowcase'
@@ -678,19 +678,10 @@ export default function EodClient({
     }
     return n > 0 ? sum / n : null
   }, [trades])
-  // Where today sits on the heat split. Only closed on when the day has exactly
-  // ONE measurable trade — with several, "today's went to X%" would be an
-  // average masquerading as a fact, and the baseline stands on its own.
-  const { todayHeatPct, todayWon } = useMemo(() => {
-    const measured = trades
-      .map(t => ({ heat: heatOf(t), pnl: t.pnl }))
-      .filter((x): x is { heat: number; pnl: number | null } => x.heat != null)
-    if (measured.length !== 1) return { todayHeatPct: null, todayWon: undefined }
-    return {
-      todayHeatPct: measured[0].heat * 100,
-      todayWon: measured[0].pnl != null ? measured[0].pnl > 0 : undefined,
-    }
-  }, [trades])
+  // Today's own heat split — how many trades stayed inside halfway to the stop,
+  // how many pushed past, how many ran to it. This LEADS the read; the lifetime
+  // baseline is context beneath it.
+  const todayHeat = useMemo(() => summarizeTodayHeat(trades), [trades])
   // Round-trip / "gave it back" rollup for the day — trades that were up ≥1×ATR
   // then closed ≤ BE. Same shared excursion layer + live ATR the coach uses, so
   // the panel line and the coach's read can't drift. Hidden by the panel when 0.
@@ -1298,12 +1289,7 @@ export default function EodClient({
       {/* The line that makes the table's MAE column mean something: the
           trader's own inside-half vs past-half split. Sits directly above the
           table it interprets — the number itself is already in the MAE cell. */}
-      <HeatBaseline
-        baseline={heatBaseline}
-        todayHeatPct={todayHeatPct}
-        todayWon={todayWon}
-        roundTrip={roundTripStats}
-      />
+      <HeatBaseline baseline={heatBaseline} today={todayHeat} roundTrip={roundTripStats} />
 
       <TradeList
         trades={trades}

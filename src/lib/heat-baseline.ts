@@ -91,12 +91,40 @@ export function computeHeatBaseline(trades: HeatTrade[]): HeatBaseline | null {
   }
 }
 
-/** Where today's trade sits on that split — used to close the sentence with
- *  the day rather than leaving the baseline hanging in the abstract. */
+/** Where a trade sits on that split. */
 export function heatOf(t: HeatTrade): number | null {
   if (t.entry_price == null || t.stop_price == null) return null
   const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
   if (plannedRiskPts === 0) return null
   const xc = mfeMaePoints(t)
   return xc ? xc.mae / plannedRiskPts : null
+}
+
+/** Today's own split — what the trader actually did in this session. The
+ *  baseline is context for THIS, not the other way round: a line that opens
+ *  with a lifetime average and never mentions the session reads as trivia. */
+export interface TodayHeat {
+  /** Trades with a stop set and excursion data — the ones this can speak to. */
+  measurable: number
+  /** Worst point stayed inside half the planned risk. */
+  inside: number
+  /** Past half, but never reached the stop. */
+  past: number
+  /** Reached the stop. */
+  stopped: number
+  /** Only set when exactly one trade is measurable, so the copy can name the
+   *  exact number instead of a count. */
+  singlePct: number | null
+}
+
+export function summarizeTodayHeat(trades: HeatTrade[]): TodayHeat | null {
+  const heats = trades.map(heatOf).filter((h): h is number => h != null)
+  if (heats.length === 0) return null
+  return {
+    measurable: heats.length,
+    inside: heats.filter(h => h < HALFWAY).length,
+    past: heats.filter(h => h >= HALFWAY && h < STOPPED_AT).length,
+    stopped: heats.filter(h => h >= STOPPED_AT).length,
+    singlePct: heats.length === 1 ? heats[0] * 100 : null,
+  }
 }

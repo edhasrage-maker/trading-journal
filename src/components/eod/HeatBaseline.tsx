@@ -1,60 +1,66 @@
 'use client'
 
 import { cn } from '@/lib/utils'
-import type { HeatBaseline as Baseline } from '@/lib/heat-baseline'
+import type { HeatBaseline as Baseline, TodayHeat } from '@/lib/heat-baseline'
 import type { RoundTripStats } from '@/lib/trade-excursion'
 
 /**
- * The one line above the trade table that makes the MAE column mean something.
+ * The line above the trade table that makes the MAE column mean something.
  *
- * The table already prints how far each trade drifted toward its stop (the MAE
- * cell's "0.7× · 78%"). What it never said is whether 78% is good or bad. This
- * says it, from the trader's own history, and then names where today landed.
+ * Order matters and was wrong first time round: this led with the lifetime
+ * split and never said what happened in the session, so on any day without
+ * exactly one measurable trade it was pure history — trivia sitting above a
+ * table about today. **Today leads; the baseline is the context underneath it.**
  *
- * Replaces `MfeMaeEfficiency`, whose avg-MFE-vs-avg-MAE verdict was structurally
- * always-true for anyone using a stop. The round-trip / "gave it back" line was
- * the one specific thing in that panel, so it moves here intact.
+ * It also has a surface now. Rendered flat on the page background it read as
+ * filler and got skipped; it uses the same panel treatment as the Prep
+ * commitment block, which is the locked precedent for "read this bit".
  */
 export default function HeatBaseline({
   baseline,
-  todayHeatPct,
-  todayWon,
+  today,
   roundTrip,
 }: {
   baseline: Baseline | null
-  /** Today's heat as a % of planned risk — only when the day has exactly one
-   *  measurable trade, so the sentence can close on it without averaging. */
-  todayHeatPct?: number | null
-  todayWon?: boolean
+  today: TodayHeat | null
   roundTrip?: RoundTripStats | null
 }) {
   const hasGiveBack = !!roundTrip && roundTrip.count > 0
-  if (!baseline && !hasGiveBack) return null
+  // Nothing measurable today → nothing to interpret. A baseline on its own is
+  // the exact trivia this component is meant not to be.
+  if (!today && !hasGiveBack) return null
+
+  const lead = today ? todaySentence(today) : null
+  // Colour the panel's rule by how the session actually went, so the shape of
+  // the day is readable before the words are.
+  const tone = !today ? 'flat'
+    : today.stopped > 0 || today.past > today.inside ? 'warn'
+      : today.inside > 0 ? 'good' : 'flat'
 
   return (
-    <div className="mb-4 pl-3 border-l-2 border-blue-900">
+    <div
+      className={cn(
+        'mt-1 mb-4 px-5 py-4 border border-gray-800 border-l-[3px] rounded-lg bg-gray-900',
+        tone === 'good' ? 'border-l-green-700' : tone === 'warn' ? 'border-l-yellow-600' : 'border-l-gray-700',
+      )}
+    >
+      {lead && (
+        <p className="text-[14.5px] text-gray-100 leading-relaxed max-w-[74ch]">{lead}</p>
+      )}
+
       {baseline && (
-        <p className="text-[13.5px] text-gray-200 max-w-[80ch] leading-relaxed">
-          <span className="font-semibold text-gray-100">Your winners barely test the stop.</span>{' '}
-          When a trade’s MAE stayed inside <b className="font-semibold">half</b> your planned risk it won{' '}
-          <b className="font-semibold text-green-400">{baseline.insideWinPct}%</b> of the time; past half,{' '}
+        <p className={cn('text-[13px] text-gray-400 leading-relaxed max-w-[74ch]', lead && 'mt-2')}>
+          Your winners barely test the stop: inside half you win{' '}
+          <b className="font-semibold text-green-400">{baseline.insideWinPct}%</b> of the time, past half{' '}
           <b className="font-semibold text-red-400">{baseline.pastWinPct}%</b>.
-          {todayHeatPct != null && (
-            <> Today’s went to{' '}
-              <b className={cn('font-semibold', todayHeatPct >= 50 ? 'text-yellow-400' : 'text-green-400')}>
-                {Math.round(todayHeatPct)}%
-              </b>
-              {todayWon != null && (todayWon ? ' — and still paid.' : '.')}
-            </>
-          )}
-          <span className="block text-[11.5px] text-gray-500 mt-1">
-            From your last {baseline.measuredN} trades with a stop set · {baseline.insideN} inside half,{' '}
-            {baseline.pastN} past it, {baseline.stoppedN} stopped out.
+          <span className="text-gray-500">
+            {' '}From your last {baseline.measuredN} trades with a stop set.
           </span>
         </p>
       )}
+
       {hasGiveBack && (
-        <p className={cn('flex items-center gap-1.5 text-[12px] text-yellow-400/90', baseline && 'mt-2')}>
+        <p className={cn('flex items-center gap-1.5 text-[12.5px] text-yellow-400/90', (lead || baseline) && 'mt-2.5')}>
           <span aria-hidden>↺</span>
           <span>
             <span className="font-medium">Gave it back</span> · {roundTrip!.count} of {roundTrip!.total} trade
@@ -65,4 +71,22 @@ export default function HeatBaseline({
       )}
     </div>
   )
+}
+
+/** What the session did, in one sentence, before any history is mentioned. */
+function todaySentence(t: TodayHeat): string {
+  if (t.measurable === 1) {
+    if (t.stopped === 1) return 'Today’s trade ran to your stop.'
+    return `Today’s trade went ${Math.round(t.singlePct ?? 0)}% of the way to your stop before it resolved.`
+  }
+
+  const parts: string[] = []
+  if (t.inside > 0) parts.push(`${t.inside} stayed inside halfway to your stop`)
+  if (t.past > 0) parts.push(`${t.past} pushed past halfway`)
+  if (t.stopped > 0) parts.push(`${t.stopped} ran to the stop`)
+
+  const trades = `${t.measurable} trade${t.measurable === 1 ? '' : 's'}`
+  if (parts.length === 1) return `Today: all ${trades} ${parts[0].replace(/^\d+ /, '')}.`
+  const last = parts.pop()!
+  return `Today, of ${trades}: ${parts.join(', ')} and ${last}.`
 }
