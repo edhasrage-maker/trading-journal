@@ -33,6 +33,7 @@ import {
   type TradeWithContext,
 } from './analytics'
 import type { TradeTags } from './supabase/types'
+import { deriveEntryFeatures, ENTRY_FEATURES, type EntryFeatures, type FeatureDef } from './derived-features'
 
 // ── Thresholds ──────────────────────────────────────────────────────────────
 // Deliberately conservative: a wrong "finding" that a trader acts on for a
@@ -46,6 +47,18 @@ const MIN_TAG_N = 8
 const MIN_GAP_R = 0.35
 /** Minimum trades with a computable capture/heat ratio for those findings. */
 const MIN_RATIO_N = 12
+/** Minimum trades on BOTH arms of a tag x feature split. Lower than MIN_N
+ *  because a conjunction is inherently a smaller slice, but still enough that
+ *  one bad session can't create the finding. */
+const MIN_CONJ_N = 10
+/** Setup labels that are residual buckets rather than real setups. "This trade
+ *  wasn't one of my named setups" underperforming the named ones is close to
+ *  definitional, and "skip the discretionary trade unless it's textbook" is not
+ *  an instruction anyone can follow. They can still appear, but they have to
+ *  out-separate a real finding by a wide margin to do it. */
+const RESIDUAL_SETUPS = /^(discretionary|other|misc|random|scalp)/i
+const RESIDUAL_PENALTY = 0.5
+
 /** Capture below this (fraction of the offered move kept) is a real leak. */
 const CAPTURE_FLOOR = 0.5
 /** Average MAE above this share of planned risk is a real leak. */
@@ -157,7 +170,20 @@ function splitByLabel(
 
 interface Candidate extends Carryover {
   tier: 1 | 2
+  /** The finding's size, in R. This is what the copy talks about. */
   effect: number
+  /** What the ranking actually sorts on: the effect discounted by how thin the
+   *  smaller arm is. Ranking on raw effect alone hands the win to the smallest
+   *  slice every time — an 8-vs-8 split showing a 1.2R gap outranked a 28-vs-14
+   *  split showing 0.86R, and the second is far likelier to still be true next
+   *  month. sqrt(min n) is the standard shape of a standard error and needs no
+   *  distributional assumption. */
+  weight: number
+}
+
+/** Effect discounted by the thinner arm of the comparison. */
+function weigh(effect: number, ...arms: number[]): number {
+  return effect * Math.sqrt(Math.max(1, Math.min(...arms)))
 }
 
 /** Setup-level separation, in both directions. The comparison is always
@@ -181,6 +207,7 @@ function setupCandidates(trades: TradeLike[], source: string): Candidate[] {
       out.push({
         tier: 1,
         effect: Math.abs(gap),
+        weight: weigh(Math.abs(gap), a.n, b.n),
         mode: 'protect',
         source,
         key: `setup:${label}`,
@@ -194,6 +221,7 @@ function setupCandidates(trades: TradeLike[], source: string): Candidate[] {
       out.push({
         tier: 1,
         effect: Math.abs(gap),
+        weight: weigh(Math.abs(gap), a.n, b.n),
         mode: 'correct',
         source,
         key: `setup:${label}`,
@@ -368,6 +396,7 @@ function taggedCostCandidates(trades: SequencedTrade[], source: string): Candida
       out.push({
         tier: 1,
         effect: Math.abs(gap),
+        weight: weigh(Math.abs(gap), a.n, b.n),
         mode: 'correct',
         source,
         key: `${category}:${label}`,
@@ -392,6 +421,7 @@ function executionCandidates(trades: TradeWithExcursion[], source: string): Cand
     out.push({
       tier: 2,
       effect: CAPTURE_FLOOR - capture.avg,
+      weight: weigh(CAPTURE_FLOOR - capture.avg, capture.count),
       mode: 'correct',
       source,
       key: 'exec:capture',
@@ -408,6 +438,7 @@ function executionCandidates(trades: TradeWithExcursion[], source: string): Cand
     out.push({
       tier: 2,
       effect: heat.avg - HEAT_CEILING,
+      weight: weigh(heat.avg - HEAT_CEILING, heat.count),
       mode: 'correct',
       source,
       key: 'exec:heat',
@@ -425,6 +456,7 @@ function executionCandidates(trades: TradeWithExcursion[], source: string): Cand
     out.push({
       tier: 2,
       effect: capture.avg - 0.7,
+      weight: weigh(capture.avg - 0.7, capture.count),
       mode: 'protect',
       source,
       key: 'exec:capture-strong',
@@ -448,6 +480,119 @@ function executionCandidates(trades: TradeWithExcursion[], source: string): Cand
  * @param trades  Scored trades from the review window (exclude today's).
  * @param source  Human label for the window, e.g. "July review".
  */
+
+// ── Derived + conjunction candidates ────────────────────────────────────────
+// The tags are the trader's own input; these are the patterns they did not
+// record. See src/lib/derived-features.ts for why only entry-time features
+// qualify.
+
+/** Split a trade list by an entry feature. Trades the feature can't classify
+ *  (no timestamps, no ATR, first trade of the day) join neither arm. */
+function splitByFeature(
+  trades: TradeLike[],
+  feats: Map<string, EntryFeatures>,
+  def: FeatureDef,
+): { on: TradeLike[]; off: TradeLike[] } {
+  const on: TradeLike[] = []
+  const off: TradeLike[] = []
+  for (const t of trades) {
+    const f = feats.get(t.id)
+    if (!f) continue
+    const v = def.test(f)
+    if (v === true) on.push(t)
+    else if (v === false) off.push(t)
+  }
+  return { on, off }
+}
+
+/** Findings from a derived feature alone — patterns in how the trader entered,
+ *  independent of anything they tagged. */
+function derivedCandidates(
+  trades: TradeLike[],
+  feats: Map<string, EntryFeatures>,
+  source: string,
+): Candidate[] {
+  const out: Candidate[] = []
+  for (const def of ENTRY_FEATURES) {
+    const { on, off } = splitByFeature(trades, feats, def)
+    const a = avgR(on)
+    const b = avgR(off)
+    if (a.avg == null || b.avg == null || a.n < MIN_N || b.n < MIN_N) continue
+    const gap = a.avg - b.avg
+    if (Math.abs(gap) < MIN_GAP_R) continue
+
+    const costly = gap < 0
+    out.push({
+      tier: 1,
+      effect: Math.abs(gap),
+      weight: weigh(Math.abs(gap), a.n, b.n),
+      mode: costly ? 'correct' : 'protect',
+      source,
+      key: `entry:${def.key}`,
+      n: a.n,
+      finding: costly
+        ? `The trades you ${def.phrase} cost you`
+        : `The trades you ${def.phrase} carried you`,
+      metric: `${fmtR(a.avg)} per trade across ${a.n} · ${def.counterPhrase} ${fmtR(b.avg)} across ${b.n}`,
+      today: costly ? def.costlyAction : def.protectAction,
+      evidence: twoBar(`You ${def.phrase}`, a.avg, a.n, def.counterPhrase, b.avg, b.n),
+    })
+  }
+  return out
+}
+
+/** Tag x feature. The comparison arm is the SAME tag without the feature, which
+ *  is what makes these worth reading: it turns "you revenge trade" (which the
+ *  trader typed) into "your revenge trades inside five minutes bleed, the later
+ *  ones don't" (which they can act on). */
+function conjunctionCandidates(
+  trades: TradeLike[],
+  feats: Map<string, EntryFeatures>,
+  source: string,
+): Candidate[] {
+  const out: Candidate[] = []
+  const categories: Array<keyof TradeTags> = ['mistakes', 'emotions', 'setups']
+
+  for (const category of categories) {
+    const labels = Array.from(new Set(trades.flatMap(t => labelsOf(t, category))))
+    for (const label of labels) {
+      const tagged = trades.filter(t => labelsOf(t, category).includes(label))
+      if (tagged.length < MIN_CONJ_N * 2) continue
+
+      for (const def of ENTRY_FEATURES) {
+        const { on, off } = splitByFeature(tagged, feats, def)
+        const a = avgR(on)
+        const b = avgR(off)
+        if (a.avg == null || b.avg == null) continue
+        if (a.n < MIN_CONJ_N || b.n < MIN_CONJ_N) continue
+        const gap = a.avg - b.avg
+        // A conjunction has to separate harder than a plain finding to earn its
+        // extra complexity — it is a smaller slice and an easier place to fool
+        // yourself.
+        if (Math.abs(gap) < MIN_GAP_R * 1.5) continue
+
+        const costly = gap < 0
+        out.push({
+          tier: 1,
+          effect: Math.abs(gap),
+          weight: weigh(Math.abs(gap), a.n, b.n),
+          mode: costly ? 'correct' : 'protect',
+          source,
+          key: `conj:${category}:${label}:${def.key}`,
+          n: a.n,
+          finding: costly
+            ? `It is the ${label} trades you ${def.phrase} that hurt`
+            : `Your ${label} trades work when you ${def.phrase}`,
+          metric: `${fmtR(a.avg)} across ${a.n} · the other ${label} trades ${fmtR(b.avg)} across ${b.n}`,
+          today: costly ? def.costlyAction : def.protectAction,
+          evidence: twoBar(`${label} — ${def.phrase}`, a.avg, a.n, `${label} — ${def.counterPhrase}`, b.avg, b.n),
+        })
+      }
+    }
+  }
+  return out
+}
+
 export function computeCarryover(
   trades: TradeWithExcursion[],
   source: string,
@@ -455,24 +600,34 @@ export function computeCarryover(
   const scored = avgR(trades)
   if (scored.n < MIN_WINDOW_N) return null
 
+  const feats = deriveEntryFeatures(trades)
   const candidates: Candidate[] = [
     ...setupCandidates(trades, source),
     ...taggedCostCandidates(trades, source),
+    ...derivedCandidates(trades, feats, source),
+    ...conjunctionCandidates(trades, feats, source),
     ...executionCandidates(trades, source),
   ]
   if (candidates.length === 0) return null
+
+  // Residual setup buckets are demoted, not banned — see RESIDUAL_SETUPS.
+  for (const c of candidates) {
+    if (c.key.startsWith('setup:') && RESIDUAL_SETUPS.test(c.key.slice('setup:'.length))) {
+      c.weight *= RESIDUAL_PENALTY
+    }
+  }
 
   // Strongest tier first, then largest effect. Ties break toward 'protect' —
   // when an edge and a leak are equally strong, telling a trader what is
   // working is the more actionable instruction.
   candidates.sort((a, b) =>
     a.tier !== b.tier ? a.tier - b.tier
-      : b.effect !== a.effect ? b.effect - a.effect
+      : b.weight !== a.weight ? b.weight - a.weight
         : a.mode === b.mode ? 0 : a.mode === 'protect' ? -1 : 1,
   )
 
-  const { tier: _tier, effect: _effect, ...winner } = candidates[0]
-  void _tier; void _effect
+  const { tier: _tier, effect: _effect, weight: _weight, ...winner } = candidates[0]
+  void _tier; void _effect; void _weight
   return winner
 }
 
