@@ -86,6 +86,8 @@ async function main() {
           <table>
             <tr><td>entry / exit</td><td>${fmt(t.entry_price)} → ${fmt(t.exit_price)}</td></tr>
             <tr><td>stop / TP1</td><td>${fmt(t.stop_price)} / ${fmt(t.tp1_price)}</td></tr>
+            <tr><td>TP vs refs</td><td>${t.exit?.tp1_vs_reference ? `${t.exit.tp1_vs_reference.dist_pts} pts ${esc(t.exit.tp1_vs_reference.side)} ${esc(t.exit.tp1_vs_reference.level)}${t.exit.tp1_vs_reference.band ? ` · <b>${esc(t.exit.tp1_vs_reference.band)}</b>` : ''}${t.exit.tp1_missed_by_pts != null ? ` · missed by ${t.exit.tp1_missed_by_pts} pts` : ''}${t.exit.tp_terrain ? ` · lands in ${esc(t.exit.tp_terrain.destination)}${t.exit.tp_terrain.crosses_thin ? `, crosses ${t.exit.tp_terrain.widest_thin_gap_pts} pts thin` : ''}` : ''}` : '—'}</td></tr>
+            <tr><td>stop terrain</td><td>${t.exit?.stop_terrain ? `${t.exit.stop_terrain.inside_entry_node ? '<b>inside entry node</b>' : 'beyond node edge'} · lands in ${esc(t.exit.stop_terrain.destination)}` : '—'}</td></tr>
             <tr><td>nearest level</td><td>${near ? `${near.name} ${near.price} · ${near.dist_pts} pts · ${near.dist_adr} ADR · ${near.side}` : '—'}</td></tr>
             <tr><td>5m structure</td><td>${fmt(t.structure.alignment_5m)}</td></tr>
             <tr><td>run before entry</td><td>${fmt(t.chase.run_before_entry_pts)} pts · ${fmt(t.chase.run_before_entry_atr)} ATR</td></tr>
@@ -102,6 +104,8 @@ async function main() {
             <tr><td>ATR vs typical · IB</td><td>${fmt(t.context?.atr_vs_typical)}× · ${fmt(t.context?.ib_regime)} / ${fmt(t.context?.ib_size_band)}</td></tr>
             <tr><td>attempts before</td><td>${t.context?.attempts_before ? `${t.context.attempts_before.count}${t.context.attempts_before.count ? ` in ${t.context.attempts_before.span_minutes} min, ${t.context.attempts_before.pnl_of_prior_attempts >= 0 ? '+' : ''}$${t.context.attempts_before.pnl_of_prior_attempts}` : ''}` : '—'}</td></tr>
             <tr><td>prior week H/L</td><td>${t.context?.prior_week ? `${t.context.prior_week.pwh} / ${t.context.prior_week.pwl}` : '—'}</td></tr>
+            <tr><td>week value</td><td>${t.context?.htf_alignment ? `prior: ${esc(t.context.htf_alignment.prior_week_value ?? '—')} · developing: ${esc(t.context.htf_alignment.developing_week_value ?? '—')}` : '—'}</td></tr>
+            <tr><td>runway</td><td>${t.context?.runway?.length ? t.context.runway.map((r: { level: string; dist_pts: number }) => `${esc(r.level)} ${r.dist_pts} pts`).join(' · ') : '—'}</td></tr>
           </table>
         </div>
         <div class="col coach">

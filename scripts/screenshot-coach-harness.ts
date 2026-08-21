@@ -279,6 +279,36 @@ function volumeProfile(bars: Bar[], bucket: number): Profile | null {
   return { poc: (pocK + 0.5) * bucket, vah: (hi + 1) * bucket, val: lo * bucket, bucket, vol, total, median: sorted[Math.floor(sorted.length / 2)] }
 }
 
+/** The terrain between two prices, walked bucket by bucket through a
+ *  profile's volume map. XY reads the same profile as terrain — what price
+ *  must cross to get from entry to target, and what sits behind the stop —
+ *  where we had only ever sampled it at the entry. LVN ≤0.5x median,
+ *  HVN ≥1.5x (same bands as profilePosition's node call). */
+function pathStructure(p: Profile, from: number, to: number): {
+  destination: string; crosses_thin: boolean; widest_thin_gap_pts: number | null; leaves_node: boolean
+} | null {
+  if (!Number.isFinite(from) || !Number.isFinite(to) || p.median <= 0) return null
+  const kFrom = Math.floor(from / p.bucket), kTo = Math.floor(to / p.bucket)
+  const keys = Array.from(p.vol.keys())
+  const kMin = Math.min(...keys), kMax = Math.max(...keys)
+  const cls = (k: number): string => {
+    const r = (p.vol.get(k) ?? 0) / p.median
+    return r <= 0.5 ? 'LVN' : r >= 1.5 ? 'HVN' : 'average'
+  }
+  const destination = kTo < kMin || kTo > kMax ? 'outside the profile' : cls(kTo)
+  const dir = kTo >= kFrom ? 1 : -1
+  let run = 0, widest = 0, leftNode = false
+  for (let k = kFrom + dir; dir > 0 ? k <= kTo : k >= kTo; k += dir) {
+    if (k < kMin || k > kMax) break
+    const r = (p.vol.get(k) ?? 0) / p.median
+    if (r <= 0.5) { run++; if (run > widest) widest = run } else run = 0
+    if (r < 0.75) leftNode = true
+  }
+  return { destination, crosses_thin: widest > 0,
+    widest_thin_gap_pts: widest > 0 ? Math.round(widest * p.bucket * 100) / 100 : null,
+    leaves_node: leftNode }
+}
+
 /** Where a price sits in a profile, in words the coach can use. */
 function profilePosition(p: Profile, price: number, atr: number | null): { zone: string; node: string; poc: number; vah: number; val: number; vol_at_price_vs_median: number | null } {
   const band = atr ? 0.15 * atr : p.bucket
@@ -511,7 +541,7 @@ function weeklyVwapSeries(bars: Bar[], date: string): Array<number | null> {
   })
 }
 
-function weekProfile(bars: Bar[], date: string, bucket: number, which: 'prior' | 'developing', endIdx: number): { poc: number; vah: number; val: number } | null {
+function weekProfile(bars: Bar[], date: string, bucket: number, which: 'prior' | 'developing', endIdx: number): Profile | null {
   const [y, m, d] = date.split('-').map(Number)
   const dt = new Date(Date.UTC(y, m - 1, d))
   const dow = dt.getUTCDay()
@@ -526,8 +556,7 @@ function weekProfile(bars: Bar[], date: string, bucket: number, which: 'prior' |
     return bd >= start && bd < end
   })
   if (wk.length < 100) return null
-  const p = volumeProfile(wk, bucket)
-  return p ? { poc: p.poc, vah: p.vah, val: p.val } : null
+  return volumeProfile(wk, bucket)
 }
 
 function sessionPhase(sec: number): string {
@@ -847,6 +876,8 @@ async function main() {
       }
     }
 
+    let dayProf: Profile | null = null
+    let prevProf: Profile | null = null
     // ── truth: context — what a judgment is made of ───────────────────────
     let context: Record<string, unknown> = {}
     if (usableBars && entryBar != null) {
@@ -866,6 +897,8 @@ async function main() {
       for (const b of prevRth) { const { date: bd } = ptParts(new Date(b.ts).getTime()); if (bd > lastPrevDate) lastPrevDate = bd }
       const prevProfile = volumeProfile(prevRth.filter(b => ptParts(new Date(b.ts).getTime()).date === lastPrevDate), bucket)
       const dayProfile = todaySoFar.length >= 20 ? volumeProfile(todaySoFar, bucket) : null
+      dayProf = dayProfile
+      prevProf = prevProfile
 
       // ATR regime: entry ATR vs the trader's typical. market_context.atr_10d_avg
       // is often null (the ES/NQ backfill didn't write it), so the baseline is
@@ -914,6 +947,20 @@ async function main() {
         session_momentum: momentum,
         attempts_before: { count: attempts.length, span_minutes: attemptsMins, pnl_of_prior_attempts: attemptsPnl },
         prior_week: pw ? { pwh: round(pw.pwh), pwl: round(pw.pwl), entry_vs_pwh_atr: inAtr(pw.pwh - entryBar), entry_vs_pwl_atr: inAtr(entryBar - pw.pwl) } : null,
+        // Where the entry sits in the WEEK'S auction — XY's frame ("PDH and
+        // PWL stacked, building back above prior week low") was invisible to
+        // a truth that only knew the session.
+        htf_alignment: {
+          prior_week_value: pwProf ? profilePosition(pwProf, entryBar, atr).zone : null,
+          developing_week_value: wkProf ? profilePosition(wkProf, entryBar, atr).zone : null,
+        },
+        // The next static references in the trade's direction — the runway.
+        // "Where might that take us" is a fact, not a vibe: the 08-19 long
+        // had ON high ~14 pts out and took 7.
+        runway: levels
+          .filter(l => !['VWAP', 'Weekly VWAP', 'EMA 9', 'EMA 20'].includes(l.name) && (isLong ? l.side === 'below' : l.side === 'above'))
+          .slice(0, 3)
+          .map(l => ({ level: l.name, dist_pts: l.dist_pts, dist_atr: l.dist_atr })),
       }
     }
 
@@ -943,9 +990,12 @@ async function main() {
     let tpMissedBy: number | null = null
     if (t.tp1_price != null && entryBar != null && usableBars) {
       const tpBar = entryBar + (t.tp1_price - entry)
-      const staticLvls = levels.filter(l => !['VWAP', 'EMA 9', 'EMA 20'].includes(l.name))
+      const refCands: Array<{ name: string; price: number }> =
+        levels.filter(l => !['VWAP', 'EMA 9', 'EMA 20'].includes(l.name)).map(l => ({ name: l.name, price: l.price }))
+      if (dayProf) refCands.push({ name: 'session VAH', price: dayProf.vah }, { name: 'session VAL', price: dayProf.val }, { name: 'session POC', price: dayProf.poc })
+      if (prevProf) refCands.push({ name: 'prior-day VAH', price: prevProf.vah }, { name: 'prior-day VAL', price: prevProf.val }, { name: 'prior-day POC', price: prevProf.poc })
       let best: { level: string; d: number; side: string } | null = null
-      for (const L of staticLvls) {
+      for (const L of refCands) {
         const d = tpBar - L.price
         if (best == null || Math.abs(d) < Math.abs(best.d)) best = { level: L.name, d, side: d > 0 ? 'above' : d < 0 ? 'below' : 'at' }
       }
@@ -956,6 +1006,17 @@ async function main() {
       }
       const tpPts = isLong ? t.tp1_price - entry : entry - t.tp1_price
       if (mfePts != null && tpPts > 0 && mfePts < tpPts) tpMissedBy = round(tpPts - mfePts)
+    }
+    //  Terrain: what the trade had to cross, and what sat behind the stop —
+    //  from the session profile AS OF ENTRY (no look-ahead).
+    let tpTerrain: ReturnType<typeof pathStructure> = null
+    let stopTerrain: (ReturnType<typeof pathStructure> & { inside_entry_node?: boolean }) | null = null
+    if (dayProf && entryBar != null && usableBars) {
+      if (t.tp1_price != null) tpTerrain = pathStructure(dayProf, entryBar, entryBar + (t.tp1_price - entry))
+      if (t.stop_price != null) {
+        const st = pathStructure(dayProf, entryBar, entryBar + (t.stop_price - entry))
+        stopTerrain = st ? { ...st, inside_entry_node: !st.leaves_node } : null
+      }
     }
 
     // ── truth: bar strip ──────────────────────────────────────────────────
@@ -1132,6 +1193,8 @@ async function main() {
           post_exit_against_atr: inAtr(t.post_exit_against_pts),
           tp1_vs_reference: tpRef,
           tp1_missed_by_pts: tpMissedBy,
+          tp_terrain: tpTerrain,
+          stop_terrain: stopTerrain,
           scaled_out: Array.isArray(t.exits_json) && t.exits_json.length > 1,
           legs: Array.isArray(t.exits_json) ? t.exits_json.length : null,
         },
