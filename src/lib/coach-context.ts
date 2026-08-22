@@ -162,6 +162,50 @@ async function fetchHandoffDate(supabase: AnyClient): Promise<string | null> {
 
 /** Historical (Tradezella) trades in [startDate, endDate] by trade_date, mapped
  *  to the unified shape. Best-effort: a missing table disables the union. */
+/**
+ * Fetch rows keyed by trading_day_id, in chunks.
+ *
+ * A bare `.in('trading_day_id', dayIds)` puts every id in the query string. Past
+ * roughly 500 ids that URL is long enough that the request fails outright —
+ * `fetch failed`, before PostgREST ever sees it. The call sites destructured
+ * only `data` and treated null as "no more rows", so a wide window silently
+ * returned ZERO native trades and the coach fell back to imported history
+ * alone: no instrument split, no stops, no excursions. It then correctly
+ * reported it couldn't answer, which read as a missing feature rather than a
+ * broken query.
+ *
+ * Chunked at 50 ids (the size the dashboard already uses) and paginated within
+ * each chunk. Errors are RETURNED rather than swallowed so a caller can tell
+ * "nothing there" apart from "the request died".
+ */
+async function fetchByDayIds(
+  supabase: AnyClient,
+  table: string,
+  columns: string,
+  dayIds: string[],
+  opts: { paginate?: boolean; refine?: (q: AnyClient) => AnyClient } = {},
+): Promise<{ rows: unknown[]; failed: boolean }> {
+  const CHUNK = 50
+  const PAGE_SIZE = 1000
+  const rows: unknown[] = []
+  let failed = false
+
+  for (let i = 0; i < dayIds.length; i += CHUNK) {
+    const slice = dayIds.slice(i, i + CHUNK)
+    for (let p = 0; p < 10; p++) {
+      let q = supabase.from(table).select(columns).in('trading_day_id', slice)
+      if (opts.refine) q = opts.refine(q)
+      if (opts.paginate) q = q.range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
+      const { data, error } = await q
+      if (error) { failed = true; break }
+      if (!data || data.length === 0) break
+      rows.push(...(data as unknown[]))
+      if (!opts.paginate || data.length < PAGE_SIZE) break
+    }
+  }
+  return { rows, failed }
+}
+
 async function fetchHistoricalInWindow(supabase: AnyClient, startDate: string, endDate: string): Promise<UnifiedTrade[]> {
   const PAGE = 1000
   const out: UnifiedTrade[] = []
@@ -272,7 +316,6 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
   }
 
   // Paginate trades within the window, UNIONing native + historical (Tradezella).
-  const PAGE = 1000
   const dayIds = Array.from(dayDateById.keys())
 
   // Prefer-historical handoff: the last Tradezella date. Native trades on/before
@@ -286,22 +329,18 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
 
   // Native trades in-window, excluding those at/before the handoff.
   if (dayIds.length > 0) {
-    for (let p = 0; p < 10; p++) {
-      const { data } = await supabase
-        .from('trades')
-        .select('id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes')
-        .in('trading_day_id', dayIds)
-        .order('entry_time', { ascending: false })
-        .order('id', { ascending: false })   // repo-convention tiebreaker → deterministic paging past 1000 rows
-        .range(p * PAGE, p * PAGE + PAGE - 1)
-      if (!data || data.length === 0) break
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const r of data as any[]) {
-        const d: string = dayDateById.get(r.trading_day_id) ?? String(r.entry_time ?? '').slice(0, 10)
-        if (handoffDate && d && d <= handoffDate) continue // prefer historical for its period
-        trades.push({ ...r, _source: 'native', _date: d, _dayTypes: dayTypesById.get(r.trading_day_id) ?? [] })
-      }
-      if (data.length < PAGE) break
+    const { rows } = await fetchByDayIds(
+      supabase,
+      'trades',
+      'id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes',
+      dayIds,
+      { paginate: true, refine: q => q.order('entry_time', { ascending: false }).order('id', { ascending: false }) },
+    )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const r of rows as any[]) {
+      const d: string = dayDateById.get(r.trading_day_id) ?? String(r.entry_time ?? '').slice(0, 10)
+      if (handoffDate && d && d <= handoffDate) continue // prefer historical for its period
+      trades.push({ ...r, _source: 'native', _date: d, _dayTypes: dayTypesById.get(r.trading_day_id) ?? [] })
     }
   }
 
@@ -325,12 +364,9 @@ NO TRADE DATA — the trader logged no trades in this window.
   // Same reasoning as analytics' histToContext.
   const ibByDate = new Map<string, { regime: string | null }>()
   {
-    const { data: mcs } = await supabase
-      .from('market_context')
-      .select('trading_day_id, rvol, atr_1m, ib_regime')
-      .in('trading_day_id', dayIds)
+    const { rows: mcs } = await fetchByDayIds(supabase, 'market_context', 'trading_day_id, rvol, atr_1m, ib_regime', dayIds)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const m of (mcs ?? []) as any[]) {
+    for (const m of mcs as any[]) {
       if (!mcByDay.has(m.trading_day_id)) {
         mcByDay.set(m.trading_day_id, { rvol: m.rvol ?? null, atr: m.atr_1m ?? null })
       }
@@ -361,22 +397,20 @@ NO TRADE DATA — the trader logged no trades in this window.
   // (pre-migration) disables only this block, never the main trades read. Values
   // are already direction-relative: favorable = continued the trade's way.
   const postExitById = new Map<string, { fav: number; against: number }>()
-  for (let p = 0; p < 10; p++) {
-    const { data: pe, error: peErr } = await supabase
-      .from('trades')
-      .select('id, post_exit_favorable_pts, post_exit_against_pts')
-      .in('trading_day_id', dayIds)
-      .not('post_exit_favorable_pts', 'is', null)
-      .order('id', { ascending: true })   // deterministic paging (was unordered → non-deterministic pages >1000 rows)
-      .range(p * PAGE, p * PAGE + PAGE - 1)
-    if (peErr || !pe || pe.length === 0) break   // column missing / no rows → stop
+  {
+    const { rows: pe } = await fetchByDayIds(
+      supabase,
+      'trades',
+      'id, post_exit_favorable_pts, post_exit_against_pts',
+      dayIds,
+      { paginate: true, refine: q => q.not('post_exit_favorable_pts', 'is', null).order('id', { ascending: true }) },
+    )
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const r of pe as any[]) {
       if (r.post_exit_favorable_pts != null && r.post_exit_against_pts != null) {
         postExitById.set(r.id, { fav: Number(r.post_exit_favorable_pts), against: Number(r.post_exit_against_pts) })
       }
     }
-    if (pe.length < PAGE) break
   }
 
   // ── Aggregates ──
@@ -473,7 +507,10 @@ NO TRADE DATA — the trader logged no trades in this window.
   const mfeSamples: Array<{ atr: number; usd: number | null; pnl: number }> = []
 
   // Per-instrument excursion + performance, keyed by symbol root (ES / NQ / ...).
-  const instrumentBuckets = new Map<string, { n: number; wins: number; pnl: number; rSum: number; rN: number; mfeAtrSum: number; mfeAtrN: number; mfe2: number; mfe3: number; capSum: number; capN: number }>()
+  const instrumentBuckets = new Map<string, { n: number; wins: number; pnl: number; rSum: number; rN: number; mfeAtrSum: number; mfeAtrN: number; mfe2: number; mfe3: number; capSum: number; capN: number; first: string; last: string }>()
+  /** month (YYYY-MM) -> instrument root -> trade count. Answers the whole class
+   *  of "when did I start/stop trading X", which a totals-only bucket cannot. */
+  const instrumentByMonth = new Map<string, Map<string, number>>()
 
   for (const t of trades) {
     const pnl = t.pnl ?? 0
@@ -485,6 +522,25 @@ NO TRADE DATA — the trader logged no trades in this window.
     // these need, so they feed only the counting/tag/PnL aggregations below.
     // `r` / `capPct` / `mfeUsd` stay null for historical → their setup-bucket
     // avgR/capture just skip those rows.
+    // Per-instrument counts and date range — ALL sources. ES and NQ move
+    // differently in ATR terms, and "when did I start trading MES" is a
+    // question a totals-only bucket silently cannot answer.
+    if (t.symbol) {
+      const root = symbolRoot(t.symbol)
+      const d = t._date || ''
+      let ib = instrumentBuckets.get(root)
+      if (!ib) { ib = { n: 0, wins: 0, pnl: 0, rSum: 0, rN: 0, mfeAtrSum: 0, mfeAtrN: 0, mfe2: 0, mfe3: 0, capSum: 0, capN: 0, first: d, last: d }; instrumentBuckets.set(root, ib) }
+      ib.n++; ib.pnl += pnl; if (isWin) ib.wins++
+      if (d) {
+        if (!ib.first || d < ib.first) ib.first = d
+        if (!ib.last || d > ib.last) ib.last = d
+        const month = d.slice(0, 7)
+        let mm = instrumentByMonth.get(month)
+        if (!mm) { mm = new Map(); instrumentByMonth.set(month, mm) }
+        mm.set(root, (mm.get(root) ?? 0) + 1)
+      }
+    }
+
     let r: number | null = null
     let capPct: number | null = null
     let mfeUsd: number | null = null
@@ -493,21 +549,19 @@ NO TRADE DATA — the trader logged no trades in this window.
       r = ex.r; capPct = ex.capPct; mfeUsd = ex.mfeUsd
       const { leftUsd, mfeR, maePts, maePct, mfeAtr, maeAtr } = ex
 
-      // Per-instrument accumulation. ES and NQ move differently in ATR terms,
-      // so an aggregate that blends them can't answer "how often do my ES
-      // trades reach 3x ATR" — a question the coach was being asked and had to
-      // refuse, even though `symbol` was on every row it fetched.
+      // Excursion stats are native-only (imported rows lack the tick extremes),
+      // so they attach here; the counts and date range are accumulated for
+      // EVERY trade below, outside this branch.
       if (t.symbol) {
-        const root = symbolRoot(t.symbol)
-        let ib = instrumentBuckets.get(root)
-        if (!ib) { ib = { n: 0, wins: 0, pnl: 0, rSum: 0, rN: 0, mfeAtrSum: 0, mfeAtrN: 0, mfe2: 0, mfe3: 0, capSum: 0, capN: 0 }; instrumentBuckets.set(root, ib) }
-        ib.n++; ib.pnl += pnl; if (isWin) ib.wins++
-        if (r != null) { ib.rSum += r; ib.rN++ }
-        if (capPct != null) { ib.capSum += capPct; ib.capN++ }
-        if (mfeAtr != null) {
-          ib.mfeAtrSum += mfeAtr; ib.mfeAtrN++
-          if (mfeAtr >= 2) ib.mfe2++
-          if (mfeAtr >= 3) ib.mfe3++
+        const ib = instrumentBuckets.get(symbolRoot(t.symbol))
+        if (ib) {
+          if (r != null) { ib.rSum += r; ib.rN++ }
+          if (capPct != null) { ib.capSum += capPct; ib.capN++ }
+          if (mfeAtr != null) {
+            ib.mfeAtrSum += mfeAtr; ib.mfeAtrN++
+            if (mfeAtr >= 2) ib.mfe2++
+            if (mfeAtr >= 3) ib.mfe3++
+          }
         }
       }
 
@@ -699,9 +753,15 @@ NO TRADE DATA — the trader logged no trades in this window.
         parts.push(`>=3x ATR ${Math.round((b.mfe3 / b.mfeAtrN) * 100)}% (${b.mfe3}/${b.mfeAtrN})`)
       }
       if (b.capN > 0) parts.push(`captured ${Math.round((b.capSum / b.capN) * 100)}%`)
+      if (b.first) parts.push(b.first === b.last ? `only on ${b.first}` : `first ${b.first}, last ${b.last}`)
       return `  ${root}: ${parts.join(' - ')}`
     })
     .join('\n') || '  (no native trades with an instrument in window)'
+
+  const instrumentMonthLines = Array.from(instrumentByMonth.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([month, mm]) => `  ${month}: ${Array.from(mm.entries()).sort((a, b) => b[1] - a[1]).map(([root, n]) => `${root} ${n}`).join(', ')}`)
+    .join('\n') || '  (no dated trades in window)'
 
   // Recent trades (newest first, capped at recentTradesLimit)
   const recent = trades.slice(0, recentTradesLimit).map(t => {
@@ -983,6 +1043,9 @@ ${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} tra
 
 BY INSTRUMENT (ES and NQ move differently in ATR terms — use this bucket; the instrument split IS available, never say it is not):
 ${instrumentLines}
+
+INSTRUMENT MIX BY MONTH (trade counts — use this for "when did I start/stop trading X"):
+${instrumentMonthLines}
 
 RECENT TRADES (newest first, terse format, capped at ${recentTradesLimit}):
 ${recent}
