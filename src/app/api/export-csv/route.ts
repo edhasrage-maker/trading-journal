@@ -6,6 +6,7 @@ import { normalizeTagArray, type Trade, type TradingDay, type MarketContext, typ
 import { rMultiple as rMultipleNum } from '@/lib/analytics'
 import { anchorExcursionToFills } from '@/lib/excursion-guard'
 import { resolveTagCategories } from '@/lib/tag-categories'
+import { todayPT } from '@/lib/pt-time'
 import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
 
 /**
@@ -198,7 +199,10 @@ export async function GET(req: Request) {
       lines.push(row)
     }
     const csv = lines.join('\r\n') + '\r\n'
-    const today = new Date().toISOString().slice(0, 10)
+    // PT, not UTC. The host runs UTC, so toISOString() stamped tomorrow's date
+    // on every export taken after 17:00 PT — a file named for a session the
+    // trader hasn't traded yet.
+    const today = todayPT()
     saveLocalCopy('day-summary', fromParam, toParam, csv)
     return new NextResponse(csv, {
       status: 200,
@@ -394,7 +398,8 @@ export async function GET(req: Request) {
   for (const r of rows) lines.push(r.row)
 
   const csv = lines.join('\r\n') + '\r\n'
-  const today = new Date().toISOString().slice(0, 10)
+  // PT, not UTC — see the day-summary stamp above.
+  const today = todayPT()
   const filename = `trades-${today}.csv`
   saveLocalCopy('trades', fromParam, toParam, csv)
 
