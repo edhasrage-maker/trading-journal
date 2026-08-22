@@ -325,8 +325,20 @@ button:disabled{opacity:.5;cursor:default}
 .chip.mixed{background:#2c2716;color:var(--amber);border-color:#4a411f}
 .win{color:var(--green)}.loss{color:var(--red)}.mute{color:var(--mute)}
 #detail{position:fixed;inset:0;background:rgba(6,8,12,.94);z-index:40;display:none;overflow:auto;padding:20px}
-#detail .inner{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(360px,.85fr);gap:18px;max-width:1750px;margin:0 auto}
-#detail img{width:100%;border:1px solid var(--line);border-radius:8px;background:#0a0c10}
+#detail .inner{display:grid;grid-template-columns:minmax(0,1fr) minmax(330px,420px);gap:16px;max-width:2200px;margin:0 auto;align-items:start}
+.vtools{display:flex;gap:7px;align-items:center;margin-bottom:9px;flex-wrap:wrap}
+.vtools button{padding:5px 10px}
+.vtools .sep{width:1px;height:18px;background:var(--line)}
+.vhint{font-size:11.5px}
+/* The Sierra captures are two-pane and dense — fit the whole frame first,
+   then let the wheel take it to native and beyond. */
+#d-view{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:8px;background:#0a0c10;height:calc(100vh - 92px);cursor:zoom-in;touch-action:none}
+#d-view.zoomed{cursor:grab}
+#d-view.dragging{cursor:grabbing}
+#d-img{position:absolute;top:0;left:0;transform-origin:0 0;max-width:none;user-select:none;-webkit-user-drag:none}
+#loaderr{display:none;position:absolute;inset:0;margin:auto;height:fit-content;padding:0 40px;text-align:center;color:var(--mute);font-size:13px}
+#loaderr code{color:var(--fg)}
+#d-side{max-height:calc(100vh - 40px);overflow:auto;padding-right:4px}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:14px}
 .panel h4{margin:0 0 9px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute)}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -364,7 +376,24 @@ td{padding:3px 0;vertical-align:top}td:first-child{color:var(--mute);width:44%;p
 <div class="grid" id="grid"></div>
 
 <div id="detail"><div class="inner">
-  <div><button id="close" style="margin-bottom:10px">&#8592; back</button><img id="d-img" alt=""></div>
+  <div>
+    <div class="vtools">
+      <button id="close">&#8592; back</button>
+      <button id="prev" title="previous trade (&#8592;)">&#8249;</button>
+      <span class="mute" id="pos"></span>
+      <button id="next" title="next trade (&#8594;)">&#8250;</button>
+      <span class="sep"></span>
+      <button id="zoomout" title="zoom out (&#8722;)">&#8722;</button>
+      <button id="zoomfit" title="fit the whole frame (0)">fit</button>
+      <button id="zoomin" title="zoom in (+)">+</button>
+      <span class="mute" id="zoomlvl"></span>
+      <span class="mute vhint">scroll to zoom &#183; drag to pan &#183; click for the next &#183; &#8592;/&#8594; to flip</span>
+    </div>
+    <div id="d-view"><img id="d-img" alt="">
+      <div id="loaderr">This screenshot did not load — its signed URL has most likely expired.
+      Re-run <code>npx tsx scripts/screenshot-coach-harness.ts --unlabelled</code> and reload this page.</div>
+    </div>
+  </div>
   <div id="d-side"></div>
 </div></div>
 
@@ -498,16 +527,104 @@ function side(t) {
         : '') +
     '</div>'
 }
+// ── the viewer ───────────────────────────────────────────────────────────
+//  These are two-pane Sierra captures: the whole frame is the orientation and
+//  the detail only shows up past native size, so the wheel zooms, a drag pans,
+//  and the zoom level SURVIVES flipping to the next trade — his screenshots
+//  share a layout, so holding the zoom is what makes two of them comparable.
+const view = $('#d-view'), img = $('#d-img')
+let vlist = [], vidx = 0, z = 1, panX = 0, panY = 0, baseW = 0, baseH = 0
+const MAXZ = 12
+function apply() {
+  const w = baseW * z, h = baseH * z
+  const vw = view.clientWidth, vh = view.clientHeight
+  panX = w <= vw ? (vw - w) / 2 : Math.min(0, Math.max(vw - w, panX))
+  panY = h <= vh ? (vh - h) / 2 : Math.min(0, Math.max(vh - h, panY))
+  img.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + z + ')'
+  view.classList.toggle('zoomed', z > 1)
+  $('#zoomlvl').textContent = Math.round(z * 100) + '%'
+}
+function fitTo(natW, natH) {
+  const vw = view.clientWidth, vh = view.clientHeight
+  const f = Math.min(vw / natW, vh / natH)
+  baseW = natW * f; baseH = natH * f
+  img.style.width = baseW + 'px'; img.style.height = baseH + 'px'
+}
+function zoomAt(cx, cy, factor) {
+  const nz = Math.min(MAXZ, Math.max(1, z * factor))
+  const k = nz / z
+  panX = cx - k * (cx - panX); panY = cy - k * (cy - panY)
+  z = nz; apply()
+}
+function openAt(i) {
+  if (!vlist.length) return
+  vidx = (i + vlist.length) % vlist.length
+  const t = vlist[vidx]
+  img.style.visibility = 'hidden'
+  $('#loaderr').style.display = 'none'
+  img.onload = () => { fitTo(img.naturalWidth, img.naturalHeight); apply(); img.style.visibility = 'visible' }
+  // Signed URLs expire about a week after the harness pull, and a dead image
+  // is otherwise an empty black box with no explanation.
+  img.onerror = () => { baseW = baseH = 0; $('#loaderr').style.display = 'block' }
+  img.src = t.url
+  $('#d-side').innerHTML = side(t)
+  $('#d-side').scrollTop = 0
+  $('#pos').textContent = (vidx + 1) + ' / ' + vlist.length
+  $('#detail').style.display = 'block'
+}
 $('#grid').addEventListener('click', e => {
   const el = e.target.closest('.card'); if (!el) return
-  const t = T.find(x => x.id === el.dataset.id)
-  $('#d-img').src = t.url
-  $('#d-side').innerHTML = side(t)
-  $('#detail').style.display = 'block'
-  $('#detail').scrollTop = 0
+  vlist = current()
+  openAt(vlist.findIndex(x => x.id === el.dataset.id))
 })
 $('#close').onclick = () => { $('#detail').style.display = 'none' }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#detail').style.display = 'none' })
+$('#prev').onclick = () => openAt(vidx - 1)
+$('#next').onclick = () => openAt(vidx + 1)
+$('#zoomin').onclick = () => zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1.4)
+$('#zoomout').onclick = () => zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1 / 1.4)
+$('#zoomfit').onclick = () => { z = 1; apply() }
+view.addEventListener('wheel', e => {
+  e.preventDefault()
+  const r = view.getBoundingClientRect()
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.18 : 1 / 1.18)
+}, { passive: false })
+// A press that does not travel is a click (next trade); one that travels pans.
+let down = null
+view.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return
+  down = { x: e.clientX, y: e.clientY, px: panX, py: panY, moved: 0 }
+  try { view.setPointerCapture(e.pointerId) } catch { /* no capture, drag still works */ }
+})
+view.addEventListener('pointermove', e => {
+  if (!down) return
+  const dx = e.clientX - down.x, dy = e.clientY - down.y
+  down.moved = Math.max(down.moved, Math.abs(dx) + Math.abs(dy))
+  if (down.moved > 4 && z > 1) {
+    view.classList.add('dragging')
+    panX = down.px + dx; panY = down.py + dy; apply()
+  }
+})
+view.addEventListener('pointerup', e => {
+  if (!down) return
+  const wasClick = down.moved <= 4
+  down = null; view.classList.remove('dragging')
+  if (wasClick) openAt(vidx + 1)
+})
+document.addEventListener('keydown', e => {
+  const el = e.target
+  if (el && el.closest && el.closest('input, textarea')) return
+  if (e.key === 'Escape') { $('#detail').style.display = 'none'; return }
+  if ($('#detail').style.display !== 'block') return
+  if (e.key === 'ArrowRight') { e.preventDefault(); openAt(vidx + 1) }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); openAt(vidx - 1) }
+  else if (e.key === '+' || e.key === '=') zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1.4)
+  else if (e.key === '-') zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1 / 1.4)
+  else if (e.key === '0') { z = 1; apply() }
+})
+window.addEventListener('resize', () => {
+  if ($('#detail').style.display !== 'block' || !img.naturalWidth) return
+  fitTo(img.naturalWidth, img.naturalHeight); apply()
+})
 $('#d-side').addEventListener('click', async e => {
   if (e.target.id !== 'gen') return
   const btn = e.target, id = btn.dataset.id, t = T.find(x => x.id === id)
