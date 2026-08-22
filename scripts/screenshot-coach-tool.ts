@@ -337,6 +337,16 @@ button:disabled{opacity:.5;cursor:default}
 #d-view.maxed{cursor:zoom-out}
 #d-view.dragging{cursor:grabbing}
 #d-img{position:absolute;top:0;left:0;transform-origin:0 0;max-width:none;user-select:none;-webkit-user-drag:none}
+.edge{position:absolute;top:50%;transform:translateY(-50%);z-index:5;width:40px;height:74px;
+  display:flex;align-items:center;justify-content:center;font-size:24px;line-height:1;
+  background:rgba(10,12,16,.6);border:1px solid var(--line);border-radius:8px;color:var(--fg);
+  cursor:pointer;opacity:0;transition:opacity .12s}
+#d-view:hover .edge,.edge:focus-visible{opacity:1}
+.edge:hover{background:rgba(10,12,16,.92);border-color:var(--blue)}
+.edge.l{left:10px}.edge.r{right:10px}
+/* Panel collapsed: the frame takes the whole width. */
+#detail .inner.wide{grid-template-columns:minmax(0,1fr)}
+#detail .inner.wide #d-side{display:none}
 #loaderr{display:none;position:absolute;inset:0;margin:auto;height:fit-content;padding:0 40px;text-align:center;color:var(--mute);font-size:13px}
 #loaderr code{color:var(--fg)}
 #d-side{max-height:calc(100vh - 40px);overflow:auto;padding-right:4px}
@@ -388,9 +398,13 @@ td{padding:3px 0;vertical-align:top}td:first-child{color:var(--mute);width:44%;p
       <button id="zoomfit" title="fit the whole frame (0)">fit</button>
       <button id="zoomin" title="zoom in (+)">+</button>
       <span class="mute" id="zoomlvl"></span>
+      <span class="sep"></span>
+      <button id="panel" title="hide the trade panel (p)">hide panel</button>
       <span class="mute vhint">click or scroll to zoom &#183; right-click to back out &#183; drag to pan &#183; &#8592;/&#8594; for the next trade</span>
     </div>
     <div id="d-view"><img id="d-img" alt="">
+      <button class="edge l" id="edgeprev" title="previous trade (&#8592;)">&#8249;</button>
+      <button class="edge r" id="edgenext" title="next trade (&#8594;)">&#8250;</button>
       <div id="loaderr">This screenshot did not load — its signed URL has most likely expired.
       Re-run <code>npx tsx scripts/screenshot-coach-harness.ts --unlabelled</code> and reload this page.</div>
     </div>
@@ -582,6 +596,23 @@ $('#grid').addEventListener('click', e => {
 $('#close').onclick = () => { $('#detail').style.display = 'none' }
 $('#prev').onclick = () => openAt(vidx - 1)
 $('#next').onclick = () => openAt(vidx + 1)
+// The edge arrows sit INSIDE the frame, so their presses would otherwise
+// bubble into the click-to-zoom handler and do both things at once.
+for (const [id, step] of [['edgeprev', -1], ['edgenext', 1]]) {
+  const b = $('#' + id)
+  for (const ev of ['pointerdown', 'pointerup', 'contextmenu']) b.addEventListener(ev, e => e.stopPropagation())
+  b.onclick = e => { e.stopPropagation(); openAt(vidx + step) }
+}
+// Collapsing the trade panel gives the frame the whole width — the choice
+// sticks, because someone reading a set of charts wants it every time.
+function setPanel(hidden) {
+  $('#detail .inner').classList.toggle('wide', hidden)
+  $('#panel').textContent = hidden ? 'show panel' : 'hide panel'
+  localStorage.setItem('coach-panel-hidden', hidden ? '1' : '')
+  if (img.naturalWidth) { fitTo(img.naturalWidth, img.naturalHeight); apply() }
+}
+$('#panel').onclick = () => setPanel(!$('#detail .inner').classList.contains('wide'))
+setPanel(localStorage.getItem('coach-panel-hidden') === '1')
 $('#zoomin').onclick = () => zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1.4)
 $('#zoomout').onclick = () => zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1 / 1.4)
 $('#zoomfit').onclick = () => { z = 1; apply() }
@@ -633,6 +664,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === '+' || e.key === '=') zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1.4)
   else if (e.key === '-') zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1 / 1.4)
   else if (e.key === '0') { z = 1; apply() }
+  else if (e.key === 'p' || e.key === 'P') setPanel(!$('#detail .inner').classList.contains('wide'))
 })
 window.addEventListener('resize', () => {
   if ($('#detail').style.display !== 'block' || !img.naturalWidth) return
