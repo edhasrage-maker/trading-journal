@@ -178,7 +178,7 @@ async function fetchHandoffDate(supabase: AnyClient): Promise<string | null> {
  * each chunk. Errors are RETURNED rather than swallowed so a caller can tell
  * "nothing there" apart from "the request died".
  */
-async function fetchByDayIds(
+export async function fetchByDayIds(
   supabase: AnyClient,
   table: string,
   columns: string,

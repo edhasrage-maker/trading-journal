@@ -20,6 +20,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
+import { COACH_QUERY_TOOL, runCoachQuery, type CoachQueryInput } from '@/lib/coach-query'
 import { getTraderProfile, profileContextBlock, focusContextBlock } from '@/lib/trader-profile'
 import { buildCoachContext } from '@/lib/coach-context'
 import { fetchDiveRows } from '@/lib/deep-dive/gather'
@@ -194,15 +195,32 @@ ${contextBlock}${focusContextBlock(traderProfile)}`
     async start(controller) {
       const encoder = new TextEncoder()
       try {
-        const response = await client.messages.stream({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 2000,
-          system: systemBlocks,
-          messages,
-        })
         let usage: { input: number; cache_write: number; cache_read: number } | null = null
-        for await (const event of response) {
-          if (event.type === 'message_start') {
+        // Tool-use loop. The coach can call query_trades to compute a cut its
+        // pre-built context doesn't cover; each call is answered and the model
+        // resumes. Capped so a confused turn can't spin: in practice one or two
+        // calls answer anything, and after the cap it must reply from what it
+        // has. Only the FINAL assistant turn streams to the client — the
+        // intermediate tool round-trips would otherwise render as half-finished
+        // sentences in the chat panel.
+        const MAX_TOOL_ROUNDS = 4
+        const convo: Anthropic.MessageParam[] = [...messages]
+
+        for (let round = 0; ; round++) {
+          const response = await client.messages.stream({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 2000,
+            system: systemBlocks,
+            tools: [COACH_QUERY_TOOL],
+            messages: convo,
+          })
+
+          // Stream text only once we know no tool call is coming — i.e. on the
+          // last permitted round we always stream, otherwise we buffer and
+          // decide after the turn completes.
+          const mustAnswer = round >= MAX_TOOL_ROUNDS
+          for await (const event of response) {
+            if (event.type === 'message_start') {
             // Cache validation: turn 1 should show cache_write > 0, turns 2+
             // (within the 5-min TTL) cache_read > 0. If read stays 0 across
             // turns, a silent invalidator crept into the stable prefix.
@@ -214,9 +232,46 @@ ${contextBlock}${focusContextBlock(traderProfile)}`
             }
             console.log(`[coach] tokens: input=${usage.input} cache_write=${usage.cache_write} cache_read=${usage.cache_read}`)
           }
-          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`))
+            if (mustAnswer && event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`))
+            }
           }
+
+          const final = await response.finalMessage()
+          const toolUses = final.content.filter(
+            (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+          )
+
+          // No tool call: this turn IS the answer. If we buffered it (because a
+          // call was still possible) flush the text now.
+          if (toolUses.length === 0) {
+            if (!mustAnswer) {
+              const text = final.content
+                .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+                .map(b => b.text)
+                .join('')
+              if (text) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
+            }
+            break
+          }
+
+          // Run each requested query and feed the results back.
+          convo.push({ role: 'assistant', content: final.content })
+          const results: Anthropic.ToolResultBlockParam[] = []
+          for (const call of toolUses) {
+            let out: string
+            try {
+              out = await runCoachQuery(supabase, (call.input ?? {}) as CoachQueryInput)
+              console.log(`[coach] query_trades ${JSON.stringify(call.input)}`)
+            } catch (err) {
+              // Hand the failure back as DATA so the model can say the cut
+              // failed, rather than inventing a number to fill the gap.
+              out = JSON.stringify({ error: err instanceof Error ? err.message : 'query failed' })
+              console.error('[coach] query_trades failed:', out)
+            }
+            results.push({ type: 'tool_result', tool_use_id: call.id, content: out })
+          }
+          convo.push({ role: 'user', content: results })
         }
         // Trailing diagnostic event — the chat client ignores chunks without
         // text/error, so this only surfaces in the network tab / curl output.
