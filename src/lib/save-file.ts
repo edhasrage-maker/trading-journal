@@ -9,11 +9,39 @@
  * standalone window has nowhere to put a download. In every one of those cases
  * the tap reads as broken.
  *
- * So ask the platform for the file instead of navigating to it. Where the Web
- * Share API can carry files — iOS Safari, Android Chrome — that opens the share
- * sheet with "Save to Files", which is explicit and impossible to miss. Where it
- * can't, an object URL and a synthetic click do what they always did.
+ * So on those platforms ask the OS for the file instead of navigating to it:
+ * the Web Share sheet offers "Save to Files", which is explicit and impossible
+ * to miss. Everywhere else an object URL and a synthetic click do what they
+ * always did.
+ *
+ * WHICH path is chosen cannot be decided by capability alone. `canShare({files})`
+ * is NOT a proxy for "this is a phone" — Chrome and Edge on Windows 11 implement
+ * it too, so feature-detection sent every desktop export into the Windows share
+ * sheet (Nearby Sharing, Teams, WhatsApp…) when the user asked for a file on
+ * their disk. So the test below is "would a download actually work here", and
+ * the share sheet is reserved for the cases where it wouldn't.
  */
+
+/**
+ * True only where `<a download>` can't be trusted to produce a saved file:
+ *
+ *   • iOS / iPadOS — Safari ignores the download attribute entirely, and every
+ *     other iOS browser is Safari underneath. iPadOS reports itself as
+ *     "MacIntel", so touch points are the only thing separating it from a Mac.
+ *   • An installed PWA — a standalone window has no download shelf or bar for
+ *     the file to land in, so the click can complete with nothing to show.
+ *
+ * Desktop browsers and Android Chrome both honour `download`, and a file saved
+ * to Downloads is what the user asked for on both.
+ */
+function downloadIsUnreliable(): boolean {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false
+  const nav = navigator as Navigator & { standalone?: boolean; platform?: string }
+  const ua = nav.userAgent || ''
+  const isIOS = /iP(hone|ad|od)/.test(ua) || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1)
+  if (isIOS) return true
+  return window.matchMedia?.('(display-mode: standalone)').matches === true || nav.standalone === true
+}
 
 export type SaveOutcome = 'shared' | 'downloaded' | 'cancelled'
 
@@ -41,10 +69,11 @@ export async function saveFileFromUrl(url: string, fallbackName: string): Promis
   const blob = await res.blob()
   const name = filenameFrom(res.headers.get('content-disposition')) ?? fallbackName
 
-  // Feature-detect with the actual file: canShare({files}) is false on desktop
-  // Chrome and on browsers that support share() for links but not attachments.
+  // Share only where a download wouldn't work, and only if this file can
+  // actually be carried — canShare({files}) still has to pass, since some
+  // browsers support share() for links but not attachments.
   const file = new File([blob], name, { type: blob.type || 'text/csv' })
-  if (typeof navigator !== 'undefined' && navigator.canShare?.({ files: [file] })) {
+  if (downloadIsUnreliable() && navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: name })
       return 'shared'
