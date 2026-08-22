@@ -333,7 +333,8 @@ button:disabled{opacity:.5;cursor:default}
 /* The Sierra captures are two-pane and dense — fit the whole frame first,
    then let the wheel take it to native and beyond. */
 #d-view{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:8px;background:#0a0c10;height:calc(100vh - 92px);cursor:zoom-in;touch-action:none}
-#d-view.zoomed{cursor:grab}
+#d-view.zoomed{cursor:zoom-in}
+#d-view.maxed{cursor:zoom-out}
 #d-view.dragging{cursor:grabbing}
 #d-img{position:absolute;top:0;left:0;transform-origin:0 0;max-width:none;user-select:none;-webkit-user-drag:none}
 #loaderr{display:none;position:absolute;inset:0;margin:auto;height:fit-content;padding:0 40px;text-align:center;color:var(--mute);font-size:13px}
@@ -387,7 +388,7 @@ td{padding:3px 0;vertical-align:top}td:first-child{color:var(--mute);width:44%;p
       <button id="zoomfit" title="fit the whole frame (0)">fit</button>
       <button id="zoomin" title="zoom in (+)">+</button>
       <span class="mute" id="zoomlvl"></span>
-      <span class="mute vhint">scroll to zoom &#183; drag to pan &#183; click for the next &#183; &#8592;/&#8594; to flip</span>
+      <span class="mute vhint">click or scroll to zoom &#183; right-click to back out &#183; drag to pan &#183; &#8592;/&#8594; for the next trade</span>
     </div>
     <div id="d-view"><img id="d-img" alt="">
       <div id="loaderr">This screenshot did not load — its signed URL has most likely expired.
@@ -542,6 +543,7 @@ function apply() {
   panY = h <= vh ? (vh - h) / 2 : Math.min(0, Math.max(vh - h, panY))
   img.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + z + ')'
   view.classList.toggle('zoomed', z > 1)
+  view.classList.toggle('maxed', z * 2 > MAXZ)
   $('#zoomlvl').textContent = Math.round(z * 100) + '%'
 }
 function fitTo(natW, natH) {
@@ -608,7 +610,18 @@ view.addEventListener('pointerup', e => {
   if (!down) return
   const wasClick = down.moved <= 4
   down = null; view.classList.remove('dragging')
-  if (wasClick) openAt(vidx + 1)
+  if (!wasClick) return
+  // A click on a photo means 'closer'. Step 1 -> 2 -> 4 -> 8 and then back to
+  // fit, anchored where they pressed, so the thing under the cursor stays put.
+  const r = view.getBoundingClientRect()
+  const cx = e.clientX - r.left, cy = e.clientY - r.top
+  if (z * 2 > MAXZ) { z = 1; apply() } else zoomAt(cx, cy, 2)
+})
+// Right-click steps back out rather than opening the browser menu.
+view.addEventListener('contextmenu', e => {
+  e.preventDefault()
+  const r = view.getBoundingClientRect()
+  zoomAt(e.clientX - r.left, e.clientY - r.top, 0.5)
 })
 document.addEventListener('keydown', e => {
   const el = e.target
