@@ -37,6 +37,7 @@ export interface CoachQueryInput {
   end_date?: string
   instrument?: string
   direction?: 'long' | 'short'
+  outcome?: 'winners' | 'losers' | 'scratches'
   setups?: string[]
   mistakes?: string[]
   emotions?: string[]
@@ -56,7 +57,8 @@ export const COACH_QUERY_TOOL: Anthropic.Tool = {
     'instead of replying that you lack the granularity. Filters combine with AND; a list ' +
     'inside a single filter matches ANY of its values. Returns per group: trade count, win ' +
     'rate, net P&L, average R, mean MFE in ATR units, the share of trades reaching 2x and 3x ' +
-    'ATR, average profit captured, and first/last trade date. R, MFE and capture come from ' +
+    'ATR, average profit captured, and first/last trade date. Combine outcome:"winners" with '
+    + 'the ATR fields to answer how far the trades that actually worked ran. R, MFE and capture come from ' +
     'natively logged trades only (imported history has no stop or in-trade extremes); each ' +
     'group reports how many rows backed them, so cite the n when quoting those.',
   input_schema: {
@@ -66,6 +68,11 @@ export const COACH_QUERY_TOOL: Anthropic.Tool = {
       end_date: { type: 'string', description: 'Inclusive PT session date, YYYY-MM-DD. Defaults to today.' },
       instrument: { type: 'string', description: 'Instrument, e.g. ES or NQ. Micros count as their mini, so ES includes MES fills.' },
       direction: { type: 'string', enum: ['long', 'short'] },
+      outcome: {
+        type: 'string',
+        enum: ['winners', 'losers', 'scratches'],
+        description: 'Restrict to profitable, losing, or flat trades. Use this for questions like "how far do my WINNERS run" — reach rates over all trades and over winners only are very different numbers.',
+      },
       setups: { type: 'array', items: { type: 'string' }, description: 'Trades carrying ANY of these setup tags.' },
       mistakes: { type: 'array', items: { type: 'string' }, description: 'Trades carrying ANY of these mistake tags.' },
       emotions: { type: 'array', items: { type: 'string' }, description: 'Trades carrying ANY of these emotion tags.' },
@@ -251,6 +258,9 @@ export async function runCoachQuery(sb: AnyClient, input: CoachQueryInput): Prom
   const filtered = all.filter(r => {
     if (family && (!r.symbol || chartSeriesRoot(r.symbol).toUpperCase() !== family)) return false
     if (input.direction && r.direction !== input.direction) return false
+    if (input.outcome === 'winners' && !(r.pnl > 0)) return false
+    if (input.outcome === 'losers' && !(r.pnl < 0)) return false
+    if (input.outcome === 'scratches' && r.pnl !== 0) return false
     if (!anyOf(r.setups, input.setups)) return false
     if (!anyOf(r.mistakes, input.mistakes)) return false
     if (!anyOf(r.emotions, input.emotions)) return false
