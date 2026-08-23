@@ -57,7 +57,47 @@ const MIN_CONJ_N = 10
  *  an instruction anyone can follow. They can still appear, but they have to
  *  out-separate a real finding by a wide margin to do it. */
 const RESIDUAL_SETUPS = /^(discretionary|other|misc|random|scalp)/i
-const RESIDUAL_PENALTY = 0.5
+
+/** A conjunction must separate this much harder than the plain feature finding
+ *  inside it, or the simpler version is reported instead. */
+const CONJUNCTION_LIFT = 1.6
+
+/**
+ * How much a finding on each dimension is worth READING, as a multiplier on the
+ * ranking weight. Not about statistical strength — `weight` already carries
+ * that. About whether the finding names something the trader can act on.
+ *
+ * Two things make a true finding worthless:
+ *
+ *   SELF-EVIDENCE. "Your Stable trades beat your Compromised ones" is real in
+ *   the data and useless on the page: nobody plans to be tilted, and "be calm"
+ *   is not a decision you make before the open.
+ *
+ *   OUTCOME CONTAMINATION. Emotion tags are written during or after the trade,
+ *   and a trade that FEELS bad correlates with one that IS bad — so the tag
+ *   partly encodes the result it is being used to explain. Same circularity
+ *   that keeps hold time out of the feature set entirely.
+ *
+ * Derived entry features sit at the top: the trader never recorded them, and
+ * every one is a decision made at entry. Emotions sit at the bottom but are NOT
+ * banned — when nothing else clears, a real emotional split still beats showing
+ * nothing.
+ */
+function dimensionWeight(key: string): number {
+  if (key.startsWith('entry:')) return 1
+  if (key.startsWith('conj:')) {
+    const parts = key.split(':')
+    const category = parts[1]
+    const label = parts[2] ?? ''
+    if (category === 'emotions') return 0.3
+    if (category === 'setups' && RESIDUAL_SETUPS.test(label)) return 0.45
+    return category === 'mistakes' ? 0.85 : 0.9
+  }
+  if (key.startsWith('setup:')) return RESIDUAL_SETUPS.test(key.slice('setup:'.length)) ? 0.4 : 0.8
+  if (key.startsWith('emotions:')) return 0.3
+  if (key.startsWith('mistakes:')) return 0.7
+  return 1
+}
 
 /** Capture below this (fraction of the offered move kept) is a real leak. */
 const CAPTURE_FLOOR = 0.5
@@ -610,12 +650,28 @@ export function computeCarryover(
   ]
   if (candidates.length === 0) return null
 
-  // Residual setup buckets are demoted, not banned — see RESIDUAL_SETUPS.
+  // Actionability prior — see dimensionWeight. Applied to the ranking weight,
+  // never to `effect`, so the number the copy quotes stays the measured one.
+  for (const c of candidates) c.weight *= dimensionWeight(c.key)
+
+  // Prefer the simpler form. A conjunction earns its extra clause only if it
+  // separates meaningfully harder than the plain feature finding inside it:
+  // "your Stable trades work when you target 3R" and "trades where you target
+  // 3R work" describe one behaviour, and only the second names something the
+  // trader decides. The conjunction stays when the tag genuinely changes the
+  // picture, and goes when the feature was doing the work.
+  const soloByFeature = new Map<string, Candidate>()
   for (const c of candidates) {
-    if (c.key.startsWith('setup:') && RESIDUAL_SETUPS.test(c.key.slice('setup:'.length))) {
-      c.weight *= RESIDUAL_PENALTY
-    }
+    if (c.key.startsWith('entry:')) soloByFeature.set(c.key.slice('entry:'.length), c)
   }
+  const surviving = candidates.filter(c => {
+    if (!c.key.startsWith('conj:')) return true
+    const featureKey = c.key.split(':').slice(3).join(':')
+    const solo = soloByFeature.get(featureKey)
+    return !solo || c.effect >= solo.effect * CONJUNCTION_LIFT
+  })
+  candidates.length = 0
+  candidates.push(...surviving)
 
   // Strongest tier first, then largest effect. Ties break toward 'protect' —
   // when an edge and a leak are equally strong, telling a trader what is
