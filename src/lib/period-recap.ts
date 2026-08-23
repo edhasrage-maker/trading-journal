@@ -145,7 +145,7 @@ export async function loadPeriodTrades(sb: AnyClient, dayIds: string[]): Promise
   for (let p = 0; p < 10; p++) {
     const { data } = await sb
       .from('trades')
-      .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, high_during_position, low_during_position')
+      .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, high_during_position, low_during_position, exit_time, tp1_price, entry_atr_1m, structure_5m_alignment')
       .in('trading_day_id', dayIds)
       .order('id', { ascending: true })
       .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
