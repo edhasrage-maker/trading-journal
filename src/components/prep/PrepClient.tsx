@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { drAdrPercent } from '@/lib/dr-adr'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 import { todayPT } from '@/lib/pt-time'
@@ -46,10 +47,13 @@ interface Props {
    *  intraday TradeForm — picking one here pre-selects the matching chip on
    *  every NEW trade for the day (via the auto-populate flow). */
   dayTypeOptions: string[]
-  /** Auto-detected DR_ADR (6:30-7:30 PT range ÷ ADR) from 1-min bars in the
-   *  ohlcv_bars table. Null when bars haven't been imported yet for the date
-   *  or market_context.adr is missing — pill falls back to manual entry. */
-  drAdrAuto: number | null
+  /** Auto-detected DR/ADR as a PERCENT (RTH range so far ÷ ADR × 100) — the
+   *  same unit condition_thresholds.DR_ADR is cut in. Null when bars haven't
+   *  been imported yet for the date or market_context.adr is missing. */
+  drAdrPctAuto: number | null
+  /** The realized RTH range behind that percent, in points, so the ledger can
+   *  show its own numerator. */
+  dayRangeAuto: number | null
   /** Symbol fed to the LiveChart — derived server-side from the day's trades,
    *  falling back to MNQM6.CME on days with no trades yet so the chart still
    *  renders the current session's price action. */
@@ -72,7 +76,7 @@ interface Props {
   historyTrades: TradeWithContext[]
 }
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrAuto, chartSymbol, initialTrades, highImpactNews, isAdmin, carryover, historyTrades }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrPctAuto, dayRangeAuto, chartSymbol, initialTrades, highImpactNews, isAdmin, carryover, historyTrades }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -290,6 +294,14 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           // as "—" while the ledger — which reads the ratio directly — showed
           // 1.13x. Two panels, one session, different answers.
           ib_10d_avg: stats.ib_10d_avg,
+          // The 07:29 PT IB-close snapshots. `condition-lookup-refresh` buckets
+          // history on THESE (`atr_at_ib_close ?? atr_1m`, `rvol_at_ib_close ??
+          // rvol`), but nothing filled them here, so Morning Conditions compared
+          // today's 12:59 EOD readings against cuts built from the IB close.
+          // Measured on prod: atr_at_ib_close p50 17.63 vs atr_1m p50 13.19 —
+          // enough to shift a day a whole bucket low.
+          atr_at_ib_close: stats.atr_at_ib_close,
+          rvol_at_ib_close: stats.rvol_at_ib_close,
         }
         // Numbers this effect filled for a DIFFERENT instrument are stale, not
         // trader input — a switch must replace them, or the form keeps NQ's ADR
@@ -1307,7 +1319,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             context={context as Partial<MarketContext>}
             atrBaseline={atrBaseline}
             adrAtNow={contextStats?.adr_at_now ?? null}
-            drAdrAuto={drAdrAuto}
+            drAdrPctAuto={drAdrPctAuto}
+            dayRangeAuto={dayRangeAuto}
             ibDayType={ibDayType}
           />
           <details className="mt-3 group">
@@ -1339,13 +1352,21 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
             date={date}
             beginner={!pro}
             marketContext={{
-              rvol: context.rvol ?? null,
+              // Every value below must be on the SAME basis and in the SAME
+              // unit that condition-lookup-refresh bucketed the history on, or
+              // today is scored against cuts drawn from a different
+              // measurement. The IB-close snapshots are preferred with the EOD
+              // value as the fallback, exactly as deriveMetrics() does.
+              rvol: context.rvol_at_ib_close ?? context.rvol ?? null,
               ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
-              atr_1m: context.atr_1m ?? null,
-              dr_adr:
-                context.day_range != null && context.adr != null && context.adr > 0
-                  ? Math.round((context.day_range / context.adr) * 100) / 100
-                  : drAdrAuto,
+              atr_730: context.atr_at_ib_close ?? context.atr_1m ?? null,
+              // PERCENT (thresholds median 75.9). This fed a RATIO (0.76) until
+              // 2026-08-24, which is below every cut — DR/ADR bucketed LOW on
+              // 100% of days, pinning one of the five lookup dimensions.
+              // Whole-day `adr` on purpose: history's day_range/adr is the
+              // whole-day pair, so the time-matched adr_at_now the ledger
+              // displays against would be a third basis.
+              dr_adr: drAdrPercent(context.day_range, context.adr) ?? drAdrPctAuto,
               // Day character — persisted by the effect above once the IB has
               // printed, so the lookup buckets on the same number the panel shows.
               // meanHL10 basis only: history is bucketed on that basis, so

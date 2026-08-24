@@ -67,12 +67,21 @@ interface InputState {
   ib_atr: string
 }
 
+/**
+ * Values from the prep page's Market Context, already put on the SAME basis and
+ * in the SAME unit that condition-lookup-refresh bucketed the history on. The
+ * caller owns that alignment (see PrepClient's Morning Conditions block) —
+ * anything passed here is fed to the lookup unconverted.
+ */
 interface MarketContextPrefill {
+  /** RVOL at the 07:30 PT IB close, EOD RVOL as fallback. */
   rvol?: number | null
   ib_vs_10d_avg?: number | null
-  atr_1m?: number | null
-  /** Server-computed DR/ADR from 1-min bars in the 6:30-7:30 PT window.
-   *  When present, fills the dr_adr lookup without the user typing. */
+  /** Wilder ATR-10 at the 07:29 PT IB close, EOD ATR as fallback — the metric
+   *  is ATR_730 and the IB-close reading is what history is cut on. */
+  atr_730?: number | null
+  /** DR/ADR as a PERCENT (75.9 = 75.9% of a normal day's range), matching
+   *  condition_thresholds.DR_ADR. */
   dr_adr?: number | null
   /** Day character (IB range / meanHL10), persisted by the prep page once the
    *  IB has printed. Buckets the trader's history by choppy / mid / expanded. */
@@ -89,6 +98,23 @@ interface Props {
    *  verdict + full stats block with a slim Win rate + Profit factor readout.
    *  Detailed Tape (pro) shows the full panel. */
   beginner?: boolean
+}
+
+/**
+ * `daily_prep.dr_adr` snapshots written before 2026-08-24 stored a RATIO (0.82)
+ * while the thresholds have always been cut in PERCENT (median 75.9), so a
+ * restored snapshot bucketed LOW no matter what the day did. Twelve such rows
+ * exist app-wide and every one is ratio-shaped (0.49-1.19); the single
+ * percent-shaped value is 311.75. Scaling below 5 recovers them exactly.
+ *
+ * This is a one-off repair of a closed set, NOT a dual-unit contract — new
+ * snapshots are written in percent, and the live path never comes through here.
+ */
+const legacyDrAdrPct = (saved: string): string => {
+  if (!saved) return ''
+  const n = parseFloat(saved)
+  if (!Number.isFinite(n)) return saved
+  return n <= 5 ? String(n * 100) : saved
 }
 
 const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '', ib_atr: '' }
@@ -117,9 +143,9 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
     raw != null && Number.isFinite(raw) ? String(raw) : ''
   const effectiveInputs: InputState = {
     rvol: inputs.rvol || fromContext(marketContext?.rvol),
-    dr_adr: inputs.dr_adr || fromContext(marketContext?.dr_adr),
+    dr_adr: legacyDrAdrPct(inputs.dr_adr) || fromContext(marketContext?.dr_adr),
     ib: inputs.ib || fromContext(marketContext?.ib_vs_10d_avg),
-    atr_730: inputs.atr_730 || fromContext(marketContext?.atr_1m),
+    atr_730: inputs.atr_730 || fromContext(marketContext?.atr_730),
     ib_atr: inputs.ib_atr || fromContext(marketContext?.ib_atr_ratio),
   }
   // ── Load existing prep + run initial lookup on mount ──────────────────────

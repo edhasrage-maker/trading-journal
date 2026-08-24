@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { drAdrPercent } from '@/lib/dr-adr'
 import type { MarketContext } from '@/lib/supabase/types'
 
 type ContextFields = Omit<MarketContext, 'id' | 'trading_day_id' | 'stat_performance_json' | 'created_at'>
@@ -43,53 +44,6 @@ function NumInput({ label, hint, value, onChange }: { label: string; hint?: stri
   )
 }
 
-/**
- * DR_ADR input — accepts the ratio (e.g. 0.82) or a percent (82 → 0.82).
- * The displayed placeholder + suffix make the percent interpretation
- * obvious. Persists as `day_range = ratio × adr` so the Morning Conditions
- * panel + condition lookup keep working off the same field they already
- * read. Requires ADR to be set first — disabled with a hint otherwise.
- */
-function DrAdrInput({
-  dayRange, adr, onChange,
-}: {
-  dayRange: number | null | undefined
-  adr: number | null | undefined
-  onChange: (ratio: number | null) => void
-}) {
-  const adrNum = adr == null ? null : Number(adr)
-  const adrUsable = adrNum != null && adrNum > 0
-  const currentRatio = adrUsable && dayRange != null ? Number(dayRange) / adrNum : null
-  const display = currentRatio == null ? '' : currentRatio.toFixed(2)
-  const placeholder = adrUsable ? '0.82  ·  shown as 82%' : 'set ADR first'
-
-  const onInput = (raw: string) => {
-    if (raw === '') { onChange(null); return }
-    let n = parseFloat(raw)
-    if (!Number.isFinite(n)) return
-    // Tolerate the user typing "82" when they meant 0.82 — anything > 5 is
-    // assumed to be a percent, divide by 100. Below 5, treat as ratio.
-    if (n > 5) n = n / 100
-    onChange(n)
-  }
-
-  return (
-    <div>
-      <label className="block text-xs text-gray-400 mb-1" title="(Day's high − low since 6:30 PT) / ADR">
-        DR_ADR
-      </label>
-      <input
-        type="number"
-        step="any"
-        placeholder={placeholder}
-        value={display}
-        disabled={!adrUsable}
-        onChange={e => onInput(e.target.value)}
-        className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-      />
-    </div>
-  )
-}
 
 export default function MarketContextForm({ value, onChange }: Props) {
   // Bad/Mid/Good per-metric flags + the metric-buckets fetch that fed
@@ -146,6 +100,16 @@ export default function MarketContextForm({ value, onChange }: Props) {
   const derivedIbPctNum = value.ib_size != null && value.ib_10d_avg != null && Number(value.ib_10d_avg) > 0
     ? Number(value.ib_size) / Number(value.ib_10d_avg) * 100
     : null
+  // DR/ADR is DERIVED here, never typed. The field used to take a ratio and
+  // persist `day_range = ratio × adr` against the whole-day ADR, while the
+  // ledger divides day_range by the time-matched `adr_at_now` — so typing 0.60
+  // mid-session read back as something else entirely. Storing the range in
+  // POINTS removes the round-trip: one stored quantity, and every consumer
+  // states which denominator it chose.
+  const derivedDrAdrPct = drAdrPercent(
+    value.day_range as number | null | undefined,
+    value.adr as number | null | undefined,
+  )
 
   return (
     <div className="space-y-6">
@@ -228,10 +192,8 @@ export default function MarketContextForm({ value, onChange }: Props) {
       {/* Volatility metrics — numeric inputs only. Collapsible: the panel
           above (Morning Conditions) already shows these values, so once
           they're filled there's no reason to keep this section unfurled.
-          DR_ADR is shown as the 4th input alongside Rvol/ADR/ATR-10;
-          internally it stores as `day_range = ratio × adr` so the rest
-          of the app (Morning Conditions, condition lookup) keeps working
-          off the same `value.day_range` field. */}
+          Day range is entered in POINTS and DR/ADR is derived from it —
+          see the note on derivedDrAdrPct. */}
       <div>
         <button
           type="button"
@@ -247,27 +209,20 @@ export default function MarketContextForm({ value, onChange }: Props) {
           )}
         </button>
         {volOpen && (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             <NumInput label="Rvol" hint="Relative Volume" value={value.rvol} onChange={r => set('rvol', r)} />
             <NumInput label="ADR" hint="Avg Daily Range (RTH)" value={value.adr} onChange={r => set('adr', r)} />
             <NumInput label="ATR-10 (1m)" hint="1×ATR on 1min chart" value={value.atr_1m} onChange={r => set('atr_1m', r)} />
-            <DrAdrInput
-              dayRange={value.day_range as number | null | undefined}
-              adr={value.adr as number | null | undefined}
-              onChange={ratio => {
-                const adr = value.adr == null ? null : Number(value.adr)
-                if (ratio == null) {
-                  onChange({ ...value, day_range: undefined })
-                  return
-                }
-                if (adr == null || !(adr > 0)) {
-                  // Without ADR we can't store the raw day_range; leave it
-                  // and surface the dependency in the input's hint.
-                  return
-                }
-                onChange({ ...value, day_range: parseFloat((ratio * adr).toFixed(2)) })
-              }}
-            />
+            <NumInput label="Day range" hint="RTH high − low so far (points)" value={value.day_range} onChange={r => set('day_range', r)} />
+            <div>
+              <label className="block text-xs text-gray-400 mb-1" title="Day range ÷ ADR. Read-only: it is a division of the two fields beside it, not a third thing to keep in sync.">
+                DR/ADR
+              </label>
+              <div className="w-full rounded-lg px-3 py-2 text-sm border bg-gray-800 border-gray-700 text-gray-300">
+                {derivedDrAdrPct != null ? `${derivedDrAdrPct.toFixed(0)}%` : '—'}
+                <span className="text-gray-600 text-xs ml-1">(auto)</span>
+              </div>
+            </div>
           </div>
         )}
       </div>

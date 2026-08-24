@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import PrepClient from '@/components/prep/PrepClient'
-import { computeDrAdr } from '@/lib/dr-adr'
+import { computeDrAdr, drAdrPercent } from '@/lib/dr-adr'
 import { fetchHighImpactNews } from '@/lib/economic-calendar'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
@@ -79,18 +79,22 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
   // DR_ADR priority: (1) market_context.day_range/adr (canonical, no query);
   // (2) bar fallback (computeDrAdr) only when those are missing. Signing mutates
   // day/trades in place (no-op on public URLs).
-  let drAdrAuto: number | null = null
-  if (context?.day_range != null && context.adr != null && context.adr > 0) {
-    drAdrAuto = Math.round((context.day_range / context.adr) * 100) / 100
-  }
+  //
+  // PERCENT, per drAdrPercent — the same unit condition_thresholds.DR_ADR is cut
+  // in. This prop used to be a RATIO, which the ledger multiplied by 100 for
+  // display while the Morning Conditions lookup passed it through unscaled, so
+  // the same number meant two things one component apart.
+  let drAdrPctAuto: number | null = drAdrPercent(context?.day_range, context?.adr)
   const [drAdrResult] = await Promise.all([
-    drAdrAuto == null ? computeDrAdr(supabase, date, symbolForBars, context?.adr ?? null) : Promise.resolve(null),
+    drAdrPctAuto == null ? computeDrAdr(supabase, date, symbolForBars, context?.adr ?? null) : Promise.resolve(null),
     signDayScreenshots(supabase, day),
     signTradeScreenshots(supabase, trades),
   ])
-  if (drAdrAuto == null && drAdrResult) {
-    drAdrAuto = drAdrResult.dr_adr != null ? Math.round(drAdrResult.dr_adr * 100) / 100 : null
-  }
+  if (drAdrPctAuto == null && drAdrResult) drAdrPctAuto = drAdrResult.dr_adr_pct
+  // The realized RTH range behind that percent, in points — so the ledger can
+  // print its own numerator instead of asking the reader to trust it.
+  const dayRangeAuto: number | null =
+    (context?.day_range != null ? Number(context.day_range) : null) ?? drAdrResult?.dr ?? null
 
   // ── Review → Prep carryover (pure compute over the window data above) ──
   const dayDateById = new Map(reviewDays.map(d => [d.id, d.date]))
@@ -116,7 +120,8 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
       initialDay={day}
       initialContext={context}
       dayTypeOptions={dayTypeOptions}
-      drAdrAuto={drAdrAuto}
+      drAdrPctAuto={drAdrPctAuto}
+      dayRangeAuto={dayRangeAuto}
       chartSymbol={chartSymbol}
       initialTrades={trades}
       highImpactNews={highImpactNews}

@@ -58,6 +58,20 @@ export interface Database {
           gbx_pct_adr: number | null
           atr_1m: number | null
           atr_flag: 'red' | 'yellow' | 'green' | null
+          // The 07:29/07:30 PT IB-CLOSE snapshots. These columns have existed
+          // and been written by the backfill for a long time, but were never
+          // declared here, so every consumer that reached for them was silently
+          // typed away — including the prep page, which then fed Morning
+          // Conditions the 12:59 EOD readings against cuts that
+          // condition-lookup-refresh builds from these. Different measurement,
+          // same metric name.
+          rvol_at_ib_close: number | null
+          atr_at_ib_close: number | null
+          /** Trailing-10 of atr_at_ib_close — an IB-close-basis baseline. NOT
+           *  the right denominator for atr_1m; see market-context-from-bars. */
+          atr_10d_avg: number | null
+          rth_open: number | null
+          ib_close_price: number | null
           price_in_pd_range: boolean | null
           price_in_gbx_range: boolean | null
           // IB day-type Phase 2 (Pt 23) — the day-CHARACTER read, classified

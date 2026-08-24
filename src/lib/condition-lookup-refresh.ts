@@ -7,6 +7,7 @@ import type {
 } from '@/lib/supabase/types'
 import { REGIME_CUTS_MEANHL10 } from '@/lib/ib-day-type'
 import { MIN_SAMPLE } from '@/lib/sample-size'
+import { drAdrPercent } from '@/lib/dr-adr'
 
 // Supabase clients are structurally identical for our purposes (server session
 // client OR service-role client); we only call .from(...).select/insert/delete.
@@ -67,11 +68,10 @@ export interface MetricRow {
  *  with EOD ATR fallback; IB_ATR is the persisted day-character ratio. */
 export function deriveMetrics(ctx: MarketContextLite | null): MetricRow {
   if (!ctx) return { rvol: null, dr_adr: null, ib: null, atr_730: null, ib_atr: null }
-  // DR_ADR stored as percent (median ≈ 102 per existing thresholds). day_range
-  // and adr are both in points; ratio × 100 gives the percent.
-  const dr_adr = (ctx.day_range != null && ctx.adr != null && ctx.adr > 0)
-    ? (ctx.day_range / ctx.adr) * 100
-    : null
+  // DR_ADR is a PERCENT (thresholds are cut in percent — median 75.9). The
+  // definition lives in drAdrPercent so the prep page cannot feed the lookup a
+  // ratio while the thresholds are in percent, which is exactly what it did.
+  const dr_adr = drAdrPercent(ctx.day_range, ctx.adr)
   return {
     // RVOL for the prep lookup uses the 07:30 PT snapshot (rvol_at_ib_close)
     // so it reflects what was actually visible at IB close — the moment the

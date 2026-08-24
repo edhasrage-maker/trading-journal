@@ -46,7 +46,7 @@ const VERDICT_CLS: Record<VerdictTone, string> = {
 }
 
 function Row({
-  label, value, chip, chipTone = 'dim', title,
+  label, value, chip, chipTone = 'dim', title, basis,
 }: {
   label: string
   value: string | null
@@ -55,11 +55,21 @@ function Row({
   /** Hover text — used where the number cannot be reproduced from the other
    *  values on the panel and would otherwise look wrong. */
   title?: string
+  /** The arithmetic, printed under the label: "27.75 ÷ 36.20 pts". A tooltip is
+   *  not enough — a number you have to hover to verify is a number you can't
+   *  check on a phone, and this row divides by a value that is deliberately NOT
+   *  the ADR shown two rows up. */
+  basis?: string | null
 }) {
   const empty = value == null
   return (
     <div className="grid grid-cols-[1fr_auto_auto] gap-3 items-center py-1.5 border-t border-gray-800">
-      <span className="text-[13px] text-gray-400" title={title}>{label}</span>
+      <span className="text-[13px] text-gray-400" title={title}>
+        {label}
+        {basis && (
+          <span className="block font-mono text-[10.5px] text-gray-600 leading-tight mt-0.5">{basis}</span>
+        )}
+      </span>
       <span
         className={cn(
           'text-[14.5px] tabular-nums text-right min-w-[74px]',
@@ -109,16 +119,22 @@ export default function PrepLedger({
   context,
   atrBaseline,
   adrAtNow,
-  drAdrAuto,
+  drAdrPctAuto,
+  dayRangeAuto,
   ibDayType,
 }: {
   context: Partial<MarketContext>
   atrBaseline: number | null
   /** Time-matched ADR for the range-used ratio while a session is running. */
   adrAtNow?: number | null
-  /** Server-computed DR/ADR fallback for days whose day_range hasn't been read
-   *  off a screenshot yet. */
-  drAdrAuto: number | null
+  /** Server-computed DR/ADR fallback, as a PERCENT, for days whose day_range
+   *  hasn't landed in market_context yet. Was a ratio; the row multiplied it by
+   *  100 here while the Morning Conditions lookup passed the same prop through
+   *  unscaled. */
+  drAdrPctAuto: number | null
+  /** The realized RTH range behind that percent, in points — the numerator the
+   *  row prints so the division can be checked. */
+  dayRangeAuto: number | null
   /** IB day-character classification (choppy/normal/extended via IB÷ATR). Shown
    *  as one compact row in the Initial Balance group — the standalone panel it
    *  replaced was too sparse. Null until the bars/IB print. */
@@ -143,9 +159,13 @@ export default function PrepLedger({
   // True while the session is still running: the time-matched baseline has not
   // yet grown into the whole-day one.
   const midSession = adrAtNow != null && adr != null && Math.abs(adrAtNow - adr) > 0.01
+  // The displayed range and the denominator it was actually divided by, kept
+  // together so the sub-line can never drift from the percentage above it.
+  const drNumer = dayRange ?? dayRangeAuto
+  const drDenom = dayRange != null ? adrForRatio : adr
   const drPct = dayRange != null && adrForRatio != null && adrForRatio > 0
     ? Math.round((dayRange / adrForRatio) * 100)
-    : drAdrAuto != null ? Math.round(drAdrAuto * 100) : null
+    : drAdrPctAuto != null ? Math.round(drAdrPctAuto) : null
 
   const overnight = chipFor('Overnight range')
   const rangeUsed = chipFor('Range used')
@@ -244,6 +264,9 @@ export default function PrepLedger({
           // = 66%, not 102%), so the label names the basis it actually used.
           label={midSession ? 'Range used (vs typical by now)' : 'Range used (DR/ADR)'}
           value={drPct != null ? `${drPct}%` : null}
+          basis={drNumer != null && drDenom != null
+            ? `${drNumer.toFixed(2)} ÷ ${drDenom.toFixed(2)} pts${midSession ? ' (range by this hour)' : ''}`
+            : null}
           chip={rangeUsed?.verdict ?? undefined}
           chipTone={rangeUsed?.tone ?? 'dim'}
           title={
