@@ -63,6 +63,12 @@ export interface DayContextStats {
   rvol: number | null              // percent vs trailing-10 avg RTH volume
   ib_size: number | null
   ib_vs_10d_avg: number | null
+  /** The RAW trailing IB average, in points — the denominator behind
+   *  ib_vs_10d_avg. Exposed because the prep editor shows it as its own field
+   *  and derives the ratio from it; without it that field sat blank and the
+   *  editor's "(auto)" ratio could not compute, while the ledger showed a
+   *  ratio anyway from the separately-filled value. */
+  ib_10d_avg: number | null
   adr: number | null
   /** ADR measured at the SAME point of the session today has reached — the
    *  honest denominator for "range used" while a day is still running. Equals
@@ -223,6 +229,7 @@ interface DayMetrics {
   rvol: number | null
   ib_size: number | null
   ib_vs_10d_avg: number | null
+  ib_10d_avg: number | null
   adr: number | null
   adr_at_now: number | null
   atr_1m: number | null
@@ -316,7 +323,8 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
       .filter((v): v is number => v != null && v > 0)
     const adrAtNow = priorRangeAtBar.length >= LOOKBACK_ADR ? avg(priorRangeAtBar) : null
     const ibSize = (d.ib_high != null && d.ib_low != null) ? d.ib_high - d.ib_low : null
-    const ibVs10d = (ibSize != null && trailIb.length >= LOOKBACK_IB) ? ibSize / avg(trailIb) : null
+    const ib10d = trailIb.length >= LOOKBACK_IB ? avg(trailIb) : null
+    const ibVs10d = (ibSize != null && ib10d != null && ib10d > 0) ? ibSize / ib10d : null
     const rvolAtIb = (trailIbVol.length >= LOOKBACK_IB && trailIbVol.reduce((s, v) => s + v, 0) > 0)
       ? (d.ib_volume / avg(trailIbVol)) * 100 : null
     const atrIb10d = trailAtrIb.length >= LOOKBACK_ATR ? avg(trailAtrIb) : null
@@ -324,7 +332,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
 
     out.push({
       date: d.date,
-      rvol, ib_size: ibSize, ib_vs_10d_avg: ibVs10d, adr, adr_at_now: adrAtNow,
+      rvol, ib_size: ibSize, ib_vs_10d_avg: ibVs10d, ib_10d_avg: ib10d, adr, adr_at_now: adrAtNow,
       atr_1m: d.atr_at_eod,
       rvol_at_ib_close: rvolAtIb,
       atr_at_ib_close: d.atr_at_ib_close,
@@ -446,6 +454,7 @@ export function contextStatsForDate(
       rvol: target.rvol,
       ib_size: target.ib_size,
       ib_vs_10d_avg: target.ib_vs_10d_avg,
+      ib_10d_avg: target.ib_10d_avg,
       adr: target.adr,
       adr_at_now: target.adr_at_now,
       // atr_at_eod only exists at the 12:59 PT bar, so a session IN PROGRESS
@@ -475,6 +484,7 @@ export function contextStatsForDate(
       date,
       realized: false,
       rvol: null, ib_size: null, ib_vs_10d_avg: null, adr_at_now: null,
+      ib_10d_avg: last.ib_10d_avg,
       adr: last.adr, atr_1m: last.atr_1m,
       rvol_at_ib_close: null, atr_at_ib_close: null, meanHL10: null,
       atr_10d_avg: last.atr_10d_avg, atr_eod_10d_avg: last.atr_eod_10d_avg,

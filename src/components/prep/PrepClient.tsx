@@ -284,6 +284,12 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           // showed blank on any account that hadn't saved it — the bar feed
           // computes it, so auto-fill it too (ratio, e.g. 1.22).
           ib_vs_10d_avg: stats.ib_vs_10d_avg,
+          // The RAW baseline as well as the ratio. The editor shows this as its
+          // own field and derives "IB vs 10d Avg (auto)" FROM it, so filling
+          // only the ratio left the field blank and the editor's derived value
+          // as "—" while the ledger — which reads the ratio directly — showed
+          // 1.13x. Two panels, one session, different answers.
+          ib_10d_avg: stats.ib_10d_avg,
         }
         // Numbers this effect filled for a DIFFERENT instrument are stale, not
         // trader input — a switch must replace them, or the form keeps NQ's ADR
