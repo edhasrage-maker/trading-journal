@@ -140,6 +140,9 @@ export default function PrepLedger({
     : null
   // Same denominator the verdict used, or the percentage and the word disagree.
   const adrForRatio = adrAtNow ?? adr
+  // True while the session is still running: the time-matched baseline has not
+  // yet grown into the whole-day one.
+  const midSession = adrAtNow != null && adr != null && Math.abs(adrAtNow - adr) > 0.01
   const drPct = dayRange != null && adrForRatio != null && adrForRatio > 0
     ? Math.round((dayRange / adrForRatio) * 100)
     : drAdrAuto != null ? Math.round(drAdrAuto * 100) : null
@@ -234,10 +237,20 @@ export default function PrepLedger({
           chipTone={barVol?.tone ?? 'dim'}
         />
         <Row
-          label="Range used (DR/ADR)"
+          // Mid-session this divides by the range prior days had covered BY THIS
+          // POINT, not by the whole-day ADR displayed two rows up — otherwise a
+          // morning always reads as a fraction of a finished day. But that
+          // leaves two numbers on screen that cannot be reconciled (27.75 / 42
+          // = 66%, not 102%), so the label names the basis it actually used.
+          label={midSession ? 'Range used (vs typical by now)' : 'Range used (DR/ADR)'}
           value={drPct != null ? `${drPct}%` : null}
           chip={rangeUsed?.verdict ?? undefined}
           chipTone={rangeUsed?.tone ?? 'dim'}
+          title={
+            adrAtNow != null && adr != null && Math.abs(adrAtNow - adr) > 0.01
+              ? `Day range so far ${dayRange?.toFixed(2) ?? '—'} ÷ ${adrAtNow.toFixed(2)} — the range your last 10 sessions had covered by this point in the day. NOT the ${adr.toFixed(2)} whole-day ADR shown above: dividing a part-day range by a full-day average reports the hour, not the day. Once the session closes the two are the same number.`
+              : `Day range ${dayRange?.toFixed(2) ?? '—'} ÷ ${adr?.toFixed(2) ?? '—'} ADR.`
+          }
         />
       </Group>
     </div>
