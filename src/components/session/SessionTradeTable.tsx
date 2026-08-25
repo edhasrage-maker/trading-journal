@@ -53,6 +53,24 @@ const TOGGLEABLE_COLS = [
 ] as const
 type ColKey = (typeof TOGGLEABLE_COLS)[number]['key']
 const COLS_STORAGE_KEY = 'eod-trade-cols-v1'
+const COL_WIDTHS_KEY = 'eod-trade-col-widths-v1'
+/** Narrowest a column may be dragged. Below this the header label is unreadable
+ *  and the handle becomes hard to grab back. */
+const MIN_COL_PX = 44
+
+/** Saved widths, or null when the trader has never dragged anything.
+ *  Null is meaningful: it keeps the table on the browser's own auto layout,
+ *  which sizes to content better than any default we could invent. Widths only
+ *  come into existence on the first drag. */
+function loadColWidths(): Record<string, number> | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(COL_WIDTHS_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Record<string, number>
+    return parsed && typeof parsed === 'object' && Object.keys(parsed).length ? parsed : null
+  } catch { return null }
+}
 
 // Post-exit verdict chip → text color. See src/lib/post-exit-verdict.ts.
 const VERDICT_TONE_CLASS: Record<VerdictTone, string> = {
@@ -328,6 +346,75 @@ export default function SessionTradeTable({
   // saved per-device choice from localStorage after mount.
   const [cols, setCols] = useState<Record<ColKey, boolean>>(defaultColPrefs)
   const [colsOpen, setColsOpen] = useState(false)
+
+  // ── Drag-to-resize ────────────────────────────────────────────────────────
+  // Widths stay null until the first drag, so the table keeps the browser's
+  // auto layout — which sizes to content better than any defaults we could
+  // pick — and nobody who never drags sees a change. On the first grab we
+  // MEASURE every header cell and seed all of them at once, then switch to
+  // `table-fixed`: seeding only the dragged column would let the others
+  // redistribute and the whole row would jump under the cursor.
+  const [colWidths, setColWidths] = useState<Record<string, number> | null>(null)
+  const theadRef = useRef<HTMLTableSectionElement>(null)
+  const dragRef = useRef<{ id: string; startX: number; startW: number } | null>(null)
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage isn't readable during render
+    setColWidths(loadColWidths())
+  }, [])
+
+  /** Measure the rendered header and freeze today's layout as explicit widths. */
+  const seedWidths = (): Record<string, number> => {
+    const seeded: Record<string, number> = {}
+    const cells = theadRef.current?.querySelectorAll<HTMLTableCellElement>('th[data-col]')
+    cells?.forEach(th => {
+      const id = th.dataset.col
+      if (id) seeded[id] = Math.max(MIN_COL_PX, Math.round(th.getBoundingClientRect().width))
+    })
+    return seeded
+  }
+
+  const startResize = (id: string, e: React.PointerEvent<HTMLSpanElement>) => {
+    e.preventDefault()
+    e.stopPropagation()   // never let the grab reach the header's sort button
+    const base = colWidths ?? seedWidths()
+    if (!colWidths) setColWidths(base)
+    dragRef.current = { id, startX: e.clientX, startW: base[id] ?? MIN_COL_PX }
+    const move = (ev: PointerEvent) => {
+      const d = dragRef.current
+      if (!d) return
+      const next = Math.max(MIN_COL_PX, Math.round(d.startW + (ev.clientX - d.startX)))
+      setColWidths(prev => ({ ...(prev ?? base), [d.id]: next }))
+    }
+    const up = () => {
+      dragRef.current = null
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    // Hold the resize cursor for the whole drag, even off the 5px handle.
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  // Persist after every change, and drop the key entirely on reset so the next
+  // load returns to auto layout rather than to a stale frozen one.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      if (colWidths) localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(colWidths))
+      else localStorage.removeItem(COL_WIDTHS_KEY)
+    } catch { /* private mode */ }
+  }, [colWidths])
+
+  /** Back to auto layout. Double-clicking any handle clears ALL widths rather
+   *  than just its own: once the table is fixed, resetting one column alone
+   *  leaves the rest frozen at whatever they happened to measure, which reads
+   *  as the reset not working. */
+  const resetWidths = () => setColWidths(null)
   // Effective per-column visibility. Capture pins Stop/TP1/Qty on and hides
   // every score/verdict column; review defers to `cols` exactly as before, so
   // its output is unchanged.
@@ -340,6 +427,23 @@ export default function SessionTradeTable({
   const showMfe = isCapture ? false : cols.mfe
   const showMae = isCapture ? false : cols.mae
   const showPostExit = isCapture ? false : cols.postExit
+  // Column order for the <colgroup> that carries dragged widths. A colgroup is
+  // POSITIONAL, so this has to track the header row exactly — hence it is built
+  // from the very same flags, immediately below them, rather than restated.
+  const visibleColIds = [
+    'select', 'time', 'setup',
+    ...(showEntry ? ['entry'] : []),
+    ...(showStop ? ['stop'] : []),
+    ...(showTp1 ? ['tp1'] : []),
+    ...(showQty ? ['qty'] : []),
+    ...(showAtr ? ['atr'] : []),
+    'pnl',
+    ...(showR ? ['r'] : []),
+    ...(showMfe ? ['mfe'] : []),
+    ...(showMae ? ['mae'] : []),
+    ...(showPostExit ? ['postExit'] : []),
+    'actions',
+  ]
 
   // Select-all for the bulk tag / delete flows. Deliberately built out of the
   // existing per-row onToggleSelect rather than a new prop: both callers update
@@ -503,6 +607,22 @@ export default function SessionTradeTable({
                   {c.label}
                 </label>
               ))}
+              {/* Only offered once widths exist. Dragging is discoverable at the
+                  header edge but resetting isn't, and a layout you can get into
+                  and not out of is worse than no layout control at all. */}
+              {colWidths && (
+                <>
+                  <div className="my-1 border-t border-gray-800" />
+                  <button
+                    type="button"
+                    onClick={() => { resetWidths(); setColsOpen(false) }}
+                    className="w-full text-left px-2 py-1 text-xs text-gray-400 hover:text-gray-100 hover:bg-gray-800 rounded"
+                    title="Return every column to its automatic width"
+                  >
+                    Reset column widths
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>}
@@ -616,7 +736,7 @@ export default function SessionTradeTable({
                   <MobileMetric label="TP1" value={t.tp1_price ?? '—'} />
                   {!isCapture && <MobileMetric label="R" value={r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R${rAtrBased ? '*' : ''}`} valueClass={rCls} />}
                   {!isCapture && <MobileMetric label="MFE" value={captureDisplay(t, bars ?? undefined) ?? '—'} />}
-                  {!isCapture && <MobileMetric label="MAE" value={maeMag + (stopHeat != null ? ` · ${Math.round(Math.max(0, stopHeat) * 100)}%` : '')} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} />}
+                  {!isCapture && <MobileMetric label="MAE" value={maeMag + (stopHeat != null && stopHeat > 1 ? ' · past stop' : '')} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} />}
                   {/* Post-exit verdict spans both columns — the plain-language label
                       is too long for a half-width cell. */}
                   {!isCapture && <div className="col-span-2">
@@ -633,14 +753,23 @@ export default function SessionTradeTable({
       </div>
 
       <div className="hidden md:block overflow-x-auto">
-        <table className="w-full text-xs font-mono">
+        <table className={`w-full text-xs font-mono ${colWidths ? 'table-fixed' : ''}`}>
+          {/* Present only once the trader has dragged something. Until then the
+              table keeps auto layout and sizes to its own content. */}
+          {colWidths && (
+            <colgroup>
+              {visibleColIds.map(id => (
+                <col key={id} style={colWidths[id] ? { width: `${colWidths[id]}px` } : undefined} />
+              ))}
+            </colgroup>
+          )}
           {/* Sticky header: stays pinned to the top of the viewport as the
               user scrolls through trades. bg-gray-900 (matches the card
               background) so scrolling content doesn't show through. z-20
               is one above the chip's z-10 so the header always wins. */}
-          <thead className="sticky top-0 bg-gray-900 z-20">
+          <thead ref={theadRef} className="sticky top-0 bg-gray-900 z-20">
             <tr className="text-gray-500 border-b border-gray-800">
-              <th className="font-normal pb-2 pr-2 w-8">
+              <th data-col="select" className="font-normal pb-2 pr-2 w-8">
                 <button
                   type="button"
                   onClick={toggleSelectAll}
@@ -656,18 +785,18 @@ export default function SessionTradeTable({
                       : <Square className="w-3.5 h-3.5" />}
                 </button>
               </th>
-              <SortableHeader label="Time" sortKey="time" align="left" current={sortKey} dir={sortDir} onSort={onSort} />
+              <SortableHeader label="Time" sortKey="time" align="left" current={sortKey} dir={sortDir} onSort={onSort} colId="time" onResize={startResize} onResetWidths={resetWidths} />
               {/* Setup column replaces the old Dir column. Direction is
                   shown as an inline arrow on the setup chip itself. */}
-              <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Setup</th>
-              {showEntry && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Entry</th>}
-              {showStop && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Stop</th>}
-              {showTp1 && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">TP1</th>}
-              {showQty && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Qty</th>}
-              {showAtr && <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." />}
-              <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} />
-              {showR && <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." />}
-              {showMfe && <th className="text-center font-normal pb-2 pr-3 whitespace-nowrap">
+              <th data-col="setup" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden">Setup<ResizeHandle id="setup" onStart={startResize} onReset={resetWidths} /></th>
+              {showEntry && <th data-col="entry" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden">Entry<ResizeHandle id="entry" onStart={startResize} onReset={resetWidths} /></th>}
+              {showStop && <th data-col="stop" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden">Stop<ResizeHandle id="stop" onStart={startResize} onReset={resetWidths} /></th>}
+              {showTp1 && <th data-col="tp1" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden">TP1<ResizeHandle id="tp1" onStart={startResize} onReset={resetWidths} /></th>}
+              {showQty && <th data-col="qty" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden">Qty<ResizeHandle id="qty" onStart={startResize} onReset={resetWidths} /></th>}
+              {showAtr && <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." colId="atr" onResize={startResize} onResetWidths={resetWidths} />}
+              <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} colId="pnl" onResize={startResize} onResetWidths={resetWidths} />
+              {showR && <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." colId="r" onResize={startResize} onResetWidths={resetWidths} />}
+              {showMfe && <th data-col="mfe" className="relative text-center font-normal pb-2 pr-3 whitespace-nowrap">
                 {/* Centered rather than right-aligned: the header carries a sort
                     control and an info icon, so right-aligning parked the short
                     values ("0%", "100%") under the icon instead of under the
@@ -715,8 +844,8 @@ export default function SessionTradeTable({
                     <p className="text-gray-500">Bolded when the trade was a give-back (MFE ≥ 1R favorable then closed red).</p>
                   </div>
                 )}
-              </th>}
-              {showMae && <th className="text-center font-normal pb-2 pr-3 whitespace-nowrap">
+              <ResizeHandle id="mfe" onStart={startResize} onReset={resetWidths} /></th>}
+              {showMae && <th data-col="mae" className="relative text-center font-normal pb-2 pr-3 whitespace-nowrap">
                 {/* Unit dropdown stacked ABOVE the MAE label so the column stays
                     narrow (was a single wide inline row: MAE · ×ATR · ?).
                     Centered to match MFE % — both are short numeric columns
@@ -778,9 +907,9 @@ export default function SessionTradeTable({
                     <p className="text-gray-500">If the trade has a planned stop, a small <span className="text-gray-400">· NN%</span> shows heat as a % of that stop — over 100% means you held past it.</p>
                   </div>
                 )}
-              </th>}
-              {showPostExit && <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap" title="Was your exit well-timed? A plain-language verdict from what the market did in the 15 min after you were out — 'exit right' (it reversed once you left), 'early' (it kept running your way — money left on the table), 'stop right' (a loss that kept going against you), or 'gave it back' (you had a real winner before it turned red).">Post-Exit</th>}
-              <th className="w-8" />
+              <ResizeHandle id="mae" onStart={startResize} onReset={resetWidths} /></th>}
+              {showPostExit && <th data-col="postExit" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap" title="Was your exit well-timed? A plain-language verdict from what the market did in the 15 min after you were out — 'exit right' (it reversed once you left), 'early' (it kept running your way — money left on the table), 'stop right' (a loss that kept going against you), or 'gave it back' (you had a real winner before it turned red).">Post-Exit<ResizeHandle id="postExit" onStart={startResize} onReset={resetWidths} /></th>}
+              <th data-col="actions" className="w-8" />
             </tr>
           </thead>
           <tbody>
@@ -1001,10 +1130,18 @@ export default function SessionTradeTable({
                             {neverAdverse && (
                               <span className="ml-1 text-emerald-400" title="Never traded below entry — instantly favorable.">↑</span>
                             )}
-                            {stopHeat != null && (
-                              <span className={`ml-1 text-[10px] ${stopHeat > 1 ? 'text-red-400 font-semibold' : 'text-gray-600'}`}
-                                title="Peak adverse as % of your planned stop distance. Over 100% = you held past your stop.">
-                                · {Math.round(Math.max(0, stopHeat) * 100)}%
+                            {/* The heat-against-stop percentage used to print on
+                                every row ("· 20%"), and it read as a second,
+                                unexplained number rather than as information —
+                                you have to already know it is measured against
+                                your stop for it to mean anything. The one case
+                                that genuinely needs saying is the breach, so
+                                that is all that survives, in words instead of a
+                                ratio. */}
+                            {stopHeat != null && stopHeat > 1 && (
+                              <span className="ml-1 text-[10px] text-red-400 font-semibold"
+                                title="Peak adverse excursion went beyond your planned stop distance — the trade was held past its stop.">
+                                · past stop
                               </span>
                             )}
                           </td>
@@ -1111,8 +1248,30 @@ export default function SessionTradeTable({
 
 /** A column header that toggles sort on click; clicking a different column
  *  resets to that column's natural direction. */
+/** The 5px grab strip on a header's trailing edge. Sits inside the th (which is
+ *  `relative`), overlapping the cell border so the target lines up with the rule
+ *  the eye already reads as the column edge. Double-click clears every width and
+ *  hands the table back to auto layout. */
+function ResizeHandle({ id, onStart, onReset }: {
+  id: string
+  onStart: (id: string, e: React.PointerEvent<HTMLSpanElement>) => void
+  onReset: () => void
+}) {
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Drag to resize column"
+      onPointerDown={e => onStart(id, e)}
+      onDoubleClick={e => { e.stopPropagation(); onReset() }}
+      className="absolute top-0 right-0 h-full w-[5px] translate-x-[2px] cursor-col-resize select-none
+                 hover:bg-blue-500/40 active:bg-blue-500/60 transition-colors"
+    />
+  )
+}
+
 function SortableHeader({
-  label, sortKey, align, current, dir, onSort, title,
+  label, sortKey, align, current, dir, onSort, title, colId, onResize, onResetWidths,
 }: {
   label: string
   sortKey: SortKey
@@ -1121,10 +1280,14 @@ function SortableHeader({
   dir: SortDir
   onSort: (k: SortKey) => void
   title?: string
+  colId: string
+  onResize: (id: string, e: React.PointerEvent<HTMLSpanElement>) => void
+  onResetWidths: () => void
 }) {
   return (
     <th
-      className={`${align === 'left' ? 'text-left' : 'text-right'} font-normal pb-2 pr-3 whitespace-nowrap`}
+      data-col={colId}
+      className={`relative ${align === 'left' ? 'text-left' : 'text-right'} font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden`}
       title={title}
     >
       <button
@@ -1135,6 +1298,7 @@ function SortableHeader({
         {label}
         <SortIcon col={sortKey} current={current} dir={dir} />
       </button>
+      <ResizeHandle id={colId} onStart={onResize} onReset={onResetWidths} />
     </th>
   )
 }
