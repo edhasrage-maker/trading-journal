@@ -31,9 +31,17 @@ type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
 
 // Optional columns the user can show/hide in the Detailed (Pro) view. Core
-// columns — checkbox, Time, Setup, Entry, PnL, Overview — are always shown.
+// columns — checkbox, Time, Setup, PnL, Overview — are always shown.
 // The choice is persisted per-device in localStorage.
+//
+// Entry is toggleable even though it looks structural. It is a price like Stop
+// and TP1, and a trader reading the table for execution quality — R, MFE, MAE,
+// Post-Exit — has no more use for it than for the other two. The row is still
+// identifiable without it: Time and Setup are core and never hide. Capture
+// (screenshot) mode forces it back on with Stop/TP1, since a shared image
+// without the fill price isn't worth much.
 const TOGGLEABLE_COLS = [
+  { key: 'entry', label: 'Entry' },
   { key: 'stop', label: 'Stop' },
   { key: 'tp1', label: 'TP1' },
   { key: 'qty', label: 'Qty' },
@@ -323,6 +331,7 @@ export default function SessionTradeTable({
   // Effective per-column visibility. Capture pins Stop/TP1/Qty on and hides
   // every score/verdict column; review defers to `cols` exactly as before, so
   // its output is unchanged.
+  const showEntry = isCapture ? true : cols.entry
   const showStop = isCapture ? true : cols.stop
   const showTp1 = isCapture ? true : cols.tp1
   const showQty = isCapture ? true : cols.qty
@@ -651,7 +660,7 @@ export default function SessionTradeTable({
               {/* Setup column replaces the old Dir column. Direction is
                   shown as an inline arrow on the setup chip itself. */}
               <th className="text-left font-normal pb-2 pr-3 whitespace-nowrap">Setup</th>
-              <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Entry</th>
+              {showEntry && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Entry</th>}
               {showStop && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Stop</th>}
               {showTp1 && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">TP1</th>}
               {showQty && <th className="text-right font-normal pb-2 pr-3 whitespace-nowrap">Qty</th>}
@@ -892,9 +901,11 @@ export default function SessionTradeTable({
                   </td>
                   {/* Entry cell — back to single line (price only). Setup
                       now lives in the dedicated column to the left. */}
-                  <td className="py-1.5 pr-3 text-right text-gray-300">
-                    {t.entry_price ?? '--'}
-                  </td>
+                  {showEntry && (
+                    <td className="py-1.5 pr-3 text-right text-gray-300">
+                      {t.entry_price ?? '--'}
+                    </td>
+                  )}
                   {showStop && <td className="py-1.5 pr-3 text-right text-gray-500">{t.stop_price ?? '--'}</td>}
                   {showTp1 && <td className="py-1.5 pr-3 text-right text-gray-500">{t.tp1_price ?? '--'}</td>}
                   {showQty && <td className="py-1.5 pr-3 text-right text-gray-300">{t.quantity ?? '--'}</td>}
