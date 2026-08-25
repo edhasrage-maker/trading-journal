@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { clientError } from '@/lib/api-error'
 import { userConflict } from '@/lib/tenant-conflict'
 import { NextResponse } from 'next/server'
@@ -46,11 +47,30 @@ export async function GET(req: Request) {
   const supabase: AnyClient = await createClient()
   const tdid = await dayId(supabase, date, false)
   if (!tdid) return NextResponse.json({ annotations: [] })
-  let q = supabase.from('chart_annotations').select('*').eq('trading_day_id', tdid).order('created_at')
-  if (symbol) q = q.eq('symbol', symbol)
-  const { data, error } = await q
+  const { data, error } = await supabase
+    .from('chart_annotations').select('*').eq('trading_day_id', tdid).order('created_at')
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
-  return NextResponse.json({ annotations: data ?? [] })
+
+  // Match on PRICE SERIES, not on the exact contract string.
+  //
+  // A drawing is saved under whatever symbol the chart was showing when it was
+  // drawn — often a micro, e.g. MNQU6.CME. The chart later resolves its NQ slot
+  // from /api/bars/symbols, which can hand back the mini (NQU6.CME) instead. An
+  // `.eq('symbol', symbol)` filter then returns nothing and the trader's zones
+  // silently vanish from a day they know they marked up. Measured on 2026-07-01:
+  // 5 annotations stored under MNQU6.CME, 0 returned for NQU6.CME.
+  //
+  // MNQ and NQ are one price series — chartSeriesRoot() is the same collapse the
+  // bar feed already applies, so a zone drawn on the micro belongs on the mini's
+  // candles at the same prices. Rows with no symbol predate per-instrument
+  // scoping; they can't be attributed to one series, and dropping them would
+  // orphan them forever, so they always come through.
+  const rows = (data ?? []) as Array<{ symbol: string | null }>
+  const wanted = symbol ? chartSeriesRoot(symbol) : null
+  const annotations = wanted
+    ? rows.filter(a => !a.symbol || chartSeriesRoot(a.symbol) === wanted)
+    : rows
+  return NextResponse.json({ annotations })
 }
 
 export async function POST(req: Request) {

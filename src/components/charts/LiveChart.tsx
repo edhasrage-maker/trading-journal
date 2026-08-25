@@ -1671,9 +1671,14 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   useEffect(() => {
     if (readOnly) {
       const rows = annotationsOverride ?? []
-      // Mirror the API's own filter: with a symbol active, show that
-      // instrument's drawings only, so an NQ zone never bleeds onto ES.
-      setAnnotations(symbol ? rows.filter(a => a.symbol === symbol) : rows)
+      // Mirror the API's filter: scope to the PRICE SERIES, not the exact
+      // contract. A zone drawn on MNQU6.CME belongs on the NQ candles — same
+      // series, same prices — and an exact-string match would drop it whenever
+      // the chart resolved its NQ slot to the mini instead. Unsymboled rows
+      // predate per-instrument scoping and always show. An ES zone still never
+      // bleeds onto NQ, which is what the scoping is actually for.
+      const want = symbol ? chartSeriesRoot(symbol) : null
+      setAnnotations(want ? rows.filter(a => !a.symbol || chartSeriesRoot(a.symbol) === want) : rows)
       return
     }
     let cancelled = false
