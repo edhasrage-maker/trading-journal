@@ -990,9 +990,11 @@ export default function SessionTradeTable({
                       encoded as a colored ▲ (long) / ▼ (short) icon at the
                       START of the chip; setup name follows, truncated at
                       ~12ch with hover-tooltip for the full text. Single
-                      line, max-w-[120px] to keep the column tight so the
-                      Overview column has room to breathe. */}
-                  <td className="py-1.5 pr-3 max-w-[150px] whitespace-nowrap">
+                      line. The cap keeps the column tight on the DEFAULT auto
+                      layout; once the trader has dragged a width it is dropped,
+                      because a fixed cap that ignores the column means widening
+                      the column does nothing. */}
+                  <td className={`py-1.5 pr-3 whitespace-nowrap ${colWidths ? 'overflow-hidden' : 'max-w-[150px]'}`}>
                     {(() => {
                       const setup = t.tags_json?.setups?.[0]
                       const isLong = t.direction === 'long'
@@ -1018,7 +1020,7 @@ export default function SessionTradeTable({
                             </span>
                           )}
                           <span
-                            className="inline-flex items-center gap-1 text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case max-w-[104px] align-middle"
+                            className={`inline-flex items-center gap-1 text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-1.5 py-0.5 rounded normal-case align-middle ${colWidths ? 'max-w-full' : 'max-w-[104px]'}`}
                             title={tooltipParts.join(' · ')}
                           >
                             <span className={`${arrowColor} font-bold`}>{arrow}</span>
@@ -1165,7 +1167,7 @@ export default function SessionTradeTable({
                     // cell's tooltip.
                     return (
                       <td className={`py-1.5 pr-3 text-left ${VERDICT_TONE_CLASS[v.tone]}`} title={v.title}>
-                        <span className="block max-w-[15rem] truncate">
+                        <span className={`block truncate ${colWidths ? '' : 'max-w-[15rem]'}`}>
                           <span className="mr-0.5">{v.glyph}</span>{v.label}
                           {partial && (
                             <span
@@ -1248,10 +1250,12 @@ export default function SessionTradeTable({
 
 /** A column header that toggles sort on click; clicking a different column
  *  resets to that column's natural direction. */
-/** The 5px grab strip on a header's trailing edge. Sits inside the th (which is
- *  `relative`), overlapping the cell border so the target lines up with the rule
- *  the eye already reads as the column edge. Double-click clears every width and
- *  hands the table back to auto layout. */
+/** The grab strip on a header's trailing edge. 12px of hit area, sitting INSIDE
+ *  the cell — the first version was 5px and translated past the edge, which the
+ *  header's own overflow-hidden promptly clipped, leaving a sliver you had to
+ *  hunt for. The visible line stays hairline-thin and only appears on hover;
+ *  generous target, quiet affordance. Double-click clears every width and hands
+ *  the table back to auto layout. */
 function ResizeHandle({ id, onStart, onReset }: {
   id: string
   onStart: (id: string, e: React.PointerEvent<HTMLSpanElement>) => void
@@ -1264,9 +1268,11 @@ function ResizeHandle({ id, onStart, onReset }: {
       aria-label="Drag to resize column"
       onPointerDown={e => onStart(id, e)}
       onDoubleClick={e => { e.stopPropagation(); onReset() }}
-      className="absolute top-0 right-0 h-full w-[5px] translate-x-[2px] cursor-col-resize select-none
-                 hover:bg-blue-500/40 active:bg-blue-500/60 transition-colors"
-    />
+      className="group absolute top-0 right-0 h-full w-3 cursor-col-resize select-none touch-none
+                 flex justify-end items-stretch z-10"
+    >
+      <span className="w-[3px] rounded-sm bg-transparent group-hover:bg-blue-500/60 group-active:bg-blue-500 transition-colors" />
+    </span>
   )
 }
 
