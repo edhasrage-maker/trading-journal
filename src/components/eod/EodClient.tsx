@@ -82,6 +82,14 @@ function hashTrade(t: Trade): string {
   for (let i = 0; i < basis.length; i++) h = ((h << 5) + h + basis.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
 }
+/** Below this many trades, Win Rate renders muted rather than as a headline
+ *  figure. A rate over one or two trades is the individual results restated —
+ *  100% on a single winner reads like a record instead of a coin landing once.
+ *  Five is a judgement, not a derivation: it is roughly where one more trade
+ *  stops being able to swing the rate by 20 points or more. The value is always
+ *  shown; only its weight changes, so nothing the trader looks for disappears. */
+const MIN_RATE_SAMPLE = 5
+
 const summaryCacheKey = (id: string) => `trade-summary-${id}`
 
 export default function EodClient({
@@ -868,7 +876,15 @@ export default function EodClient({
           (no more date sitting under the Watch-folder button). */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
         <div data-tour="eod-header" className="shrink-0">
-          <h1 className="text-xl font-bold text-white">EOD Recap</h1>
+          {/* Achievement badges sit ON the title line rather than below it.
+              Stacked under "Ended by choice" they read as another status line;
+              beside the heading they read as what they are — a mark on the day.
+              flex-wrap so a day with several badges drops them to their own row
+              instead of squeezing the heading. */}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-xl font-bold text-white">EOD Recap</h1>
+            <AchievementBadges items={achievements} />
+          </div>
           {/* Ended by choice (Pt 13 step 3) — a positive discipline note when the
               trader called the session early rather than trading to the close. */}
           {endedAtLabel && (
@@ -877,8 +893,6 @@ export default function EodClient({
               Ended by choice at {endedAtLabel}
             </p>
           )}
-          {/* Achievement badges earned this day (Sniper, Grand Slam, …). */}
-          <AchievementBadges items={achievements} className="mt-1.5" />
           {/* Date + action buttons share one row, aligned under the title. */}
           <div className="flex items-center gap-2 mt-1">
             <input
@@ -952,35 +966,55 @@ export default function EodClient({
           </div>
         </div>
         <div className="flex items-center gap-2 text-sm">
-          {/* Stats strip: tightened font + gap so the row fits on one line.
-              All labels carry `whitespace-nowrap` so "W/L" and "MAE Heat %"
-              never wrap onto two lines when the viewport narrows. On phones the
-              strip wraps to a second line (flex-wrap) rather than overflowing. */}
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
-          <div>
-            <div className="text-[10px] text-gray-500 whitespace-nowrap">Trades</div>
-            <div className="font-mono text-white text-sm">{trades.length}</div>
-          </div>
-          <div>
-            <div className="text-[10px] text-gray-500 whitespace-nowrap">Win Rate</div>
-            <div className="font-mono text-white text-sm">{winRate.toFixed(0)}%</div>
-          </div>
-          <div>
-            <div className="text-[10px] text-gray-500 whitespace-nowrap">W / L</div>
-            <div className="font-mono text-sm whitespace-nowrap">
-              <span className="text-green-400">{winCount}</span>
-              <span className="text-gray-600">/</span>
-              <span className="text-red-400">{lossCount}</span>
-            </div>
-          </div>
-          <div>
-            <div className="text-[10px] text-gray-500 whitespace-nowrap">PnL</div>
-            <div className={`font-mono text-sm whitespace-nowrap ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-              {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
+          {/* Stats strip, GROUPED: Result (what the day did) | Execution (how it
+              was traded). Seven equal-weight values in one run read as a list to
+              be worked through rather than an answer — the fix is hierarchy, not
+              size, so the values step 13px -> 17px and the grouping does the rest.
+
+              W/L was dropped rather than moved: Win Rate sits right beside it and
+              the TapeScore card below already prints "N trades - NW / NL", so the
+              same fact was on screen three times inside 100px.
+
+              Labels appear only in pro mode, where there are two groups to tell
+              apart; a lone "RESULT" heading over the plain stats would be noise.
+              Groups wrap on a phone instead of overflowing. */}
+          <div className="flex flex-wrap items-start gap-y-3">
+          <div className={mode === 'pro' ? 'pr-4' : ''}>
+            {mode === 'pro' && (
+              <div className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-gray-500 mb-1.5">Result</div>
+            )}
+            <div className="flex items-start gap-x-4">
+              <div>
+                <div className="text-[10px] text-gray-500 whitespace-nowrap">PnL</div>
+                <div className={`font-mono text-[17px] whitespace-nowrap ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                  {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500 whitespace-nowrap">Trades</div>
+                <div className="font-mono text-white text-[17px]">{trades.length}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500 whitespace-nowrap">Win Rate</div>
+                {/* Muted below MIN_RATE_SAMPLE. At one or two trades a "rate" is
+                    just the individual results restated, and 100% reads like a
+                    record rather than a coin landing once. Shown, never hidden:
+                    the number is true, it simply isn't evidence yet. */}
+                <div
+                  className={`font-mono text-[17px] ${trades.length < MIN_RATE_SAMPLE ? 'text-gray-500' : 'text-white'}`}
+                  title={trades.length < MIN_RATE_SAMPLE
+                    ? `${trades.length} trade${trades.length === 1 ? '' : 's'} — too few to read as a rate`
+                    : undefined}
+                >
+                  {winRate.toFixed(0)}%
+                </div>
+              </div>
             </div>
           </div>
           {mode === 'pro' && (
-          <>
+          <div className="pl-4 border-l border-gray-800">
+            <div className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-gray-500 mb-1.5">Execution</div>
+            <div className="flex items-start gap-x-4">
           {/* Avg MFE/MAE — inline variant, drops between PnL and MFE Realized %.
               Uses pts/$/×ATR toggle synced with the Dashboard card via localStorage. */}
           <AvgMfeMaeCard trades={trades} variant="inline" />
@@ -999,7 +1033,7 @@ export default function EodClient({
             {(() => {
               const cell = formatCaptureCell(captureStats.avg, avgMfePts)
               return (
-                <div className={`font-mono text-sm ${cell.text === '—' ? 'text-gray-500'
+                <div className={`font-mono text-[17px] ${cell.text === '—' ? 'text-gray-500'
                   : captureStats.avg != null && captureStats.avg < 0 ? 'text-red-400 font-bold'
                   : 'text-gray-400'} ${cell.title ? 'cursor-help' : ''}`}
                   title={cell.title}>
@@ -1045,7 +1079,7 @@ export default function EodClient({
                 <HelpCircle className="w-3 h-3" />
               </button>
             </div>
-            <div className={`font-mono text-sm ${ratioStats.ratio == null ? 'text-gray-500'
+            <div className={`font-mono text-[17px] ${ratioStats.ratio == null ? 'text-gray-500'
               : ratioStats.ratio >= 1 ? 'text-green-400 font-bold'
               : 'text-red-400'}`}>
               {ratioStats.ratio == null ? '—' : `${ratioStats.ratio.toFixed(1)}×`}
@@ -1076,7 +1110,8 @@ export default function EodClient({
               </div>
             )}
           </div>
-          </>
+            </div>
+          </div>
           )}
           </div>
         </div>
