@@ -397,8 +397,18 @@ export function buildEodPrompt({
         // bias" when the trader had tagged all three Follow LTF structure and
         // the regime was neutral.
         const regime5m = (t as { structure_5m_regime?: string | null }).structure_5m_regime ?? null
+        // What price did in the 15 minutes AFTER the exit, direction-relative:
+        // favorable = kept going the trade's way. This is the only datum that
+        // separates "wrong direction" from "right direction, wrong stop", and
+        // without it a losing session reads as a bad read every time.
+        const peFav = (t as { post_exit_favorable_pts?: number | null }).post_exit_favorable_pts
+        const peAgn = (t as { post_exit_against_pts?: number | null }).post_exit_against_pts
+        const postExit = peFav != null && peAgn != null
+          ? `continued YOUR way ${peFav}pts, reversed ${peAgn}pts`
+          : 'not computed for this trade'
         return `  ${i + 1}. open ${time} → close ${exitTime} | ${dir} @ ${t.entry_price ?? '?'} stop ${t.stop_price ?? '?'} TP1 ${tp1} exit ${exit} qty ${t.quantity ?? '?'} | PnL ${pnl}
        intra-trade extremes: high=${hdp} low=${ldp}
+       AFTER YOU EXITED (15m): ${postExit}
        5m structure AT ENTRY: ${regime5m ?? 'N/A'} (snapshot at the entry bar — you have no reading of what structure did after)
        entry ATR-10(1m): ${atr ?? 'N/A'} | planned TP1: ${plannedR} | session: ${isGbx ? 'GBX/overnight — exempt from prep_adherence + the ATR stop-band check ONLY; STILL execution-scored on every other criterion' : 'RTH'}
        setups: ${setups} | entry_model: ${entryModel} | confluences: ${confluences}
@@ -635,6 +645,21 @@ count tags by eye, don't add up wins, don't convert timestamps into durations.
 A live analysis got roughly half its numbers wrong doing exactly that ("3/3 ES
 trades hit TP" when it was 2/3; "T1→T2 was 60s" when it was 44s) while every
 field it simply READ was correct.
+
+**0a-2. A LOSING SESSION IS NOT EVIDENCE OF A WRONG DIRECTION.** Every trade
+line carries "AFTER YOU EXITED (15m)". When a trade shows continued YOUR way
+materially more than it reversed, THE READ WAS RIGHT and the loss came from
+stop placement, size or timing — say that, and never call the bias, the
+direction or the market read wrong. Getting swept and then watching the move
+go your way is a STOP problem, and telling that trader their bias was wrong is
+both false and the most damaging thing this analysis can do.
+
+A live analysis wrote "pressing a short bias ... the bias itself was fighting
+the hardest statistical terrain" about a session whose first two shorts
+continued 9.75 and 13 points the trader's way within 15 minutes of stopping
+out on a 1.5-point stop. The direction was correct twice; only the stop was
+wrong. Check this field before writing ANY sentence about bias, read,
+direction, or "the market didn't support it".
 
 **0b. NO INVENTED TRENDS.** "The gap lengthens", "quality improves through the
 session" and similar progressions require the values to ACTUALLY be monotone —
