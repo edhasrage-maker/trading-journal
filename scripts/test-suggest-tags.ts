@@ -182,6 +182,45 @@ check('the learning loop closes: confirm a phrase, it matches next time', (() =>
   return flat(suggestTagsFromText('had it way too heavy on that one', [learned])).includes('Oversized')
 })())
 
+console.log('verb tense (notes are past tense, labels are infinitives)')
+
+// The note that started this: the trader wrote "stop out before going" and the
+// tag reads "Stopped Out Before Going" — one suffix apart, and it matched
+// nothing.
+{
+  const tense = [
+    tag('confluences', 'Stopped Out Before Going'),
+    tag('setups', 'Break And Retest'),
+    tag('confluences', 'VWAP Hold/Bounce'),
+    tag('confluences', '9 EMA Hold'),
+    tag('confluences', 'Sweep'),
+  ]
+  const hits = (text: string) => flat(suggestTagsFromText(text, tense))
+
+  check('the real note catches BOTH tags',
+    hits('Weekly Open break and retest. Another stop out before going').length === 2,
+    JSON.stringify(hits('Weekly Open break and retest. Another stop out before going')))
+  check('-ed: "stop out" matches "Stopped Out"',
+    hits('stop out before going').includes('Stopped Out Before Going'))
+  check('-ing: "stopping out" matches "Stopped Out"',
+    hits('stopping out before going').includes('Stopped Out Before Going'))
+  check('silent e: "bounced" matches "Bounce"',
+    hits('vwap bounced off it').includes('VWAP Hold/Bounce'))
+  check('irregular: "held" matches "Hold"',
+    hits('held vwap into the close').includes('VWAP Hold/Bounce'))
+  check('irregular: "broke" matches "Break"',
+    hits('broke and retested the level').includes('Break And Retest'))
+  check('irregular: "swept" matches "Sweep"',
+    hits('swept the lows').includes('Sweep'))
+  check('-ing: "holding" matches "Hold"',
+    hits('holding the 9 ema').includes('9 EMA Hold'))
+
+  // Guards — the length floors exist so stripping can't destroy short words.
+  check('does NOT over-stem "fed" into "feed"', hits('I fed the position more size').length === 0)
+  check('does NOT over-stem "used"', hits('used a wider stop').length === 0)
+  check('unrelated prose still matches nothing', hits('nothing relevant here at all').length === 0)
+}
+
 console.log('mergeTradeTags')
 
 check('categories union and dedupe',

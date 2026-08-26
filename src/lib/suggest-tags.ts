@@ -12,6 +12,8 @@
  *   - Singulars: "clusters" ↔ "cluster", "attempts" ↔ "attempt"
  *   - Slash alternatives in tag labels: "Clusters/Bubbles" means EITHER
  *     "clusters" OR "bubbles" can satisfy that token, not both.
+ *   - Verb tense: "stopped" ↔ "stop", "bounced" ↔ "bounce", "holding" ↔ "hold"
+ *   - Irregular verbs: "held" ↔ "hold", "broke" ↔ "break", "took" ↔ "take" 
  *
  * Suggestions feed into TradeForm's auto-add path. User can still manually
  * remove auto-added tags; the autoAddedRef there prevents re-adding once
@@ -52,6 +54,58 @@ function singularize(w: string): string {
   return w.slice(0, -1)
 }
 
+/**
+ * Irregular verbs a trader actually types. Notes are written in the past tense
+ * ("held the level", "broke out", "took the trade") while tag labels are
+ * infinitives ("VWAP Hold/Bounce", "Break And Retest"), and no amount of suffix
+ * stripping bridges held -> hold. Small and hand-picked: every entry is a word
+ * that appears in real trade notes, so this can't quietly distort unrelated
+ * matching.
+ */
+const IRREGULAR_VERBS: Record<string, string> = {
+  held: 'hold',
+  broke: 'break', broken: 'break',
+  took: 'take', taken: 'take',
+  ran: 'run',
+  went: 'go', gone: 'go',
+  sold: 'sell', bought: 'buy',
+  lost: 'lose',
+  got: 'get', gotten: 'get',
+  came: 'come',
+  made: 'make',
+  saw: 'see', seen: 'see',
+  hit: 'hit',
+  left: 'leave',
+  swept: 'sweep',
+  caught: 'catch',
+  built: 'build',
+  fell: 'fall', fallen: 'fall',
+}
+
+/**
+ * Conservative verb stem, so a tag written as an infinitive still matches prose
+ * written in another tense. This is what made "Stopped Out Before Going" miss a
+ * note reading "another stop out before going" — one suffix apart.
+ *
+ * Both the tag label and the note run through it, so the two sides only have to
+ * agree with EACH OTHER; the stem need not be a real word ("bounce" and
+ * "bounced" both land on "bounc"). Length floors keep it off short words where
+ * stripping would destroy meaning — "feed" must not become "fe", "used" must
+ * not become "us".
+ */
+function stem(w: string): string {
+  let t = w
+  // "entrie" (already singularized from "entries") -> "entry"
+  if (t.length >= 5 && t.endsWith('ie')) t = t.slice(0, -2) + 'y'
+  else if (t.length >= 6 && t.endsWith('ing')) t = t.slice(0, -3)
+  else if (t.length >= 5 && t.endsWith('ed')) t = t.slice(0, -2)
+  // "stopp" -> "stop", "runn" -> "run"
+  if (t.length >= 4 && /([bdfglmnprt])\1$/.test(t)) t = t.slice(0, -1)
+  // Drop a silent trailing "e" so "bounce" and "bounced" converge on "bounc".
+  if (t.length >= 5 && t.endsWith('e')) t = t.slice(0, -1)
+  return t
+}
+
 /** Full normalization pipeline applied to every token on both sides. */
 function normalizePart(w: string): string {
   if (!w) return ''
@@ -59,6 +113,8 @@ function normalizePart(w: string): string {
   t = normalizeOrdinal(t)
   if (NUMBER_WORDS[t]) t = NUMBER_WORDS[t]
   t = singularize(t)
+  if (IRREGULAR_VERBS[t]) t = IRREGULAR_VERBS[t]
+  t = stem(t)
   return t
 }
 
