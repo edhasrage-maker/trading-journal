@@ -25,6 +25,27 @@ export interface Achievement {
   blurb: string
 }
 
+// Thresholds — declared FIRST and interpolated into the catalog copy below, so
+// a rule and the sentence describing it can never drift apart.
+export const ACHIEVEMENT_THRESHOLDS = {
+  // Sniper is a DAY-LEVEL average: mean adverse heat across ALL of the day's
+  // trades (incl. stop-outs) must stay under this ×ATR — "surgical entries all
+  // session", not just one lucky tight entry.
+  sniperMaeAtr: 0.25,
+  // Grand Slam, path 1: risk efficiency. Set to 5 (not 8) because 8R is
+  // unreachable for a scale-out style — 0 of 672 logged sessions ever hit it.
+  grandSlamR: 5,
+  // Grand Slam, path 2 (merged Pt 7 from the old Game Winner): one trade
+  // capturing this share of the day's high-low range. 0.2, not 0.8, for the
+  // same reason — the best single-trade capture on record is 23%.
+  grandSlamCapture: 0.2,
+  // Game Winner is now the COMEBACK coin: the last trade flips a red day green
+  // after at least this many losers dug the hole.
+  gameWinnerMinLosers: 2,
+  careerDayPercentile: 0.9,
+  heatCheckStreak: 5,
+} as const
+
 /** Static catalog — the single source of truth for each badge's display label,
  *  fallback emoji, and a GENERIC "what it means" blurb. `dayAchievements` pulls
  *  its label/emoji from here (then overrides the blurb with the day's live
@@ -32,9 +53,9 @@ export interface Achievement {
  *  collection strip, lifetime counts) use these generic entries directly since
  *  they don't recompute the day. */
 export const ACHIEVEMENT_CATALOG: Record<AchievementId, { label: string; emoji: string; blurb: string }> = {
-  sniper:      { label: 'Sniper',      emoji: '🎯', blurb: 'The day averaged under 0.25×ATR of heat across every trade — surgical all session.' },
-  grand_slam:  { label: 'Grand Slam',  emoji: '⚾', blurb: 'A trade of 8R or more — swung big and connected.' },
-  game_winner: { label: 'Game Winner', emoji: '🏀', blurb: "Your best trade captured 80%+ of the day's range." },
+  sniper:      { label: 'Sniper',      emoji: '🎯', blurb: `The day averaged under ${ACHIEVEMENT_THRESHOLDS.sniperMaeAtr}×ATR of heat across every trade — surgical all session.` },
+  grand_slam:  { label: 'Grand Slam',  emoji: '⚾', blurb: `One trade worth ${ACHIEVEMENT_THRESHOLDS.grandSlamR}R+, or that caught ${Math.round(ACHIEVEMENT_THRESHOLDS.grandSlamCapture * 100)}%+ of the day's range — swung big and connected.` },
+  game_winner: { label: 'Game Winner', emoji: '🏀', blurb: 'Your last trade flipped a losing day green — a buzzer-beater.' },
   career_day:  { label: 'Career Day',  emoji: '📅', blurb: 'A top-10% P&L day across your logged sessions.' },
   heat_check:  { label: 'Heat Check',  emoji: '🔥', blurb: '5 green sessions in a row — you’re heating up.' },
 }
@@ -63,22 +84,11 @@ export interface AchievementInput {
    *  traded, so consecutive entries mean consecutive sessions. Omit to skip
    *  those two badges. */
   pnlHistory?: { date: string; pnl: number }[]
-  /** The session's high-low range in POINTS (market_context.day_range) — for
-   *  Game Winner (best trade captured ≥80% of it). Omit to skip that badge. */
+  /** The session's high-low range in POINTS (market_context.day_range) — feeds
+   *  Grand Slam's capture path (one trade caught grandSlamCapture of it). Omit
+   *  to skip that path; Grand Slam's R path still works without it. */
   dayRangePts?: number | null
 }
-
-// Thresholds — single source of truth so the UI copy and the rules never drift.
-export const ACHIEVEMENT_THRESHOLDS = {
-  // Sniper is a DAY-LEVEL average: mean adverse heat across ALL of the day's
-  // trades (incl. stop-outs) must stay under this ×ATR — "surgical entries all
-  // session", not just one lucky tight entry.
-  sniperMaeAtr: 0.25,
-  grandSlamR: 8,
-  gameWinnerCapture: 0.8,
-  careerDayPercentile: 0.9,
-  heatCheckStreak: 5,
-} as const
 
 /** Realized R for a trade: pnl ÷ planned $ risk (|entry−stop| × qty × mult).
  *  Null when there's no stop or no known multiplier. */
@@ -114,22 +124,20 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
     })
   }
 
-  // 🚀 Grand Slam — a trade of 8R or more (needs a logged stop).
+  // ⚾ Grand Slam — ONE huge trade, earned EITHER way (merged Pt 7):
+  //   • grandSlamR — risk efficiency: made vs risked (needs a logged stop).
+  //   • grandSlamCapture of the day's high-low range — opportunity capture: how
+  //     much of the available move one trade caught (stop/size-independent).
+  // These used to be two coins (Grand Slam / the old Game Winner), but both
+  // answer "did one trade win the day"; the Game Winner NAME now belongs to the
+  // comeback rule below.
   const bestR = trades.reduce<number | null>((m, t) => {
     const r = tradeR(t)
     return r == null ? m : m == null || r > m ? r : m
   }, null)
-  if (bestR != null && bestR >= T.grandSlamR) {
-    earned.push({
-      id: 'grand_slam', ...ACHIEVEMENT_CATALOG.grand_slam,
-      blurb: `A ${bestR.toFixed(1)}R trade — swung big and connected.`,
-    })
-  }
+  const bigR = bestR != null && bestR >= T.grandSlamR
 
-  // 🏀 Game Winner — your single best trade captured ≥80% of the day's high-low
-  // range (points). Size-independent: "one shot that caught the whole move."
-  // Realized capture = direction-signed (exit − entry) for each trade; we take
-  // the biggest, so a red day with one monster winner can still qualify.
+  let captureRatio: number | null = null
   if (dayRangePts != null && dayRangePts > 0) {
     const bestCapturePts = trades.reduce((m, t) => {
       if (t.entry_price == null || t.exit_price == null) return m
@@ -139,17 +147,48 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
     const ratio = bestCapturePts / dayRangePts
     // A single trade CANNOT capture more than the full session range. A ratio
     // materially over 100% means dayRangePts and the trade are in different
-    // instruments/units (a day can carry a per-symbol market_context — e.g. an
+    // instruments/units (a day carries a per-symbol market_context — e.g. an
     // ES-scale 19.5-pt range measured against an NQ trade's ~130-pt range) or
-    // span different sessions, so the comparison is invalid — do NOT award.
+    // span different sessions, so the comparison is invalid — don't count it.
     // The small epsilon tolerates a genuine full-range capture nicked by
     // rounding; the displayed % clamps to 100 so the copy is never impossible.
-    const GW_MAX_RATIO = 1.02
-    if (ratio >= T.gameWinnerCapture && ratio <= GW_MAX_RATIO) {
-      const pct = Math.min(Math.round(ratio * 100), 100)
+    if (ratio <= 1.02) captureRatio = ratio
+  }
+  const bigCapture = captureRatio != null && captureRatio >= T.grandSlamCapture
+
+  if (bigR || bigCapture) {
+    const why = bigR
+      ? `A ${bestR!.toFixed(1)}R trade`
+      : `One trade caught ${Math.min(Math.round(captureRatio! * 100), 100)}% of the day's ${Math.round(dayRangePts!)}-pt range`
+    earned.push({
+      id: 'grand_slam', ...ACHIEVEMENT_CATALOG.grand_slam,
+      blurb: `${why} — swung big and connected.`,
+    })
+  }
+
+  // 🏀 Game Winner — the buzzer-beater. Your LAST trade of the day was a winner
+  // that flipped the session from red to green, after at least 2 losers dug the
+  // hole. Deliberately STRUCTURAL (a shape-of-the-day rule) rather than gated on
+  // a dollar drawdown: it needs no per-trader Daily Loss Limit, so it works for
+  // any account regardless of whether one is configured.
+  const timed = trades
+    .filter(t => t.pnl != null)
+    // This rule is ORDER-DEPENDENT and not every caller fetches ordered (the
+    // persist hook selects without an ORDER BY), so sort defensively here.
+    .slice()
+    .sort((a, b) => (a.entry_time ?? '').localeCompare(b.entry_time ?? ''))
+  if (timed.length > T.gameWinnerMinLosers) {
+    const last = timed[timed.length - 1]
+    const prior = timed.slice(0, -1)
+    const priorPnl = prior.reduce((s, t) => s + (t.pnl ?? 0), 0)
+    const priorLosers = prior.filter(t => (t.pnl ?? 0) < 0).length
+    const lastPnl = last.pnl ?? 0
+    const finalPnl = priorPnl + lastPnl
+    const usd = (n: number) => `$${Math.abs(Math.round(n)).toLocaleString('en-US')}`
+    if (priorLosers >= T.gameWinnerMinLosers && priorPnl < 0 && lastPnl > 0 && finalPnl > 0) {
       earned.push({
         id: 'game_winner', ...ACHIEVEMENT_CATALOG.game_winner,
-        blurb: `Your best trade caught ${pct}% of the day's ${Math.round(dayRangePts)}-pt range.`,
+        blurb: `Down ${usd(priorPnl)} after ${priorLosers} losers — your last trade won the day, closing +${usd(finalPnl)}.`,
       })
     }
   }
