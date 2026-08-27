@@ -32,13 +32,18 @@ export const ACHIEVEMENT_THRESHOLDS = {
   // trades (incl. stop-outs) must stay under this ×ATR — "surgical entries all
   // session", not just one lucky tight entry.
   sniperMaeAtr: 0.25,
-  // Grand Slam, path 1: risk efficiency. Set to 5 (not 8) because 8R is
-  // unreachable for a scale-out style — 0 of 672 logged sessions ever hit it.
-  grandSlamR: 5,
-  // Grand Slam, path 2 (merged Pt 7 from the old Game Winner): one trade
-  // capturing this share of the day's high-low range. 0.2, not 0.8, for the
-  // same reason — the best single-trade capture on record is 23%.
-  grandSlamCapture: 0.2,
+  // Grand Slam is deliberately set by what is OBJECTIVELY a monster trade, NOT
+  // by percentile of the trader's own history. Calibrating to personal bests
+  // would only certify "better than you usually do" — a trophy graded on a
+  // curve means nothing. It is fine, and intended, for this coin to sit
+  // unearned: Sniper and Game Winner are the regular ones.
+  //
+  // Path 1: risk efficiency — 8R is a monster by any standard.
+  grandSlamR: 8,
+  // Path 2 (merged Pt 7 from the old Game Winner): one trade capturing this
+  // share of the day's high-low range. Half the session's move in a single
+  // trade is genuinely big; anything less reads as an ordinary day.
+  grandSlamCapture: 0.5,
   // Game Winner is now the COMEBACK coin: the last trade flips a red day green
   // after at least this many losers dug the hole.
   gameWinnerMinLosers: 2,
