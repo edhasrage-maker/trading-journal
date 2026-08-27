@@ -169,6 +169,60 @@ export async function ingestFile(file: File): Promise<void> {
   await ingest(file)
 }
 
+/** Pick a recording and REMEMBER it, without building a grabber here.
+ *
+ *  For callers that run their own decode pipeline (the Review recap does — it
+ *  keeps a per-day anchor the store doesn't model) but should still leave the
+ *  handle behind for everything else. Without this, picking a recording on
+ *  Review taught the rest of the app nothing, and the Trade tab asked for the
+ *  same file again as though it had never been chosen.
+ *
+ *  Returns the File so the caller can proceed as before, or null if the picker
+ *  was dismissed or the browser has no FS Access API. */
+export async function pickAndRememberFile(): Promise<File | null> {
+  const w = window as FsPickerWindow
+  if (!w.showOpenFilePicker) return null
+  let handle: FsFileHandle | undefined
+  try {
+    ;[handle] = await w.showOpenFilePicker({
+      types: [{
+        description: 'Screen recording',
+        accept: {
+          'video/mp4': ['.mp4', '.m4v'],
+          'video/webm': ['.webm'],
+          'video/x-matroska': ['.mkv'],
+          'video/quicktime': ['.mov'],
+        },
+      }],
+    })
+  } catch {
+    return null // dismissed
+  }
+  if (!handle) return null
+  await saveHandle(handle).catch(() => {})
+  setState({ savedHandleName: handle.name })
+  return handle.getFile()
+}
+
+/** The remembered clip's filename, if one was ever picked on this device.
+ *  Lets a surface offer "re-open <name>" instead of a bare file picker. */
+export async function savedRecordingName(): Promise<string | null> {
+  const handle = await loadHandle()
+  return handle?.name ?? null
+}
+
+/** Re-grant and return the saved clip as a File, for a caller with its own
+ *  pipeline. Needs a user gesture. Null when there's nothing saved or the
+ *  grant was declined. */
+export async function reopenSavedFile(): Promise<File | null> {
+  const handle = await loadHandle()
+  if (!handle) return null
+  const perm = (await handle.requestPermission?.({ mode: 'read' })) ?? 'denied'
+  if (perm !== 'granted') return null
+  setState({ savedHandleName: handle.name })
+  try { return await handle.getFile() } catch { return null }
+}
+
 /** Re-grant + load a previously-saved handle. Needs a user gesture (a click). */
 export async function reopenSavedRecording(): Promise<void> {
   const handle = await loadHandle()

@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare, SlidersHorizontal, Check, Copy, ChevronDown } from 'lucide-react'
+import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare, SlidersHorizontal, Check, Copy, ChevronDown, RotateCcw } from 'lucide-react'
 import { VideoFrameGrabber, parseObsFilenameStartMs } from '@/lib/browser-frames'
+import { supportsFsAccess, pickAndRememberFile, savedRecordingName, reopenSavedFile } from '@/lib/recording-store'
 import { createClient } from '@/lib/supabase/client'
 import type { Trade, DetectedLevels } from '@/lib/supabase/types'
 
@@ -138,6 +139,11 @@ const fmtClock = (sec: number): string => {
 
 export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
   const [file, setFile] = useState<File | null>(null)
+  // A clip picked previously on THIS device — on Review or on the Trade tab,
+  // they share one handle. Offering it by name turns "find that file again"
+  // into one click. Null when nothing has ever been picked, or when the
+  // browser has no File System Access API to remember handles with.
+  const [rememberedName, setRememberedName] = useState<string | null>(null)
   const [grabber, setGrabber] = useState<VideoFrameGrabber | null>(null)
   const [duration, setDuration] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -288,6 +294,33 @@ export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
     }
     setScrubSec(0)
   }, [date])
+
+  // Surface a clip picked earlier — here or on the Trade tab.
+  useEffect(() => {
+    if (!supportsFsAccess()) return
+    let dead = false
+    void savedRecordingName().then(n => { if (!dead) setRememberedName(n) })
+    return () => { dead = true }
+  }, [])
+
+  /** Pick through the store where the browser allows it, so the handle is
+   *  REMEMBERED for every other surface. This component keeps running its own
+   *  decode + per-day anchor afterwards; only the remembering is shared.
+   *  Browsers without File System Access fall back to the <input> below, which
+   *  works exactly as before but can't be remembered — a File from an <input>
+   *  carries no handle, so there is nothing to store. */
+  const pickRemembered = useCallback(async () => {
+    const f = await pickAndRememberFile()
+    if (!f) return
+    setRememberedName(f.name)
+    await onPick(f)
+  }, [onPick])
+
+  const reopenRemembered = useCallback(async () => {
+    const f = await reopenSavedFile()
+    if (!f) return
+    await onPick(f)
+  }, [onPick])
 
   // Persist the anchor whenever it changes.
   useEffect(() => {
@@ -481,16 +514,43 @@ export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
 
       {/* File picker */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-        <label className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-sm rounded-lg px-4 py-2 cursor-pointer transition-colors w-fit">
-          <Upload className="w-4 h-4" />
-          {file ? 'Choose a different recording' : 'Select recording…'}
-          <input
-            type="file"
-            accept="video/mp4,video/*"
-            className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) void onPick(f) }}
-          />
-        </label>
+        {supportsFsAccess() ? (
+          // Chromium: pick through the store so the choice is remembered app-wide.
+          <button
+            type="button"
+            onClick={() => void pickRemembered()}
+            className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-sm rounded-lg px-4 py-2 cursor-pointer transition-colors w-fit"
+          >
+            <Upload className="w-4 h-4" />
+            {file ? 'Choose a different recording' : 'Select recording…'}
+          </button>
+        ) : (
+          <label className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-sm rounded-lg px-4 py-2 cursor-pointer transition-colors w-fit">
+            <Upload className="w-4 h-4" />
+            {file ? 'Choose a different recording' : 'Select recording…'}
+            <input
+              type="file"
+              accept="video/mp4,video/*"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) void onPick(f) }}
+            />
+          </label>
+        )}
+        {/* One click back to the clip already chosen on this device. The browser
+            drops read permission to a local file at every page load — that is a
+            fixed rule of the web, not something the app can hold onto — so a
+            single re-grant is the floor. What it should never do is make you go
+            find the file again. */}
+        {!file && rememberedName && (
+          <button
+            type="button"
+            onClick={() => void reopenRemembered()}
+            className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 w-fit"
+            title="Use the recording you already picked on this device"
+          >
+            <RotateCcw className="w-3 h-3" /> Re-open <span className="font-mono">{rememberedName}</span>
+          </button>
+        )}
         {loadingVideo && (
           <span className="inline-flex items-center gap-2 text-xs text-gray-400">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading recording…
