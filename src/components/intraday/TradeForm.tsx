@@ -204,7 +204,9 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   // trade's stored structure_5m_regime (imported trades only). Hoisted out of
   // the callback so the memo deps match what the compiler infers.
   const editingTradeId = trade?.id ?? null
+  const suggestInFlightRef = useRef(false)
   const suggestTagsFromNotes = useCallback(async () => {
+    if (suggestInFlightRef.current) return
     const notes = form.notes.trim()
     // The structure suggestion is worth a call even when the notes haven't
     // changed, so it bypasses the notes dedupe when we have an id and no prose.
@@ -212,6 +214,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
     if (notes.length < 3 && !tradeId) return
     if (notes.length >= 3 && notes === lastSuggestedNotesRef.current) return
     if (notes.length >= 3) lastSuggestedNotesRef.current = notes
+    suggestInFlightRef.current = true
     setSuggestingTags(true)
     try {
       const res = await fetch('/api/trades/suggest-tags', {
@@ -227,6 +230,32 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
     } catch { /* best-effort: suggestions are optional */ }
     finally { setSuggestingTags(false) }
   }, [form.notes, form.tags, editingTradeId])
+
+  /**
+   * Semantic suggestions used to wait for the notes field to LOSE focus, while
+   * the keyword matcher ran live on every keystroke. So a trader looking at the
+   * form mid-note saw only half the system: "5m demand at POC with large DBP"
+   * showed the keyword hits and nothing for "Large Delta on DBP", which reads
+   * as the matcher being broken rather than as a layer that hasn't run yet.
+   *
+   * Now it also fires a beat after typing stops. `lastSuggestedNotesRef` already
+   * dedupes on the exact text and `suggestInFlightRef` blocks an overlap with
+   * the blur handler, so the debounce costs at most one extra call per distinct
+   * note — and the model path is quota-gated, degrading to keyword-only.
+   *
+   * The floor is higher than the button's 3 chars: auto-firing spends a usage
+   * unit without the trader asking, so it waits for something worth reading.
+   */
+  const AUTO_SUGGEST_MS = 1500
+  const AUTO_SUGGEST_MIN_CHARS = 15
+  const suggestRef = useRef(suggestTagsFromNotes)
+  useEffect(() => { suggestRef.current = suggestTagsFromNotes }, [suggestTagsFromNotes])
+  useEffect(() => {
+    if (compact) return
+    if (form.notes.trim().length < AUTO_SUGGEST_MIN_CHARS) return
+    const id = setTimeout(() => { void suggestRef.current() }, AUTO_SUGGEST_MS)
+    return () => clearTimeout(id)
+  }, [form.notes, compact])
 
   const handleFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
