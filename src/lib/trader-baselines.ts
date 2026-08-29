@@ -1,4 +1,4 @@
-import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { mfeMaePoints, type TradeWithExcursion } from '@/lib/analytics'
 import type { TradeTags } from '@/lib/supabase/types'
 
@@ -54,6 +54,11 @@ export interface TraderBaselines {
   clean: BaselineRow | null
   /** Targets: how often a trade got most of the way to TP1 and still missed. */
   nearMiss: { reached: number; missed: number; total: number } | null
+  /** What size this trader NORMALLY trades, per instrument. Without it the
+   *  analysis reads a lot count against the cap alone and calls a routine size
+   *  "your maximum" — true, and misleading, when 86% of their MES trades are
+   *  that size. Contract counts are not comparable across instruments. */
+  sizeByInstrument: Array<{ root: string; typical: number; pctAtTypical: number; max: number; n: number }>
 }
 
 type BaselineTrade = TradeWithExcursion & {
@@ -174,8 +179,28 @@ export function computeTraderBaselines(
     }
   }
 
+  // Modal size per instrument — the size they actually trade, not the cap.
+  const sizeGroups = new Map<string, number[]>()
+  for (const t of trades) {
+    if (!t.symbol || !t.quantity) continue
+    const root = symbolRoot(t.symbol)
+    const arr = sizeGroups.get(root) ?? []
+    arr.push(t.quantity)
+    sizeGroups.set(root, arr)
+  }
+  const sizeByInstrument = Array.from(sizeGroups.entries())
+    .filter(([, qs]) => qs.length >= MIN_TAG_N)
+    .map(([root, qs]) => {
+      const counts = new Map<number, number>()
+      for (const q of qs) counts.set(q, (counts.get(q) ?? 0) + 1)
+      const [typical, hits] = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]
+      return { root, typical, pctAtTypical: Math.round((hits / qs.length) * 100), max: Math.max(...qs), n: qs.length }
+    })
+    .sort((a, b) => b.n - a.n)
+
   return {
     overall: summarize('all trades with a stop set', scored),
+    sizeByInstrument,
     setups: byLabel('setups'),
     mistakes: byLabel('mistakes'),
     emotions: byLabel('emotions'),
@@ -251,6 +276,15 @@ export function baselinesPromptBlock(b: TraderBaselines): string {
   }
   if (b.emotions.length > 0) {
     lines.push('', 'By emotion tag (lifetime, most extreme first):', ...b.emotions.slice(0, 6).map(fmtRow))
+  }
+  if (b.sizeByInstrument.length > 0) {
+    lines.push(
+      '',
+      'NORMAL POSITION SIZE per instrument (what they actually trade, NOT the cap —',
+      'contract counts are not comparable across instruments):',
+      ...b.sizeByInstrument.map(x =>
+        `  ${x.root}: usually ${x.typical} contracts (${x.pctAtTypical}% of ${x.n} trades), largest ${x.max}`),
+    )
   }
   if (b.nearMiss && b.nearMiss.total >= 20) {
     lines.push(

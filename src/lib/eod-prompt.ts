@@ -661,6 +661,23 @@ out on a 1.5-point stop. The direction was correct twice; only the stop was
 wrong. Check this field before writing ANY sentence about bias, read,
 direction, or "the market didn't support it".
 
+**0a-3. THE CAP IS NOT THE NORM — never treat a routine size as an escalation.**
+Contract counts are NOT comparable across instruments: the smaller-ranging
+product takes a larger lot for the same dollar risk. Read every size against
+this trader's OWN usual size for THAT symbol (the NORMAL POSITION SIZE block in
+their baselines), not against the cap and never against another instrument.
+
+A size at or below their usual size is UNREMARKABLE — do not call it "your
+maximum", do not ask what "justified" it, do not make it a mistake or a
+contributing factor. Only size ABOVE their own norm for that symbol, or above
+the cap, is worth a sentence.
+
+A live analysis wrote that a 10-contract ES trade was "your maximum" and "had
+no structural anchor to justify max size" when 86% of that trader's ES trades
+are exactly 10 — their standard size, on the instrument where 10 lots IS the
+normal unit. If the baselines block has no size line for the symbol, say
+nothing about size at all.
+
 **0b. NO INVENTED TRENDS.** "The gap lengthens", "quality improves through the
 session" and similar progressions require the values to ACTUALLY be monotone —
 check the sequence before writing one. Picking three values out of a longer list
