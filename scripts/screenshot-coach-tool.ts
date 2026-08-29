@@ -69,6 +69,22 @@ const anchoredSet = new Set<string>(existsSync(join(OUT_DIR, 'anchored-ids.json'
 const commentaryCache: Record<string, { text: string; at: string }> =
   existsSync(CACHE_PATH) ? JSON.parse(readFileSync(CACHE_PATH, 'utf8')) : {}
 
+// The screenshots are Supabase signed URLs with a 7-day life. Past that the
+// grid is a wall of black boxes and the snapshot is a week stale — the two
+// failures arrive together, and neither announces itself. Read the expiry
+// out of the token so the page can say so.
+function urlExpiry(url: string): number | null {
+  const tok = /token=([^&]+)/.exec(url)?.[1]
+  if (!tok) return null
+  try {
+    const p = JSON.parse(Buffer.from(tok.split('.')[1], 'base64').toString())
+    return typeof p.exp === 'number' ? p.exp * 1000 : null
+  } catch { return null }
+}
+const expiries = rows.map(r => urlExpiry(r.frame.signed_url)).filter((x): x is number => x != null)
+const urlsExpireAt = expiries.length ? Math.min(...expiries) : null
+const newestTrade = rows.map(r => String(r.date)).sort().pop() ?? null
+
 const ctx = (r: Row) => r.truth?.context ?? {}
 const ex = (r: Row) => r.truth?.exit ?? {}
 const pnlOf = (r: Row): number => r.truth?.exit?.pnl ?? 0
@@ -283,6 +299,9 @@ server.listen(PORT, () => {
 The Coach — http://localhost:${PORT}
   ${rows.length} trades  ·  ${readsBy.size} with a cached verdict  ·  ${Object.keys(commentaryCache).length} with a commentary reply
   model ${MODEL}, text-only — this tool makes no image calls.
+  data through ${newestTrade}; screenshot links ${urlsExpireAt == null ? 'have no readable expiry'
+    : Date.now() > urlsExpireAt ? 'EXPIRED on ' + new Date(urlsExpireAt).toISOString().slice(0, 10) + ' — re-run the harness'
+    : 'good until ' + new Date(urlsExpireAt).toISOString().slice(0, 10)}
   chat is appended to ${CHAT_LOG}
 Ctrl+C to stop.
 `)
@@ -293,6 +312,13 @@ function page(): string {
   // Embedded rather than fetched: the set is small, and one payload means the
   // grid, the filters and the detail view can never disagree about a trade.
   const data = JSON.stringify(rows.map(pageRow)).replace(/</g, '\u003c')
+  const stale = urlsExpireAt != null && Date.now() > urlsExpireAt
+  const banner = stale
+    ? `<div class="stale"><b>These screenshots have expired.</b> The signed URLs ran out on ` +
+      `${new Date(urlsExpireAt).toISOString().slice(0, 10)}, and this snapshot only goes up to ${newestTrade} — ` +
+      `anything traded since is missing too. Re-run <code>npx tsx scripts/screenshot-coach-harness.ts --unlabelled</code>, ` +
+      `then restart this tool.</div>`
+    : ''
   return `<!doctype html><html><head><meta charset="utf-8"><title>The Coach</title>
 <style>
 :root{--bg:#0f1115;--card:#161a22;--line:#242a35;--fg:#e6e8ee;--mute:#8b93a7;--blue:#4c8dff;--green:#3ddc84;--red:#ff5d5d;--amber:#f5b342}
@@ -366,6 +392,9 @@ td{padding:3px 0;vertical-align:top}td:first-child{color:var(--mute);width:44%;p
 #chat input{flex:1;min-width:0}
 .spin{color:var(--mute);font-style:italic}
 .hint{color:var(--mute);font-size:12px;padding:0 18px 10px}
+.stale{margin:0 18px 14px;padding:11px 14px;border-radius:8px;font-size:13px;
+  background:#331a1a;border:1px solid #552626;color:#ffcaca}
+.stale code{color:#fff}
 .empty{color:var(--mute);padding:30px 18px}
 </style></head><body>
 <div class="bar">
@@ -383,6 +412,7 @@ td{padding:3px 0;vertical-align:top}td:first-child{color:var(--mute);width:44%;p
 </div>
 <div class="stats" id="stats"></div>
 <div id="aggwrap"></div>
+${banner}
 <div class="hint">Click a screenshot to open the trade. Every number comes from the 1-minute bars — the coach never sees these images.</div>
 <div class="grid" id="grid"></div>
 
