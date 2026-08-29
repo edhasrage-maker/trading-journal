@@ -17,6 +17,9 @@ export interface ReviewScope {
   weekStart: string
   /** True when today has trades but no completed review yet. */
   pending: boolean
+  /** Most recent date that actually has trades behind it — what Review should
+   *  open on. Null when the account has no trades at all. */
+  lastDataDate: string | null
 }
 
 /**
@@ -37,7 +40,21 @@ export async function resolveReviewScope(
   supabase: any,
 ): Promise<ReviewScope> {
   const today = todayPT()
-  const scope: ReviewScope = { today, weekStart: weekStartFor(today), pending: false }
+  const scope: ReviewScope = { today, weekStart: weekStartFor(today), pending: false, lastDataDate: null }
+
+  // The most recent day with trades behind it. Review opens on the last session
+  // you actually traded, not on today — on a weekend, a holiday, or any morning
+  // before the first fill, "today" is an empty page, and an empty page is a
+  // worse answer than the session you probably came back to look at.
+  try {
+    const { data } = await supabase
+      .from('trading_days')
+      .select('date, trades!inner(id)')
+      .lte('date', today)
+      .order('date', { ascending: false })
+      .limit(1) as { data: Array<{ date: string }> | null }
+    scope.lastDataDate = data?.[0]?.date ?? null
+  } catch { /* best-effort — Review still opens on today */ }
 
   try {
     const { data: day } = await supabase

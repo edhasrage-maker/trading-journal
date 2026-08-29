@@ -32,6 +32,12 @@ import BrandLockup from '@/components/BrandLockup'
 // link resolves. Applied to both the masthead link and the mobile tab — the
 // tour's viewport-aware resolver targets whichever is visible. 'nav-eod' points
 // at Review (the session debrief); 'nav-dashboard' at the home overview.
+// How long a visit to a dated Review page keeps pulling Prep to that same day.
+// Long enough to cover "read the recap, now open its prep"; short enough that
+// tomorrow morning Prep means today again without anyone clearing anything.
+const REVIEW_FOLLOW_SEC = 60 * 60
+const REVIEW_VISIT_COOKIE = 'ts_review_visit'
+
 function navTourAnchor(href: string): string | undefined {
   if (href === '/dashboard') return 'nav-dashboard'
   if (href.startsWith('/prep')) return 'nav-prep'
@@ -192,7 +198,26 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
     const m = /^\/(?:prep|intraday|eod|review\/today)\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
     return m ? m[1] : null
   })()
-  const prepDate = urlDate ?? today
+
+  // Remember the day you were last reviewing, in a COOKIE rather than component
+  // state, so the bare /prep route can read it on the server and redirect. The
+  // client had no business owning this: deriving the href here meant calling
+  // Date.now() during render and setting state from an effect. The honest shape
+  // is the one /review already uses — a bare link the server resolves.
+  //
+  // Why an hour: reviewing Friday's session on Sunday and then clicking Prep
+  // should open Friday, because you are still working on Friday. A window makes
+  // that a continuation of what you are doing now, rather than a sticky
+  // preference that quietly redirects you days later.
+  useEffect(() => {
+    const m = /^\/review\/today\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
+    if (!m) return
+    try {
+      document.cookie =
+        REVIEW_VISIT_COOKIE + '=' + m[1] + '; path=/; max-age=' + REVIEW_FOLLOW_SEC + '; samesite=lax'
+    } catch { /* cookies blocked — Prep just means today */ }
+  }, [pathname])
+
   const reviewDate = urlDate ?? anchor ?? today
   // Review keeps the day too, so Prep → Trade → Review is one day's loop rather
   // than three sections each with their own idea of the date. With no date in
@@ -209,7 +234,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   const navItems = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome', match: '/welcome' }] : []),
     { href: '/dashboard', label: 'Dashboard', match: '/dashboard' },
-    { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
+    { href: urlDate ? `/prep/${urlDate}` : '/prep', label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
     { href: reviewHref, label: 'Review', match: '/review' },
     { href: '/analytics', label: 'Patterns', match: '/analytics' },
@@ -221,7 +246,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   // tabs.
   const mobileTabs = [
     { href: '/dashboard', label: 'Home', match: '/dashboard' },
-    { href: `/prep/${prepDate}`, label: 'Prep', match: '/prep' },
+    { href: urlDate ? `/prep/${urlDate}` : '/prep', label: 'Prep', match: '/prep' },
     { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
     { href: reviewHref, label: 'Review', match: '/review' },
   ]
