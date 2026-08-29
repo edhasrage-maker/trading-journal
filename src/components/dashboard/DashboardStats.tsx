@@ -29,6 +29,14 @@ export interface DayStat {
   eod_pnl: number | null
   trade_wins: number
   trades_with_pnl_count: number
+  /** Realized-R sums for the payoff ratio. Optional so a day whose stats_json
+   *  predates STATS_VERSION 5 still types — those recompute on read, but the
+   *  page must not fall over while they do. */
+  sum_win_r?: number
+  win_r_count?: number
+  sum_loss_r?: number
+  loss_r_count?: number
+  r_sample?: number
   avg_mfe_pts: number | null
   avg_mae_pts: number | null
   avg_mfe_dollars: number | null
@@ -188,6 +196,32 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     const totalTradesWithPnl = inPeriod.reduce((s, d) => s + d.trades_with_pnl_count, 0)
     const tradeWinRate = totalTradesWithPnl > 0 ? totalTradeWins / totalTradesWithPnl : null
 
+    // Payoff ratio = average winner / average loser, both in R, pooled over the
+    // period from per-day SUMS so a one-trade day doesn't count as much as a
+    // ten-trade one.
+    //
+    // R rather than dollars, deliberately. Avg win $ / avg loss $ largely
+    // measures how big the position was, not how well it was traded — size one
+    // loser up and the ratio follows the sizing. Measured on this book over 30
+    // days the two disagree by a wide margin (3.18 in R against 2.58 in $), and
+    // the R figure is the one describing the trading.
+    const sumWinR = inPeriod.reduce((s, d) => s + (d.sum_win_r ?? 0), 0)
+    const winRCount = inPeriod.reduce((s, d) => s + (d.win_r_count ?? 0), 0)
+    const sumLossR = inPeriod.reduce((s, d) => s + (d.sum_loss_r ?? 0), 0)
+    const lossRCount = inPeriod.reduce((s, d) => s + (d.loss_r_count ?? 0), 0)
+    const rSample = inPeriod.reduce((s, d) => s + (d.r_sample ?? 0), 0)
+    const avgWinR = winRCount > 0 ? sumWinR / winRCount : null
+    const avgLossR = lossRCount > 0 ? sumLossR / lossRCount : null
+    const payoffR = avgWinR != null && avgLossR != null && avgLossR > 0 ? avgWinR / avgLossR : null
+    // What the payoff has to clear at this win rate just to break even:
+    // (1 - w) / w. Computed from the number printed beside it, so it can never
+    // go stale the way a configured target would — and it answers the only
+    // question a payoff figure raises on its own, which is "is that enough?".
+    const breakEvenPayoff =
+      tradeWinRate != null && tradeWinRate > 0 && tradeWinRate < 1
+        ? (1 - tradeWinRate) / tradeWinRate
+        : null
+
     // Avg MFE/MAE: averaged across days that have stats. Each day's value is
     // already a per-day average across that day's trades — averaging across
     // days gives equal weight per day (matches "what's a typical day look
@@ -251,6 +285,9 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       pnl,
       dayWinRate,
       tradeWinRate,
+      payoffR,
+      breakEvenPayoff,
+      rSample,
       avgMfe,
       avgMae,
       avgCapture,
@@ -316,13 +353,40 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
           tone={stats.dayWinRate == null ? 'neutral' : stats.dayWinRate >= 0.6 ? 'positive' : 'neutral'}
           sub="% of days green"
         />
+        {/* Win rate is half a metric on its own. At a 31% win rate you need
+            better than 2.2:1 just to break even, so a bare "31%" next to a green
+            P&L is a contradiction the reader has to resolve unaided — the number
+            that resolves it is the payoff, and it belongs in the same card
+            rather than in a fifth one. */}
         <StatCard
-          label="Trade Win %"
+          label={stats.payoffR == null ? 'Trade Win %' : 'Trade Win % · Payoff'}
+          title="Win rate, and how much bigger the average winner is than the average loser (in R, so position sizing doesn't distort it). Break-even is what the payoff must clear at this win rate to come out flat."
           value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
           // Never red (see Day Win %): 38% trade win on a profitable stretch is
           // fine for a high-R approach. Neutral by default, green only when strong.
           tone={stats.tradeWinRate == null ? 'neutral' : stats.tradeWinRate >= 0.6 ? 'positive' : 'neutral'}
+          valueNode={stats.payoffR == null ? undefined : (
+            <span className="flex items-baseline gap-2 flex-wrap">
+              <span>{stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}</span>
+              <span className="text-gray-600 text-lg font-normal">·</span>
+              <span className={stats.breakEvenPayoff != null && stats.payoffR > stats.breakEvenPayoff ? 'text-green-400' : 'text-gray-200'}>
+                {stats.payoffR.toFixed(1)}<span className="text-sm font-semibold text-gray-400">R : 1R</span>
+              </span>
+            </span>
+          )}
           sub={`${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
+          subNode={stats.payoffR != null && stats.breakEvenPayoff != null ? (
+            <div className="text-[11px] text-gray-500">
+              {stats.totalTradesWithPnl} trade{stats.totalTradesWithPnl === 1 ? '' : 's'}
+              {stats.rSample < stats.totalTradesWithPnl ? ` · ${stats.rSample} with a stop` : ''}
+              <div className="mt-1 pt-1 border-t border-gray-800">
+                break-even here: <span className="text-gray-300">{stats.breakEvenPayoff.toFixed(2)}</span>
+                {stats.payoffR > stats.breakEvenPayoff
+                  ? <span className="text-green-500"> — above it</span>
+                  : <span className="text-amber-400"> — below it</span>}
+              </div>
+            </div>
+          ) : undefined}
         />
         <StatCard
           label="Avg MFE / MAE"
@@ -500,10 +564,14 @@ function ExcursionBar({ mfe, mae, capture, keptLabel, maeLabel, mfeLabel }: {
 }
 
 function StatCard({
-  label, value, tone, sub, subNode, valueClass, chartNode, title,
+  label, value, valueNode, tone, sub, subNode, valueClass, chartNode, title,
 }: {
   label: string
   value: string
+  /** Rich value line, for a tile whose headline is more than one figure (the
+   *  win-rate tile pairs a percentage with a payoff ratio). Wins over `value`.
+   *  The plain string stays the common path — most tiles are one number. */
+  valueNode?: React.ReactNode
   tone: 'positive' | 'negative' | 'neutral'
   sub?: string
   /** Rich subline (e.g. an inline <select>). Wins over `sub` when both set. */
@@ -528,7 +596,9 @@ function StatCard({
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       {/* Blank value is intentional (e.g. the MFE tile, whose numbers live at the
           bar ends) — skip the line entirely so it doesn't leave an empty gap. */}
-      {value !== '' && (
+      {valueNode ? (
+        <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'}`}>{valueNode}</p>
+      ) : value !== '' && (
         <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
       )}
       {chartNode}

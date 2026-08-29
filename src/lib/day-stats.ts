@@ -73,6 +73,17 @@ export interface DayStatsRollup {
   live_atr_count: number
   avg_mfe_atr: number | null
   avg_mae_atr: number | null
+  /** Realized-R sums for the payoff ratio, kept as SUMS + COUNTS rather than a
+   *  per-day average. The dashboard pools a period, and averaging per-day
+   *  averages would weight a one-trade day the same as a ten-trade day — the
+   *  payoff would drift with how the trades happened to fall across sessions.
+   *  Only trades carrying a real stop contribute, since R is undefined without
+   *  one; `r_sample` is how many of `trades_with_pnl_count` qualified. */
+  sum_win_r: number
+  win_r_count: number
+  sum_loss_r: number
+  loss_r_count: number
+  r_sample: number
 }
 
 /**
@@ -94,7 +105,7 @@ export interface DayStatsRollup {
 // stopped just short of the price it was stopped AT, so heat was understated on
 // exactly the trades where heat matters most — avg_mae/avg_heat move on those
 // days, and every cached row must recompute to agree with a fresh one.
-export const STATS_VERSION = 4
+export const STATS_VERSION = 5
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
@@ -156,6 +167,19 @@ export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepA
 
   const tradesWithPnl = trades.filter(t => t.pnl != null)
   const winsOnDay = tradesWithPnl.filter(t => (t.pnl ?? 0) > 0).length
+  // Realized R per trade = PnL / planned risk, with the contract multiplier
+  // applied so a micro and a mini are directly comparable. Deliberately NOT
+  // back-solved from realized_rr for trades without a stop: a synthesised risk
+  // makes the payoff look measured when it was invented.
+  let sumWinR = 0, winRCount = 0, sumLossR = 0, lossRCount = 0
+  for (const t of tradesWithPnl) {
+    if (t.entry_price == null || t.stop_price == null || t.quantity == null) continue
+    const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * symbolToMultiplier(t.symbol ?? '')
+    if (!(risk > 0)) continue
+    const r = (t.pnl as number) / risk
+    if (r > 0) { sumWinR += r; winRCount++ }
+    else if (r < 0) { sumLossR += Math.abs(r); lossRCount++ }
+  }
   const winRate = tradesWithPnl.length > 0
     ? (winsOnDay / tradesWithPnl.length) * 100
     : null
@@ -238,6 +262,11 @@ export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepA
     trade_count: trades.length,
     trade_wins: winsOnDay,
     trades_with_pnl_count: tradesWithPnl.length,
+    sum_win_r: sumWinR,
+    win_r_count: winRCount,
+    sum_loss_r: sumLossR,
+    loss_r_count: lossRCount,
+    r_sample: winRCount + lossRCount,
     setups: setupsAll,
     process_score: day.ai_analysis_json?.score ?? null,
     overall_grade: (() => {

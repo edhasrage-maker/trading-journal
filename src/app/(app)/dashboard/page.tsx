@@ -379,6 +379,14 @@ export default async function DashboardPage() {
     eod_pnl: d.eod_pnl,
     trade_wins: d.trade_wins,
     trades_with_pnl_count: d.trades_with_pnl_count,
+    // Realized-R sums behind the payoff ratio on the win-rate tile. This map is
+    // an explicit field list, so anything added to the rollup and not named here
+    // is computed and then silently dropped.
+    sum_win_r: d.sum_win_r,
+    win_r_count: d.win_r_count,
+    sum_loss_r: d.sum_loss_r,
+    loss_r_count: d.loss_r_count,
+    r_sample: d.r_sample,
     avg_mfe_pts: d.avg_mfe_pts,
     avg_mae_pts: d.avg_mae_pts,
     avg_mfe_dollars: d.avg_mfe_dollars,
