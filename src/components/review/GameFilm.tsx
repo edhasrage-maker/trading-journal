@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { GhostButton } from '@/components/ui/Section'
+import ScreenshotLightbox from '@/components/intraday/ScreenshotLightbox'
 import type { TradeVerdict } from '@/lib/supabase/types'
 
 /**
@@ -64,9 +65,18 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
 
   // Arrow keys flip frames while the catalog is on screen and focus isn't in
   // a text field — the note input needs its own arrows.
+  // Full-screen view of the current frame. These are dense Sierra layouts —
+  // footprint, delta ladders, a volume profile — shrunk into a card; the whole
+  // point of reviewing one is reading numbers that a 70vh fit makes illegible.
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null)
+
   useEffect(() => {
     if (n < 2) return
     const onKey = (e: KeyboardEvent) => {
+      // While the lightbox owns the screen, the arrows are its own (pan) — and
+      // flipping the frame underneath it would swap the picture out from under
+      // whoever is reading it.
+      if (zoomSrc) return
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const el = containerRef.current
@@ -79,7 +89,7 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [go, n])
+  }, [go, n, zoomSrc])
 
   if (n === 0) {
     return (
@@ -124,7 +134,9 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
         <img
           src={f.src}
           alt={`${f.day} ${f.time} trade screenshot`}
-          className="block w-full max-h-[70vh] object-contain mx-auto"
+          onClick={() => setZoomSrc(f.src)}
+          title="Click to open full screen — then click again for 100% and 200%"
+          className="block w-full max-h-[70vh] object-contain mx-auto cursor-zoom-in"
           draggable={false}
         />
         {n > 1 && (
@@ -193,8 +205,13 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
       <div className="flex items-baseline gap-4 mt-2 text-[12px] text-gray-600">
         <span>{labelled} of {n} reviewed</span>
         {missing > 0 && <span>{missing} trade{missing === 1 ? '' : 's'} this week without a screenshot</span>}
-        {n > 1 && <span className="ml-auto">← → to flip</span>}
+        <span className="ml-auto">click to zoom{n > 1 ? ' · ← → to flip' : ''}</span>
       </div>
+
+      {/* Same lightbox as the trade list and the shared session: fit → 100% →
+          200%, drag to pan, Esc to close. It already existed; Game film simply
+          never reached for it. */}
+      <ScreenshotLightbox src={zoomSrc} onClose={() => setZoomSrc(null)} />
     </div>
   )
 }
