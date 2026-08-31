@@ -88,6 +88,16 @@ and preferences. Treat this as ground truth about HOW they trade. Do NOT
 critique them for following these rules or violating generic "best
 practices" that conflict with what they've explicitly described here.
 
+PRECEDENCE: this is prose the trader wrote once and it can lag their current
+settings, so it is NOT authoritative about what is enforced. When a structured
+P-rule rail block appears elsewhere in this prompt, that block wins on every
+disagreement — a rail marked NOT TRACKED is not in force no matter what the
+text below says. When no rail block appears, treat every number below as
+something the trader once wrote, not as a live limit. Either way: never tell
+them a limit "is already a rule" / "is your rule" / "is mandatory" on the
+strength of this block. Cite it as context ("you've written that you aim
+for..."), never as an enforced rail.
+
 ${text}
 
 ═══════════════════════════════════════════════
