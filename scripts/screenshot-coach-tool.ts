@@ -376,6 +376,7 @@ function page(): string {
       `then restart this tool.</div>`
     : ''
   return `<!doctype html><html><head><meta charset="utf-8"><title>The Coach</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#0f1115;--card:#161a22;--line:#242a35;--fg:#e6e8ee;--mute:#8b93a7;--blue:#4c8dff;--green:#3ddc84;--red:#ff5d5d;--amber:#f5b342}
 *{box-sizing:border-box}
@@ -455,6 +456,21 @@ td{padding:3px 0;vertical-align:top}td:first-child{color:var(--mute);width:44%;p
   background:#331a1a;border:1px solid #552626;color:#ffcaca}
 .stale code{color:#fff}
 .empty{color:var(--mute);padding:30px 18px}
+/* A phone is a review device here: one column, a shorter frame, arrows that
+   do not wait for a hover that touch can never give. */
+@media (hover: none) { .edge { opacity: 1 } .vhint { display: none } }
+@media (max-width: 900px) {
+  #detail{padding:8px}
+  #detail .inner{grid-template-columns:1fr;gap:10px}
+  #d-view{height:46vh}
+  #d-side{max-height:none;overflow:visible}
+  #playout{height:150px}
+  #chat{width:100vw}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;padding:0 8px 30px}
+  .card img{height:96px}
+  .stats{grid-template-columns:1fr 1fr;padding:8px;gap:6px}
+  .bar{padding:8px;gap:6px}
+}
 </style></head><body>
 <div class="bar">
   <h1>The Coach</h1>
