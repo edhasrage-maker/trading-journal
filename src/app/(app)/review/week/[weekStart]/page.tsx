@@ -298,7 +298,7 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
     return {
       state: baseline.periodR >= baseline.baselineR ? 'edge' : 'leak',
       headline: `${baseline.label} ${baseline.periodR >= baseline.baselineR ? 'ran above' : 'ran below'} your usual.`,
-      sub: `${fmtR(baseline.periodR)} across ${baseline.periodN} this week against ${fmtR(baseline.baselineR)} over your last ${baseline.baselineN}. ${railsPart}${capturePart}`,
+      sub: `${fmtR(baseline.periodR)} per trade across ${baseline.periodN} this week against ${fmtR(baseline.baselineR)} per trade over your last ${baseline.baselineN}. ${railsPart}${capturePart}`,
       next: baseline.periodR >= baseline.baselineR
         ? `Keep taking ${baseline.label} while it is working.`
         : `Watch ${baseline.label} — it is running under your own average.`,
@@ -316,10 +316,15 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
 
 const fmtR = (r: number) => `${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(1)}R`
 
-/** " Break And Retest ran +1.7R across 4 against your usual +0.3R over 46." */
+/** " Break And Retest ran +1.7R per trade across 4 this week — your usual on
+ *  that setup is +0.3R per trade over 46."
+ *
+ *  "per trade" is not padding. These are expectancy figures over ALL trades,
+ *  winners and losers, and without the qualifier a healthy +0.3R expectancy
+ *  reads as a feeble 0.3R trade — the founder read it exactly that way. On this
+ *  book +0.34R across 46 is 19 winners at +2.1R carrying 27 losers at -0.9R. */
 function baselineSentence(b: BaselineRead): string {
-  const verb = b.periodR >= b.baselineR ? 'ran' : 'ran'
-  return ` ${b.label} ${verb} ${fmtR(b.periodR)} across ${b.periodN} this week — your usual on that ${b.kind} is ${fmtR(b.baselineR)} over ${b.baselineN}.`
+  return ` ${b.label} ran ${fmtR(b.periodR)} per trade across ${b.periodN} this week — your usual on that ${b.kind} is ${fmtR(b.baselineR)} per trade over ${b.baselineN}.`
 }
 
 function baselineBars(b: BaselineRead) {
