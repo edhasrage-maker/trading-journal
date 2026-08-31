@@ -573,7 +573,7 @@ function side(t) {
     const w = tf.window_10m, er = tf.entry_rows
     const fRows = [
       row('last 10 min delta', w ? (w.delta > 0 ? '+' : '') + w.delta + ' on ' + w.volume + ' · ' + esc(w.delta_is) + ' the trade' : '—'),
-      row('delta at entry price', er ? (er.delta > 0 ? '+' : '') + er.delta + ' on ' + er.volume + (er.significant ? ' · <b>significant</b> (' + esc(er.kind || 'unresolved') + ')' : ' · below threshold ' + er.threshold) : '—'),
+      row('delta at entry price', er ? (er.delta > 0 ? '+' : '') + er.delta + ' on ' + er.volume + (er.significant ? ' · <b>significant</b> (' + esc(er.kind || 'unresolved') + ')' : ' · ' + (er.pct_of_large != null ? er.pct_of_large + '% of a large print today' : 'below threshold ' + er.threshold)) : '—'),
     ]
     for (const l of (tf.significant_levels || []).slice(0, 3))
       fRows.push(row(esc(l.kind) + ' @ ' + l.price, (l.delta > 0 ? '+' : '') + l.delta + ' · ' + Math.abs(l.dist_pts) + ' pts ' + esc(l.side) + (l.in_tp_path ? ' · <b>in TP path</b>' : '')))

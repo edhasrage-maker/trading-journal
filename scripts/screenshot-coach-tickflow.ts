@@ -22,9 +22,9 @@
  *  This module measures it: built volume, build delta (who was aggressing),
  *  departure direction and depth, age, and whether it has been retested.
  *
- *  Delta significance rows are the FOOTPRINT chart's rows (1pt ES / 5pt NQ —
- *  the convention of the trader's own delta scripts), NOT the profile rows:
- *  at 0.25pt a single large seller fragments into four unremarkable rows.
+ *  Delta significance rows are the FOOTPRINT chart's rows, from the trader's
+ *  own word (2026-08-30): ES 1 tick (0.25pt), NQ 1 point. The p99 threshold is
+ *  computed on the same grid, so "large for today" stays grid-honest.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join, basename } from 'path'
@@ -40,8 +40,8 @@ const PRICE_DIVISOR = 100
 const ROOTS: Record<string, {
   vpRow: number; deltaRow: number; d5Row: number | null; d30Row: number | null
 }> = {
-  ES: { vpRow: 0.25, deltaRow: 1, d5Row: 0.25, d30Row: 1 },
-  NQ: { vpRow: 1, deltaRow: 5, d5Row: null, d30Row: null },
+  ES: { vpRow: 0.25, deltaRow: 0.25, d5Row: 0.25, d30Row: 1 },
+  NQ: { vpRow: 1, deltaRow: 1, d5Row: null, d30Row: null },
 }
 
 /** MESU6.CME → ES + U6 → ESU6.CME.scid (micros trade the mini's book). */
@@ -244,7 +244,7 @@ export interface LostNode {
 const LOST_MIN_AWAY_MIN = 20     // must stay out this long to count as left
 const LOST_REACCEPT_BARS = 5     // this many closes back inside repairs the node
 const EDGE_BAND_PTS = (rowPts: number) => 2 * rowPts
-export const TICKFLOW_VERSION = 2
+export const TICKFLOW_VERSION = 4
 
 function lostNodesOf(
   session: string, prof: TickProfile, bars: DeltaBar[],
@@ -359,7 +359,7 @@ export interface TickflowInput {
 export interface TickflowResult {
   file: string
   window_10m: { delta: number; volume: number; delta_is: 'with' | 'against' | 'flat' } | null
-  entry_rows: { delta: number; volume: number; significant: boolean;
+  entry_rows: { delta: number; volume: number; significant: boolean; pct_of_large: number | null;
     kind: string | null; strength: number | null; threshold: number } | null
   significant_levels: Array<{
     price: number; dist_pts: number; side: 'above' | 'below'
@@ -496,6 +496,7 @@ export function analyzeTickflow(t: TickflowInput): TickflowResult | null {
   const eLvl = sig.find(l => Math.round(l.price * PRICE_DIVISOR) === eKey) ?? null
   const entry_rows = eRow ? {
     delta: eRow.delta, volume: eRow.volume,
+    pct_of_large: det.threshold > 0 ? Math.round((Math.abs(eRow.delta) / det.threshold) * 100) : null,
     significant: Math.abs(eRow.delta) >= det.threshold && det.threshold > 0,
     kind: eLvl?.kind ?? null, strength: eLvl ? Math.round(eLvl.strength * 100) / 100 : null,
     threshold: Math.round(det.threshold),
