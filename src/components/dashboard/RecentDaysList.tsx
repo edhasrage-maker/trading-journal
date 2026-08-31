@@ -665,9 +665,12 @@ function DayRowItem({
           capture: (
             <td key="capture" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
               {(() => {
-                const { text, title } = formatCaptureCell(day.avg_capture, day.avg_mfe_pts)
+                const { text, title, untested } = formatCaptureCell(day.avg_capture, day.avg_mfe_pts)
+                // An untested 0% is muted: it means the exit was never graded,
+                // not that a winner was given back. Same number, different fact.
+                const tone = text === '—' ? 'text-gray-700' : untested ? 'text-gray-500' : ''
                 return title
-                  ? <span className={`cursor-help ${text === '—' ? 'text-gray-700' : ''}`} title={title}>{text}</span>
+                  ? <span className={`cursor-help ${tone}`} title={title}>{text}</span>
                   : text
               })()}
             </td>

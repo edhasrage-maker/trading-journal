@@ -1034,6 +1034,7 @@ export default function EodClient({
               const cell = formatCaptureCell(captureStats.avg, avgMfePts)
               return (
                 <div className={`font-mono text-[17px] ${cell.text === '—' ? 'text-gray-500'
+                  : cell.untested ? 'text-gray-500'
                   : captureStats.avg != null && captureStats.avg < 0 ? 'text-red-400 font-bold'
                   : 'text-gray-400'} ${cell.title ? 'cursor-help' : ''}`}
                   title={cell.title}>

@@ -664,6 +664,11 @@ export function captureBlankReason(avgMfePts: number | null | undefined): string
 export const CAPTURE_NO_MOVE_TOOLTIP =
   'Price never went your way here, so there was no move to capture. Shown as 0% because you banked none of it — but left out of your capture average, which measures how well you EXIT, and was never tested here.'
 
+/** Shown on a 0% where there WAS a favorable move, but too small to grade an
+ *  exit against (under ~0.5x ATR — see mfeClearsNoiseFloor). */
+export const CAPTURE_TOO_SMALL_TOOLTIP =
+  'The move never got far enough your way to grade the exit against — under half an ATR. Shown as 0% because you banked none of it, but left out of your capture average: your exit was never really tested.'
+
 /**
  * The text for one capture cell, and the tooltip that explains it.
  *
@@ -684,16 +689,29 @@ export function formatCaptureCell(
   ratio: number | null | undefined,
   mfePts: number | null | undefined,
   opts?: { exitedAtExtreme?: boolean },
-): { text: string; title: string | undefined } {
+): { text: string; title: string | undefined; untested?: boolean } {
   if (ratio != null) {
     const pct = formatCapturePct(ratio, opts)
     return pct == null
       ? { text: '—', title: CAPTURE_MISMATCH_TOOLTIP }
       : { text: pct, title: undefined }
   }
+  // No favorable move at all — 0%, and the exit was never tested.
   if (mfePts != null && mfePts <= 0) {
-    return { text: '0%', title: CAPTURE_NO_MOVE_TOOLTIP }
+    return { text: '0%', title: CAPTURE_NO_MOVE_TOOLTIP, untested: true }
   }
+  // There WAS a move, but every trade's was under the noise floor, so no ratio
+  // was computable. This used to render as a dash, which is indistinguishable
+  // from missing data — a trader sees an empty cell on a day they know they
+  // traded and reasonably concludes the app is broken. It reads 0% now: none of
+  // the move was banked, which is true. `untested` keeps it visually separable
+  // from a real give-back, because the two mean different things — one is a bad
+  // exit, the other is an exit that was never tested.
+  if (mfePts != null) {
+    return { text: '0%', title: CAPTURE_TOO_SMALL_TOOLTIP, untested: true }
+  }
+  // mfePts == null: genuinely no excursion data behind these trades. That is
+  // NOT zero — we don't know — so it stays a dash.
   return { text: '—', title: captureBlankReason(mfePts) }
 }
 
