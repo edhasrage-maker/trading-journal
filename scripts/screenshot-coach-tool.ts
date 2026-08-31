@@ -35,6 +35,10 @@ const MODEL = argVal('model') ?? 'claude-sonnet-5'
 const OUT_DIR = dirname(IN_PATH)
 const CACHE_PATH = join(OUT_DIR, 'tool-commentary.json')
 const CHAT_LOG = join(OUT_DIR, 'tool-chat.md')
+// Self ratings + text-only AI ratings, local to this tool. The self ratings
+// are the calibration labels this workstream has been blocked on since
+// 2026-08-14 — kept here as a file so nothing needs prod write access.
+const RATINGS_PATH = join(OUT_DIR, 'tool-ratings.json')
 
 for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
   const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)$/)
@@ -66,6 +70,9 @@ const anchoredSet = new Set<string>(existsSync(join(OUT_DIR, 'anchored-ids.json'
 
 // Commentary replies are cached to disk — the same trade should not cost a
 // second call just because the page was reloaded.
+type Rating = { self?: string | null; self_at?: string; ai?: { verdict: string; line: string; at: string } | null }
+const ratings: Record<string, Rating> = existsSync(RATINGS_PATH) ? JSON.parse(readFileSync(RATINGS_PATH, 'utf8')) : {}
+const saveRatings = () => writeFileSync(RATINGS_PATH, JSON.stringify(ratings, null, 1), 'utf8')
 const commentaryCache: Record<string, { text: string; at: string }> =
   existsSync(CACHE_PATH) ? JSON.parse(readFileSync(CACHE_PATH, 'utf8')) : {}
 
@@ -110,6 +117,7 @@ function pageRow(r: Row) {
   return {
     id: r.trade_id, date: r.date, week: weekOf(r.date),
     time: String(r.entry_pt ?? '').slice(11, 16),
+    exit_time: String(r.exit_pt ?? '').slice(11, 16) || null,
     direction: r.direction, symbol: r.symbol, url: r.frame.signed_url,
     pnl: pnlOf(r), r_multiple: ex(r).r_multiple ?? null, capture_pct: ex(r).capture_pct ?? null,
     mfe_atr: ex(r).mfe_atr ?? null, mae_atr: ex(r).mae_atr ?? null,
@@ -130,6 +138,10 @@ function pageRow(r: Row) {
     tp_vs_reference: ex(r).tp1_vs_reference ?? null, tp_missed_by_pts: ex(r).tp1_missed_by_pts ?? null,
     stop_terrain: ex(r).stop_terrain ?? null,
     tickflow: r.truth?.tickflow ?? null,
+    bars: r.truth?.bars ?? null,
+    entry_bar_close: r.truth?.bar_basis?.entry_bar_close ?? null,
+    self: ratings[r.trade_id]?.self ?? null,
+    ai: ratings[r.trade_id]?.ai ?? null,
     tags: tagsOf(r), note: noteOf(r),
     coach: cached ? { verdict: cached.verdict, read: cached.read, on_your_read: cached.on_your_read, vintage: cached.vintage } : null,
     commentary: commentaryCache[r.trade_id]?.text ?? null,
@@ -216,6 +228,14 @@ His account of a trade (trader_tags, trader_note) is input, not truth: where the
 
 Plain, direct, second person, his register — one sharp line at most, never mockery. Outcome is never a reason a trade was good or bad.`
 
+const RATE_SYSTEM = `You are this trader's screenshot coach, rating ONE trade from its bar-and-tick truth alone — you have NOT seen the chart image. Judge the PLACEMENT, never the P&L: where the entry sat in the profiles and levels, session momentum, the orderflow block (window_10m, entry rows, lost nodes — his own concept: a built-out node price left, whose losers are trapped inside), attempt count, chase, and the exit vs what the tape offered. A winner can be a bad trade; a stopped-out first touch with structure can be a good one. ${NUMBERS_RULE}
+
+${XY_LENS}
+
+Answer in EXACTLY this form, nothing before or after:
+VERDICT: good | not_good | mixed
+LINE: one blunt sentence, his register, with the one number that decides it.`
+
 const COMMENTARY_SYSTEM = `You are this trader's screenshot coach, answering what HE said about ONE of his trades. You have not seen the chart here — you have the bar-derived truth for the trade, and (when it exists) the verdict you already wrote on it. ${NUMBERS_RULE}
 
 ${XY_LENS}
@@ -277,6 +297,31 @@ const server = createServer(async (req, res) => {
       const last = (messages ?? []).filter((m: any) => m.role === 'user').pop()
       appendFileSync(CHAT_LOG, `\n**you:** ${last?.content ?? ''}\n\n**coach:** ${text}\n`, 'utf8')
       json(res, 200, { text }); return
+    }
+    if (req.method === 'POST' && req.url === '/api/rate') {
+      const { id, self } = await body(req)
+      if (!rows.some(x => x.trade_id === id)) { json(res, 404, { error: 'no such trade' }); return }
+      if (![null, 'good', 'mistake', 'unsure'].includes(self)) { json(res, 400, { error: 'bad rating' }); return }
+      ratings[id] = { ...ratings[id], self, self_at: new Date().toISOString() }
+      saveRatings()
+      json(res, 200, { ok: true, self }); return
+    }
+    if (req.method === 'POST' && req.url === '/api/airate') {
+      const { id, regenerate } = await body(req)
+      const r = rows.find(x => x.trade_id === id)
+      if (!r) { json(res, 404, { error: 'no such trade' }); return }
+      if (!regenerate && ratings[id]?.ai) { json(res, 200, { ...ratings[id].ai, cached: true }); return }
+      const prompt = ['TRADE: ' + r.direction + ' ' + r.symbol + ', entered ' + r.entry_pt + ', exited ' + (r.exit_pt ?? 'unknown') + '.',
+        '', 'TRUTH (bar/tick-derived; the only source of numbers):', JSON.stringify(digest(r), null, 1),
+        '', 'Rate the placement.'].join(String.fromCharCode(10))
+      const text = await say(RATE_SYSTEM, [{ role: 'user', content: prompt }], 900)
+      const vm = text.match(/VERDICT:\s*(good|not_good|mixed)/i)
+      const lm = text.match(/LINE:\s*([^]*)/i)
+      if (!vm) { json(res, 500, { error: 'unparseable rating: ' + text.slice(0, 120) }); return }
+      const ai = { verdict: vm[1].toLowerCase(), line: (lm?.[1] ?? '').trim(), at: new Date().toISOString() }
+      ratings[id] = { ...ratings[id], ai }
+      saveRatings()
+      json(res, 200, { ...ai, cached: false }); return
     }
     if (req.method === 'POST' && req.url === '/api/commentary') {
       const { id, regenerate } = await body(req)
@@ -369,7 +414,10 @@ button:disabled{opacity:.5;cursor:default}
 .vhint{font-size:11.5px}
 /* The Sierra captures are two-pane and dense — fit the whole frame first,
    then let the wheel take it to native and beyond. */
-#d-view{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:8px;background:#0a0c10;height:calc(100vh - 92px);cursor:zoom-in;touch-action:none}
+#d-view{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:8px;background:#0a0c10;height:calc(100vh - 330px);cursor:zoom-in;touch-action:none}
+#fov{position:absolute;left:0;right:0;bottom:0;z-index:6;display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding:7px 10px;background:linear-gradient(transparent,rgba(6,8,12,.88) 30%);pointer-events:none}
+#fov .chip{background:rgba(22,26,34,.9)}
+#playout{width:100%;height:206px;display:block;background:#0a0c10;border:1px solid var(--line);border-radius:8px;margin-top:8px}
 #d-view.zoomed{cursor:zoom-in}
 #d-view.maxed{cursor:zoom-out}
 #d-view.dragging{cursor:grabbing}
@@ -415,6 +463,7 @@ td{padding:3px 0;vertical-align:top}td:first-child{color:var(--mute);width:44%;p
   <select id="f-week"><option value="">week: any</option></select>
   <select id="f-tag"><option value="">tag: any</option></select>
   <select id="f-shape"><option value="">shape: any</option><option value="zero">0% of a &#8805;1 ATR move</option><option value="midnode">mid-node entry</option><option value="repeat">2nd+ attempt</option><option value="tpparked">TP parked at a reference</option><option value="stopnode">stop inside entry node</option></select>
+  <select id="f-self"><option value="">your call: any</option><option value="good">good</option><option value="mistake">mistake</option><option value="unsure">unsure</option><option value="none">unrated</option></select>
   <select id="f-outcome"><option value="">result: any</option><option value="win">winners</option><option value="loss">losers</option></select>
   <button id="reset">reset</button>
   <button id="read" class="primary">Read the set</button>
@@ -448,7 +497,9 @@ ${banner}
       <button class="edge r" id="edgenext" title="next trade (&#8594;)">&#8250;</button>
       <div id="loaderr">This screenshot did not load — its signed URL has most likely expired.
       Re-run <code>npx tsx scripts/screenshot-coach-harness.ts --unlabelled</code> and reload this page.</div>
+      <div id="fov"></div>
     </div>
+    <canvas id="playout"></canvas>
   </div>
   <div id="d-side"></div>
 </div></div>
@@ -481,12 +532,13 @@ const shapes = {
 }
 function current() {
   const m = $('#f-momentum').value, v = $('#f-verdict').value, w = $('#f-week').value
-  const g = $('#f-tag').value, s = $('#f-shape').value, o = $('#f-outcome').value
+  const g = $('#f-tag').value, s = $('#f-shape').value, o = $('#f-outcome').value, sr = $('#f-self').value
   return T.filter(t =>
     (!m || (t.momentum && t.momentum.trade_is === m)) &&
     (!v || (v === 'none' ? !t.coach : t.coach && t.coach.verdict === v)) &&
     (!w || t.week === w) && (!g || t.tags.includes(g)) &&
     (!s || shapes[s](t)) &&
+    (!sr || (sr === 'none' ? !t.self : t.self === sr)) &&
     (!o || (o === 'win' ? t.pnl > 0 : t.pnl <= 0)))
 }
 function statsOf(list) {
@@ -506,6 +558,15 @@ function statsOf(list) {
     'repeat attempts (2nd+)': of_(list.filter(shapes.repeat)),
     'stop inside entry node': list.filter(shapes.stopnode).length + ' of ' + n,
     'TP parked at/near a reference': list.filter(shapes.tpparked).length + ' of ' + n,
+    'your calls': (function(){
+      const rated = list.filter(t => t.self)
+      const both = rated.filter(t => t.ai || t.coach)
+      const agree = both.filter(t => {
+        const av = t.ai ? t.ai.verdict : t.coach.verdict
+        return (t.self === 'good') === (av === 'good')
+      })
+      return rated.length + ' rated' + (both.length ? ' · you and the coach agree on ' + agree.length + '/' + both.length : '')
+    })(),
     'momentum': withM + ' with \u00b7 ' + off.length + ' offsides (won ' + wr(off) + ') \u00b7 ' + weak + ' against a read too weak to call',
   }
 }
@@ -526,6 +587,8 @@ function card(t) {
       (t.capture_pct != null ? '<span class="chip">' + t.capture_pct + '% captured</span>' : '') +
       (t.attempts >= 2 ? '<span class="chip">attempt ' + (t.attempts + 1) + '</span>' : '') +
       (t.tickflow && (t.tickflow.lost_nodes || []).some(n => n.entry_relation === 'inside') ? '<span class="chip off">into lost node</span>' : '') +
+      (t.self ? '<span class="chip ' + (t.self === 'good' ? 'good' : t.self === 'mistake' ? 'bad' : 'mixed') + '">you: ' + esc(t.self) + '</span>' : '') +
+      (t.ai ? '<span class="chip ' + (t.ai.verdict === 'good' ? 'good' : t.ai.verdict === 'not_good' ? 'bad' : 'mixed') + '">tape: ' + esc(t.ai.verdict.replace('_',' ')) + '</span>' : '') +
       (t.commentary || (t.coach && t.coach.on_your_read) ? '<span class="chip">answered</span>' : '') +
     '</div></div></div>'
 }
@@ -588,6 +651,16 @@ function side(t) {
       ? '<div class="verdict"><b>' + esc(c.verdict.replace('_',' ')) + '</b>' +
         (c.vintage === 'v4' ? ' <span class="mute">(v4, before the XY lens)</span>' : '') + String.fromCharCode(10,10) + esc(c.read) + '</div>'
       : '<div class="mute">' + noRead + '</div>') + '</div>' +
+    '<div class="panel"><h4>Ratings</h4>' +
+      '<table>' +
+      row('your call', ['good','mistake','unsure'].map(v =>
+        '<button class="ratebtn' + (t.self === v ? ' primary' : '') + '" data-rate="' + v + '" data-id="' + t.id + '">' + v + '</button>'
+      ).join(' ') + ' <span class="mute" style="font-size:11px">(g / m / u)</span>') +
+      row('coach, from the image', c ? c.verdict.replace('_',' ') + (c.vintage === 'v4' ? ' (v4)' : '') : '— no read cached') +
+      row('coach, from the tape', t.ai
+        ? '<b>' + esc(t.ai.verdict.replace('_',' ')) + '</b> · ' + esc(t.ai.line) + ' <button id="airate" data-id="' + t.id + '" data-regen="1">again</button>'
+        : '<button id="airate" data-id="' + t.id + '">Rate from the tape (no image)</button>') +
+      '</table><div id="airewrap"></div></div>' +
     '<div class="panel"><h4>What you said</h4>' +
       (t.tags.length ? '<div class="chips">' + t.tags.map(g => '<span class="chip">' + esc(g) + '</span>').join('') + '</div>' : '<div class="mute">no tags</div>') +
       (t.note ? '<div class="note" style="margin-top:9px">' + esc(t.note) + '</div>' : '') +
@@ -642,8 +715,80 @@ function openAt(i) {
   $('#d-side').innerHTML = side(t)
   $('#d-side').scrollTop = 0
   $('#pos').textContent = (vidx + 1) + ' / ' + vlist.length
+  fillFov(t)
+  drawPlayout(t)
   $('#detail').style.display = 'block'
 }
+// ── the tag overlay on the frame (visible even with the panel hidden) ────
+function fillFov(t) {
+  const chips = []
+  const chip = (txt, cls) => chips.push('<span class="chip ' + (cls || '') + '">' + txt + '</span>')
+  chip(esc(t.direction) + " &#183; " + money(t.pnl) + (t.r_multiple != null ? " &#183; " + n1(t.r_multiple) + "R" : ""), t.pnl > 0 ? "good" : "bad")
+  if (t.self) chip("you: " + esc(t.self), t.self === "good" ? "good" : t.self === "mistake" ? "bad" : "mixed")
+  const av = t.ai ? t.ai.verdict : t.coach ? t.coach.verdict : null
+  if (av) chip("coach: " + esc(av.replace("_", " ")), av === "good" ? "good" : av === "not_good" ? "bad" : "mixed")
+  if (t.momentum && t.momentum.trade_is === "offsides") chip("offsides", "off")
+  for (const g of t.tags.slice(0, 9)) chip(esc(g))
+  if (t.tags.length > 9) chip("+" + (t.tags.length - 9))
+  $("#fov").innerHTML = chips.join("")
+}
+
+// ── how the trade actually played out, from the 1m bars ──────────────────
+//  The screenshot ends where the capture ended; the strip and the post-exit
+//  window carry the rest of the story. Bars are the continuous feed, the
+//  fills are contract prices — entry_bar_close anchors the shift.
+function drawPlayout(t) {
+  const cv = $("#playout"), ctx2 = cv.getContext("2d")
+  const W = cv.clientWidth, H = cv.clientHeight || 206
+  if (!W) { requestAnimationFrame(() => { if (cv.clientWidth) drawPlayout(t) }); return }
+  cv.width = W * devicePixelRatio; cv.height = H * devicePixelRatio
+  ctx2.scale(devicePixelRatio, devicePixelRatio)
+  ctx2.clearRect(0, 0, W, H)
+  const b = t.bars
+  if (!b || !b.strip || !b.strip.length) {
+    ctx2.fillStyle = "#8b93a7"; ctx2.font = "12px sans-serif"
+    ctx2.fillText("no bar strip for this trade", 12, 24); return
+  }
+  const seen = new Set(b.strip.map(x => x[0]))
+  const bars = b.strip.concat((b.post_exit || []).filter(x => !seen.has(x[0])))
+  const shift = (t.entry_bar_close != null && t.entry_price != null) ? t.entry_bar_close - t.entry_price : 0
+  let lo = Infinity, hi = -Infinity
+  for (const x of bars) { lo = Math.min(lo, x[3]); hi = Math.max(hi, x[2]) }
+  for (const p of [t.stop_price, t.tp1_price]) if (p != null) { lo = Math.min(lo, p + shift); hi = Math.max(hi, p + shift) }
+  const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad
+  const px = p => H - ((p - lo) / (hi - lo)) * H
+  const bw = W / bars.length
+  const line = (p, color, label) => {
+    if (p == null) return
+    const y = px(p + shift)
+    ctx2.strokeStyle = color; ctx2.setLineDash([5, 4]); ctx2.lineWidth = 1
+    ctx2.beginPath(); ctx2.moveTo(0, y); ctx2.lineTo(W, y); ctx2.stroke(); ctx2.setLineDash([])
+    ctx2.fillStyle = color; ctx2.font = "10px sans-serif"
+    ctx2.fillText(label + " " + p, 4, y - 3)
+  }
+  line(t.stop_price, "#ff5d5d", "stop")
+  line(t.tp1_price, "#3ddc84", "TP1")
+  line(t.entry_price, "#4c8dff", "entry")
+  bars.forEach((x, i) => {
+    const cx = i * bw + bw / 2
+    const up = x[4] >= x[1]
+    ctx2.strokeStyle = ctx2.fillStyle = up ? "#3ddc84" : "#ff5d5d"
+    ctx2.beginPath(); ctx2.moveTo(cx, px(x[2])); ctx2.lineTo(cx, px(x[3])); ctx2.stroke()
+    const yo = px(Math.max(x[1], x[4])), yc = px(Math.min(x[1], x[4]))
+    ctx2.fillRect(cx - Math.max(1, bw * 0.3), yo, Math.max(2, bw * 0.6), Math.max(1, yc - yo))
+  })
+  const mark = (idx, color, label) => {
+    if (idx < 0 || idx >= bars.length) return
+    const cx = idx * bw + bw / 2
+    ctx2.strokeStyle = color; ctx2.lineWidth = 1
+    ctx2.beginPath(); ctx2.moveTo(cx, 0); ctx2.lineTo(cx, H); ctx2.stroke()
+    ctx2.fillStyle = color; ctx2.font = "10px sans-serif"
+    ctx2.fillText(label, cx + 3, 11)
+  }
+  mark(b.entry_offset ?? -1, "#4c8dff", "in")
+  if (t.exit_time) mark(bars.findIndex(x => x[0] === t.exit_time), "#e6e8ee", "out")
+}
+
 $('#grid').addEventListener('click', e => {
   const el = e.target.closest('.card'); if (!el) return
   vlist = current()
@@ -666,6 +811,7 @@ function setPanel(hidden) {
   $('#panel').textContent = hidden ? 'show panel' : 'hide panel'
   localStorage.setItem('coach-panel-hidden', hidden ? '1' : '')
   if (img.naturalWidth) { fitTo(img.naturalWidth, img.naturalHeight); apply() }
+  if (vlist[vidx]) requestAnimationFrame(() => drawPlayout(vlist[vidx]))
 }
 $('#panel').onclick = () => setPanel(!$('#detail .inner').classList.contains('wide'))
 setPanel(localStorage.getItem('coach-panel-hidden') === '1')
@@ -721,10 +867,14 @@ document.addEventListener('keydown', e => {
   else if (e.key === '-') zoomAt(view.clientWidth / 2, view.clientHeight / 2, 1 / 1.4)
   else if (e.key === '0') { z = 1; apply() }
   else if (e.key === 'p' || e.key === 'P') setPanel(!$('#detail .inner').classList.contains('wide'))
+  else if (e.key === 'g') rateSelf(vlist[vidx].id, 'good')
+  else if (e.key === 'm') rateSelf(vlist[vidx].id, 'mistake')
+  else if (e.key === 'u') rateSelf(vlist[vidx].id, 'unsure')
 })
 window.addEventListener('resize', () => {
   if ($('#detail').style.display !== 'block' || !img.naturalWidth) return
   fitTo(img.naturalWidth, img.naturalHeight); apply()
+  if (vlist[vidx]) drawPlayout(vlist[vidx])
 })
 $('#d-side').addEventListener('click', async e => {
   if (e.target.id !== 'gen') return
@@ -744,6 +894,33 @@ $('#d-side').addEventListener('click', async e => {
     $('#replywrap').innerHTML = '<div class="reply">' + esc(String(err.message || err)) + '</div>'
   }
   btn.disabled = false
+})
+async function rateSelf(id, v) {
+  const t = T.find(x => x.id === id); if (!t) return
+  const nv = t.self === v ? null : v
+  const r = await fetch("/api/rate", { method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({ id: id, self: nv }) }).then(x => x.json())
+  if (r.error) return
+  t.self = nv
+  $("#d-side").innerHTML = side(t)
+  fillFov(t); render()
+}
+async function rateAi(id, regen) {
+  const t = T.find(x => x.id === id); if (!t) return
+  const w = $('#airewrap'); if (w) w.innerHTML = '<div class="spin">the coach is reading the tape&#8230;</div>'
+  try {
+    const r = await fetch("/api/airate", { method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({ id: id, regenerate: !!regen }) }).then(x => x.json())
+    if (r.error) throw new Error(r.error)
+    t.ai = { verdict: r.verdict, line: r.line, at: r.at }
+    $("#d-side").innerHTML = side(t)
+    fillFov(t); render()
+  } catch (err) {
+    if (w) w.innerHTML = '<div class="reply">' + esc(String(err.message || err)) + '</div>'
+  }
+}
+$("#d-side").addEventListener("click", e => {
+  const el = e.target
+  if (el.dataset && el.dataset.rate) rateSelf(el.dataset.id, el.dataset.rate)
+  else if (el.id === "airate") rateAi(el.dataset.id, el.dataset.regen === "1")
 })
 
 // ── the set, and the conversation about it ───────────────────────────────
