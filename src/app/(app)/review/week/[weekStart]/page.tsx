@@ -11,7 +11,7 @@ import type { FilmFrame } from '@/components/review/GameFilm'
 import type { TradeReview } from '@/lib/supabase/types'
 import {
   loadPeriodDays, loadPeriodTrades, summarizePeriod, summarizeCommitments, comparisonRows,
-  type PeriodDay, type PeriodSummary,
+  periodVsBaseline, type BaselineRead, type PeriodDay, type PeriodSummary,
 } from '@/lib/period-recap'
 import PeriodRecapClient, {
   type RecapFinding, type RecapLedgerRow, type RecapCommitment, type AiSynthesis,
@@ -67,7 +67,29 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
   const trades = await loadPeriodTrades(supabase, tradedDayIds)
   const carryover = computeCarryover(trades as unknown as TradeWithExcursion[], `week of ${weekLabel(weekStart)}`)
 
-  const finding = weeklyFinding(carryover, summary)
+  // The week is read against the trader's OWN history, not against itself:
+  // 14 trades can't support a within-week split, but the baseline arm has
+  // hundreds. Trailing 400 with the day types each trade was taken on.
+  const dayTypesById = new Map(days.map(d => [d.rollup.id, d.rollup.day_types]))
+  const { data: bookRaw } = await supabase
+    .from('trades')
+    .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol')
+    .order('entry_time', { ascending: false })
+    .limit(400) as { data: Array<Record<string, unknown>> | null }
+  const bookDayIds = Array.from(new Set((bookRaw ?? []).map(t => t.trading_day_id as string).filter(Boolean)))
+  const { data: bookDays } = await supabase
+    .from('trading_days').select('id, day_types').in('id', bookDayIds) as { data: Array<{ id: string; day_types: string[] | null }> | null }
+  const bookTypes = new Map((bookDays ?? []).map(d => [d.id, Array.isArray(d.day_types) ? d.day_types : []]))
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const book = (bookRaw ?? []).map(t => ({ ...t, _dayTypes: bookTypes.get(t.trading_day_id as string) ?? [] })) as any[]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const weekTrades = (trades as any[]).map(t => ({ ...t, _dayTypes: dayTypesById.get(t.trading_day_id) ?? [] }))
+  const baselineRead = periodVsBaseline(weekTrades, book, t => [
+    ...(((t.tags_json as { setups?: string[] } | null)?.setups) ?? []).map(label => ({ kind: 'setup' as const, label })),
+    ...((t._dayTypes as string[] | undefined) ?? []).map(label => ({ kind: 'day type' as const, label })),
+  ])
+
+  const finding = weeklyFinding(carryover, summary, baselineRead)
   const commitment = weeklyCommitment(days)
 
   // Sessions ledger — all five weekdays, empty ones included but quiet.
@@ -227,7 +249,7 @@ async function buildFilm(
 
 /** Weekly hero: the engine's finding when it clears, otherwise honest process
  *  facts — never an invented lesson. */
-function weeklyFinding(carryover: Carryover | null, s: PeriodSummary): RecapFinding {
+function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: BaselineRead | null): RecapFinding {
   if (carryover) {
     return {
       state: carryover.mode === 'protect' ? 'edge' : 'leak',
@@ -256,23 +278,63 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary): RecapFind
     }
   }
   const capturePart = s.capture != null ? ` You kept ${s.capture}% of what your winners offered.` : ''
+  // A short week can't be split against itself, but it CAN be read against the
+  // trader's own history — where the comparison arm has hundreds of trades.
+  // Saying "too few trades" instead reads as a reprimand for being selective.
+  const vsBaseline = baseline ? baselineSentence(baseline) : ''
   if (s.railsDays > 0 && s.railsKept === s.railsDays) {
     return {
       state: 'held',
       headline: `Every rail kept, ${s.railsDays === 1 ? 'the one graded day' : `all ${s.railsDays} graded days`}.`,
-      sub: `${s.trades} trades across ${s.tradedDays} sessions, clean on the rails you track.${capturePart} Too few trades to call a setup edge or leak — that read builds at the month.`,
-      next: 'Nothing to fix — protect the process that made this week.',
-      evidence: [],
+      sub: `${s.trades} trades across ${s.tradedDays} sessions, clean on the rails you track.${capturePart}${vsBaseline}`,
+      next: baseline && baseline.periodR > baseline.baselineR
+        ? `Protect it — ${baseline.label} is running above your own average.`
+        : 'Nothing to fix — protect the process that made this week.',
+      evidence: baseline ? baselineBars(baseline) : [],
     }
   }
   const railsPart = s.railsDays > 0 ? `Rails held on ${s.railsKept} of ${s.railsDays} graded days.` : 'No sessions were graded against your rails.'
+  if (baseline) {
+    return {
+      state: baseline.periodR >= baseline.baselineR ? 'edge' : 'leak',
+      headline: `${baseline.label} ${baseline.periodR >= baseline.baselineR ? 'ran above' : 'ran below'} your usual.`,
+      sub: `${fmtR(baseline.periodR)} across ${baseline.periodN} this week against ${fmtR(baseline.baselineR)} over your last ${baseline.baselineN}. ${railsPart}${capturePart}`,
+      next: baseline.periodR >= baseline.baselineR
+        ? `Keep taking ${baseline.label} while it is working.`
+        : `Watch ${baseline.label} — it is running under your own average.`,
+      evidence: baselineBars(baseline),
+    }
+  }
   return {
     state: 'none',
     headline: 'Nothing separated itself.',
-    sub: `${s.trades} trades across ${s.tradedDays} sessions — no setup or behaviour stood out at this sample size. ${railsPart}${capturePart}`,
+    sub: `${s.trades} trades across ${s.tradedDays} sessions — nothing this week diverged from how you normally trade. ${railsPart}${capturePart}`,
     next: 'No change to force — keep taking your A setups and let the sample build.',
     evidence: [],
   }
+}
+
+const fmtR = (r: number) => `${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(1)}R`
+
+/** " Break And Retest ran +1.7R across 4 against your usual +0.3R over 46." */
+function baselineSentence(b: BaselineRead): string {
+  const verb = b.periodR >= b.baselineR ? 'ran' : 'ran'
+  return ` ${b.label} ${verb} ${fmtR(b.periodR)} across ${b.periodN} this week — your usual on that ${b.kind} is ${fmtR(b.baselineR)} over ${b.baselineN}.`
+}
+
+function baselineBars(b: BaselineRead) {
+  const span = Math.max(Math.abs(b.periodR), Math.abs(b.baselineR), 0.5)
+  const bar = (label: string, r: number, n: number) => ({
+    label,
+    value: fmtR(r),
+    n,
+    pct: Math.round((Math.abs(r) / span) * 100),
+    tone: (r >= 0 ? 'pos' : 'neg') as 'pos' | 'neg',
+  })
+  return [
+    bar(`${b.label} — this week`, b.periodR, b.periodN),
+    bar(`${b.label} — your usual`, b.baselineR, b.baselineN),
+  ]
 }
 
 function weeklyCommitment(days: PeriodDay[]): RecapCommitment | null {

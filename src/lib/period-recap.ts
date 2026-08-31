@@ -1,5 +1,6 @@
 import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type DayStatsRollup, type DayStatsStored } from '@/lib/day-stats'
 import { aggregateTapeScore, type TapeScorePeriod } from '@/lib/tapescore'
+import { rMultiple, type TradeLike } from '@/lib/analytics'
 import type { PrepCommitment } from '@/lib/supabase/types'
 
 /**
@@ -250,6 +251,88 @@ export function summarizeCommitments(days: PeriodDay[]): CommitmentReport | null
     if (!top || agg.tracked > top.tracked) top = agg
   }
   return { tracked: withC.length, held, broke, unresolved, days: dayStates, top }
+}
+
+
+// ── This period vs the trader's own baseline ────────────────────────────────
+
+/**
+ * A short window can't support a within-window comparison — split 14 trades by
+ * setup and both arms are noise. But it CAN be read against the trader's own
+ * history, where the comparison arm has hundreds of trades.
+ *
+ * This exists because the weekly recap used to say "too few trades to call a
+ * setup edge or leak", which reads as a reprimand for being selective. Trading
+ * 14 times in a week is not a deficiency, and the data is perfectly readable —
+ * just not against itself.
+ */
+export interface BaselineRead {
+  /** e.g. "Break And Retest" */
+  label: string
+  kind: 'setup' | 'day type'
+  periodR: number
+  periodN: number
+  baselineR: number
+  baselineN: number
+}
+
+/** Baseline arm needs real weight — this is the whole point of the comparison. */
+const BASELINE_MIN_N = 20
+/** Period arm: enough that one trade can't create the read. */
+const PERIOD_MIN_N = 3
+/** Weekly noise is wide, so the gap has to be worth a sentence. */
+const BASELINE_MIN_GAP_R = 0.5
+
+type LabelledTrade = TradeLike & { _dayTypes?: string[] }
+
+function avgOf(rows: number[]): number | null {
+  return rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : null
+}
+
+/**
+ * Strongest divergence between this window and the trader's book. `book` should
+ * be the trailing history INCLUDING the window — the baseline is "how this
+ * normally goes for you", not a disjoint sample.
+ */
+export function periodVsBaseline(
+  period: LabelledTrade[],
+  book: LabelledTrade[],
+  labelsOf: (t: LabelledTrade) => Array<{ kind: 'setup' | 'day type'; label: string }>,
+): BaselineRead | null {
+  const rOf = (t: LabelledTrade) => rMultiple(t)
+  const collect = (rows: LabelledTrade[], kind: string, label: string) =>
+    rows.filter(t => labelsOf(t).some(l => l.kind === kind && l.label === label))
+      .map(rOf).filter((x): x is number => x != null)
+
+  const seen = new Set<string>()
+  let best: (BaselineRead & { weight: number }) | null = null
+
+  for (const t of period) {
+    for (const { kind, label } of labelsOf(t)) {
+      const key = kind + '|' + label
+      if (seen.has(key)) continue
+      seen.add(key)
+
+      const p = collect(period, kind, label)
+      const b = collect(book, kind, label)
+      if (p.length < PERIOD_MIN_N || b.length < BASELINE_MIN_N) continue
+      const pr = avgOf(p), br = avgOf(b)
+      if (pr == null || br == null) continue
+      const gap = pr - br
+      if (Math.abs(gap) < BASELINE_MIN_GAP_R) continue
+
+      // Same shape as the finding engine: discount the gap by how thin the
+      // period arm is, so a 3-trade blip can't outrank a 10-trade signal.
+      const weight = Math.abs(gap) * Math.sqrt(p.length)
+      if (!best || weight > best.weight) {
+        best = { label, kind, periodR: pr, periodN: p.length, baselineR: br, baselineN: b.length, weight }
+      }
+    }
+  }
+  if (!best) return null
+  const { weight: _w, ...read } = best
+  void _w
+  return read
 }
 
 // ── Prior-period comparison (computed, never AI) ───────────────────────────
