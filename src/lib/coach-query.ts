@@ -29,6 +29,7 @@ type AnyClient = any
 
 const GROUP_BYS = [
   'none', 'month', 'weekday', 'instrument', 'setup', 'mistake', 'emotion', 'day_type', 'direction',
+  'reentry_gap',
 ] as const
 type GroupBy = (typeof GROUP_BYS)[number]
 
@@ -42,6 +43,12 @@ export interface CoachQueryInput {
   mistakes?: string[]
   emotions?: string[]
   day_types?: string[]
+  /** Sequence filters — derived from the fill order inside each session, not
+   *  from a tag. Null-gap rows (first trade of the day, and ALL imported
+   *  history, which carries no times) drop out of both. */
+  reentry_within_sec?: number
+  exclude_reentries_within_sec?: number
+  after_prior?: 'loss' | 'win'
   group_by?: GroupBy
   /** Groups smaller than this fold into an "(other)" row, so a one-trade
    *  bucket can never be quoted back as a pattern. */
@@ -60,7 +67,11 @@ export const COACH_QUERY_TOOL: Anthropic.Tool = {
     'ATR, average profit captured, and first/last trade date. Combine outcome:"winners" with '
     + 'the ATR fields to answer how far the trades that actually worked ran. R, MFE and capture come from ' +
     'natively logged trades only (imported history has no stop or in-trade extremes); each ' +
-    'group reports how many rows backed them, so cite the n when quoting those.',
+    'group reports how many rows backed them, so cite the n when quoting those. ' +
+    'reentry_within_sec / exclude_reentries_within_sec / after_prior and group_by:"reentry_gap" work off ' +
+    'the fill SEQUENCE inside each session (gap between one exit and the next entry). Those need real ' +
+    'timestamps, which only natively logged trades have — the result reports timed_rows vs total so you ' +
+    'can state the coverage instead of quoting it as full history.',
   input_schema: {
     type: 'object',
     properties: {
@@ -77,6 +88,19 @@ export const COACH_QUERY_TOOL: Anthropic.Tool = {
       mistakes: { type: 'array', items: { type: 'string' }, description: 'Trades carrying ANY of these mistake tags.' },
       emotions: { type: 'array', items: { type: 'string' }, description: 'Trades carrying ANY of these emotion tags.' },
       day_types: { type: 'array', items: { type: 'string' }, description: 'Trades on days carrying ANY of these day types.' },
+      reentry_within_sec: {
+        type: 'number',
+        description: 'Keep ONLY trades whose entry came within this many seconds of the exit of the PREVIOUS trade in the same session. This is computed from the fill sequence, not from a tag — use it for "quick re-entry" / "second attempt" questions instead of substituting the revenge tag.',
+      },
+      exclude_reentries_within_sec: {
+        type: 'number',
+        description: 'The complement: DROP trades that re-entered within this many seconds of the prior exit, keeping everything else. Use this to answer "what would my numbers be if I cut those out".',
+      },
+      after_prior: {
+        type: 'string',
+        enum: ['loss', 'win'],
+        description: 'Keep only trades whose PREVIOUS trade in the same session lost / won. Combine with reentry_within_sec for "second attempt right after a loser".',
+      },
       group_by: { type: 'string', enum: GROUP_BYS as unknown as string[], description: 'How to break the result down. Default none (one total row).' },
       min_group_n: { type: 'number', description: 'Fold groups under this size into (other). Default 3.' },
     },
@@ -98,6 +122,13 @@ interface Row {
   r: number | null
   mfeAtr: number | null
   capture: number | null
+  /** Sequence position inside the session, from the fill order. Null on every
+   *  imported row (no times) and on any native row missing entry/exit. */
+  gapSec: number | null
+  prevWasLoss: boolean | null
+  /** True for the session's first trade — no prior exit to measure against, so
+   *  it is neither a quick re-entry nor a slow one. */
+  firstOfDay: boolean
 }
 
 function tagList(tags: unknown, key: string): string[] {
@@ -105,6 +136,19 @@ function tagList(tags: unknown, key: string): string[] {
   const v = t ? t[key] : undefined
   if (Array.isArray(v)) return v.map(String).map(x => x.trim()).filter(Boolean)
   return typeof v === 'string' && v.trim() ? [v.trim()] : []
+}
+
+/** Bucket a trade by how fast it followed the previous exit. A NEGATIVE gap
+ *  means the position overlapped the previous one (an add or a concurrent
+ *  position), which is not a re-entry at all and gets its own bucket so it
+ *  never inflates the fast one. */
+function gapBucket(r: Row): string {
+  if (r.gapSec == null) return r.firstOfDay ? 'first trade of session' : '(no timestamps)'
+  if (r.gapSec < 0) return 'overlapping / added to a position'
+  if (r.gapSec <= 90) return 're-entry within 90s'
+  if (r.gapSec <= 300) return 're-entry 90s-5min'
+  if (r.gapSec <= 1800) return 're-entry 5-30min'
+  return 're-entry over 30min'
 }
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -130,10 +174,45 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
   const { rows: native } = await fetchByDayIds(
     sb,
     'trades',
-    'id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, entry_atr_1m',
+    'id, trading_day_id, pnl, entry_time, exit_time, entry_price, stop_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, entry_atr_1m',
     Array.from(dayById.keys()),
     { paginate: true },
   )
+
+  // Sequence pass — the gap between one trade's exit and the next entry inside
+  // the same session. This is the whole reason the tool can answer "second
+  // attempt within 90 seconds" without falling back to the revenge tag: it is
+  // derived from the fill order, so it does not depend on the trader having
+  // remembered to tag anything. Only natively logged trades carry times, so
+  // imported rows stay null and are reported as uncovered rather than counted
+  // as slow re-entries.
+  const ms = (v: unknown): number | null => {
+    if (typeof v !== 'string' || !v) return null
+    const n = Date.parse(v)
+    return Number.isFinite(n) ? n : null
+  }
+  const seq = new Map<string, { gapSec: number | null; prevWasLoss: boolean | null; firstOfDay: boolean }>()
+  const byDay = new Map<string, Array<Record<string, unknown>>>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const t of native as any[]) {
+    if (t.pnl == null || ms(t.entry_time) == null) continue
+    const arr = byDay.get(t.trading_day_id) ?? []
+    arr.push(t)
+    byDay.set(t.trading_day_id, arr)
+  }
+  for (const arr of byDay.values()) {
+    arr.sort((a, b) => (ms(a.entry_time) ?? 0) - (ms(b.entry_time) ?? 0))
+    for (let i = 0; i < arr.length; i++) {
+      const prev = i > 0 ? arr[i - 1] : null
+      const prevExit = prev ? ms(prev.exit_time) : null
+      const entry = ms(arr[i].entry_time)
+      seq.set(String(arr[i].id), {
+        gapSec: prev && prevExit != null && entry != null ? (entry - prevExit) / 1000 : null,
+        prevWasLoss: prev ? Number(prev.pnl) < 0 : null,
+        firstOfDay: i === 0,
+      })
+    }
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const t of native as any[]) {
@@ -165,6 +244,7 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
       mfeAtr: mfe != null && t.entry_atr_1m ? mfe / t.entry_atr_1m : null,
       // Floor at 0 and cap at 1: a give-back reads as 0% kept, never negative.
       capture: mfeUsd && mfeUsd > 0 ? Math.max(0, Math.min(1, t.pnl / mfeUsd)) : null,
+      ...(seq.get(String(t.id)) ?? { gapSec: null, prevWasLoss: null, firstOfDay: false }),
     })
   }
 
@@ -192,6 +272,7 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
         emotions: tagList(h.tags_json, 'emotions'),
         dayTypes: [],
         r: null, mfeAtr: null, capture: null,
+        gapSec: null, prevWasLoss: null, firstOfDay: false,
       })
     }
     if (data.length < 1000) break
@@ -214,6 +295,7 @@ function groupsFor(r: Row, by: GroupBy): string[] {
     case 'mistake': return r.mistakes.length ? r.mistakes : ['(no mistake tagged)']
     case 'emotion': return r.emotions.length ? r.emotions : ['(untagged)']
     case 'day_type': return r.dayTypes.length ? r.dayTypes : ['(untagged)']
+    case 'reentry_gap': return [gapBucket(r)]
   }
 }
 
@@ -248,6 +330,27 @@ export async function runCoachQuery(sb: AnyClient, input: CoachQueryInput): Prom
 
   const all = await loadRows(sb, start, end)
 
+  // A sequence question can only be answered over rows that carry real times.
+  // Reporting this alongside the numbers is what stops the coach quoting a
+  // fill-order result as if it covered the whole book.
+  const usesSequence =
+    input.reentry_within_sec != null || input.exclude_reentries_within_sec != null ||
+    input.after_prior != null || by === 'reentry_gap'
+  const timed = all.filter(r => r.gapSec != null || r.firstOfDay)
+  const timedDates = timed.map(r => r.date).sort()
+  const coverage = usesSequence
+    ? {
+        timed_rows: timed.length,
+        total_rows_in_window: all.length,
+        timed_from: timedDates[0] ?? null,
+        timed_to: timedDates[timedDates.length - 1] ?? null,
+        note:
+          'Fill-order questions need entry AND exit timestamps, which only natively logged trades have. ' +
+          'Imported history is excluded entirely. State this coverage — do NOT present the result as ' +
+          'covering the full trade history.',
+      }
+    : null
+
   const anyOf = (have: string[], want?: string[]) =>
     !want || want.length === 0 || want.some(w => have.some(h => h.toLowerCase() === w.toLowerCase()))
 
@@ -265,6 +368,21 @@ export async function runCoachQuery(sb: AnyClient, input: CoachQueryInput): Prom
     if (!anyOf(r.mistakes, input.mistakes)) return false
     if (!anyOf(r.emotions, input.emotions)) return false
     if (!anyOf(r.dayTypes, input.day_types)) return false
+    // Sequence filters. A row with no measurable gap (first of session, or any
+    // imported row) can neither confirm nor deny a re-entry claim, so it is
+    // dropped from BOTH directions rather than being silently counted as slow.
+    if (input.reentry_within_sec != null) {
+      if (r.gapSec == null || r.gapSec < 0 || r.gapSec > input.reentry_within_sec) return false
+    }
+    if (input.exclude_reentries_within_sec != null) {
+      // The session's FIRST trade has no prior exit, so it is not a fast
+      // re-entry and must survive "what if I cut those out" — dropping it
+      // would quietly delete a day's opening trade from the comparison.
+      if (r.gapSec == null && !r.firstOfDay) return false
+      if (r.gapSec != null && r.gapSec >= 0 && r.gapSec <= input.exclude_reentries_within_sec) return false
+    }
+    if (input.after_prior === 'loss' && r.prevWasLoss !== true) return false
+    if (input.after_prior === 'win' && r.prevWasLoss !== false) return false
     return true
   })
 
@@ -273,6 +391,7 @@ export async function runCoachQuery(sb: AnyClient, input: CoachQueryInput): Prom
       window: { start, end },
       filters_applied: input,
       trades_matched: 0,
+      ...(coverage ? { timing_coverage: coverage } : {}),
       note: 'No trades matched. Say so plainly rather than answering from the summary context.',
     })
   }
@@ -300,6 +419,7 @@ export async function runCoachQuery(sb: AnyClient, input: CoachQueryInput): Prom
     filters_applied: input,
     group_by: by,
     trades_matched: filtered.length,
+    ...(coverage ? { timing_coverage: coverage } : {}),
     metric_notes:
       'avg_r, mean_mfe_atr, reached_2x/3x_atr_pct and avg_captured_pct come from natively logged trades only ' +
       '(imported history has no stop or in-trade extremes). The *_from_n fields say how many rows backed them, ' +
