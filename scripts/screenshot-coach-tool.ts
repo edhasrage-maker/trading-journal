@@ -129,6 +129,7 @@ function pageRow(r: Row) {
     attempts: ctx(r).attempts_before?.count ?? 0,
     tp_vs_reference: ex(r).tp1_vs_reference ?? null, tp_missed_by_pts: ex(r).tp1_missed_by_pts ?? null,
     stop_terrain: ex(r).stop_terrain ?? null,
+    tickflow: r.truth?.tickflow ?? null,
     tags: tagsOf(r), note: noteOf(r),
     coach: cached ? { verdict: cached.verdict, read: cached.read, on_your_read: cached.on_your_read, vintage: cached.vintage } : null,
     commentary: commentaryCache[r.trade_id]?.text ?? null,
@@ -154,6 +155,16 @@ function digest(r: Row): Record<string, unknown> {
     tp: { vs_reference: ex(r).tp1_vs_reference, missed_by_pts: ex(r).tp1_missed_by_pts, terrain: ex(r).tp_terrain },
     stop_terrain: ex(r).stop_terrain,
     coach_verdict: cached ? { verdict: cached.verdict, vintage: cached.vintage } : null,
+    orderflow: r.truth?.tickflow ? {
+      window_10m: r.truth.tickflow.window_10m,
+      entry_rows: r.truth.tickflow.entry_rows,
+      lost_nodes: (r.truth.tickflow.lost_nodes ?? []).map((n: any) => ({
+        session: n.session, lo: n.lo, hi: n.hi, losing_side: n.losing_side,
+        built_volume: n.built_volume, entry_relation: n.entry_relation,
+        in_tp_path: n.in_tp_path, retested: n.retested,
+      })),
+      significant_levels: (r.truth.tickflow.significant_levels ?? []).slice(0, 3),
+    } : null,
     trader_tags: tagsOf(r), trader_note: noteOf(r) || null,
   }
 }
@@ -514,6 +525,7 @@ function card(t) {
       (mo === 'offsides' ? '<span class="chip off">offsides</span>' : mo === 'against_weak' ? '<span class="chip weak">against (weak)</span>' : '') +
       (t.capture_pct != null ? '<span class="chip">' + t.capture_pct + '% captured</span>' : '') +
       (t.attempts >= 2 ? '<span class="chip">attempt ' + (t.attempts + 1) + '</span>' : '') +
+      (t.tickflow && (t.tickflow.lost_nodes || []).some(n => n.entry_relation === 'inside') ? '<span class="chip off">into lost node</span>' : '') +
       (t.commentary || (t.coach && t.coach.on_your_read) ? '<span class="chip">answered</span>' : '') +
     '</div></div></div>'
 }
@@ -555,9 +567,23 @@ function side(t) {
     row('attempts before', t.attempts),
   ].join('')
   const noRead = 'No read cached for this trade. A verdict costs two image calls, so it is never generated from this page \u2014 run read.ts for it.'
+  const tf = t.tickflow
+  let flow = ''
+  if (tf) {
+    const w = tf.window_10m, er = tf.entry_rows
+    const fRows = [
+      row('last 10 min delta', w ? (w.delta > 0 ? '+' : '') + w.delta + ' on ' + w.volume + ' · ' + esc(w.delta_is) + ' the trade' : '—'),
+      row('delta at entry price', er ? (er.delta > 0 ? '+' : '') + er.delta + ' on ' + er.volume + (er.significant ? ' · <b>significant</b> (' + esc(er.kind || 'unresolved') + ')' : ' · below threshold ' + er.threshold) : '—'),
+    ]
+    for (const l of (tf.significant_levels || []).slice(0, 3))
+      fRows.push(row(esc(l.kind) + ' @ ' + l.price, (l.delta > 0 ? '+' : '') + l.delta + ' · ' + Math.abs(l.dist_pts) + ' pts ' + esc(l.side) + (l.in_tp_path ? ' · <b>in TP path</b>' : '')))
+    for (const n of (tf.lost_nodes || []))
+      fRows.push(row('lost node ' + n.lo + '–' + n.hi, esc(n.session) + ' · ' + esc(n.losing_side) + ' trapped · ' + n.built_volume.toLocaleString() + ' built · <b>' + esc(String(n.entry_relation).replace('_', ' ')) + '</b>' + (n.in_tp_path ? ' · in TP path' : '') + (n.retested ? ' · retested' : ' · unretested')))
+    flow = '<div class="panel"><h4>Orderflow — from the ticks</h4><table>' + fRows.join('') + '</table></div>'
+  }
   return '<div class="panel"><h4>' + esc(t.date + ' ' + t.time) + ' \u00b7 ' + esc(t.direction) + ' ' + esc(t.symbol) +
       ' \u00b7 ' + money(t.pnl) + (t.anchored ? ' \u00b7 anchored' : '') + '</h4><table>' + tape + '</table></div>' +
-    '<div class="panel"><h4>Context</h4><table>' + context + '</table></div>' +
+    '<div class="panel"><h4>Context</h4><table>' + context + '</table></div>' + flow +
     '<div class="panel"><h4>Coach \u2014 the verdict</h4>' + (c
       ? '<div class="verdict"><b>' + esc(c.verdict.replace('_',' ')) + '</b>' +
         (c.vintage === 'v4' ? ' <span class="mute">(v4, before the XY lens)</span>' : '') + String.fromCharCode(10,10) + esc(c.read) + '</div>'

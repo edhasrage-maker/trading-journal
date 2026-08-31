@@ -45,6 +45,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { analyzeTickflow, TICKFLOW_VERSION, type TickflowResult } from './screenshot-coach-tickflow'
 
 const argv = process.argv.slice(2)
 const has = (n: string) => argv.includes(`--${n}`)
@@ -61,6 +62,11 @@ const envName = argVal('env') ?? 'public'
 const isProd = envName !== 'local'
 const LIMIT = Number(argVal('limit') ?? '0') || 0
 const OUT_DIR = argVal('out') ?? join(process.cwd(), 'evals', 'screenshot-coach')
+// Tick-derived orderflow/profile results, keyed by trade id + entry ms so a
+// harness re-run only pays the tick read for NEW trades. --no-tickflow skips
+// the whole layer (e.g. when the .scid drive is not mounted).
+const TICKFLOW_OFF = has('no-tickflow')
+const TICKFLOW_CACHE = join(OUT_DIR, 'tickflow-cache.json')
 
 // LIVE-FIRST: .env.public-feed points at prod; .env.local is the dev project.
 // Values there are quote-wrapped — strip them.
@@ -570,17 +576,30 @@ function weeklyVwapSeries(bars: Bar[], date: string): Array<number | null> {
   const sun = new Date(thisMon); sun.setUTCDate(thisMon.getUTCDate() - 1)
   const sunIso = sun.toISOString().slice(0, 10)
   const monIso = thisMon.toISOString().slice(0, 10)
+  // The trader's study (EdhasrageSessionLevels.cpp) accumulates HLC/3 x volume
+  // PER CHART BAR, and their execution chart runs 5-minute bars — so a 1m
+  // accumulation is a different number. Aggregate wall-clock 5m buckets and
+  // fold each one exactly the way the DLL does: completed buckets locked,
+  // the developing bucket contributing its current H/L/C.
   let pv = 0, vol = 0, started = false
+  let bk = -1, bh = 0, bl = 0, bc = 0, bv = 0
   return bars.map(b => {
-    const { date: bd, sec } = ptParts(new Date(b.ts).getTime())
+    const ms = new Date(b.ts).getTime()
+    const { date: bd, sec } = ptParts(ms)
     if (!started) {
       if ((bd === sunIso && sec >= 15 * 3600) || bd >= monIso) started = true
       else return null
     }
-    const typical = (b.high + b.low + b.close) / 3
-    const v = b.volume ?? 0
-    pv += typical * v; vol += v
-    return vol > 0 ? pv / vol : null
+    const k = Math.floor(ms / 300_000)
+    if (k !== bk) {
+      if (bk >= 0 && bv > 0) { pv += ((bh + bl + bc) / 3) * bv; vol += bv }
+      bk = k; bh = b.high; bl = b.low; bc = b.close; bv = b.volume ?? 0
+    } else {
+      bh = Math.max(bh, b.high); bl = Math.min(bl, b.low); bc = b.close; bv += b.volume ?? 0
+    }
+    const devPv = bv > 0 ? ((bh + bl + bc) / 3) * bv : 0
+    const totV = vol + bv
+    return totV > 0 ? (pv + devPv) / totV : null
   })
 }
 
@@ -628,6 +647,9 @@ const round = (v: number | null | undefined, d = 2): number | null =>
 
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true })
+  let tfCache: Record<string, TickflowResult | null> = {}
+  try { tfCache = JSON.parse(readFileSync(TICKFLOW_CACHE, 'utf8')) } catch { /* first run */ }
+  let tfHits = 0, tfMisses = 0, tfNulls = 0
   console.log(`db=${isProd ? 'PROD (public)' : 'dev (local)'}  user=${USER_ID}  out=${OUT_DIR}\n`)
 
   // ── 1. the calibration set ────────────────────────────────────────────────
@@ -1116,6 +1138,30 @@ async function main() {
     // `obs-<uuid>-<epoch>.jpg`, manual saves as `<date>-<epoch>.png`.
     const isObs = shotPath ? /\/obs-/.test(shotPath) : null
 
+    // ── tick-derived orderflow + the trader's own profiles ────────────────
+    //  Contract-space by construction (the .scid is the traded contract), so
+    //  these prices compare to the trade's fills with no basis anchoring.
+    let tickflow: TickflowResult | null = null
+    if (!TICKFLOW_OFF) {
+      const tfKey = t.id + '|' + entryMs + '|v' + TICKFLOW_VERSION
+      if (tfKey in tfCache) { tickflow = tfCache[tfKey]; tfHits++ }
+      else {
+        try {
+          tickflow = analyzeTickflow({
+            symbol, rthDate: date, entryMs,
+            entryPrice: entry, tp1: t.tp1_price ?? null, stop: t.stop_price ?? null,
+            isLong, atr, adr,
+          })
+          tfMisses++
+        } catch (e) {
+          console.error(`  tickflow failed for ${t.id} (${date}): ${(e as Error).message}`)
+          tickflow = null; tfNulls++
+        }
+        tfCache[tfKey] = tickflow
+      }
+      if (tickflow == null) tfNulls++
+    }
+
     const tags = (t.tags_json ?? {}) as Record<string, string[] | string | undefined>
     const norm = (v: string[] | string | undefined): string[] =>
       v == null ? [] : Array.isArray(v) ? v : [v]
@@ -1194,6 +1240,11 @@ async function main() {
           scale_mismatch: scaleMismatch,
         },
 
+        /** Tick-file truth: the trader's own volume profiles (their row
+         *  heights, their sessions), lost volume, and delta around the entry.
+         *  Null when the .scid is missing or --no-tickflow. */
+        tickflow,
+
         location: {
           nearest: nearest,
           vwap: vwapRef,
@@ -1254,6 +1305,10 @@ async function main() {
   // ── 5. write + the step-0 report ──────────────────────────────────────────
   const jsonlPath = join(OUT_DIR, UNLABELLED ? 'unlabelled-trades.jsonl' : 'labelled-trades.jsonl')
   writeFileSync(jsonlPath, records.map(r => JSON.stringify(r)).join('\n') + '\n', 'utf8')
+  if (!TICKFLOW_OFF) {
+    writeFileSync(TICKFLOW_CACHE, JSON.stringify(tfCache), 'utf8')
+    console.log(`tickflow: ${tfHits} cached, ${tfMisses} computed, ${tfNulls} null (no .scid / failed)`)
+  }
 
   const n = records.length
   const withShot = records.filter(r => (r.frame as any).signed_url).length            // eslint-disable-line @typescript-eslint/no-explicit-any
