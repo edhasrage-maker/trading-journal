@@ -332,7 +332,7 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
     const { rows } = await fetchByDayIds(
       supabase,
       'trades',
-      'id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes',
+      'id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes, review_json',
       dayIds,
       { paginate: true, refine: q => q.order('entry_time', { ascending: false }).order('id', { ascending: false }) },
     )
@@ -506,6 +506,14 @@ NO TRADE DATA — the trader logged no trades in this window.
   // than a fixed 1×ATR anchor — the median + round-trip are computed after the loop.
   const mfeSamples: Array<{ atr: number; usd: number | null; pnl: number }> = []
 
+  /** The trader's OWN verdict on each trade, from the weekly film room
+   *  (trades.review_json.verdict — good | mistake | unsure + a one-line note).
+   *  This is the highest-authority read on process in the whole dataset: it is
+   *  the trader grading their own decision AFTER the fact, with the chart in
+   *  front of them. Where it disagrees with the P&L is where the entire
+   *  "grade decisions, not money" thesis lives. */
+  const reviewed: Array<{ date: string; call: string; note: string; pnl: number }> = []
+
   // Per-instrument excursion + performance, keyed by symbol root (ES / NQ / ...).
   const instrumentBuckets = new Map<string, { n: number; wins: number; pnl: number; rSum: number; rN: number; mfeAtrSum: number; mfeAtrN: number; mfe2: number; mfe3: number; capSum: number; capN: number; first: string; last: string }>()
   /** month (YYYY-MM) -> instrument root -> trade count. Answers the whole class
@@ -522,6 +530,12 @@ NO TRADE DATA — the trader logged no trades in this window.
     // these need, so they feed only the counting/tag/PnL aggregations below.
     // `r` / `capPct` / `mfeUsd` stay null for historical → their setup-bucket
     // avgR/capture just skip those rows.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const verdict = (t as any).review_json?.verdict as { call?: string; note?: string } | undefined
+    if (verdict?.call) {
+      reviewed.push({ date: t._date || '', call: verdict.call, note: String(verdict.note ?? '').trim(), pnl })
+    }
+
     // Per-instrument counts and date range — ALL sources. ES and NQ move
     // differently in ATR terms, and "when did I start trading MES" is a
     // question a totals-only bucket silently cannot answer.
@@ -762,6 +776,37 @@ NO TRADE DATA — the trader logged no trades in this window.
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([month, mm]) => `  ${month}: ${Array.from(mm.entries()).sort((a, b) => b[1] - a[1]).map(([root, n]) => `${root} ${n}`).join(', ')}`)
     .join('\n') || '  (no dated trades in window)'
+
+  /**
+   * The trader's own verdicts, and specifically where they DISAGREE with the
+   * money. A winner they called a mistake, or a loser they stand behind, is the
+   * single most informative row in the book: it separates process from outcome,
+   * which is the thing this product claims to do and the thing a P&L-shaped
+   * summary gets wrong every time.
+   */
+  const disagreeWin = reviewed.filter(r => r.pnl > 0 && (r.call === 'mistake' || r.call === 'unsure'))
+  const disagreeLoss = reviewed.filter(r => r.pnl <= 0 && r.call === 'good')
+  const reviewLines = reviewed.length === 0
+    ? ''
+    : [
+      '',
+      "THE TRADER'S OWN VERDICTS (from the weekly film room — they graded these themselves,",
+      'with the chart in front of them, after the fact. Treat as the authority on process:',
+      'it OUTRANKS your inference from tags, notes and P&L. Quote it, and never contradict a',
+      'verdict without addressing the reason they gave):',
+      ...reviewed.map(r => `  ${r.date} ${r.call.toUpperCase()} (${r.pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(r.pnl))})${r.note ? ` — "${r.note}"` : ''}`),
+      ...(disagreeWin.length + disagreeLoss.length > 0
+        ? [
+          '',
+          '  WHERE THEIR VERDICT DISAGREES WITH THE MONEY — the most valuable rows here.',
+          `  ${disagreeWin.length} PROFITABLE trade(s) they called a mistake or were unsure about,`,
+          `  and ${disagreeLoss.length} LOSING trade(s) they stand behind. A profitable process`,
+          '  failure is still a failure and a disciplined loss is still disciplined; grade',
+          '  accordingly and do NOT put a trade in "what worked" on P&L alone when they',
+          '  called it a mistake.',
+        ]
+        : []),
+    ].join('\n')
 
   // Recent trades (newest first, capped at recentTradesLimit)
   const recent = trades.slice(0, recentTradesLimit).map(t => {
@@ -1040,6 +1085,8 @@ ${Array.from(followFadeBuckets.entries()).map(([k, b]) => `  ${k === 'follow' ? 
 
 5M STRUCTURE ALIGNMENT (EMA-20 read; separate from the pivot follow/fade above — sparser, native SC-log imports only):
 ${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no structure_5m_alignment values yet — sparse; use the pivot follow/fade above)'}
+
+${reviewLines}
 
 BY INSTRUMENT (ES and NQ move differently in ATR terms — use this bucket; the instrument split IS available, never say it is not):
 ${instrumentLines}
