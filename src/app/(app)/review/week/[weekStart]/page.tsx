@@ -11,7 +11,7 @@ import type { FilmFrame } from '@/components/review/GameFilm'
 import type { TradeReview } from '@/lib/supabase/types'
 import {
   loadPeriodDays, loadPeriodTrades, summarizePeriod, summarizeCommitments, comparisonRows,
-  periodVsBaseline, type BaselineRead, type PeriodDay, type PeriodSummary,
+  periodVsBaseline, driverSentence, type BaselineRead, type PeriodDay, type PeriodSummary,
 } from '@/lib/period-recap'
 import PeriodRecapClient, {
   type RecapFinding, type RecapLedgerRow, type RecapCommitment, type AiSynthesis,
@@ -287,9 +287,7 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
       state: 'held',
       headline: `Every rail kept, ${s.railsDays === 1 ? 'the one graded day' : `all ${s.railsDays} graded days`}.`,
       sub: `${s.trades} trades across ${s.tradedDays} sessions, clean on the rails you track.${capturePart}${vsBaseline}`,
-      next: baseline && baseline.periodR > baseline.baselineR
-        ? `Protect it — ${baseline.label} is running above your own average.`
-        : 'Nothing to fix — protect the process that made this week.',
+      next: baseline ? driverAction(baseline) : 'Nothing to fix — protect the process that made this week.',
       evidence: baseline ? baselineBars(baseline) : [],
     }
   }
@@ -298,10 +296,8 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
     return {
       state: baseline.periodR >= baseline.baselineR ? 'edge' : 'leak',
       headline: `${baseline.label} ${baseline.periodR >= baseline.baselineR ? 'ran above' : 'ran below'} your usual.`,
-      sub: `${fmtR(baseline.periodR)} per trade across ${baseline.periodN} this week against ${fmtR(baseline.baselineR)} per trade over your last ${baseline.baselineN}. ${railsPart}${capturePart}`,
-      next: baseline.periodR >= baseline.baselineR
-        ? `Keep taking ${baseline.label} while it is working.`
-        : `Watch ${baseline.label} — it is running under your own average.`,
+      sub: `${fmtR(baseline.periodR)} per trade across ${baseline.periodN} this week against ${fmtR(baseline.baselineR)} per trade over your last ${baseline.baselineN}. ${driverSentence(baseline)} ${railsPart}${capturePart}`,
+      next: driverAction(baseline),
       evidence: baselineBars(baseline),
     }
   }
@@ -324,7 +320,30 @@ const fmtR = (r: number) => `${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(1)}R`
  *  reads as a feeble 0.3R trade — the founder read it exactly that way. On this
  *  book +0.34R across 46 is 19 winners at +2.1R carrying 27 losers at -0.9R. */
 function baselineSentence(b: BaselineRead): string {
-  return ` ${b.label} ran ${fmtR(b.periodR)} per trade across ${b.periodN} this week — your usual on that ${b.kind} is ${fmtR(b.baselineR)} per trade over ${b.baselineN}.`
+  return ` ${b.label} ran ${fmtR(b.periodR)} per trade across ${b.periodN} this week — your usual on that ${b.kind} is ${fmtR(b.baselineR)} per trade over ${b.baselineN}. ${driverSentence(b)}`
+}
+
+/** What to do about it depends on WHICH component moved — holding winners
+ *  longer and winning more often call for opposite responses, and a thin-sample
+ *  win-rate swing calls for none at all. */
+function driverAction(b: BaselineRead): string {
+  const better = b.driver.contribution >= 0
+  switch (b.driver.kind) {
+    case 'payoff':
+      return better
+        ? `You held ${b.label} winners further than usual — that is the habit to keep.`
+        : `Your ${b.label} winners were cut shorter than usual — hold to the plan before taking anything off.`
+    case 'losses':
+      return better
+        ? `Your losers were smaller than usual — whatever you did on the exits, keep it.`
+        : `Your losers ran further than usual — the stop is where to look, not the entry.`
+    case 'win rate':
+      return b.thin
+        ? `Nothing to change on ${b.periodN} trades — let the sample build before reading anything into it.`
+        : better
+          ? `You are picking ${b.label} better than usual — keep the filter that got you here.`
+          : `You are picking ${b.label} worse than usual — tighten what qualifies before the next one.`
+  }
 }
 
 function baselineBars(b: BaselineRead) {

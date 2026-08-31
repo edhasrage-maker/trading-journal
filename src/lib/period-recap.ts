@@ -274,6 +274,18 @@ export interface BaselineRead {
   periodN: number
   baselineR: number
   baselineN: number
+  /** Which component actually moved, and what it contributed in R. Expectancy
+   *  says a week was better; only this says WHY, and the two answers call for
+   *  completely different responses. */
+  driver: {
+    kind: 'payoff' | 'win rate' | 'losses'
+    contribution: number
+    periodValue: number
+    baselineValue: number
+  }
+  /** Period win rate is on a thin sample — a win-rate-driven week is then
+   *  variance, and saying otherwise dresses luck as edge. */
+  thin: boolean
 }
 
 /** Baseline arm needs real weight — this is the whole point of the comparison. */
@@ -282,27 +294,50 @@ const BASELINE_MIN_N = 20
 const PERIOD_MIN_N = 3
 /** Weekly noise is wide, so the gap has to be worth a sentence. */
 const BASELINE_MIN_GAP_R = 0.5
+/** Below this, a win-rate swing is variance and must be named as such. */
+const THIN_SAMPLE_N = 10
 
 type LabelledTrade = TradeLike & { _dayTypes?: string[] }
+interface Outcome { r: number; win: boolean }
 
-function avgOf(rows: number[]): number | null {
-  return rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : null
+function profile(rows: Outcome[]) {
+  if (rows.length === 0) return null
+  const wins = rows.filter(o => o.win)
+  const losses = rows.filter(o => !o.win)
+  const mean = (a: Outcome[]) => (a.length ? a.reduce((s, o) => s + o.r, 0) / a.length : 0)
+  return {
+    n: rows.length,
+    expectancy: mean(rows),
+    winRate: wins.length / rows.length,
+    // Empty side falls back to the other side's sign-appropriate zero so the
+    // decomposition stays defined on a week with no winners (or no losers).
+    winnerR: wins.length ? mean(wins) : 0,
+    loserR: losses.length ? mean(losses) : 0,
+    hasWins: wins.length > 0,
+  }
 }
 
 /**
  * Strongest divergence between this window and the trader's book. `book` should
  * be the trailing history INCLUDING the window — the baseline is "how this
  * normally goes for you", not a disjoint sample.
+ *
+ * Selection uses expectancy OR the largest single component, whichever is
+ * bigger. That second clause matters: a week can have its win rate fall ten
+ * points while its winners run 0.65R further, net out to nothing, and read as
+ * "unremarkable" when two real things happened and cancelled.
  */
 export function periodVsBaseline(
   period: LabelledTrade[],
   book: LabelledTrade[],
   labelsOf: (t: LabelledTrade) => Array<{ kind: 'setup' | 'day type'; label: string }>,
 ): BaselineRead | null {
-  const rOf = (t: LabelledTrade) => rMultiple(t)
-  const collect = (rows: LabelledTrade[], kind: string, label: string) =>
-    rows.filter(t => labelsOf(t).some(l => l.kind === kind && l.label === label))
-      .map(rOf).filter((x): x is number => x != null)
+  const outcomes = (rows: LabelledTrade[], kind: string, label: string): Outcome[] =>
+    rows
+      .filter(t => labelsOf(t).some(l => l.kind === kind && l.label === label))
+      .map(t => ({ r: rMultiple(t), pnl: t.pnl }))
+      .filter((x): x is { r: number; pnl: number | null } => x.r != null)
+      .map(x => ({ r: x.r, win: (x.pnl ?? 0) > 0 }))
 
   const seen = new Set<string>()
   let best: (BaselineRead & { weight: number }) | null = null
@@ -313,19 +348,37 @@ export function periodVsBaseline(
       if (seen.has(key)) continue
       seen.add(key)
 
-      const p = collect(period, kind, label)
-      const b = collect(book, kind, label)
-      if (p.length < PERIOD_MIN_N || b.length < BASELINE_MIN_N) continue
-      const pr = avgOf(p), br = avgOf(b)
-      if (pr == null || br == null) continue
-      const gap = pr - br
-      if (Math.abs(gap) < BASELINE_MIN_GAP_R) continue
+      const p = profile(outcomes(period, kind, label))
+      const b = profile(outcomes(book, kind, label))
+      if (!p || !b || p.n < PERIOD_MIN_N || b.n < BASELINE_MIN_N) continue
 
-      // Same shape as the finding engine: discount the gap by how thin the
-      // period arm is, so a 3-trade blip can't outrank a 10-trade signal.
-      const weight = Math.abs(gap) * Math.sqrt(p.length)
+      // Exact decomposition of the expectancy gap. Each term is what that
+      // component alone contributed, and the three sum to the total.
+      const fromWinRate = (p.winRate - b.winRate) * (b.winnerR - b.loserR)
+      const fromPayoff = p.winRate * (p.winnerR - b.winnerR)
+      const fromLosses = (1 - p.winRate) * (p.loserR - b.loserR)
+
+      const parts = [
+        { kind: 'win rate' as const, contribution: fromWinRate, periodValue: p.winRate, baselineValue: b.winRate },
+        { kind: 'payoff' as const, contribution: fromPayoff, periodValue: p.winnerR, baselineValue: b.winnerR },
+        { kind: 'losses' as const, contribution: fromLosses, periodValue: p.loserR, baselineValue: b.loserR },
+      ]
+      const driver = parts.reduce((a, c) => (Math.abs(c.contribution) > Math.abs(a.contribution) ? c : a))
+      // A payoff driver is meaningless with no winners to measure.
+      if (driver.kind === 'payoff' && !p.hasWins) continue
+
+      const gap = p.expectancy - b.expectancy
+      const size = Math.max(Math.abs(gap), Math.abs(driver.contribution))
+      if (size < BASELINE_MIN_GAP_R) continue
+
+      const weight = size * Math.sqrt(p.n)
       if (!best || weight > best.weight) {
-        best = { label, kind, periodR: pr, periodN: p.length, baselineR: br, baselineN: b.length, weight }
+        best = {
+          label, kind,
+          periodR: p.expectancy, periodN: p.n,
+          baselineR: b.expectancy, baselineN: b.n,
+          driver, thin: p.n < THIN_SAMPLE_N, weight,
+        }
       }
     }
   }
@@ -333,6 +386,22 @@ export function periodVsBaseline(
   const { weight: _w, ...read } = best
   void _w
   return read
+}
+
+/** The one sentence naming what actually moved. */
+export function driverSentence(b: BaselineRead): string {
+  const r = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}R`
+  const pct = (v: number) => `${Math.round(v * 100)}%`
+  switch (b.driver.kind) {
+    case 'payoff':
+      return `Your winners ran ${r(b.driver.periodValue)} against a usual ${r(b.driver.baselineValue)}.`
+    case 'losses':
+      return `Your losers cost ${r(b.driver.periodValue)} against a usual ${r(b.driver.baselineValue)}.`
+    case 'win rate':
+      return b.thin
+        ? `You won ${pct(b.driver.periodValue)} of them against a usual ${pct(b.driver.baselineValue)} — on ${b.periodN} trades that is variance more than edge.`
+        : `You won ${pct(b.driver.periodValue)} of them against a usual ${pct(b.driver.baselineValue)}.`
+  }
 }
 
 // ── Prior-period comparison (computed, never AI) ───────────────────────────
