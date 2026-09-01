@@ -91,9 +91,31 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd }: Pr
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <span className="font-semibold text-white text-base w-44 text-center">
-            {format(cursor, 'MMMM yyyy')}
-          </span>
+          {/* The month label IS the picker. Stepping one month per click is fine
+              for "last month" and useless for "June" — from here that was
+              fifteen clicks, with no way to see how far you had come. The
+              navigable range is the whole account (windowStart is 2000-01-01),
+              so the arrows were never the constraint; the absence of a way to
+              jump was. Native month input: a real month+year picker, keyboard
+              operable, and it still reads as the heading it replaced. */}
+          <label className="relative w-44 text-center">
+            <span className="font-semibold text-white text-base pointer-events-none">
+              {format(cursor, 'MMMM yyyy')}
+            </span>
+            <input
+              type="month"
+              aria-label="Jump to month"
+              title="Jump to any month"
+              value={format(cursor, 'yyyy-MM')}
+              min={windowStart.slice(0, 7)}
+              max={windowEnd.slice(0, 7)}
+              onChange={e => {
+                const v = e.target.value
+                if (/^\d{4}-\d{2}$/.test(v)) setCursor(startOfMonth(new Date(`${v}-01T12:00:00`)))
+              }}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+          </label>
           <button
             type="button"
             onClick={() => setCursor(nextMonth)}
