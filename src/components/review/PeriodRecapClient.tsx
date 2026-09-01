@@ -9,9 +9,9 @@ import { ScoreCluster } from '@/components/review/ReviewMonthHero'
 import GameFilm, { type FilmFrame } from '@/components/review/GameFilm'
 import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { EvidenceBar } from '@/lib/prep-carryover'
-import type { RecapVsRow } from '@/lib/period-recap'
+import type { RecapVsRow, QuarterRead } from '@/lib/period-recap'
 
-export type { RecapVsRow }
+export type { RecapVsRow, QuarterRead }
 
 /**
  * The Week / Month recap body (mockup: docs/tapescore-recap-mockup-r1.html,
@@ -44,6 +44,11 @@ export interface RecapNumbers {
   mfeMae: number | null
   railsKept: number
   railsDays: number
+  winRate: number | null
+  avgR: number | null
+  /** How many trades carried a stop, so avgR can cite its own denominator. */
+  rSample: number
+  dollarsPerTrade: number | null
 }
 
 export interface RecapCommitment {
@@ -100,6 +105,8 @@ export interface RecapProps {
   commitment: RecapCommitment | null
   ledger: { title: string; hint: string; rows: RecapLedgerRow[] }
   vs: { title: string; rows: RecapVsRow[] } | null
+  /** Month only: the same measures across the trailing periods. */
+  quarter?: { title: string; headline: string; read: QuarterRead } | null
   initialSynthesis: AiSynthesis | null
   initialNotes: string
   /** True when the recap table hasn't been migrated yet — notes/synthesis
@@ -117,6 +124,7 @@ const STATE_META: Record<FindingState, { label: string; cls: string }> = {
 }
 
 const fmtUsd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString()}`
+const fmtR = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}R`
 const pnlCls = (v: number | null) => (v == null ? 'text-gray-600' : v > 0 ? 'text-green-400' : v < 0 ? 'text-red-400' : 'text-gray-400')
 
 export default function PeriodRecapClient(p: RecapProps) {
@@ -202,6 +210,11 @@ export default function PeriodRecapClient(p: RecapProps) {
                       {bar.value}
                       <span className="text-[11px] text-gray-500 ml-1.5 font-normal">n={bar.n}</span>
                     </span>
+                    {bar.winRate != null && (
+                      <span className="text-[12px] text-gray-300 tabular-nums w-11 text-right shrink-0" title="win rate">
+                        {bar.winRate}%
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -210,17 +223,37 @@ export default function PeriodRecapClient(p: RecapProps) {
         </div>
       </div>
 
-      {/* The numbers — inline ledger, no cards */}
+      {/* The numbers — two inline ledgers, no cards. Split because the outcome
+          row and the execution row answer different questions, and nine cells
+          on one line stops scanning as a row. */}
       <div className="flex flex-wrap mt-7 pt-4 border-t border-gray-800 gap-y-4">
         <NumCell first label={`${p.scope === 'week' ? 'Week' : 'Month'} P&L`} value={fmtUsd(p.numbers.pnl)} valueCls={pnlCls(p.numbers.pnl)} />
-        <NumCell label="Trades" value={String(p.numbers.trades)} />
-        <NumCell label="Day wins" value={String(p.numbers.dayWins)} small={`of ${p.numbers.tradedDays}`} />
+        <NumCell
+          label="$ / trade"
+          value={p.numbers.dollarsPerTrade != null ? fmtUsd(p.numbers.dollarsPerTrade) : '—'}
+          valueCls={p.numbers.dollarsPerTrade != null ? pnlCls(p.numbers.dollarsPerTrade) : undefined}
+          small={`across ${p.numbers.trades}`}
+        />
+        <NumCell
+          label="Win rate"
+          value={p.numbers.winRate != null ? `${p.numbers.winRate}%` : '—'}
+        />
+        <NumCell
+          label="Avg R"
+          value={p.numbers.avgR != null ? fmtR(p.numbers.avgR) : '—'}
+          valueCls={p.numbers.avgR != null ? pnlCls(p.numbers.avgR) : undefined}
+          small={p.numbers.rSample > 0 ? `${p.numbers.rSample} with a stop` : undefined}
+        />
+        <NumCell label="Trades" value={String(p.numbers.trades)} small={`${p.numbers.tradedDays} sessions`} />
+      </div>
+      <div className="flex flex-wrap mt-5 pt-4 border-t border-gray-800 gap-y-4">
+        <NumCell first label="Day wins" value={String(p.numbers.dayWins)} small={`of ${p.numbers.tradedDays}`} />
         <NumCell label="Profit captured" value={p.numbers.capture != null ? `${p.numbers.capture}%` : '—'} />
         {mode === 'pro' && (
           <NumCell label="MFE : MAE" value={p.numbers.mfeMae != null ? p.numbers.mfeMae.toFixed(1) : '—'} />
         )}
         {p.numbers.railsDays > 0 && (
-          <NumCell label="Rails kept" value={String(p.numbers.railsKept)} small={`of ${p.numbers.railsDays} days`} />
+          <NumCell label="Rules followed" value={String(p.numbers.railsKept)} small={`of ${p.numbers.railsDays} days`} />
         )}
       </div>
 
@@ -259,7 +292,7 @@ export default function PeriodRecapClient(p: RecapProps) {
             <span className="hidden sm:block">{p.scope === 'week' ? 'Read' : ''}</span>
             <span className="text-right">Trades</span>
             <span className="text-right hidden sm:block">Captured</span>
-            <span className="text-right hidden md:block">Rails</span>
+            <span className="text-right hidden md:block">Rules</span>
             <span className="text-right">TapeScore</span>
             <span className="text-right">Result</span>
           </div>
@@ -302,6 +335,88 @@ export default function PeriodRecapClient(p: RecapProps) {
       {p.film && (
         <RecapSection title="Game film" hint="every screenshot this week — flip through, make the call">
           <GameFilm frames={p.film.frames} missing={p.film.missing} migrationPending={p.film.migrationPending} />
+        </RecapSection>
+      )}
+
+      {/* Across the trailing periods */}
+      {p.quarter && (
+        <RecapSection title={p.quarter.title}>
+          <h3
+            className="text-[19px] font-semibold text-gray-100 leading-snug max-w-[34ch] tracking-[-0.01em]"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            {p.quarter.headline}
+          </h3>
+
+          {p.quarter.read.unloggedDays > 0 && (
+            <div className="mt-4 border border-amber-900/60 bg-amber-950/25 rounded-sm px-4 py-3 max-w-[76ch]">
+              <div className="text-[11px] uppercase tracking-[0.06em] text-amber-500/90" style={{ fontFamily: 'var(--font-mono)' }}>
+                Read this comparison carefully
+              </div>
+              <p className="text-[13.5px] text-gray-300 mt-1.5 leading-relaxed">
+                {p.quarter.read.unloggedByPeriod
+                  .map(u => `${u.label} ${u.pnl >= 0 ? '+' : '−'}$${Math.abs(u.pnl).toLocaleString()} over ${u.days} day${u.days === 1 ? '' : 's'}`)
+                  .join(', ')}
+                {' '}carr{p.quarter.read.unloggedByPeriod.length === 1 ? 'ies' : 'y'} P&amp;L the trade log does not
+                account for. The P&amp;L row below is day level and the per-trade rows are trade level, so they will not
+                reconcile for those periods — part of any move you see there is a logging gap, not a trading result.
+              </p>
+            </div>
+          )}
+
+          <div className="overflow-x-auto mt-5">
+            <table className="w-full min-w-[760px] border-collapse text-[14px]">
+              <thead>
+                <tr className="border-b border-gray-800">
+                  <th className="text-left pb-2.5 font-medium text-[11px] uppercase tracking-[0.06em] text-gray-500 whitespace-nowrap" style={{ fontFamily: 'var(--font-mono)' }}>
+                    Driver
+                  </th>
+                  {p.quarter.read.labels.map((l, i) => (
+                    <th
+                      key={l}
+                      className={cn(
+                        'text-right pb-2.5 px-4 text-[11px] uppercase tracking-[0.06em] whitespace-nowrap',
+                        i === p.quarter!.read.labels.length - 1 ? 'text-gray-200 font-semibold' : 'text-gray-500 font-medium',
+                      )}
+                      style={{ fontFamily: 'var(--font-mono)' }}
+                    >
+                      {l}
+                    </th>
+                  ))}
+                  <th className="text-left pb-2.5 font-medium text-[11px] uppercase tracking-[0.06em] text-gray-500" style={{ fontFamily: 'var(--font-mono)' }}>
+                    The trend
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.quarter.read.rows.map(row => (
+                  <tr key={row.driver} className="border-b border-gray-800/60 last:border-b-0">
+                    <td className="py-3 h-11 align-middle text-gray-200 whitespace-nowrap">
+                      {row.driver}
+                      {row.note && <span className="text-gray-600 text-[12px] ml-1.5">{row.note}</span>}
+                    </td>
+                    {row.values.map((v, i) => {
+                      const isLast = i === row.values.length - 1
+                      return (
+                        <td
+                          key={i}
+                          className={cn(
+                            'py-3 h-11 align-middle px-4 text-right tabular-nums whitespace-nowrap',
+                            isLast
+                              ? cn('font-semibold', row.tone === 'pos' ? 'text-green-400' : row.tone === 'neg' ? 'text-red-400' : 'text-gray-100')
+                              : 'text-gray-400',
+                          )}
+                        >
+                          {v}
+                        </td>
+                      )
+                    })}
+                    <td className="py-3 h-11 align-middle text-gray-500 pl-1">{row.trend}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </RecapSection>
       )}
 

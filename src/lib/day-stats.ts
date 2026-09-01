@@ -1,4 +1,4 @@
-import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { symbolToMultiplier, symbolRoot } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
 import { tapeScoreFromAnalyses, type TapeScoreResult } from '@/lib/tapescore'
 import type { TradingDay } from '@/lib/supabase/types'
@@ -84,6 +84,23 @@ export interface DayStatsRollup {
   sum_loss_r: number
   loss_r_count: number
   r_sample: number
+  /** Trade-level shape of the day, for period-over-period attribution. Kept on
+   *  the rollup so a multi-month comparison reads cached days instead of
+   *  re-fetching every trade in the quarter. */
+  /** SUMS + COUNTS, not per-day averages — same reasoning as the R sums above:
+   *  a period pools these, and averaging per-day averages would weight a
+   *  one-trade day like a ten-trade one. The counts differ from each other
+   *  because risk needs a stop and lot size does not. */
+  sum_risk_dollars: number
+  risk_sample: number
+  sum_quantity: number
+  quantity_sample: number
+  /** Trade counts per instrument root, e.g. { MES: 4, MNQ: 1 }. */
+  symbol_counts: Record<string, number>
+  /** Sum of the day's logged trade P&L. Differs from `eod_pnl` when the day
+   *  carries a P&L the trades do not account for; the gap is what makes a
+   *  period comparison unreconcilable, so it is surfaced rather than hidden. */
+  logged_trade_pnl: number | null
 }
 
 /**
@@ -105,7 +122,11 @@ export interface DayStatsRollup {
 // stopped just short of the price it was stopped AT, so heat was understated on
 // exactly the trades where heat matters most — avg_mae/avg_heat move on those
 // days, and every cached row must recompute to agree with a fresh one.
-export const STATS_VERSION = 5
+// v7 (2026-08-31): the rollup gained the trade-shape fields the month-over-month
+// comparison reads (risk/quantity sums + counts, instrument split, logged trade
+// P&L). Stored as SUMS so a period pools them correctly; every cached row must
+// recompute or the comparison silently drops its risk and size rows.
+export const STATS_VERSION = 7
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
@@ -183,6 +204,20 @@ export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepA
   const winRate = tradesWithPnl.length > 0
     ? (winsOnDay / tradesWithPnl.length) * 100
     : null
+
+  // Average planned dollar risk and lot size, plus the instrument split. Risk
+  // is the honest size measure: more lots on a smaller-tick instrument is
+  // dollar parity, not an escalation, and a contracts-only read inverts that.
+  let riskSum = 0, riskN = 0, qtySum = 0, qtyN = 0
+  const symbolCounts: Record<string, number> = {}
+  for (const t of tradesWithPnl) {
+    if (t.quantity != null) { qtySum += t.quantity; qtyN++ }
+    const root = symbolRoot(t.symbol ?? '')
+    if (root) symbolCounts[root] = (symbolCounts[root] ?? 0) + 1
+    if (t.entry_price == null || t.stop_price == null || t.quantity == null) continue
+    const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * symbolToMultiplier(t.symbol ?? '')
+    if (risk > 0) { riskSum += risk; riskN++ }
+  }
 
   // Avg MFE / MAE per trade (points + $), floored at 0 per trade.
   const mfeMaeTrades = trades.filter(t =>
@@ -267,6 +302,12 @@ export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepA
     sum_loss_r: sumLossR,
     loss_r_count: lossRCount,
     r_sample: winRCount + lossRCount,
+    sum_risk_dollars: riskSum,
+    risk_sample: riskN,
+    sum_quantity: qtySum,
+    quantity_sample: qtyN,
+    symbol_counts: symbolCounts,
+    logged_trade_pnl: tradesWithPnl.length > 0 ? summedPnl : null,
     setups: setupsAll,
     process_score: day.ai_analysis_json?.score ?? null,
     overall_grade: (() => {

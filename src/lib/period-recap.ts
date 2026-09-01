@@ -173,6 +173,28 @@ export interface PeriodSummary {
   railsDays: number
   railsKept: number
   score: TapeScorePeriod
+  /** Trade win rate, 0-100. Denominator is trades carrying a P&L, which is why
+   *  it can differ from the R sample below. Null with nothing to divide. */
+  winRate: number | null
+  /** Expectancy per trade in R. Only trades with a real stop qualify, so
+   *  `rSample` is smaller than `trades` and is cited alongside the number. */
+  avgR: number | null
+  rSample: number
+  /** Period P&L over trade count. Uses the same day-level P&L as `pnl`, so it
+   *  agrees with the headline even on days the trade log does not account for. */
+  dollarsPerTrade: number | null
+  /** Trades per traded session. */
+  tradesPerDay: number | null
+  /** Mean planned dollar risk and lot size across the period. */
+  avgRisk: number | null
+  avgQuantity: number | null
+  /** Instrument roots by trade count, largest first. */
+  symbolCounts: Record<string, number>
+  /** Day-level P&L minus the P&L its trades account for, and how many days
+   *  contributed. Non-zero means the book does not reconcile and a per-trade
+   *  comparison cannot be read against the headline P&L. */
+  unloggedPnl: number
+  unloggedDays: number
 }
 
 export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
@@ -180,6 +202,11 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
   let capSum = 0, capN = 0
   let mfeSum = 0, maeSum = 0, excN = 0
   let railsDays = 0, railsKept = 0
+  let wins = 0, winsDenom = 0
+  let sumWinR = 0, sumLossR = 0, rSample = 0
+  let riskSum = 0, riskN = 0, qtySum = 0, qtyN = 0
+  const symbolCounts: Record<string, number> = {}
+  let unloggedPnl = 0, unloggedDays = 0
   for (const { rollup: r } of days) {
     const dayPnl = r.eod_pnl ?? null
     if (dayPnl != null) pnl += dayPnl
@@ -198,6 +225,24 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
       railsDays++
       if (r.process_verdict === 'Compliant') railsKept++
     }
+    wins += r.trade_wins
+    winsDenom += r.trades_with_pnl_count
+    // Loss R is stored as a MAGNITUDE, so expectancy subtracts it. Summing the
+    // two would report a positive R that no win rate could produce.
+    sumWinR += r.sum_win_r
+    sumLossR += r.sum_loss_r
+    rSample += r.r_sample
+    riskSum += r.sum_risk_dollars ?? 0
+    riskN += r.risk_sample ?? 0
+    qtySum += r.sum_quantity ?? 0
+    qtyN += r.quantity_sample ?? 0
+    for (const [root, n] of Object.entries(r.symbol_counts ?? {})) {
+      symbolCounts[root] = (symbolCounts[root] ?? 0) + n
+    }
+    if (r.eod_pnl != null && r.logged_trade_pnl != null) {
+      const gap = r.eod_pnl - r.logged_trade_pnl
+      if (Math.abs(gap) > 1) { unloggedPnl += gap; unloggedDays++ }
+    }
   }
   return {
     pnl,
@@ -209,6 +254,16 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
     railsDays,
     railsKept,
     score: aggregateTapeScore(days.map(d => d.rollup.tapescore)),
+    winRate: winsDenom > 0 ? Math.round((wins / winsDenom) * 100) : null,
+    avgR: rSample > 0 ? Math.round(((sumWinR - sumLossR) / rSample) * 100) / 100 : null,
+    rSample,
+    dollarsPerTrade: trades > 0 ? Math.round(pnl / trades) : null,
+    tradesPerDay: tradedDays > 0 ? Math.round((trades / tradedDays) * 10) / 10 : null,
+    avgRisk: riskN > 0 ? Math.round(riskSum / riskN) : null,
+    avgQuantity: qtyN > 0 ? Math.round((qtySum / qtyN) * 10) / 10 : null,
+    symbolCounts,
+    unloggedPnl: Math.round(unloggedPnl),
+    unloggedDays,
   }
 }
 
@@ -286,6 +341,10 @@ export interface BaselineRead {
   /** Period win rate is on a thin sample — a win-rate-driven week is then
    *  variance, and saying otherwise dresses luck as edge. */
   thin: boolean
+  /** Hit rate for each arm, 0-100. Shown beside R so a reader can tell a
+   *  genuinely better arm from one that simply had more room to run. */
+  periodWinRate: number | null
+  baselineWinRate: number | null
 }
 
 /** Baseline arm needs real weight — this is the whole point of the comparison. */
@@ -378,6 +437,8 @@ export function periodVsBaseline(
           periodR: p.expectancy, periodN: p.n,
           baselineR: b.expectancy, baselineN: b.n,
           driver, thin: p.n < THIN_SAMPLE_N, weight,
+          periodWinRate: Math.round(p.winRate * 100),
+          baselineWinRate: Math.round(b.winRate * 100),
         }
       }
     }
@@ -438,7 +499,7 @@ export function comparisonRows(prior: PeriodSummary, now: PeriodSummary, scope: 
     const nr = now.railsKept / now.railsDays
     const d = Math.round((nr - pr) * 100)
     rows.push({
-      dim: 'Rails kept',
+      dim: 'Rules followed',
       prior: `${prior.railsKept} of ${prior.railsDays} days`, now: `${now.railsKept} of ${now.railsDays} days`,
       delta: d === 0 ? 'level' : `${d > 0 ? '+' : '−'}${Math.abs(d)} pts`, tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'flat',
     })
@@ -476,4 +537,201 @@ export function nextMonth(month: string): string {
 
 export function monthLabel(month: string): string {
   return new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
+
+/** One line of the period-over-period table: the same measure across N periods,
+ *  plus the sentence saying which way it moved. */
+export interface QuarterRow {
+  driver: string
+  /** One cell per period, oldest first. Already formatted. */
+  values: string[]
+  trend: string
+  /** Tone for the MOST RECENT cell only — the others are context, and colouring
+   *  every cell turns a trend into a scoreboard. */
+  tone: 'pos' | 'neg' | null
+  /** Set when the cell is day-level while the rest of the table is trade-level. */
+  note?: string
+}
+
+export interface QuarterRead {
+  labels: string[]
+  rows: QuarterRow[]
+  /** Total day-level P&L the trade log does not account for, across all periods,
+   *  and how many days contributed. Non-zero means the per-trade rows cannot be
+   *  reconciled against the P&L row and the table must say so. */
+  unloggedPnl: number
+  unloggedDays: number
+  /** Per-period gap, for naming which months are affected. */
+  unloggedByPeriod: Array<{ label: string; pnl: number; days: number }>
+}
+
+/** Largest instrument root and its share, e.g. "MES 82%". Null with no trades. */
+function mixLabel(counts: Record<string, number>): string | null {
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
+  if (total === 0) return null
+  const [root, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
+  return `${root} ${Math.round((n / total) * 100)}%`
+}
+
+/** Direction of travel across the series, ignoring nulls. */
+function direction(vals: Array<number | null>): 'up' | 'down' | 'mixed' | null {
+  const v = vals.filter((x): x is number => x != null)
+  if (v.length < 2) return null
+  let up = true, down = true
+  for (let i = 1; i < v.length; i++) {
+    if (v[i] <= v[i - 1]) up = false
+    if (v[i] >= v[i - 1]) down = false
+  }
+  return up ? 'up' : down ? 'down' : 'mixed'
+}
+
+const pct = (a: number, b: number) => Math.round(((b - a) / Math.abs(a)) * 100)
+
+/**
+ * The period-over-period table. Every row is derived from the cached day
+ * rollups, so a three-month comparison costs three `loadPeriodDays` calls and
+ * no trade fetches.
+ *
+ * Two things this deliberately refuses to smooth over. The P&L row is DAY level
+ * while risk, size and mix are TRADE level, so on any period whose trade log is
+ * incomplete they cannot be reconciled — `unloggedPnl` reports the gap instead
+ * of letting the reader assume the rows agree. And size is reported in dollar
+ * risk as well as contracts, because more lots on a smaller-tick instrument is
+ * dollar parity, not an escalation, and a contracts-only read inverts it.
+ */
+export function quarterRead(periods: Array<{ label: string; summary: PeriodSummary }>): QuarterRead | null {
+  const withTrades = periods.filter(p => p.summary.trades > 0)
+  if (withTrades.length < 2) return null
+
+  const labels = withTrades.map(p => p.label)
+  const s = withTrades.map(p => p.summary)
+  const last = s[s.length - 1]
+  const first = s[0]
+  const rows: QuarterRow[] = []
+  const dash = (v: string | null) => v ?? '—'
+
+  const riskDir = direction(s.map(x => x.avgRisk))
+  if (s.some(x => x.avgRisk != null)) {
+    const change = first.avgRisk != null && last.avgRisk != null ? pct(first.avgRisk, last.avgRisk) : null
+    rows.push({
+      driver: 'Risk per trade',
+      values: s.map(x => dash(x.avgRisk != null ? `$${x.avgRisk.toLocaleString()}` : null)),
+      trend: change != null && Math.abs(change) >= 5
+        ? `${change < 0 ? 'Down' : 'Up'} ${Math.abs(change)}% across the period.`
+        : 'Broadly flat.',
+      tone: null,
+    })
+  }
+
+  if (s.some(x => Object.keys(x.symbolCounts).length > 0)) {
+    rows.push({
+      driver: 'Instrument mix',
+      values: s.map(x => dash(mixLabel(x.symbolCounts))),
+      trend: mixLabel(first.symbolCounts) !== mixLabel(last.symbolCounts)
+        ? 'The book moved between instruments.'
+        : 'Held the same instrument throughout.',
+      tone: null,
+    })
+  }
+
+  if (s.some(x => x.avgQuantity != null)) {
+    const qtyUp = first.avgQuantity != null && last.avgQuantity != null && last.avgQuantity > first.avgQuantity
+    const riskDown = riskDir === 'down'
+    rows.push({
+      driver: 'Size in contracts',
+      values: s.map(x => dash(x.avgQuantity != null ? x.avgQuantity.toFixed(1) : null)),
+      // The one row most likely to be misread on its own.
+      trend: qtyUp && riskDown
+        ? 'More lots at lower dollar risk is parity, not sizing up.'
+        : 'Read against risk per trade, not on its own.',
+      tone: null,
+    })
+  }
+
+  const wrDir = direction(s.map(x => x.winRate))
+  if (s.some(x => x.winRate != null)) {
+    rows.push({
+      driver: 'Win rate',
+      values: s.map(x => dash(x.winRate != null ? `${x.winRate}%` : null)),
+      trend: wrDir === 'down' ? 'Slipped every period.' : wrDir === 'up' ? 'Improved every period.' : 'Moved both ways.',
+      tone: first.winRate != null && last.winRate != null ? (last.winRate >= first.winRate ? 'pos' : 'neg') : null,
+    })
+  }
+
+  if (s.some(x => x.avgR != null)) {
+    const dir = direction(s.map(x => x.avgR))
+    rows.push({
+      driver: 'Avg R',
+      values: s.map(x => dash(x.avgR != null ? `${x.avgR >= 0 ? '+' : '−'}${Math.abs(x.avgR).toFixed(2)}R` : null)),
+      trend: dir === 'up' ? 'Improved every period.' : dir === 'down' ? 'Fell every period.' : 'Dipped and recovered.',
+      tone: first.avgR != null && last.avgR != null ? (last.avgR >= first.avgR ? 'pos' : 'neg') : null,
+    })
+  }
+
+  if (s.some(x => x.capture != null)) {
+    const best = Math.max(...s.map(x => x.capture ?? -1))
+    rows.push({
+      driver: 'Profit captured',
+      values: s.map(x => dash(x.capture != null ? `${x.capture}%` : null)),
+      trend: last.capture != null && last.capture === best ? 'Best of the set.' : 'Off its best.',
+      tone: last.capture != null && last.capture === best ? 'pos' : null,
+    })
+  }
+
+  if (s.some(x => x.railsDays > 0)) {
+    const share = (x: PeriodSummary) => (x.railsDays > 0 ? Math.round((x.railsKept / x.railsDays) * 100) : null)
+    rows.push({
+      driver: 'Rules followed',
+      values: s.map(x => (x.railsDays > 0 ? `${x.railsKept} of ${x.railsDays}` : '—')),
+      trend: s.map(share).filter(v => v != null).join('% → ') + '%.',
+      tone: direction(s.map(share)) === 'up' ? 'pos' : null,
+    })
+  }
+
+  if (s.some(x => x.score.score != null)) {
+    const dir = direction(s.map(x => x.score.score))
+    rows.push({
+      driver: 'TapeScore',
+      values: s.map(x => dash(x.score.score != null ? String(x.score.score) : null)),
+      trend: dir === 'up' ? 'Rose every period.' : dir === 'down' ? 'Fell every period.' : 'Moved both ways.',
+      tone: dir === 'up' ? 'pos' : null,
+    })
+  }
+
+  const pnlChange = first.pnl !== 0 ? pct(first.pnl, last.pnl) : null
+  const riskChange = first.avgRisk != null && last.avgRisk != null ? pct(first.avgRisk, last.avgRisk) : null
+  rows.push({
+    driver: 'P&L',
+    values: s.map(x => `${x.pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(x.pnl)).toLocaleString()}`),
+    // P&L falling alongside risk is de-risking, not decay. Saying only the first
+    // half of that would read as a verdict on the trading.
+    trend: pnlChange != null && riskChange != null && pnlChange < 0 && riskChange < 0
+      ? `Down ${Math.abs(pnlChange)}% — on ${Math.abs(riskChange)}% less risk per trade.`
+      : pnlChange != null
+        ? `${pnlChange < 0 ? 'Down' : 'Up'} ${Math.abs(pnlChange)}%.`
+        : 'No prior period to compare.',
+    tone: null,
+    note: 'day level',
+  })
+
+  rows.push({
+    driver: 'Trades / day',
+    values: s.map(x => dash(x.tradesPerDay != null ? x.tradesPerDay.toFixed(1) : null)),
+    trend: direction(s.map(x => x.tradesPerDay)) === 'down'
+      ? 'Down every period — fewer shots taken per session.'
+      : direction(s.map(x => x.tradesPerDay)) === 'up'
+        ? 'Up every period — more shots taken per session.'
+        : 'Moved both ways.',
+    tone: null,
+  })
+
+  return {
+    labels,
+    rows,
+    unloggedPnl: s.reduce((a, x) => a + x.unloggedPnl, 0),
+    unloggedDays: s.reduce((a, x) => a + x.unloggedDays, 0),
+    unloggedByPeriod: withTrades
+      .map(p => ({ label: p.label, pnl: p.summary.unloggedPnl, days: p.summary.unloggedDays }))
+      .filter(x => x.days > 0),
+  }
 }

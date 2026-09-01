@@ -119,6 +119,11 @@ export interface EvidenceBar {
   /** 0-100 bar length. */
   pct: number
   tone: 'pos' | 'neg' | 'acc'
+  /** Hit rate for this arm, 0-100. Shown beside R because R alone cannot tell
+   *  a genuinely better arm from one that merely had more room to run: a wider
+   *  target lifts R while LOWERING the hit rate, so an arm winning more often
+   *  AND earning more R is selection rather than a bigger ceiling. */
+  winRate: number | null
 }
 
 export interface Carryover {
@@ -147,14 +152,22 @@ export interface Carryover {
 // ── Small helpers ───────────────────────────────────────────────────────────
 
 /** Mean R across trades that have a computable R. */
-function avgR(trades: TradeLike[]): { avg: number | null; n: number } {
+function avgR(trades: TradeLike[]): { avg: number | null; n: number; winRate: number | null } {
   let sum = 0
   let n = 0
+  let wins = 0, decided = 0
   for (const t of trades) {
     const r = rMultiple(t)
     if (r != null && Number.isFinite(r)) { sum += r; n++ }
+    // Hit rate spans every trade with a P&L, not only those carrying a stop,
+    // so a missing stop costs the arm its R but not its win rate.
+    if (t.pnl != null) { decided++; if (t.pnl > 0) wins++ }
   }
-  return { avg: n > 0 ? sum / n : null, n }
+  return {
+    avg: n > 0 ? sum / n : null,
+    n,
+    winRate: decided > 0 ? Math.round((wins / decided) * 100) : null,
+  }
 }
 
 function labelsOf(t: TradeLike, category: keyof TradeTags): string[] {
@@ -175,16 +188,21 @@ function fmtPct(x: number): string {
 
 /** Two comparison bars for the Review evidence rail, scaled to the larger
  *  magnitude so the stronger reading fills the track. */
-function twoBar(aLabel: string, aR: number, aN: number, bLabel: string, bR: number, bN: number): EvidenceBar[] {
+function twoBar(
+  aLabel: string, aR: number, aN: number,
+  bLabel: string, bR: number, bN: number,
+  aWin: number | null = null, bWin: number | null = null,
+): EvidenceBar[] {
   const max = Math.max(Math.abs(aR), Math.abs(bR)) || 1
-  const bar = (label: string, r: number, n: number): EvidenceBar => ({
+  const bar = (label: string, r: number, n: number, winRate: number | null): EvidenceBar => ({
     label,
     value: fmtR(r),
     n,
     pct: Math.round((Math.abs(r) / max) * 100),
     tone: r > 0 ? 'pos' : r < 0 ? 'neg' : 'acc',
+    winRate,
   })
-  return [bar(aLabel, aR, aN), bar(bLabel, bR, bN)]
+  return [bar(aLabel, aR, aN, aWin), bar(bLabel, bR, bN, bWin)]
 }
 
 /** Split a set of trades by whether they carry `label` in `category`. */
@@ -255,7 +273,7 @@ function setupCandidates(trades: TradeLike[], source: string): Candidate[] {
         finding: `${label} was your best setup`,
         metric: `${fmtR(a.avg)} per trade across ${a.n} trades · everything else ${fmtR(b.avg)}`,
         today: `Protect it — take the ${label} and let the marginal ones go.`,
-        evidence: twoBar(label, a.avg, a.n, 'Other setups', b.avg, b.n),
+        evidence: twoBar(label, a.avg, a.n, 'Other setups', b.avg, b.n, a.winRate, b.winRate),
       })
     } else if (gap < 0 && a.avg < 0) {
       out.push({
@@ -269,7 +287,7 @@ function setupCandidates(trades: TradeLike[], source: string): Candidate[] {
         finding: `${label} cost you`,
         metric: `${fmtR(a.avg)} per trade across ${a.n} trades · everything else ${fmtR(b.avg)}`,
         today: `Skip the ${label} unless it is textbook.`,
-        evidence: twoBar(label, a.avg, a.n, 'Other setups', b.avg, b.n),
+        evidence: twoBar(label, a.avg, a.n, 'Other setups', b.avg, b.n, a.winRate, b.winRate),
       })
     }
   }
@@ -444,7 +462,7 @@ function taggedCostCandidates(trades: SequencedTrade[], source: string): Candida
         finding: best.finding,
         metric: best.metric,
         today: best.today,
-        evidence: twoBar(`Tagged "${label}"`, a.avg, a.n, 'The rest', b.avg, b.n),
+        evidence: twoBar(`Tagged "${label}"`, a.avg, a.n, 'The rest', b.avg, b.n, a.winRate, b.winRate),
       })
     }
   }
@@ -575,7 +593,7 @@ function derivedCandidates(
         : `The trades you ${def.phrase} carried you`,
       metric: `${fmtR(a.avg)} per trade across ${a.n} · ${def.counterPhrase} ${fmtR(b.avg)} across ${b.n}`,
       today: costly ? def.costlyAction : def.protectAction,
-      evidence: twoBar(`You ${def.phrase}`, a.avg, a.n, def.counterPhrase, b.avg, b.n),
+      evidence: twoBar(`You ${def.phrase}`, a.avg, a.n, def.counterPhrase, b.avg, b.n, a.winRate, b.winRate),
     })
   }
   return out
@@ -625,7 +643,7 @@ function conjunctionCandidates(
             : `Your ${label} trades work when you ${def.phrase}`,
           metric: `${fmtR(a.avg)} across ${a.n} · the other ${label} trades ${fmtR(b.avg)} across ${b.n}`,
           today: costly ? def.costlyAction : def.protectAction,
-          evidence: twoBar(`${label} — ${def.phrase}`, a.avg, a.n, `${label} — ${def.counterPhrase}`, b.avg, b.n),
+          evidence: twoBar(`${label} — ${def.phrase}`, a.avg, a.n, `${label} — ${def.counterPhrase}`, b.avg, b.n, a.winRate, b.winRate),
         })
       }
     }

@@ -6,8 +6,8 @@ import { computeCarryover, type Carryover } from '@/lib/prep-carryover'
 import type { TradeWithExcursion } from '@/lib/analytics'
 import {
   loadPeriodDays, loadPeriodTrades, summarizePeriod, summarizeCommitments, comparisonRows,
-  monthRange, previousMonth, nextMonth, monthLabel,
-  type PeriodDay, type PeriodSummary,
+  monthRange, previousMonth, nextMonth, monthLabel, quarterRead,
+  type PeriodDay, type PeriodSummary, type QuarterRead,
 } from '@/lib/period-recap'
 import PeriodRecapClient, {
   type RecapFinding, type RecapLedgerRow, type RecapCommitment, type AiSynthesis,
@@ -43,10 +43,15 @@ export default async function MonthlyRecapPage({ params }: PageProps) {
   const { start, end } = monthRange(month)
   const prevM = previousMonth(month)
   const prevRange = monthRange(prevM)
+  // Two months back as well: with only one prior month a dip reads as decline,
+  // and the direction of travel is what makes the comparison worth reading.
+  const prev2M = previousMonth(prevM)
+  const prev2Range = monthRange(prev2M)
 
-  const [days, prevDays, recapResult] = await Promise.all([
+  const [days, prevDays, prev2Days, recapResult] = await Promise.all([
     loadPeriodDays(supabase, start, end),
     loadPeriodDays(supabase, prevRange.start, prevRange.end),
+    loadPeriodDays(supabase, prev2Range.start, prev2Range.end),
     supabase
       .from('monthly_recap')
       .select('ai_synthesis_json, notes_md, generated_at')
@@ -56,6 +61,14 @@ export default async function MonthlyRecapPage({ params }: PageProps) {
 
   const summary = summarizePeriod(days)
   const prevSummary = summarizePeriod(prevDays)
+  const prev2Summary = summarizePeriod(prev2Days)
+  const quarter = buildQuarter(
+    [
+      { label: monthLabel(prev2M).split(' ')[0], summary: prev2Summary },
+      { label: monthLabel(prevM).split(' ')[0], summary: prevSummary },
+      { label: monthLabel(month).split(' ')[0], summary },
+    ],
+  )
 
   const tradedDayIds = days.filter(d => d.rollup.trade_count > 0).map(d => d.rollup.id)
   const trades = await loadPeriodTrades(supabase, tradedDayIds)
@@ -122,10 +135,15 @@ export default async function MonthlyRecapPage({ params }: PageProps) {
         mfeMae: summary.mfeMae,
         railsKept: summary.railsKept,
         railsDays: summary.railsDays,
+        winRate: summary.winRate,
+        avgR: summary.avgR,
+        rSample: summary.rSample,
+        dollarsPerTrade: summary.dollarsPerTrade,
       }}
       commitment={commitment}
       ledger={{ title: 'The weeks', hint: 'each row opens that week’s recap', rows: ledgerRows }}
       vs={vs}
+      quarter={quarter}
       initialSynthesis={recap?.ai_synthesis_json ?? null}
       initialNotes={recap?.notes_md ?? ''}
       migrationPending={!!migrationPending}
@@ -182,4 +200,43 @@ function monthlyCommitment(days: PeriodDay[]): RecapCommitment | null {
     days: [],
     summary: parts.join(' · ') + '.' + topPart,
   }
+}
+
+/**
+ * The three-month read. The headline is chosen from what actually moved rather
+ * than from a template: a P&L fall that tracks a fall in risk per trade is
+ * de-risking and says so, because reporting only the P&L half of that would
+ * read as a verdict on the trading.
+ */
+function buildQuarter(
+  periods: Array<{ label: string; summary: PeriodSummary }>,
+): { title: string; headline: string; read: QuarterRead } | null {
+  const read = quarterRead(periods)
+  if (!read) return null
+
+  const live = periods.filter(p => p.summary.trades > 0)
+  const first = live[0].summary
+  const last = live[live.length - 1].summary
+  const span = `${live[0].label}–${live[live.length - 1].label}`
+
+  const riskChange =
+    first.avgRisk != null && last.avgRisk != null && first.avgRisk > 0
+      ? Math.round(((last.avgRisk - first.avgRisk) / first.avgRisk) * 100)
+      : null
+  const pnlChange = first.pnl !== 0 ? Math.round(((last.pnl - first.pnl) / Math.abs(first.pnl)) * 100) : null
+
+  let headline: string
+  if (riskChange != null && riskChange <= -10 && pnlChange != null && pnlChange < 0) {
+    headline = `Your risk per trade fell ${Math.abs(riskChange)}%. The P&L fell with it — the trading did not.`
+  } else if (riskChange != null && riskChange <= -10) {
+    headline = `You cut risk per trade ${Math.abs(riskChange)}% and held the result.`
+  } else if (last.avgR != null && first.avgR != null && last.avgR > first.avgR) {
+    headline = 'You are earning more per unit of risk than you were.'
+  } else if (last.avgR != null && first.avgR != null && last.avgR < first.avgR) {
+    headline = 'You are earning less per unit of risk than you were.'
+  } else {
+    headline = 'The measures held broadly steady across the period.'
+  }
+
+  return { title: `The quarter, month by month · ${span}`, headline, read }
 }

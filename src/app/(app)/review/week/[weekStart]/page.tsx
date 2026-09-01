@@ -148,6 +148,10 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
         mfeMae: summary.mfeMae,
         railsKept: summary.railsKept,
         railsDays: summary.railsDays,
+        winRate: summary.winRate,
+        avgR: summary.avgR,
+        rSample: summary.rSample,
+        dollarsPerTrade: summary.dollarsPerTrade,
       }}
       commitment={commitment}
       ledger={{ title: 'The sessions', hint: 'each row opens that day’s review', rows: ledgerRows }}
@@ -348,16 +352,17 @@ function driverAction(b: BaselineRead): string {
 
 function baselineBars(b: BaselineRead) {
   const span = Math.max(Math.abs(b.periodR), Math.abs(b.baselineR), 0.5)
-  const bar = (label: string, r: number, n: number) => ({
+  const bar = (label: string, r: number, n: number, winRate: number | null) => ({
     label,
     value: fmtR(r),
     n,
     pct: Math.round((Math.abs(r) / span) * 100),
     tone: (r >= 0 ? 'pos' : 'neg') as 'pos' | 'neg',
+    winRate,
   })
   return [
-    bar(`${b.label} — this week`, b.periodR, b.periodN),
-    bar(`${b.label} — your usual`, b.baselineR, b.baselineN),
+    bar(`${b.label} — this week`, b.periodR, b.periodN, b.periodWinRate),
+    bar(`${b.label} — your usual`, b.baselineR, b.baselineN, b.baselineWinRate),
   ]
 }
 
