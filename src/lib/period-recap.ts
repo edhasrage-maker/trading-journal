@@ -190,11 +190,19 @@ export interface PeriodSummary {
   avgQuantity: number | null
   /** Instrument roots by trade count, largest first. */
   symbolCounts: Record<string, number>
-  /** Day-level P&L minus the P&L its trades account for, and how many days
-   *  contributed. Non-zero means the book does not reconcile and a per-trade
-   *  comparison cannot be read against the headline P&L. */
-  unloggedPnl: number
-  unloggedDays: number
+  /** Days where a MANUALLY ENTERED day P&L disagrees with the trades logged for
+   *  that day, and by how much.
+   *
+   *  Deliberately narrow, and the narrowness matters. `rollup.eod_pnl` is the
+   *  DISPLAYED P&L, which already falls back to the sum of trades when no
+   *  override exists — so this difference is zero by construction on every day
+   *  the trader did not type a number into. It therefore CANNOT see a session
+   *  missing from the journal entirely, or missing trades on a day with no
+   *  override. It is evidence the book disagrees with itself where both numbers
+   *  exist; it is NOT a measure of how complete the book is, and must never be
+   *  presented as one. */
+  overrideGapPnl: number
+  overrideGapDays: number
 }
 
 export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
@@ -206,7 +214,7 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
   let sumWinR = 0, sumLossR = 0, rSample = 0
   let riskSum = 0, riskN = 0, qtySum = 0, qtyN = 0
   const symbolCounts: Record<string, number> = {}
-  let unloggedPnl = 0, unloggedDays = 0
+  let overrideGapPnl = 0, overrideGapDays = 0
   for (const { rollup: r } of days) {
     const dayPnl = r.eod_pnl ?? null
     if (dayPnl != null) pnl += dayPnl
@@ -241,7 +249,7 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
     }
     if (r.eod_pnl != null && r.logged_trade_pnl != null) {
       const gap = r.eod_pnl - r.logged_trade_pnl
-      if (Math.abs(gap) > 1) { unloggedPnl += gap; unloggedDays++ }
+      if (Math.abs(gap) > 1) { overrideGapPnl += gap; overrideGapDays++ }
     }
   }
   return {
@@ -262,8 +270,8 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
     avgRisk: riskN > 0 ? Math.round(riskSum / riskN) : null,
     avgQuantity: qtyN > 0 ? Math.round((qtySum / qtyN) * 10) / 10 : null,
     symbolCounts,
-    unloggedPnl: Math.round(unloggedPnl),
-    unloggedDays,
+    overrideGapPnl: Math.round(overrideGapPnl),
+    overrideGapDays,
   }
 }
 
@@ -556,13 +564,12 @@ export interface QuarterRow {
 export interface QuarterRead {
   labels: string[]
   rows: QuarterRow[]
-  /** Total day-level P&L the trade log does not account for, across all periods,
-   *  and how many days contributed. Non-zero means the per-trade rows cannot be
-   *  reconciled against the P&L row and the table must say so. */
-  unloggedPnl: number
-  unloggedDays: number
-  /** Per-period gap, for naming which months are affected. */
-  unloggedByPeriod: Array<{ label: string; pnl: number; days: number }>
+  /** Days whose typed P&L disagrees with their logged trades. See
+   *  `PeriodSummary.overrideGapPnl` for what this can and cannot detect. */
+  overrideGapPnl: number
+  overrideGapDays: number
+  /** Per-period, for naming which ones are affected. */
+  overrideGapByPeriod: Array<{ label: string; pnl: number; days: number }>
 }
 
 /** Largest instrument root and its share, e.g. "MES 82%". Null with no trades. */
@@ -728,10 +735,10 @@ export function quarterRead(periods: Array<{ label: string; summary: PeriodSumma
   return {
     labels,
     rows,
-    unloggedPnl: s.reduce((a, x) => a + x.unloggedPnl, 0),
-    unloggedDays: s.reduce((a, x) => a + x.unloggedDays, 0),
-    unloggedByPeriod: withTrades
-      .map(p => ({ label: p.label, pnl: p.summary.unloggedPnl, days: p.summary.unloggedDays }))
+    overrideGapPnl: s.reduce((a, x) => a + x.overrideGapPnl, 0),
+    overrideGapDays: s.reduce((a, x) => a + x.overrideGapDays, 0),
+    overrideGapByPeriod: withTrades
+      .map(p => ({ label: p.label, pnl: p.summary.overrideGapPnl, days: p.summary.overrideGapDays }))
       .filter(x => x.days > 0),
   }
 }

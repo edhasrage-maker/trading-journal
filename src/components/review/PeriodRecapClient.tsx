@@ -348,18 +348,22 @@ export default function PeriodRecapClient(p: RecapProps) {
             {p.quarter.headline}
           </h3>
 
-          {p.quarter.read.unloggedDays > 0 && (
-            <div className="mt-4 border border-amber-900/60 bg-amber-950/25 rounded-sm px-4 py-3 max-w-[76ch]">
+          {p.quarter.read.overrideGapDays > 0 && (
+            <div className="mt-4 border border-amber-900/60 bg-amber-950/25 rounded-sm px-4 py-3 max-w-[78ch]">
               <div className="text-[11px] uppercase tracking-[0.06em] text-amber-500/90" style={{ fontFamily: 'var(--font-mono)' }}>
                 Read this comparison carefully
               </div>
               <p className="text-[13.5px] text-gray-300 mt-1.5 leading-relaxed">
-                {p.quarter.read.unloggedByPeriod
+                {p.quarter.read.overrideGapByPeriod
                   .map(u => `${u.label} ${u.pnl >= 0 ? '+' : '−'}$${Math.abs(u.pnl).toLocaleString()} over ${u.days} day${u.days === 1 ? '' : 's'}`)
                   .join(', ')}
-                {' '}carr{p.quarter.read.unloggedByPeriod.length === 1 ? 'ies' : 'y'} P&amp;L the trade log does not
-                account for. The P&amp;L row below is day level and the per-trade rows are trade level, so they will not
-                reconcile for those periods — part of any move you see there is a logging gap, not a trading result.
+                {' '}typed a day P&amp;L that disagrees with the trades logged that day. Where the two disagree, the
+                P&amp;L row is day level and the per-trade rows are trade level, so they will not reconcile.
+              </p>
+              <p className="text-[12.5px] text-gray-500 mt-2 leading-relaxed">
+                This check only compares days you entered a P&amp;L for by hand. A session missing from the journal
+                altogether, or missing trades on a day you did not override, cannot show up here — so treat it as
+                evidence the book disagrees with itself, never as proof the book is complete.
               </p>
             </div>
           )}
