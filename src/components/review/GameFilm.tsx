@@ -33,6 +33,10 @@ export interface FilmFrame {
   /** 0–100 or null. */
   capture: number | null
   setups: string[]
+  /** Every tag on the trade, grouped and ordered for display. Built server-side
+   *  so the client never handles raw tags_json. Shown in the zoomed view: full
+   *  screen is precisely when the row you opened it from is off the page. */
+  tags: Array<{ label: string; items: string[]; danger?: boolean }>
   read: string | null
   verdict: TradeVerdict | null
 }
@@ -211,7 +215,38 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
       {/* Same lightbox as the trade list and the shared session: fit → 100% →
           200%, drag to pan, Esc to close. It already existed; Game film simply
           never reached for it. */}
-      <ScreenshotLightbox src={zoomSrc} onClose={() => setZoomSrc(null)} />
+      <ScreenshotLightbox
+        src={zoomSrc}
+        onClose={() => setZoomSrc(null)}
+        meta={
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-baseline gap-2 text-[12px] text-gray-400">
+              <span className="text-gray-200">{f.day} {f.time}</span>
+              {f.symbol && <span className="font-mono">{f.symbol}</span>}
+              {f.pnl != null && (
+                <span className={f.pnl >= 0 ? 'text-green-400' : 'text-red-400'}>{fmtUsd(f.pnl)}</span>
+              )}
+              {f.r != null && <span className="text-gray-300">{fmtR(f.r)}</span>}
+            </div>
+            {f.tags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1">
+                {f.tags.flatMap(g => g.items.map(it => (
+                  <span
+                    key={`${g.label}-${it}`}
+                    title={g.label}
+                    className={cn(
+                      'text-[11px] px-1.5 py-0.5 rounded-full border',
+                      g.danger
+                        ? 'border-red-800/60 text-red-300 bg-red-950/30'
+                        : 'border-gray-700 text-gray-300 bg-gray-800/60',
+                    )}
+                  >{it}</span>
+                )))}
+              </div>
+            )}
+          </div>
+        }
+      />
     </div>
   )
 }

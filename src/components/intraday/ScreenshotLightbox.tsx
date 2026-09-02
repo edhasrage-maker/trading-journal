@@ -28,9 +28,16 @@ import { X, ZoomIn, ZoomOut } from 'lucide-react'
 export default function ScreenshotLightbox({
   src,
   onClose,
+  meta,
 }: {
   src: string | null
   onClose: () => void
+  /** Optional context strip pinned to the bottom-left — the trade's tags, say.
+   *  Zooming in is exactly when you stop being able to see the row you opened
+   *  it from, so the facts that frame the picture have to travel with it. It
+   *  hides while dragging, never takes pointer events (so the backdrop still
+   *  closes on click), and is simply absent when nothing is passed. */
+  meta?: React.ReactNode
 }) {
   // Zoom level cycles 0 (fit) → 1 (100%) → 2 (200%) → 0. Reset whenever a new
   // src arrives so opening another screenshot starts from fit.
@@ -200,6 +207,14 @@ export default function ScreenshotLightbox({
         />
         </div>
       </div>
+
+      {meta && !isDragging && (
+        <div className="absolute bottom-3 left-3 right-3 sm:right-auto sm:max-w-[70vw] pointer-events-none">
+          <div className="bg-gray-900/90 border border-gray-700 rounded-lg px-3 py-2 shadow-lg">
+            {meta}
+          </div>
+        </div>
+      )}
 
       {/* Top-right controls — zoom level indicator, +/-, and close. */}
       <div className="absolute top-3 right-3 flex items-center gap-2">

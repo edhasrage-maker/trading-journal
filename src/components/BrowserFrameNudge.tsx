@@ -37,6 +37,9 @@ function dataUrlToBlob(dataUrl: string): Blob {
 interface Props {
   tradeId: string
   entryTimeIso: string
+  /** The trade's exit, when it has one. Lets the scrubber jump to how the trade
+   *  actually resolved rather than only to the moment you committed. */
+  exitTimeIso?: string | null
   /** Existing recording_commentary, preserved on save (commentary text, levels). */
   recordingCommentary?: Trade['recording_commentary']
   /** Filename recorded on a previous save — a hint of which clip to pick. */
@@ -48,7 +51,7 @@ interface Props {
 }
 
 export default function BrowserFrameNudge({
-  tradeId, entryTimeIso, recordingCommentary, suggestedFileName, initialDelta = 0, onSaved, onClose,
+  tradeId, entryTimeIso, exitTimeIso, recordingCommentary, suggestedFileName, initialDelta = 0, onSaved, onClose,
 }: Props) {
   const rec = useRecording()
   const [delta, setDelta] = useState(initialDelta)
@@ -61,10 +64,19 @@ export default function BrowserFrameNudge({
   const reqToken = useRef(0)
 
   const entryMs = Date.parse(entryTimeIso)
+  const exitMs = exitTimeIso ? Date.parse(exitTimeIso) : NaN
+  const hasExit = Number.isFinite(exitMs) && exitMs > entryMs
+  // Which moment the scrubber is anchored to. Entry answers "what did I see when
+  // I committed"; exit answers "how did it actually play out", which is the
+  // question you are really asking in review and which the frame grabber could
+  // always have answered — the offset is arithmetic on a timestamp the trade
+  // already carries. `delta` still nudges around whichever anchor is chosen.
+  const [anchorAt, setAnchorAt] = useState<'entry' | 'exit'>('entry')
+  const baseMs = anchorAt === 'exit' && hasExit ? exitMs : entryMs
   const ready = rec.status === 'ready' && rec.grabber != null && rec.anchorMs != null
-  // Where in the shared recording this trade's entry falls, plus the user's nudge.
-  const offsetSec = ready && Number.isFinite(entryMs)
-    ? (entryMs - rec.anchorMs!) / 1000 + delta
+  // Where in the shared recording that moment falls, plus the user's nudge.
+  const offsetSec = ready && Number.isFinite(baseMs)
+    ? (baseMs - rec.anchorMs!) / 1000 + delta
     : null
   const inRange = offsetSec != null && offsetSec >= 0 && offsetSec <= rec.duration
 
@@ -158,7 +170,31 @@ export default function BrowserFrameNudge({
   return (
     <div className="bg-gray-950/60 border border-gray-700 rounded-lg p-3 space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-gray-300">Adjust entry frame</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold text-gray-300">
+            Adjust {anchorAt === 'exit' ? 'exit' : 'entry'} frame
+          </span>
+          {/* Only offered when the trade actually closed. On an open position
+              there is no exit to seek to, and a dead toggle is worse than none. */}
+          {hasExit && (
+            <div className="flex items-center rounded border border-gray-700 overflow-hidden">
+              {(['entry', 'exit'] as const).map(k => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => { setAnchorAt(k); setDelta(0) }}
+                  aria-pressed={anchorAt === k}
+                  title={k === 'entry'
+                    ? 'The moment you committed'
+                    : 'How the trade actually resolved'}
+                  className={`px-1.5 py-0.5 text-[10px] capitalize transition-colors ${
+                    anchorAt === k ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800'
+                  }`}
+                >{k}</button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {ready && (
             <button

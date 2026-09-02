@@ -489,6 +489,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       <BrowserFrameNudge
         tradeId={trade!.id}
         entryTimeIso={trade!.entry_time!}
+        exitTimeIso={trade!.exit_time ?? null}
         recordingCommentary={trade!.recording_commentary}
         suggestedFileName={recVideoFile}
         initialDelta={recDelta}

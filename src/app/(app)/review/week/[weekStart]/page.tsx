@@ -164,9 +164,34 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
   )
 }
 
+/** tags_json → the display groups Game film shows over a zoomed screenshot.
+ *  Same categories and same order the shared session and the trade table use,
+ *  so one trade reads identically wherever you meet it. Mistakes carry `danger`
+ *  because they are the one group you want to see before the others. */
+const FILM_TAG_CATS: Array<{ key: string; label: string; danger?: boolean }> = [
+  { key: 'setups', label: 'Setup' },
+  { key: 'confluences', label: 'Confluence' },
+  { key: 'order_flow', label: 'Order flow' },
+  { key: 'entry_model', label: 'Entry' },
+  { key: 'trade_management', label: 'Management' },
+  { key: 'emotions', label: 'Emotion' },
+  { key: 'mistakes', label: 'Mistake', danger: true },
+]
+function filmTags(tags: unknown): FilmFrame['tags'] {
+  if (!tags || typeof tags !== 'object' || Array.isArray(tags)) return []
+  const t = tags as Record<string, unknown>
+  return FILM_TAG_CATS
+    .map(c => ({
+      label: c.label,
+      danger: c.danger,
+      items: Array.isArray(t[c.key]) ? (t[c.key] as unknown[]).filter((v): v is string => typeof v === 'string' && v !== '') : [],
+    }))
+    .filter(g => g.items.length > 0)
+}
 /** The week's screenshot catalog. One query for the week's trades (lean
  *  fields + review_json), one batched sign for the storage URLs. Trades
  *  without a screenshot are counted, not shown. */
+
 async function buildFilm(
   supabase: AnyClient,
   days: PeriodDay[],
@@ -244,6 +269,7 @@ async function buildFilm(
       r: rMultiple(r as unknown as TradeWithExcursion),
       capture: cap != null ? Math.round(cap * 100) : null,
       setups: Array.isArray(r.tags_json?.setups) ? r.tags_json!.setups!.filter(Boolean) : [],
+      tags: filmTags(r.tags_json),
       read: day && day.day_types.length > 0 ? displayDayTypes(day.day_types) : null,
       verdict: r.review_json?.verdict ?? null,
     })
