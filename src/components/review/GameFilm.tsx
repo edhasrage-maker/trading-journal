@@ -72,28 +72,35 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
   // Full-screen view of the current frame. These are dense Sierra layouts —
   // footprint, delta ladders, a volume profile — shrunk into a card; the whole
   // point of reviewing one is reading numbers that a 70vh fit makes illegible.
-  const [zoomSrc, setZoomSrc] = useState<string | null>(null)
+  // Open/closed rather than which-picture: the lightbox renders whatever frame
+  // is current, so flipping while zoomed swaps the image under it for free.
+  const [zoomOpen, setZoomOpen] = useState(false)
+  // Bumped only when the lightbox is OPENED. Zoom resets on this, not on src,
+  // so a flip keeps the zoom level instead of dropping back to Fit each time.
+  const [zoomSession, setZoomSession] = useState(0)
 
   useEffect(() => {
     if (n < 2) return
     const onKey = (e: KeyboardEvent) => {
-      // While the lightbox owns the screen, the arrows are its own (pan) — and
-      // flipping the frame underneath it would swap the picture out from under
-      // whoever is reading it.
-      if (zoomSrc) return
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      const el = containerRef.current
-      if (!el) return
-      const r = el.getBoundingClientRect()
-      const onScreen = r.bottom > 0 && r.top < window.innerHeight
-      if (!onScreen) return
+      // The lightbox is a fixed overlay and pans by drag, not by arrow, so the
+      // arrows stay free to flip frames there too — being zoomed in is exactly
+      // when you want to step through trades without dropping back out. The
+      // visibility test only applies to the inline catalog.
+      if (!zoomOpen) {
+        const el = containerRef.current
+        if (!el) return
+        const r = el.getBoundingClientRect()
+        const onScreen = r.bottom > 0 && r.top < window.innerHeight
+        if (!onScreen) return
+      }
       if (e.key === 'ArrowRight') { e.preventDefault(); go(1) }
       if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [go, n, zoomSrc])
+  }, [go, n, zoomOpen])
 
   if (n === 0) {
     return (
@@ -138,7 +145,7 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
         <img
           src={f.src}
           alt={`${f.day} ${f.time} trade screenshot`}
-          onClick={() => setZoomSrc(f.src)}
+          onClick={() => { setZoomOpen(true); setZoomSession(v => v + 1) }}
           title="Click to open full screen — then click again for 100% and 200%"
           className="block w-full max-h-[70vh] object-contain mx-auto cursor-zoom-in"
           draggable={false}
@@ -216,8 +223,9 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
           200%, drag to pan, Esc to close. It already existed; Game film simply
           never reached for it. */}
       <ScreenshotLightbox
-        src={zoomSrc}
-        onClose={() => setZoomSrc(null)}
+        src={zoomOpen ? f.src : null}
+        zoomResetKey={zoomSession}
+        onClose={() => setZoomOpen(false)}
         meta={
           <div className="flex flex-col gap-1.5">
             <div className="flex items-baseline gap-2 text-[12px] text-gray-400">
@@ -227,6 +235,11 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
                 <span className={f.pnl >= 0 ? 'text-green-400' : 'text-red-400'}>{fmtUsd(f.pnl)}</span>
               )}
               {f.r != null && <span className="text-gray-300">{fmtR(f.r)}</span>}
+              {n > 1 && (
+                <span className="text-gray-500">
+                  {idx + 1} of {n} · ← → to flip
+                </span>
+              )}
             </div>
             {f.tags.length > 0 && (
               <div className="flex flex-wrap items-center gap-1">

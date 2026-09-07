@@ -29,6 +29,7 @@ export default function ScreenshotLightbox({
   src,
   onClose,
   meta,
+  zoomResetKey,
 }: {
   src: string | null
   onClose: () => void
@@ -38,6 +39,12 @@ export default function ScreenshotLightbox({
    *  hides while dragging, never takes pointer events (so the backdrop still
    *  closes on click), and is simply absent when nothing is passed. */
   meta?: React.ReactNode
+  /** Identifies the OPEN, not the picture. Zoom resets when this changes, so a
+   *  caller that swaps `src` while the lightbox stays open — flipping between
+   *  frames in a catalog — keeps the zoom level the reader chose, instead of
+   *  dropping back to Fit on every flip and making them re-zoom each time.
+   *  Left undefined it falls back to `src`, the original per-image behaviour. */
+  zoomResetKey?: string | number
 }) {
   // Zoom level cycles 0 (fit) → 1 (100%) → 2 (200%) → 0. Reset whenever a new
   // src arrives so opening another screenshot starts from fit.
@@ -56,10 +63,17 @@ export default function ScreenshotLightbox({
   const movedRef = useRef(false)
   const [isDragging, setIsDragging] = useState(false)
 
+  const resetKey = zoomResetKey ?? src
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: reset zoom when a NEW screenshot opens so each modal starts at Fit
     setZoom(0)
-    // Drop the previous image's intrinsic size; the new one reports its own on load.
+  }, [resetKey])
+
+  useEffect(() => {
+    // Always drop the previous image's intrinsic size, even on a flip that
+    // keeps the zoom level: displayW/H are computed from it, so a stale value
+    // would size the incoming image to the outgoing one until it loads.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: the new image reports its own size on load
     setNatural(null)
   }, [src])
 
