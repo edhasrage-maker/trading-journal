@@ -78,6 +78,9 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
   // Bumped only when the lightbox is OPENED. Zoom resets on this, not on src,
   // so a flip keeps the zoom level instead of dropping back to Fit each time.
   const [zoomSession, setZoomSession] = useState(0)
+  // Unsaved edits, per trade. Held here so the row can render inline or inside
+  // the zoom overlay without the draft dying in the move.
+  const [drafts, setDrafts] = useState<Record<string, { call: TradeVerdict['call'] | null; note: string }>>({})
 
   useEffect(() => {
     if (n < 2) return
@@ -112,6 +115,26 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
   }
 
   const f = frames[Math.min(idx, n - 1)]
+  const saved = verdicts[f.tradeId] ?? null
+  const draft = drafts[f.tradeId] ?? { call: saved?.call ?? null, note: saved?.note ?? '' }
+  const verdictRow = (compact: boolean) => (
+    <VerdictRow
+      key={f.tradeId}
+      tradeId={f.tradeId}
+      value={saved}
+      draft={draft}
+      onDraft={d => setDrafts(prev => ({ ...prev, [f.tradeId]: d }))}
+      compact={compact}
+      migrationPending={migrationPending}
+      onSaved={v => {
+        setVerdicts(prev => ({ ...prev, [f.tradeId]: v }))
+        // The saved value is now the draft; drop the override so the row
+        // reads clean rather than staying permanently "dirty".
+        setDrafts(prev => { const next = { ...prev }; delete next[f.tradeId]; return next })
+      }}
+      onNext={n > 1 ? () => go(1) : undefined}
+    />
+  )
   const labelled = frames.filter(fr => verdicts[fr.tradeId]).length
 
   return (
@@ -168,15 +191,9 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
         )}
       </div>
 
-      {/* Verdict — the one affordance */}
-      <VerdictRow
-        key={f.tradeId}
-        tradeId={f.tradeId}
-        value={verdicts[f.tradeId] ?? null}
-        migrationPending={migrationPending}
-        onSaved={v => setVerdicts(prev => ({ ...prev, [f.tradeId]: v }))}
-        onNext={n > 1 ? () => go(1) : undefined}
-      />
+      {/* Verdict — the one affordance. Hidden while zoomed, where the same row
+          renders inside the overlay instead. */}
+      {!zoomOpen && verdictRow(false)}
 
       {/* The strip — stills with one perforated edge */}
       <div className="mt-4 relative">
@@ -226,6 +243,7 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
         src={zoomOpen ? f.src : null}
         zoomResetKey={zoomSession}
         onClose={() => setZoomOpen(false)}
+        actions={verdictRow(true)}
         meta={
           <div className="flex flex-col gap-1.5">
             <div className="flex items-baseline gap-2 text-[12px] text-gray-400">
@@ -264,15 +282,26 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
   )
 }
 
-function VerdictRow({ tradeId, value, migrationPending, onSaved, onNext }: {
+function VerdictRow({ tradeId, value, migrationPending, onSaved, onNext, draft, onDraft, compact }: {
   tradeId: string
   value: TradeVerdict | null
   migrationPending: boolean
   onSaved: (v: TradeVerdict | null) => void
   onNext?: () => void
+  /** The in-progress edit, held by the parent. This row renders in two places —
+   *  inline under the frame, and inside the zoom overlay — and a draft kept in
+   *  local state would be thrown away every time you zoomed in to look closer
+   *  at the thing you were describing. */
+  draft: { call: TradeVerdict['call'] | null; note: string }
+  onDraft: (d: { call: TradeVerdict['call'] | null; note: string }) => void
+  /** Zoomed presentation: the controls wrap onto their own line so the note
+   *  field gets the full width on a phone. */
+  compact?: boolean
 }) {
-  const [call, setCall] = useState<TradeVerdict['call'] | null>(value?.call ?? null)
-  const [note, setNote] = useState(value?.note ?? '')
+  const call = draft.call
+  const note = draft.note
+  const setCall = (c: TradeVerdict['call'] | null) => onDraft({ call: c, note })
+  const setNote = (t: string) => onDraft({ call, note: t })
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const dirty = call !== (value?.call ?? null) || note !== (value?.note ?? '')
@@ -300,9 +329,9 @@ function VerdictRow({ tradeId, value, migrationPending, onSaved, onNext }: {
   }
 
   return (
-    <div className="mt-3 flex items-center gap-3 flex-wrap">
+    <div className={cn('flex items-center gap-3 flex-wrap', compact ? 'mt-0' : 'mt-3')}>
       <span className="text-[12.5px] text-gray-500 whitespace-nowrap">Your call</span>
-      <div className="inline-flex border border-gray-700 rounded overflow-hidden text-[12.5px]">
+      <div className={cn('inline-flex border border-gray-700 rounded overflow-hidden', compact ? 'text-[13px]' : 'text-[12.5px]')}>
         {(Object.keys(CALL_META) as TradeVerdict['call'][]).map(k => (
           <button
             key={k}
@@ -310,7 +339,8 @@ function VerdictRow({ tradeId, value, migrationPending, onSaved, onNext }: {
             onClick={() => setCall(k)}
             aria-pressed={call === k}
             className={cn(
-              'px-3 py-1 border-r border-gray-700 last:border-r-0 transition-colors',
+              'border-r border-gray-700 last:border-r-0 transition-colors',
+              compact ? 'px-4 py-2' : 'px-3 py-1',
               call === k
                 ? cn('bg-gray-800 shadow-[inset_0_-2px_0_currentColor]', CALL_META[k].cls)
                 : 'text-gray-500 hover:text-gray-300',
@@ -327,7 +357,10 @@ function VerdictRow({ tradeId, value, migrationPending, onSaved, onNext }: {
         onKeyDown={e => { if (e.key === 'Enter' && call && dirty && !saving) save() }}
         placeholder="One line — what you see in hindsight"
         maxLength={500}
-        className="flex-1 min-w-[220px] bg-gray-900 border border-gray-800 text-gray-200 rounded px-3 py-1.5 text-[13px] placeholder-gray-600 focus:outline-none focus:border-gray-600"
+        className={cn(
+          'flex-1 bg-gray-900 border border-gray-800 text-gray-200 rounded placeholder-gray-600 focus:outline-none focus:border-gray-600',
+          compact ? 'min-w-full sm:min-w-[220px] px-3 py-2.5 text-[16px]' : 'min-w-[220px] px-3 py-1.5 text-[13px]',
+        )}
       />
       <GhostButton onClick={save} disabled={!call || !dirty || saving}>{saving ? 'Saving…' : 'Save'}</GhostButton>
       {status && <span className={cn('text-[12px]', status === 'Saved' ? 'text-green-400' : 'text-red-400')}>{status}</span>}
