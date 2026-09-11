@@ -49,6 +49,41 @@ OBS commentary) are hidden in the cloud build and untouched in your local build.
    - **Redirect URLs:** add `https://<your-vercel-url>/auth/callback`.
    - (You can come back and fill these once Vercel gives you the URL.)
 
+### 4b. Google sign-in — brand the consent screen BEFORE inviting anyone
+
+Supabase hosts the OAuth callback, so Google's consent screen is configured in
+**Google Cloud**, not in this repo and not in Supabase. `redirectTo` in
+`AuthCard.tsx` only says where *our* app resumes afterwards — Google never sees
+it, and no code change can alter that screen.
+
+An OAuth client with no **App name** set makes Google fall back to the host of
+the authorized redirect URI. Because that URI is
+`https://<project-ref>.supabase.co/auth/v1/callback`, a new user is asked to
+sign in to `dmutgkycrjudfejswvhg.supabase.co` — a random-looking string with no
+connection to the product. People decline that, correctly. This happened to a
+real tester on the live project; it is the first thing to fix on any new
+environment.
+
+1. Google Cloud Console → **APIs & Services → OAuth consent screen → Branding**:
+   - **App name:** `TapeScore` — this alone changes the headline to
+     "Sign in to TapeScore".
+   - App logo, support email, homepage, privacy policy and terms links.
+2. **Audience / Publishing status:** "Testing" allows only explicitly-listed
+   test users, capped at 100. Move to **In production** before a public invite.
+   Our scopes are `email` / `profile` / `openid`, all non-sensitive, so Google
+   does NOT require a verification review and users see no "unverified app"
+   warning — publishing is enough.
+3. **Credentials → OAuth 2.0 Client ID → Authorized redirect URIs:** must include
+   `https://<project-ref>.supabase.co/auth/v1/callback`.
+4. Supabase → Authentication → Providers → **Google**: paste the client ID and
+   secret.
+
+The line *under* the headline ("Google will allow …supabase.co to access this
+info") comes from the redirect host, so branding will not change it. Making that
+read `tapescore.app` requires Supabase's **Custom Domain** add-on (paid): move
+auth to e.g. `auth.tapescore.app`, then update the authorized redirect URI in
+Google and the Site URL in Supabase to match.
+
 ## 5. Deploy to Vercel
 1. Push the branch (already done if you pulled): `feat/public-testing-mvp`.
 2. vercel.com → New Project → import the GitHub repo → select that branch.
