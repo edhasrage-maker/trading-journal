@@ -644,3 +644,37 @@ drop policy if exists "Owner access" on public.condition_lookup_meta;
 create policy "Owner access" on public.condition_lookup_meta
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 -- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 14. Session volume profile (shared market data, tick-true).
+-- ----------------------------------------------------------------------------
+-- See migrations/20260914_session_volume_profile.public.sql for the reasoning:
+-- a profile smeared from 1-minute bars misplaces the POC, so the .scid feed
+-- publishes the real one. Readable by anon (share links draw it), written only
+-- by the service-role feed.
+create table if not exists public.session_volume_profile (
+  symbol       text        not null,                 -- mini root: 'ES', 'NQ'
+  date         date        not null,                 -- PT session date
+  session      text        not null default 'rth',
+  tick         numeric     not null,
+  rows         jsonb       not null,
+  poc          numeric     not null,
+  vah          numeric     not null,
+  val          numeric     not null,
+  total_volume bigint      not null,
+  trades       bigint      not null,
+  source       text        not null default 'scid',
+  computed_at  timestamptz not null default now(),
+  primary key (symbol, date, session)
+);
+
+comment on table public.session_volume_profile is
+  'Tick-true session volume profile per mini root and PT date, published by the central .scid feed. rows = [[price, volume, ask, bid], ...] ascending.';
+
+alter table public.session_volume_profile enable row level security;
+
+drop policy if exists "Shared read" on public.session_volume_profile;
+create policy "Shared read" on public.session_volume_profile
+  for select to anon, authenticated using (true);
+
+grant select on public.session_volume_profile to anon, authenticated;

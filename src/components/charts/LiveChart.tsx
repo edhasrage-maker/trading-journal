@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2, Pencil, Type as TypeIcon, Highlighter, Eye, EyeOff } from 'lucide-react'
+import { Loader2, AlertCircle, Database, Settings2, X, Activity, Square, Trash2, Pencil, Type as TypeIcon, Highlighter, Eye, EyeOff, AlignRight } from 'lucide-react'
 import {
   createChart,
   CandlestickSeries,
@@ -16,6 +16,7 @@ import {
 } from 'lightweight-charts'
 import { TradeArrowsPrimitive, type TradeArrow } from './TradeArrowsPrimitive'
 import { AnnotationsPrimitive, type ChartAnnotation, type AnnGeom, type TradeHighlight } from './AnnotationsPrimitive'
+import { VolumeProfilePrimitive, PROFILE_WIDTH_DEFAULT, PROFILE_WIDTH_MIN, PROFILE_WIDTH_MAX, type ProfileDrawData } from './VolumeProfilePrimitive'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import type { Trade } from '@/lib/supabase/types'
 import type { SessionLevels, LevelSeriesPoint, SessionKind } from '@/lib/session-levels'
@@ -106,6 +107,11 @@ export interface ChartPrefs {
   emaTimeframeMins: number
   showLevels: boolean
   hiddenLevels: string[]
+  /** Session volume profile underlay. Only offered when a tick-true profile
+   *  exists for the session; see /api/bars/profile. */
+  showProfile: boolean
+  /** Share of the pane width the widest profile row reaches (0.1–0.6). */
+  profileWidth: number
 }
 const DEFAULT_PREFS: ChartPrefs = {
   background: '#030712',
@@ -122,6 +128,8 @@ const DEFAULT_PREFS: ChartPrefs = {
   emaTimeframeMins: 5,
   showLevels: true,
   hiddenLevels: [],
+  showProfile: true,
+  profileWidth: PROFILE_WIDTH_DEFAULT,
 }
 const PREFS_KEY = 'livechart-prefs-v2'
 // Per-(symbol, date) active-TF persistence. Each calendar day remembers its own
@@ -361,6 +369,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // on, the overlay captures the mouse: right-click opens a tool menu (draw /
   // type / recolor / delete), left-drag draws a zone once armed.
   const annotationsPrimRef = useRef<AnnotationsPrimitive | null>(null)
+  const profilePrimRef = useRef<VolumeProfilePrimitive | null>(null)
+  // Last profile handed to the primitive — replayed onto the fresh primitive
+  // each time the chart is rebuilt (timeframe / height change).
+  const profileDrawRef = useRef<{ data: ProfileDrawData | null; width: number }>({ data: null, width: PROFILE_WIDTH_DEFAULT })
   const [annotations, setAnnotations] = useState<ChartAnnotation[]>([])
   const [drawingMode, setDrawingMode] = useState(false)
   const [armedTool, setArmedTool] = useState<'zone' | null>(null)
@@ -907,6 +919,12 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     candleRef.current.attachPrimitive(tradeArrowsRef.current)
     annotationsPrimRef.current = new AnnotationsPrimitive()
     candleRef.current.attachPrimitive(annotationsPrimRef.current)
+    // Volume profile — its pane view is zOrder 'bottom', so it renders beneath
+    // the candles regardless of attach order. The chart is rebuilt on every
+    // timeframe change, so hand the new primitive whatever was last showing.
+    profilePrimRef.current = new VolumeProfilePrimitive()
+    candleRef.current.attachPrimitive(profilePrimRef.current)
+    profilePrimRef.current.setData(profileDrawRef.current.data, profileDrawRef.current.width)
     // VWAP/EMA overlays must NOT drive the price axis — on a trend day the
     // session-anchored VWAP sits far from the candles and would blow out the
     // vertical scale (squashing the candles). Returning null keeps the price
@@ -1010,6 +1028,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       ema20Ref.current = null
       tradeArrowsRef.current = null
       annotationsPrimRef.current = null
+      profilePrimRef.current = null
     }
   }, [effHeight, chartTfMins])
 
@@ -1699,6 +1718,37 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     annotationsPrimRef.current?.setData(annotations.map(a => ({ ...a, selected: a.id === selectedAnnId })))
   }, [annotations, selectedAnnId])
 
+  // ── Volume profile ─────────────────────────────────────────────────────
+  // The session's tick-true RTH profile. Null whenever no true profile exists
+  // (before the open, a date older than the feed, table not migrated) — and
+  // then the Profile toggle doesn't render at all, rather than offering a
+  // switch that draws nothing. Refetches on the poll tick so today's profile
+  // develops through the session the way Sierra's does.
+  const [profile, setProfile] = useState<ProfileDrawData | null>(null)
+  useEffect(() => {
+    if (!symbol) { setProfile(null); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/bars/profile?symbol=${encodeURIComponent(symbol)}&date=${date}`)
+        if (!res.ok) { if (!cancelled) setProfile(null); return }
+        const { profile: p } = await res.json() as { profile: ProfileDrawData | null }
+        if (!cancelled) setProfile(p && Array.isArray(p.rows) && p.rows.length > 0 ? p : null)
+      } catch { if (!cancelled) setProfile(null) }
+    })()
+    return () => { cancelled = true }
+  }, [symbol, date, refreshKey, pollTick])
+
+  // Push into the primitive. Declared AFTER the chart-creation effect on
+  // purpose, and keyed on the same effHeight/chartTfMins: React runs effects in
+  // declaration order, so on a timeframe change the chart is rebuilt first and
+  // this then repaints the profile onto the new instance.
+  useEffect(() => {
+    const data = prefs.showProfile ? profile : null
+    profileDrawRef.current = { data, width: prefs.profileWidth }
+    profilePrimRef.current?.setData(data, prefs.profileWidth)
+  }, [profile, prefs.showProfile, prefs.profileWidth, effHeight, chartTfMins])
+
   // Esc closes menus / disarms / clears selection. Delete or Backspace removes
   // the selected annotation (unless typing in a field — e.g. the text editor).
   useEffect(() => {
@@ -2019,6 +2069,27 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             {prefs.showLevels ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
             Levels
           </button>
+          {/* Volume profile toggle. Only rendered when a tick-true profile exists
+              for this session — a switch that draws nothing is worse than no
+              switch. Width lives in the settings popover. */}
+          {profile && (
+            <button
+              type="button"
+              onClick={() => updatePref({ showProfile: !prefs.showProfile })}
+              aria-pressed={prefs.showProfile}
+              title={prefs.showProfile
+                ? `Hide the session volume profile (POC ${profile.poc}) — width in chart settings`
+                : 'Show the session volume profile'}
+              className={`flex items-center gap-1 rounded px-1.5 py-0.5 border transition-colors ${
+                prefs.showProfile
+                  ? 'border-blue-700 bg-blue-950/60 text-blue-300 hover:bg-blue-900/60'
+                  : 'border-transparent text-gray-500 hover:text-gray-200 hover:bg-gray-800'
+              }`}
+            >
+              <AlignRight className="w-3 h-3" />
+              Profile
+            </button>
+          )}
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.vwapColor }} />VWAP</span>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema9Color }} />EMA 9</span>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema20Color }} />EMA 20</span>
@@ -2089,6 +2160,34 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                       {TZ_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
                     </select>
                   </label>
+
+                  {/* Volume profile controls — only when there's a profile to size. */}
+                  {profile && (
+                    <div className="border-t border-gray-800 pt-2 mt-1 space-y-2">
+                      <label className="flex items-center justify-between">
+                        <span>Volume profile</span>
+                        <input type="checkbox" checked={prefs.showProfile} onChange={e => updatePref({ showProfile: e.target.checked })} className="accent-blue-600" />
+                      </label>
+                      <label className="block">
+                        <span className="flex items-center justify-between">
+                          <span>Profile width</span>
+                          <span className="font-mono text-[11px] text-gray-400">{Math.round(prefs.profileWidth * 100)}%</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={Math.round(PROFILE_WIDTH_MIN * 100)}
+                          max={Math.round(PROFILE_WIDTH_MAX * 100)}
+                          step={2}
+                          value={Math.round(prefs.profileWidth * 100)}
+                          onChange={e => updatePref({ profileWidth: Number(e.target.value) / 100, showProfile: true })}
+                          disabled={!prefs.showProfile}
+                          className="w-full accent-blue-600 mt-1 disabled:opacity-40"
+                          aria-label="Volume profile width, as a share of the chart"
+                        />
+                      </label>
+                      <p className="text-[10px] text-gray-500">How far the widest row reaches across the chart. Candles always draw on top.</p>
+                    </div>
+                  )}
 
                   {/* Session levels controls */}
                   <div className="border-t border-gray-800 pt-2 mt-1 space-y-2">
