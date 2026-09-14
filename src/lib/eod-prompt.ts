@@ -18,6 +18,7 @@ import path from 'path'
 // TS path aliases from tsconfig. Next.js + Webpack handle both fine.
 import type { PrepNotes, AiAnalysis, Trade, MarketContext, EodAiAnalysis, RuleId } from './supabase/types.ts'
 import { symbolToMultiplier } from './futures-symbols.ts'
+import { isOutsideRth } from './rth.ts'
 import { CAPTURE_UNITS_DISCIPLINE } from './coach-methodology.ts'
 import { computeSessionFacts, sessionFactsBlock } from './session-facts.ts'
 import {
@@ -388,7 +389,19 @@ export function buildEodPrompt({
         const atr = (t as { entry_atr_1m?: number | null }).entry_atr_1m
         const dtRaw = (t.tags_json as { day_type?: unknown } | null | undefined)?.day_type
         const dts = Array.isArray(dtRaw) ? dtRaw : (dtRaw ? [dtRaw] : [])
-        const isGbx = dts.some(d => typeof d === 'string' && d.toUpperCase().includes('GBX'))
+        // Overnight is a SESSION attribute, decided by when the trade was
+        // entered — the same isOutsideRth test the importer uses to stamp the
+        // bare 'GBX' tag. It is NOT a substring of the day type: "GBX Reversal"
+        // names an RTH day that reversed the overnight move, and every one of
+        // the 49 trades carrying it was entered inside RTH. A substring match
+        // labelled all of them overnight, which both made the analysis narrate
+        // "a GBX session" and silently exempted RTH trades from prep adherence
+        // and the ATR stop-band check. The exact tag is only a fallback for a
+        // trade with no entry time.
+        const entryTs = (t as { entry_time?: string | null }).entry_time
+        const isGbx = entryTs
+          ? isOutsideRth(entryTs)
+          : dts.some(d => typeof d === 'string' && d.trim().toUpperCase() === 'GBX')
         // The ONLY market-structure datum in this prompt. Computed from 5m pivot
         // structure at the entry bar (scripts/backfill-structure-regime.ts) —
         // a snapshot at entry, NOT a running read of the session. Without it the
@@ -535,11 +548,17 @@ Compute each sub-metric on 0..1 (higher = better):
       when prep notes are entirely blank.
       EXEMPT GBX / OVERNIGHT TRADES: the morning prep (bias, IB behaviour,
       volume profile, RTH trade_plans) describes the RTH session — it does NOT
-      apply to a trade taken outside RTH. EXCLUDE any trade with
-      tags_json.day_type "GBX" (or entered outside 06:30–13:00 PT) from the
-      prep_adherence comparison entirely; grade ONLY the RTH trades against the
-      prep. If EVERY trade was GBX, prep_adherence is null (no RTH trade to
-      score against the RTH prep) — do not penalize the session for it.
+      apply to a trade taken outside RTH. Use each trade's own "session:" field
+      to decide — it is computed from the entry time. EXCLUDE only trades whose
+      session reads "GBX/overnight" from the prep_adherence comparison; grade
+      every "RTH" trade against the prep. If EVERY trade was overnight,
+      prep_adherence is null — do not penalize the session for it.
+      A DAY TYPE THAT CONTAINS "GBX" IS NOT AN OVERNIGHT SESSION. "GBX Reversal"
+      (and any similar label) describes how the RTH session behaved relative to
+      the overnight move — those trades were taken in RTH and must be graded and
+      described as RTH trades. Never call a session "a GBX session" or "an
+      overnight session" because of its day type; only the per-trade "session:"
+      field says where a trade was taken.
       A BLANK prep field is NOT an adherence miss: a field the trader never
       filled (blank ib_behaviour, blank volume_profile_shape) is nothing to
       "adhere" to — that's a prep-quality gap the separate Prep score already
