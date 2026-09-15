@@ -228,10 +228,15 @@ interface Props {
   /** Starting range before the user's saved preference loads. The Dashboard
    *  passes 'all' so the equity curve matches the all-time stat total. */
   defaultPeriod?: Period
+  /** Set while a dashboard filter is active: `days` is already bounded, so the
+   *  range picker gives way to this label. See DashboardStats. */
+  rangeLabel?: string
 }
 
-export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) {
+export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabel }: Props) {
   const [period, setPeriod] = useState<Period>(defaultPeriod)
+  // Same contract as DashboardStats: an active dashboard filter owns the range.
+  const effectivePeriod: Period = rangeLabel ? 'all' : period
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => {
     try {
@@ -247,7 +252,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
   }, [period, hydrated])
 
   const { points, equity, daily, scores } = useMemo(() => {
-    const { start, end } = periodBounds(period)
+    const { start, end } = periodBounds(effectivePeriod)
     const inPeriod = days
       .filter(d => d.eod_pnl != null && d.date >= start && d.date <= end)
       .sort((a, b) => a.date.localeCompare(b.date))
@@ -264,7 +269,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
     // days with no EOD analysis — the overlay breaks rather than interpolating.
     const scores = inPeriod.map(d => d.tapescore?.score ?? null)
     return { points, equity, daily, scores }
-  }, [days, period])
+  }, [days, effectivePeriod])
 
   const hasData = points.length > 0
 
@@ -273,6 +278,9 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
       {/* Period selector — independent of the stat-card period below. */}
       <div className="flex items-center gap-2 mb-3">
         <label className="text-xs text-gray-500">Chart range:</label>
+        {rangeLabel ? (
+          <span className="text-xs text-gray-300">{rangeLabel}</span>
+        ) : (
         <div className="relative">
           <select
             value={period}
@@ -285,6 +293,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd' }: Props) 
           </select>
           <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
         </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

@@ -149,10 +149,17 @@ interface Props {
    *  passes 'all' so a first visit shows the full-history total, then the
    *  saved choice (if any) takes over. */
   defaultPeriod?: Period
+  /** Set while a dashboard filter is active. The filter already bounded `days`
+   *  to its own range, so the period picker is replaced by this label and every
+   *  passed day counts. Without it a saved "Last 30 Days" preference would
+   *  silently clip a 3-month filter to 30 days — wrong numbers under a banner
+   *  that promised three months. The saved preference itself is left alone. */
+  rangeLabel?: string
 }
 
-export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d' }: Props) {
+export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d', rangeLabel }: Props) {
   const [period, setPeriod] = useState<Period>(defaultPeriod)
+  const effectivePeriod: Period = rangeLabel ? 'all' : period
   // Default unit is ATR — it's the user's preferred ATR-normalized reading
   // for the MFE/MAE roll-up. localStorage hydration may overwrite below.
   const [mfeUnit, setMfeUnit] = useState<MfeUnit>('atr')
@@ -178,7 +185,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
   }, [mfeUnit, hydrated])
 
   const stats = useMemo(() => {
-    const { start, end } = periodBounds(period)
+    const { start, end } = periodBounds(effectivePeriod)
     const inPeriod = days.filter(d => d.date >= start && d.date <= end)
 
     // P&L sum (skip null PnL days = no trades + no override)
@@ -299,13 +306,16 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       procCount: prepScores.length,
       v13Count: v13Scores.length,
     }
-  }, [days, period, mfeUnit])
+  }, [days, effectivePeriod, mfeUnit])
 
   return (
     <div className="mb-6">
       {/* Period selector */}
       <div className="flex items-center gap-2 mb-3">
         <label className="text-xs text-gray-500">Period:</label>
+        {rangeLabel ? (
+          <span className="text-xs text-gray-300">{rangeLabel}</span>
+        ) : (
         <div className="relative">
           <select
             value={period}
@@ -318,6 +328,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
           </select>
           <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
         </div>
+        )}
       </div>
 
       {/* One TapeScore hero (Ruleset amendment 6): the report card before the

@@ -7,7 +7,6 @@ import MonthlyCalendarView from './MonthlyCalendarView'
 
 interface Props {
   initialDays: DayRowData[]
-  allSetups: string[]
   windowStart: string // YYYY-MM-DD — earliest fetched day (outer bound, ~180d ago)
   windowEnd: string   // YYYY-MM-DD — today
   defaultFilterStart: string // YYYY-MM-DD — list-view date filter default start (~30d ago)
@@ -18,7 +17,14 @@ type ViewMode = 'list' | 'calendar'
 /**
  * Recent Days section wrapper.
  *
- * Holds view-mode (list vs calendar) and filter state (date range, setup).
+ * Holds view-mode (list vs calendar) and the list's date range.
+ *
+ * It used to carry a setup dropdown too. That filtered DAYS, not trades: a day
+ * with one Supply & Demand trade passed and then showed the whole session's
+ * result, so "filter to S&D" answered a different question than it appeared to.
+ * Setup filtering now lives in the dashboard Filter (DashboardFilterScope),
+ * which recomputes every figure from the matching trades and hands this section
+ * already-filtered days.
  * Filters cascade to BOTH views so the list and calendar always agree on
  * what's being shown. Filter state is local — not persisted across page
  * reloads. The 30-day server-fetched window is the outer bound; the date
@@ -30,7 +36,6 @@ type ViewMode = 'list' | 'calendar'
  */
 export default function RecentDaysSection({
   initialDays,
-  allSetups,
   windowStart,
   windowEnd,
   defaultFilterStart,
@@ -38,18 +43,9 @@ export default function RecentDaysSection({
   const [view, setView] = useState<ViewMode>('list')
   const [startDate, setStartDate] = useState(defaultFilterStart)
   const [endDate, setEndDate] = useState(windowEnd)
-  const [setupFilter, setSetupFilter] = useState<string>('')
-
-  // Apply the setup filter universally, plus the date range for list view.
-  // Calendar view ignores the date-range slider (it navigates month by month
-  // within the full window) so the setup filter cascades there but the
-  // date-range narrowing doesn't.
-  const filteredByTags = useMemo(() => {
-    return initialDays.filter(d => {
-      if (setupFilter && !d.setups.includes(setupFilter)) return false
-      return true
-    })
-  }, [initialDays, setupFilter])
+  // Calendar view ignores the date range (it navigates month by month within
+  // the full window); the list narrows to it.
+  const filteredByTags = initialDays
 
   const filteredDays = useMemo(() => {
     return filteredByTags.filter(d => {
@@ -60,13 +56,11 @@ export default function RecentDaysSection({
 
   const filtersActive =
     startDate !== defaultFilterStart ||
-    endDate !== windowEnd ||
-    setupFilter !== ''
+    endDate !== windowEnd
 
   const clearFilters = () => {
     setStartDate(defaultFilterStart)
     setEndDate(windowEnd)
-    setSetupFilter('')
   }
 
   return (
@@ -122,18 +116,6 @@ export default function RecentDaysSection({
             />
           </>
         )}
-
-        <select
-          value={setupFilter}
-          onChange={e => setSetupFilter(e.target.value)}
-          className="bg-gray-800 border border-gray-700 text-gray-200 rounded-md px-2 py-1 focus:outline-none focus:border-blue-500"
-          title="Filter by setup tag"
-        >
-          <option value="">All setups</option>
-          {allSetups.map(s => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
 
         {filtersActive && (
           <button

@@ -3,8 +3,8 @@ import { format, subDays } from 'date-fns'
 import { todayPT } from '@/lib/pt-time'
 import EmptyStateImport from '@/components/dashboard/EmptyStateImport'
 import FirstReadCards from '@/components/dashboard/FirstReadCards'
-import RecentDaysSection from '@/components/dashboard/RecentDaysSection'
-import DashboardStats, { type DayStat } from '@/components/dashboard/DashboardStats'
+import DashboardFilterScope from '@/components/dashboard/DashboardFilterScope'
+import { type DayStat } from '@/components/dashboard/DashboardStats'
 import DashboardCharts from '@/components/dashboard/DashboardCharts'
 import DashboardModeSwitch from '@/components/dashboard/DashboardModeSwitch'
 import BeginnerDashboard from '@/components/dashboard/BeginnerDashboard'
@@ -525,32 +525,22 @@ export default async function DashboardPage() {
             period stats below drop their own ring. */}
         <DashboardHero periods={heroPeriods} />
 
-        {/* The all-trades overview: period-selectable stats + equity/P&L charts.
-            The period is the trader's saved preference (defaults to Last 30
-            Days / YtD); the all-time total is a dropdown away, and the score
-            ring above is always all-time regardless. */}
-        <div className="mt-8 pt-5 border-t border-gray-700">
-          <DashboardStats days={statsDays} hideScoreHero />
-        </div>
-        <DashboardCharts days={statsDays} />
-
-        {/* Trophy case — the full achievement collection with lifetime counts.
-            The EOD recap shows only what a given day earned; the whole set of
-            badges lives here. */}
-        <div className="mt-8 pt-5 border-t border-gray-700">
-          <AchievementCollection counts={collectionCounts} />
-        </div>
-
-        {/* Every session — toggle between the list and the calendar. */}
-        <div className="mt-8 pt-5 border-t border-gray-700">
-          <RecentDaysSection
-            initialDays={recentDaysForTable}
-            allSetups={allSetups}
-            windowStart={windowStart}
-            windowEnd={windowEnd}
-            defaultFilterStart={defaultFilterStart}
-          />
-        </div>
+        {/* The all-trades overview — period stats, equity/P&L charts, the
+            trophy case and every session — under one Filter (setups × time).
+            The filter scopes everything below its bar and nothing above: the
+            TapeScore hero grades whole sessions, which can't be split by setup.
+            Unfiltered, each section keeps its own saved period exactly as
+            before. The trophy case is a lifetime collection and never filters. */}
+        <DashboardFilterScope
+          statsDays={statsDays}
+          tableDays={recentDaysForTable}
+          allSetups={allSetups}
+          today={today}
+          windowStart={windowStart}
+          windowEnd={windowEnd}
+          defaultFilterStart={defaultFilterStart}
+          achievements={<AchievementCollection counts={collectionCounts} />}
+        />
       </DashboardModeSwitch>
     </div>
   )
