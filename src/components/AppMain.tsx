@@ -12,7 +12,7 @@ import Link from 'next/link'
  */
 export default function AppMain({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex-1 min-w-0 p-6 pt-20 md:pt-[86px] pb-24 md:pb-10 overflow-y-auto">
+    <main className="app-main flex-1 min-w-0 p-6 pt-20 md:pt-[86px] pb-24 md:pb-10 overflow-y-auto">
       {children}
       {/* App-shell footer — gives signed-in users a path to the legal pages and
           support, which otherwise only exist on the logged-out landing. */}

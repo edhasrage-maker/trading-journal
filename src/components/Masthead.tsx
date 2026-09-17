@@ -383,7 +383,10 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
       {/* ── Mobile bottom tab bar (md:hidden) ──────────────────────────── */}
       <nav
         className="md:hidden fixed bottom-0 inset-x-0 z-40 flex bg-gray-950 border-t border-gray-800"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        // --tabbar-bottom (globals.css) keeps the buttons above the strip iPhone
+        // Safari intercepts along the bottom edge; in an installed app it's just
+        // the home-indicator inset.
+        style={{ paddingBottom: 'var(--tabbar-bottom)' }}
       >
         {mobileTabs.map(({ href, label, match }) => {
           const active = pathname.startsWith(match)
@@ -425,7 +428,9 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
           <div className="fixed inset-0 z-40 bg-black/60" onClick={() => setMoreOpen(false)} aria-hidden />
           <div
             className="fixed inset-x-0 bottom-0 z-50 max-h-[85dvh] overflow-y-auto rounded-t-2xl bg-gray-900 border-t border-gray-700"
-            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+            // Same clearance as the tab bar: the sheet's last row (Sign out)
+            // sits on the same bottom edge Safari intercepts.
+            style={{ paddingBottom: 'var(--tabbar-bottom)' }}
           >
             <div className="sticky top-0 flex items-center justify-between px-5 py-4 bg-gray-900 border-b border-gray-800">
               <span className="text-sm font-semibold text-gray-200">More</span>

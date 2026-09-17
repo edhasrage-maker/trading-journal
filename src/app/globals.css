@@ -420,6 +420,45 @@ h1, h2, h3 {
   color: var(--color-accent-contrast);
 }
 
+/* ── Mobile bottom tab bar: clear Safari's own bottom bar ────────────────────
+   On iPhone Safari the address bar lives at the bottom. Scroll down and it
+   collapses into a thin strip along the bottom edge — and a tap on that strip
+   does not reach the page, it re-expands Safari's toolbar. Our tab bar is
+   fixed to that same edge, so the first tap on Prep / Trade / Review opened
+   Safari's UI instead. The safe-area padding the bar already had only clears
+   the home indicator, which is a smaller zone than Safari's strip (and reads as
+   0 in some browser states).
+
+   So in the browser the bar keeps at least 44px of dead space beneath its
+   buttons: the strip Safari intercepts lands on empty bar background, and the
+   buttons sit above it. 44px is Apple's minimum touch target, the conservative
+   size for that strip.
+
+   Installed to the home screen (display-mode: standalone) there IS no Safari
+   UI, so the bar drops back to just the home-indicator inset and stays tight.
+
+   One variable, read by the bar, the page's bottom padding and the Trade Coach
+   button, so none of them can drift out of step with the others. */
+:root {
+  --tabbar-bottom: env(safe-area-inset-bottom);
+}
+@media (max-width: 767px) {
+  :root {
+    --tabbar-bottom: max(calc(env(safe-area-inset-bottom) + 12px), 44px);
+  }
+  /* The page must end above the taller bar, or its last row hides behind it.
+     52px = the bar's button row; 1.5rem breathing room. Unlayered, so it wins
+     over AppMain's pb-24 utility. */
+  .app-main {
+    padding-bottom: calc(52px + var(--tabbar-bottom) + 1.5rem);
+  }
+}
+@media (max-width: 767px) and (display-mode: standalone) {
+  :root {
+    --tabbar-bottom: env(safe-area-inset-bottom);
+  }
+}
+
 /* Mobile: lift the floating Trade Coach above the bottom tab bar so the brain
    FAB (and its expanded panel) don't sit on top of it. Positioned from the
    coach's mount point (#coach-fab-root in the app layout) so CoachChat.tsx is
@@ -429,11 +468,11 @@ h1, h2, h3 {
 @media (max-width: 767px) {
   #coach-fab-root > button,
   #coach-fab-root > div {
-    bottom: calc(56px + env(safe-area-inset-bottom) + 1rem);
+    bottom: calc(56px + var(--tabbar-bottom) + 1rem);
   }
   /* Keep the expanded chat panel fully above the bar at this taller offset. */
   #coach-fab-root > div {
-    max-height: calc(100dvh - 56px - env(safe-area-inset-bottom) - 2rem);
+    max-height: calc(100dvh - 56px - var(--tabbar-bottom) - 2rem);
   }
 }
 
