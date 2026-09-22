@@ -7,8 +7,8 @@ import type { AchievementId } from '@/lib/achievements'
  * share coin). Green accent (`#4ADE80`) lands only on the celebratory beats
  * (home-run ball, swish ball, flame core) so amber stays the identity.
  *
- * Game Winner's glyph (shooter + arc + hoop) is a PLACEHOLDER pending a nicer
- * basketball mark — swap just the `game_winner` case when it's ready.
+ * Clutch's glyph is a rising shooter releasing OVER a contesting defender (the
+ * defender is drawn dimmed so the shooter stays the subject).
  */
 
 const G = '#0c0a09'      // graphite ground
@@ -47,23 +47,34 @@ function Glyph({ id }: { id: AchievementId }) {
           <path d="M66.5 30 Q70 33 66.5 36 M73.5 30 Q70 33 73.5 36" fill="none" stroke={G} strokeWidth={1.2} />
         </>
       )
-    case 'game_winner': // basketball — shooter releasing a long three toward the hoop (PLACEHOLDER)
+    case 'clutch': // basketball — rising shooter releasing OVER a contesting defender
       return (
         <>
-          <path d="M18 74 Q22 60 30 58" fill="none" stroke={C} strokeWidth={2} strokeLinecap="round" opacity={0.5} />
-          <circle cx={30} cy={50} r={3.6} fill="none" stroke={C} strokeWidth={2.4} />
-          <g stroke={C} strokeWidth={2.6} strokeLinecap="round" fill="none">
-            <line x1={30} y1={54} x2={30} y2={63} />
-            <line x1={30} y1={63} x2={25} y2={73} />
-            <line x1={30} y1={63} x2={35} y2={72} />
-            <line x1={30} y1={57} x2={24} y2={52} />
-            <line x1={30} y1={57} x2={37} y2={47} />
+          {/* Defender, right: dimmed so the shooter stays the subject. Drawn
+              FLAT-FOOTED (feet at y≈76 vs the shooter's ≈61) with the contesting
+              hand at y≈37 — well below the ball at y≈23. That vertical gap is
+              what makes the shot read as going OVER him. */}
+          <g stroke={C} strokeWidth={2.6} strokeLinecap="round" fill="none" opacity={0.42}>
+            <circle cx={69} cy={45} r={3.6} strokeWidth={2.4} />
+            <line x1={69} y1={49} x2={69} y2={66} />
+            <line x1={69} y1={66} x2={64} y2={76} />
+            <line x1={69} y1={66} x2={74} y2={75} />
+            <line x1={69} y1={53} x2={64} y2={37} />
+            <line x1={69} y1={54} x2={76} y2={61} />
           </g>
-          <circle cx={41} cy={43} r={4.2} fill={GREEN} />
-          <path d="M43 41 Q60 18 73 40" fill="none" stroke={C} strokeWidth={2} strokeDasharray="3 4" strokeLinecap="round" opacity={0.7} />
-          <line x1={76} y1={30} x2={76} y2={44} stroke={C} strokeWidth={2.4} strokeLinecap="round" />
-          <ellipse cx={70} cy={44} rx={7} ry={2.4} fill="none" stroke={C} strokeWidth={2.4} />
-          <path d="M64 45 L66 53 M70 46 L70 55 M76 45 L74 53" fill="none" stroke={C} strokeWidth={1.6} opacity={0.8} />
+          {/* Shooter, left: elevated mid-jump. BOTH arms fan up-RIGHT so the ball
+              sits cocked above/right of the head — arms angled to opposite sides
+              close a loop around the head and read as a balloon at small sizes. */}
+          <circle cx={32} cy={37} r={4} fill="none" stroke={C} strokeWidth={2.6} />
+          <g stroke={C} strokeWidth={3} strokeLinecap="round" fill="none">
+            <line x1={34} y1={41} x2={35} y2={53} />
+            <line x1={35} y1={53} x2={29} y2={62} />
+            <line x1={35} y1={53} x2={42} y2={60} />
+            <line x1={34} y1={44} x2={43} y2={31} />
+            <line x1={34} y1={44} x2={38} y2={29} />
+          </g>
+          <circle cx={46} cy={23} r={5} fill={GREEN} />
+          <path d="M42.3 20.1 Q46 23 42.3 25.9 M49.7 20.1 Q46 23 49.7 25.9" fill="none" stroke={G} strokeWidth={1.3} />
         </>
       )
     case 'career_day': // ascending bars + star on the tallest

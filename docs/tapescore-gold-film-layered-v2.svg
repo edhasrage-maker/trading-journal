@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore compact gold film emblem</title>
+  <desc id="desc">A compact centered TapeScore presentation matching the uploaded reference: four broken diagonal gold film-strip rails, five metallic candles, a centered uppercase wordmark, and two lower-right spark accents.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="76%"><stop offset="0" stop-color="#2B2B2A"/><stop offset=".58" stop-color="#20201F"/><stop offset="1" stop-color="#141414"/></radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#D1AA68"/><stop offset=".28" stop-color="#B2864A"/><stop offset=".62" stop-color="#9A6D36"/><stop offset="1" stop-color="#6D461E"/></linearGradient>
+    <linearGradient id="gold-hi" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7B5024"/><stop offset=".48" stop-color="#D4AE6C"/><stop offset=".72" stop-color="#B58243"/><stop offset="1" stop-color="#6F461F"/></linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#737678"/><stop offset=".24" stop-color="#ECEDEE"/><stop offset=".52" stop-color="#B9BBBC"/><stop offset=".78" stop-color="#F7F7F6"/><stop offset="1" stop-color="#6C6F71"/></linearGradient>
+    <linearGradient id="slate" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#17191C"/><stop offset=".35" stop-color="#4B4F52"/><stop offset=".7" stop-color="#24272A"/><stop offset="1" stop-color="#111315"/></linearGradient>
+    <filter id="grain" x="-10%" y="-10%" width="120%" height="120%"><feTurbulence type="fractalNoise" baseFrequency=".72" numOctaves="2" seed="19"/><feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .055 0"/></filter>
+    <filter id="soft-shadow" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#000" flood-opacity=".58"/></filter>
+    <filter id="word-shadow" x="-20%" y="-50%" width="140%" height="220%"><feDropShadow dx="0" dy="5" stdDeviation="2.5" flood-color="#000" flood-opacity=".9"/></filter>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <pattern id="microgrid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#FFF" stroke-opacity=".018"/></pattern>
+  </defs>
+
+  <g id="background-and-effects">
+    <rect width="1600" height="900" fill="url(#bg)"/>
+    <rect width="1600" height="900" fill="url(#microgrid)"/>
+    <rect width="1600" height="900" filter="url(#grain)" opacity=".95"/>
+    <ellipse cx="800" cy="450" rx="410" ry="330" fill="#000" opacity=".08"/>
+  </g>
+
+  <!-- Candles remain in a narrow diagonal column between the broken film rails. -->
+  <g id="candlestick-bodies-and-wicks" filter="url(#soft-shadow)">
+    <g id="candle-1" transform="translate(660 590)"><line y1="-62" y2="66" stroke="#9A9C9E" stroke-width="4"/><rect x="-14" y="-25" width="28" height="54" rx="2" fill="url(#silver)"/><path d="M14 -25L20 -20V29L14 29Z" fill="#55585A" opacity=".7"/></g>
+    <g id="candle-2" transform="translate(725 532)"><line y1="-70" y2="66" stroke="#B5B7B9" stroke-width="4"/><rect x="-16" y="-36" width="32" height="64" rx="2" fill="url(#silver)"/><path d="M16 -36L22 -30V28L16 28Z" fill="#55585A" opacity=".72"/></g>
+    <g id="candle-3" transform="translate(795 470)"><line y1="-65" y2="62" stroke="#5B5F62" stroke-width="4"/><rect x="-16" y="-31" width="32" height="60" rx="2" fill="url(#slate)" stroke="#666A6D" stroke-width="1"/><path d="M16 -31L22 -25V29L16 29Z" fill="#0E1012" opacity=".82"/></g>
+    <g id="candle-4" transform="translate(875 388)"><line y1="-78" y2="72" stroke="#C5C7C8" stroke-width="4"/><rect x="-18" y="-42" width="36" height="72" rx="2" fill="url(#silver)"/><path d="M18 -42L25 -35V30L18 30Z" fill="#55585A" opacity=".7"/></g>
+    <g id="candle-5" transform="translate(972 286)"><line y1="-82" y2="76" stroke="#D0D1D2" stroke-width="4"/><rect x="-18" y="-45" width="36" height="78" rx="2" fill="url(#silver)"/><path d="M18 -45L25 -38V33L18 33Z" fill="#55585A" opacity=".7"/></g>
+  </g>
+
+  <!-- Four separate film-strip segments reproduce the reference's compact broken frame. -->
+  <g id="film-strip-shape" filter="url(#soft-shadow)">
+    <!-- extrusion shadows -->
+    <g fill="#5F3B19" opacity=".82">
+      <rect x="-135" y="-18" width="270" height="38" rx="2" transform="translate(820 292) rotate(-45) translate(7 8)"/>
+      <rect x="-52" y="-18" width="104" height="38" rx="2" transform="translate(1000 326) rotate(-45) translate(7 8)"/>
+      <rect x="-52" y="-18" width="104" height="38" rx="2" transform="translate(650 558) rotate(-45) translate(7 8)"/>
+      <rect x="-145" y="-18" width="290" height="38" rx="2" transform="translate(875 545) rotate(-45) translate(7 8)"/>
+    </g>
+    <!-- front faces -->
+    <rect x="-135" y="-18" width="270" height="38" rx="2" transform="translate(820 292) rotate(-45)" fill="url(#gold-hi)"/>
+    <rect x="-52" y="-18" width="104" height="38" rx="2" transform="translate(1000 326) rotate(-45)" fill="url(#gold)"/>
+    <rect x="-52" y="-18" width="104" height="38" rx="2" transform="translate(650 558) rotate(-45)" fill="url(#gold)"/>
+    <rect x="-145" y="-18" width="290" height="38" rx="2" transform="translate(875 545) rotate(-45)" fill="url(#gold-hi)"/>
+    <!-- short connector facets create the open zig-zag frame without one giant ribbon -->
+    <path d="M904 382 L938 416 L966 388 L932 354Z" fill="url(#gold)"/>
+    <path d="M734 474 L768 508 L741 535 L707 501Z" fill="url(#gold)"/>
+  </g>
+
+  <g id="film-perforations" fill="#2A2118" stroke="#D6B170" stroke-opacity=".35" stroke-width="1">
+    <!-- upper-left long strip -->
+    <g transform="translate(820 292) rotate(-45)"><rect x="-118" y="-7" width="14" height="14" rx="3"/><rect x="-88" y="-7" width="14" height="14" rx="3"/><rect x="-58" y="-7" width="14" height="14" rx="3"/><rect x="-28" y="-7" width="14" height="14" rx="3"/><rect x="2" y="-7" width="14" height="14" rx="3"/><rect x="32" y="-7" width="14" height="14" rx="3"/><rect x="62" y="-7" width="14" height="14" rx="3"/><rect x="92" y="-7" width="14" height="14" rx="3"/></g>
+    <!-- upper-right short strip -->
+    <g transform="translate(1000 326) rotate(-45)"><rect x="-37" y="-7" width="14" height="14" rx="3"/><rect x="-7" y="-7" width="14" height="14" rx="3"/><rect x="23" y="-7" width="14" height="14" rx="3"/></g>
+    <!-- lower-left short strip -->
+    <g transform="translate(650 558) rotate(-45)"><rect x="-37" y="-7" width="14" height="14" rx="3"/><rect x="-7" y="-7" width="14" height="14" rx="3"/><rect x="23" y="-7" width="14" height="14" rx="3"/></g>
+    <!-- lower-right long strip -->
+    <g transform="translate(875 545) rotate(-45)"><rect x="-128" y="-7" width="14" height="14" rx="3"/><rect x="-98" y="-7" width="14" height="14" rx="3"/><rect x="-68" y="-7" width="14" height="14" rx="3"/><rect x="-38" y="-7" width="14" height="14" rx="3"/><rect x="-8" y="-7" width="14" height="14" rx="3"/><rect x="22" y="-7" width="14" height="14" rx="3"/><rect x="52" y="-7" width="14" height="14" rx="3"/><rect x="82" y="-7" width="14" height="14" rx="3"/><rect x="112" y="-7" width="14" height="14" rx="3"/></g>
+  </g>
+
+  <g id="tapescore-wordmark" filter="url(#word-shadow)">
+    <text id="text-shadow" x="800" y="510" text-anchor="middle" fill="#000" opacity=".78" font-family="Montserrat, 'Proxima Nova', Inter, Arial, sans-serif" font-size="104" font-weight="900" letter-spacing="3.5">TAPESCORE</text>
+    <text id="wordmark-text" x="800" y="504" text-anchor="middle" fill="#FFF" font-family="Montserrat, 'Proxima Nova', Inter, Arial, sans-serif" font-size="104" font-weight="900" letter-spacing="3.5">TAPESCORE</text>
+  </g>
+
+  <g id="spark-accent" filter="url(#glow)">
+    <path transform="translate(1450 758)" d="M0 -27C4 -8 8 -4 27 0C8 4 4 8 0 27C-4 8-8 4-27 0C-8 -4-4 -8 0 -27Z" fill="url(#silver)" opacity=".78"/>
+    <path transform="translate(1500 780)" d="M0 -30C5 -9 9 -5 30 0C9 5 5 9 0 30C-5 9-9 5-30 0C-9 -5-5 -9 0 -30Z" fill="#D4B77C" opacity=".9"/>
+  </g>
+</svg>

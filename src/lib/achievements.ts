@@ -3,7 +3,7 @@
 // trader earned that day. Callers (EOD page, dashboard) assemble the input and
 // render the result; rules whose inputs are absent simply don't fire.
 //
-// Single-user badges only (Sniper, Grand Slam, Game Winner, Career Day, Heat
+// Single-user badges only (Sniper, Grand Slam, Clutch, Career Day, Heat
 // Check). Cross-user badges (top-3 PnL, TapeCenter) are gated on the
 // benchmarking work and are NOT here — see the gamification plan.
 
@@ -13,7 +13,7 @@ import { symbolToMultiplier } from '@/lib/futures-symbols'
 export type AchievementId =
   | 'sniper'
   | 'grand_slam'
-  | 'game_winner'
+  | 'clutch'
   | 'career_day'
   | 'heat_check'
 
@@ -36,17 +36,17 @@ export const ACHIEVEMENT_THRESHOLDS = {
   // by percentile of the trader's own history. Calibrating to personal bests
   // would only certify "better than you usually do" — a trophy graded on a
   // curve means nothing. It is fine, and intended, for this coin to sit
-  // unearned: Sniper and Game Winner are the regular ones.
+  // unearned: Sniper and Clutch are the regular ones.
   //
   // Path 1: risk efficiency — 8R is a monster by any standard.
   grandSlamR: 8,
-  // Path 2 (merged Pt 7 from the old Game Winner): one trade capturing this
+  // Path 2 (merged Pt 7 from the retired Game Winner coin): one trade capturing
   // share of the day's high-low range. Half the session's move in a single
   // trade is genuinely big; anything less reads as an ordinary day.
   grandSlamCapture: 0.5,
-  // Game Winner is now the COMEBACK coin: the last trade flips a red day green
-  // after at least this many losers dug the hole.
-  gameWinnerMinLosers: 2,
+  // Clutch is the COMEBACK coin: the last trade flips a red day green after at
+  // least this many losers dug the hole.
+  clutchMinLosers: 2,
   careerDayPercentile: 0.9,
   heatCheckStreak: 5,
 } as const
@@ -60,18 +60,18 @@ export const ACHIEVEMENT_THRESHOLDS = {
 export const ACHIEVEMENT_CATALOG: Record<AchievementId, { label: string; emoji: string; blurb: string }> = {
   sniper:      { label: 'Sniper',      emoji: '🎯', blurb: `The day averaged under ${ACHIEVEMENT_THRESHOLDS.sniperMaeAtr}×ATR of heat across every trade — surgical all session.` },
   grand_slam:  { label: 'Grand Slam',  emoji: '⚾', blurb: `One trade worth ${ACHIEVEMENT_THRESHOLDS.grandSlamR}R+, or that caught ${Math.round(ACHIEVEMENT_THRESHOLDS.grandSlamCapture * 100)}%+ of the day's range — swung big and connected.` },
-  game_winner: { label: 'Game Winner', emoji: '🏀', blurb: 'Your last trade flipped a losing day green — a buzzer-beater.' },
+  clutch:      { label: 'Clutch',      emoji: '🏀', blurb: 'Your last trade flipped a losing day green — a shot over the defender.' },
   career_day:  { label: 'Career Day',  emoji: '📅', blurb: 'A top-10% P&L day across your logged sessions.' },
   heat_check:  { label: 'Heat Check',  emoji: '🔥', blurb: '5 green sessions in a row — you’re heating up.' },
 }
 
 /** Canonical display order (used by the collection strip + counts UI). */
 export const ACHIEVEMENT_ORDER: AchievementId[] = [
-  'sniper', 'grand_slam', 'game_winner', 'career_day', 'heat_check',
+  'sniper', 'grand_slam', 'clutch', 'career_day', 'heat_check',
 ]
 
 /** Trade shape the rules read: excursion fields + the entry-time ATR snapshot +
- *  the average exit price (for Game Winner's realized point capture). */
+ *  the average exit price (for Grand Slam's realized point capture). */
 export type AchievementTrade = TradeWithExcursion & {
   entry_atr_1m?: number | null
   exit_price?: number | null
@@ -133,9 +133,9 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
   //   • grandSlamR — risk efficiency: made vs risked (needs a logged stop).
   //   • grandSlamCapture of the day's high-low range — opportunity capture: how
   //     much of the available move one trade caught (stop/size-independent).
-  // These used to be two coins (Grand Slam / the old Game Winner), but both
-  // answer "did one trade win the day"; the Game Winner NAME now belongs to the
-  // comeback rule below.
+  // These used to be two coins (Grand Slam / Game Winner), but both answer "did
+  // one trade win the day". Game Winner was then RENAMED to Clutch and given the
+  // comeback rule below, which is what that name always described.
   const bestR = trades.reduce<number | null>((m, t) => {
     const r = tradeR(t)
     return r == null ? m : m == null || r > m ? r : m
@@ -171,7 +171,7 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
     })
   }
 
-  // 🏀 Game Winner — the buzzer-beater. Your LAST trade of the day was a winner
+  // 🏀 Clutch — the shot over the defender. Your LAST trade of the day was a winner
   // that flipped the session from red to green, after at least 2 losers dug the
   // hole. Deliberately STRUCTURAL (a shape-of-the-day rule) rather than gated on
   // a dollar drawdown: it needs no per-trader Daily Loss Limit, so it works for
@@ -182,7 +182,7 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
     // persist hook selects without an ORDER BY), so sort defensively here.
     .slice()
     .sort((a, b) => (a.entry_time ?? '').localeCompare(b.entry_time ?? ''))
-  if (timed.length > T.gameWinnerMinLosers) {
+  if (timed.length > T.clutchMinLosers) {
     const last = timed[timed.length - 1]
     const prior = timed.slice(0, -1)
     const priorPnl = prior.reduce((s, t) => s + (t.pnl ?? 0), 0)
@@ -190,9 +190,9 @@ export function dayAchievements(input: AchievementInput): Achievement[] {
     const lastPnl = last.pnl ?? 0
     const finalPnl = priorPnl + lastPnl
     const usd = (n: number) => `$${Math.abs(Math.round(n)).toLocaleString('en-US')}`
-    if (priorLosers >= T.gameWinnerMinLosers && priorPnl < 0 && lastPnl > 0 && finalPnl > 0) {
+    if (priorLosers >= T.clutchMinLosers && priorPnl < 0 && lastPnl > 0 && finalPnl > 0) {
       earned.push({
-        id: 'game_winner', ...ACHIEVEMENT_CATALOG.game_winner,
+        id: 'clutch', ...ACHIEVEMENT_CATALOG.clutch,
         blurb: `Down ${usd(priorPnl)} after ${priorLosers} losers — your last trade won the day, closing +${usd(finalPnl)}.`,
       })
     }
@@ -243,7 +243,7 @@ export function achievementCounts(
   days: (readonly string[] | null | undefined)[],
 ): Record<AchievementId, number> {
   const counts: Record<AchievementId, number> = {
-    sniper: 0, grand_slam: 0, game_winner: 0, career_day: 0, heat_check: 0,
+    sniper: 0, grand_slam: 0, clutch: 0, career_day: 0, heat_check: 0,
   }
   for (const arr of days) {
     if (!arr) continue

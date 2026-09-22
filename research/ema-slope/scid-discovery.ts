@@ -69,10 +69,40 @@ function scidFileSpan(path: string): { firstMs: number | null; lastMs: number | 
   }
 }
 
+// Fraction of sampled mid-file trade prices that show genuine 0.25-tick granularity.
+// Genuine NQ data (either ×100-scaled ints ending 25/50/75, or unscaled floats with
+// fractional parts) scores ~0.7; files whose prices were rounded to whole points
+// (the degraded 2026-06-25 copies, e.g. NQZ25-CME.scid) score ~0.03.
+function tickQualityScore(path: string): number {
+  const fd = openSync(path, 'r')
+  try {
+    const size = fstatSync(fd).size
+    const recCount = Math.floor((size - HEADER_SIZE) / RECORD_SIZE)
+    if (recCount < 64) return 0
+    const N = Math.min(512, recCount)
+    const startIdx = Math.floor((recCount - N) / 2)
+    const buf = Buffer.alloc(N * RECORD_SIZE)
+    readSync(fd, buf, 0, N * RECORD_SIZE, HEADER_SIZE + startIdx * RECORD_SIZE)
+    let sampled = 0
+    let fine = 0
+    for (let i = 0; i < N; i++) {
+      const close = buf.readFloatLE(i * RECORD_SIZE + 20)
+      if (!Number.isFinite(close) || close <= 0) continue
+      sampled++
+      const hasFraction = close !== Math.floor(close)
+      const sub = Math.round(close) % 100
+      if (hasFraction || sub === 25 || sub === 50 || sub === 75) fine++
+    }
+    return sampled > 0 ? fine / sampled : 0
+  } finally {
+    closeSync(fd)
+  }
+}
+
 // Lists NQ quarterly contract .scid files in a directory, sorted chronologically
 // by expiry. Handles both naming conventions (NQM6.CME.scid and NQH23-CME.scid).
 // Where the same expiry month/year has multiple files (legacy + current naming),
-// the file with more bytes wins — that's the more complete copy.
+// prefer genuine tick granularity (see tickQualityScore), then the larger file.
 export function listNqContracts(dir: string): ContractFile[] {
   const entries = readdirSync(dir).filter(f => CONTRACT_RE.test(f))
   const candidates: ContractFile[] = []
@@ -100,15 +130,27 @@ export function listNqContracts(dir: string): ContractFile[] {
     })
   }
 
-  // Dedupe by (year, month) — keep the largest file.
+  // Dedupe by (year, month) — genuine tick granularity first, then the largest file.
+  // (Score computed lazily, only for expiries that actually have duplicates.)
   const byExpiry = new Map<string, ContractFile>()
   const dropped: Array<{ kept: string; dropped: string }> = []
+  const scores = new Map<string, number>()
+  const scoreOf = (cf: ContractFile): number => {
+    let s = scores.get(cf.path)
+    if (s == null) { s = tickQualityScore(cf.path); scores.set(cf.path, s) }
+    return s
+  }
   for (const cf of candidates) {
     const key = `${cf.expiryYear}-${cf.expiryMonth}`
     const existing = byExpiry.get(key)
     if (!existing) {
       byExpiry.set(key, cf)
-    } else if (cf.sizeBytes > existing.sizeBytes) {
+      continue
+    }
+    const exGenuine = scoreOf(existing) >= 0.2
+    const cfGenuine = scoreOf(cf) >= 0.2
+    const cfWins = cfGenuine !== exGenuine ? cfGenuine : cf.sizeBytes > existing.sizeBytes
+    if (cfWins) {
       dropped.push({ kept: cf.name, dropped: existing.name })
       byExpiry.set(key, cf)
     } else {

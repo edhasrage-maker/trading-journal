@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapeScore · What the MFE/MAE bar shows</title>
+<style>
+  :root {
+    --ground:#0C0D10; --line:#282C32; --line-dim:#1E2229;
+    --ink:#E8EAED; --mut:#969BA3; --faint:#5E636B;
+    --pos:#4FC58E; --neg:#E0685F; --accent:#4F97CE;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ground); }
+  body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; padding: 34px 0 70px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 34px; }
+  .h { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 14px; }
+  .note { font-size: 12.5px; color: var(--faint); margin: 26px 0 34px; max-width: 78ch; line-height: 1.6; }
+  .note b { color: var(--mut); font-weight: 600; }
+
+  /* treatment C container */
+  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .cell { padding: 16px 18px; background: transparent; border: 1px solid var(--line); border-radius: 3px; }
+  .lab { font-size: 12px; color: var(--mut); }
+  .val { font-size: 27px; font-weight: 600; margin-top: 8px; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .sub { font-size: 11px; color: var(--faint); margin-top: 9px; }
+
+  /* the bar */
+  .bar { position: relative; height: 7px; margin-top: 15px; background: #14171C; border-radius: 2px; }
+  .bar > i { position: absolute; top: 0; height: 7px; display: block; }
+  .heat { left: 0; width: 29.8%; background: rgba(224,104,95,0.45); border-radius: 2px 0 0 2px; }
+  .ran  { left: 29.8%; width: 70.2%; background: rgba(79,197,142,0.18); border-radius: 0 2px 2px 0; }
+  .kept { left: 29.8%; width: 31.6%; background: var(--pos); }
+  .entry { left: 29.8%; width: 1.5px; top: -3px; height: 13px; background: var(--ink); }
+  .exit  { left: 61.4%; width: 2px; top: -3px; height: 13px; background: var(--ink); }
+  .bar-lab { display: flex; justify-content: space-between; margin-top: 9px; font-size: 10.5px; }
+
+  /* annotated diagram */
+  .diagram { border: 1px solid var(--line); border-radius: 3px; padding: 30px 34px 26px; margin-bottom: 34px; }
+  .dbar { position: relative; height: 12px; background: #14171C; border-radius: 2px; }
+  .dbar > i { position: absolute; top: 0; height: 12px; display: block; }
+  .dbar .heat { left: 0; width: 29.8%; background: rgba(224,104,95,0.45); border-radius: 2px 0 0 2px; }
+  .dbar .ran  { left: 29.8%; width: 70.2%; background: rgba(79,197,142,0.18); border-radius: 0 2px 2px 0; }
+  .dbar .kept { left: 29.8%; width: 31.6%; background: var(--pos); }
+  .dbar .entry { left: 29.8%; width: 2px; top: -6px; height: 24px; background: var(--ink); }
+  .dbar .exit  { left: 61.4%; width: 3px; top: -6px; height: 24px; background: var(--ink); }
+  .marks { position: relative; height: 54px; margin-top: 12px; }
+  .mark { position: absolute; font-size: 11px; line-height: 1.5; }
+  .mark .t { color: var(--ink); font-weight: 600; display: block; }
+  .mark .d { color: var(--faint); }
+  .above { position: relative; height: 34px; }
+  .amark { position: absolute; bottom: 0; font-size: 11px; color: var(--mut); }
+  .amark b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="h">What the bar encodes — your real numbers</div>
+    <div class="diagram">
+      <div class="above">
+        <span class="amark" style="left:0">heat you sat through · <b style="color:var(--neg)">−0.53×</b></span>
+        <span class="amark" style="left:63%">gave back · <b>55%</b> of the run</span>
+      </div>
+      <div class="dbar">
+        <i class="heat"></i><i class="ran"></i><i class="kept"></i><i class="entry"></i><i class="exit"></i>
+      </div>
+      <div class="marks">
+        <span class="mark" style="left:0"><span class="t">worst point</span><span class="d">−0.53× ATR</span></span>
+        <span class="mark" style="left:28%"><span class="t">entry</span><span class="d">0</span></span>
+        <span class="mark" style="left:57%"><span class="t">your exit</span><span class="d">kept 45%</span></span>
+        <span class="mark" style="right:0; text-align:right"><span class="t">best point</span><span class="d">+1.25× ATR</span></span>
+      </div>
+    </div>
+
+    <div class="h">In the tile (treatment C)</div>
+    <div class="row">
+      <div class="cell"><div class="lab">Last 30 Days P&amp;L</div><div class="val" style="color:var(--pos)">+$836</div><div class="sub">13 trading days</div></div>
+      <div class="cell"><div class="lab">Day Win %</div><div class="val">46%</div><div class="sub">% of days green</div></div>
+      <div class="cell"><div class="lab">Trade Win %</div><div class="val">40%</div><div class="sub">55 trades</div></div>
+      <div class="cell">
+        <div class="lab">Avg MFE / MAE</div>
+        <div class="val">+1.25× / <span style="color:var(--neg)">−0.53×</span></div>
+        <div class="bar"><i class="heat"></i><i class="ran"></i><i class="kept"></i><i class="entry"></i><i class="exit"></i></div>
+        <div class="bar-lab"><span style="color:var(--neg)">heat</span><span style="color:var(--faint)">kept <b style="color:var(--ink)">45%</b></span><span style="color:var(--pos)">run</span></div>
+      </div>
+    </div>
+
+    <p class="note">
+      Scale is one axis in ATR: the span runs from the average trade's <b>worst point (−0.53×)</b> through the <b>entry</b> to its <b>best point (+1.25×)</b>.
+      The solid green is what you actually <b>kept</b> (Profit Captured 45%); the faint green to its right is what the trade offered and you <b>gave back</b>.
+      Every value here already exists in your data — MFE, MAE and Profit Captured are columns in Recent Days, so nothing new needs computing.
+    </p>
+
+  </div>
+</body>
+</html>

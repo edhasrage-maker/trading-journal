@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapeScore · Modern-tech (bento + glow)</title>
+<style>
+  :root {
+    --ground:  #0A0B0E;
+    --p-top:   #16191F;   /* panel gradient top */
+    --p-bot:   #101216;   /* panel gradient bottom */
+    --inset:   #0D0F13;
+    --border:  rgba(255,255,255,0.07);
+    --border-2:rgba(255,255,255,0.11);
+    --ink:     #F2F4F7;
+    --ink-2:   #AEB6C2;
+    --mut:     #6E7681;
+    --faint:   #4B5563;
+    --accent:  #5EA8EE;
+    --accent-2:#3B82CE;
+    --glow:    rgba(94,168,238,0.30);
+    --pos:     #3FD69A;
+    --neg:     #FB7185;
+    --warn:    #F5B547;
+    --sans: "Geist", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ground); }
+  body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; padding-bottom: 64px; position: relative; }
+  /* faint aurora at the top — the modern-tech signature */
+  body::before { content:""; position: fixed; top: -30%; left: 50%; transform: translateX(-50%); width: 900px; height: 500px; pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(94,168,238,0.12), transparent 62%); filter: blur(20px); z-index: 0; }
+  .num { font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: -0.03em; }
+  .lab { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--mut); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
+
+  /* ── Masthead ── */
+  .masthead { display: flex; align-items: center; gap: 34px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .glyph { width: 27px; height: 27px; border-radius: 8px; }
+  .brand .word { font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+  nav { display: flex; gap: 8px; }
+  nav a { color: var(--mut); text-decoration: none; font-size: 13px; font-weight: 500; padding: 7px 12px; border-radius: 8px; }
+  nav a.on { color: var(--ink); background: rgba(255,255,255,0.05); }
+  .m-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .m-right .ghost { color: var(--mut); font-size: 13px; font-weight: 500; padding: 7px 12px; }
+  .seg { display: inline-flex; background: var(--inset); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
+  .seg span { font-size: 12px; font-weight: 600; color: var(--mut); padding: 5px 11px; border-radius: 7px; }
+  .seg span.on { color: var(--ink); background: rgba(94,168,238,0.16); box-shadow: inset 0 0 0 1px rgba(94,168,238,0.35); }
+
+  /* ── Bento grid ── */
+  .bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin-top: 14px; }
+  .panel { background: linear-gradient(180deg, var(--p-top), var(--p-bot)); border: 1px solid var(--border); border-radius: 18px; padding: 22px;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 12px 34px rgba(0,0,0,0.36); position: relative; }
+  .p-score   { grid-column: 1 / span 2; grid-row: 1 / span 2; }
+  .p-finding { grid-column: 3 / span 4; grid-row: 1; }
+  .p-pnl     { grid-column: 3 / span 2; grid-row: 2; }
+  .p-win     { grid-column: 5 / span 1; grid-row: 2; }
+  .p-trade   { grid-column: 6 / span 1; grid-row: 2; }
+  .p-equity  { grid-column: 1 / span 4; grid-row: 3; }
+  .p-sessions{ grid-column: 5 / span 2; grid-row: 3; }
+  @media (max-width: 860px){ .bento { grid-template-columns: 1fr 1fr; } .panel { grid-column: auto !important; grid-row: auto !important; } .p-score, .p-finding, .p-equity, .p-sessions { grid-column: 1 / span 2 !important; } }
+
+  .phead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .phead .lab { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  /* Score panel */
+  .ring-wrap { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .ring { position: relative; width: 168px; height: 168px; }
+  .ring .c { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  .ring .c .n { font-size: 56px; font-weight: 800; letter-spacing: -0.04em; line-height: 1; color: var(--neg); text-shadow: 0 0 24px rgba(251,113,133,0.35); }
+  .ring .c .w { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--neg); margin-top: 8px; }
+  .axis-chips { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+  .achip { display: grid; grid-template-columns: 44px 1fr 26px; align-items: center; gap: 10px; }
+  .achip .an { font-size: 11px; color: var(--mut); font-weight: 600; }
+  .achip .bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
+  .achip .bar > span { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+  .achip .av { font-size: 13px; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Finding panel */
+  .find-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.03em; color: var(--accent);
+    background: rgba(94,168,238,0.10); border: 1px solid rgba(94,168,238,0.28); padding: 4px 10px; border-radius: 999px; }
+  .find-h { font-size: clamp(26px, 3vw, 34px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; margin-top: 16px; max-width: 18ch; }
+  .find-sub { margin-top: 12px; font-size: 15px; color: var(--ink-2); line-height: 1.5; max-width: 56ch; }
+  .find-sub b.neg { color: var(--neg); } .find-sub b.pos { color: var(--pos); }
+  .find-foot { margin-top: 18px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #06121F;
+    background: linear-gradient(180deg, #7CBAF3, var(--accent)); padding: 9px 15px; border-radius: 10px; box-shadow: 0 6px 18px rgba(94,168,238,0.28); }
+  .metric-chip { font-size: 12px; color: var(--mut); } .metric-chip b { color: var(--ink); font-weight: 700; }
+
+  /* KPI panels */
+  .kpi .big { font-size: 30px; font-weight: 800; letter-spacing: -0.03em; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .kpi .foot { font-size: 11px; color: var(--faint); margin-top: 8px; }
+
+  /* Equity panel */
+  .cval { font-size: 15px; font-weight: 800; color: var(--pos); }
+
+  /* Sessions panel */
+  .srow { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); }
+  .srow:first-of-type { border-top: none; }
+  .srow .sd { font-size: 12.5px; color: var(--ink-2); }
+  .srow .sd small { color: var(--faint); margin-left: 6px; }
+  .badge { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 7px; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <header class="masthead">
+      <div class="brand">
+        <svg class="glyph" viewBox="0 0 128 128" aria-label="TapeScore">
+          <rect width="128" height="128" rx="28" fill="#0F1318"/>
+          <rect x="22" y="24" width="17" height="80" rx="3" fill="#E3A62F"/>
+          <g fill="#0F1318"><rect x="27" y="30" width="7" height="8" rx="1.6"/><rect x="27" y="44" width="7" height="8" rx="1.6"/><rect x="27" y="58" width="7" height="8" rx="1.6"/><rect x="27" y="72" width="7" height="8" rx="1.6"/><rect x="27" y="86" width="7" height="8" rx="1.6"/></g>
+          <rect x="89" y="24" width="17" height="80" rx="3" fill="#E3A62F"/>
+          <g fill="#0F1318"><rect x="94" y="30" width="7" height="8" rx="1.6"/><rect x="94" y="44" width="7" height="8" rx="1.6"/><rect x="94" y="58" width="7" height="8" rx="1.6"/><rect x="94" y="72" width="7" height="8" rx="1.6"/><rect x="94" y="86" width="7" height="8" rx="1.6"/></g>
+          <rect x="39" y="24" width="50" height="5" fill="#E3A62F"/><rect x="39" y="99" width="50" height="5" fill="#E3A62F"/>
+          <line x1="50" y1="66" x2="50" y2="92" stroke="#F3F5F7" stroke-width="3.2"/><rect x="44.5" y="71" width="11" height="16" rx="1.5" fill="#F3F5F7"/>
+          <line x1="64" y1="48" x2="64" y2="80" stroke="#F3F5F7" stroke-width="3.2"/><rect x="58.5" y="53" width="11" height="21" rx="1.5" fill="#F3F5F7"/>
+          <line x1="78" y1="34" x2="78" y2="68" stroke="#F3F5F7" stroke-width="3.2"/><rect x="72.5" y="38" width="11" height="25" rx="1.5" fill="#F3F5F7"/>
+        </svg>
+        <span class="word">TapeScore</span>
+      </div>
+      <nav><a class="on" href="#">Dashboard</a><a href="#">Prep</a><a href="#">Trade</a><a href="#">Review</a><a href="#">Patterns</a></nav>
+      <div class="m-right">
+        <span class="ghost">Import</span>
+        <span class="seg"><span>Highlights</span><span class="on">Detailed</span></span>
+      </div>
+    </header>
+
+    <div class="bento">
+
+      <!-- Score -->
+      <div class="panel p-score">
+        <div class="phead">
+          <span class="lab">TapeScore</span>
+          <span class="seg"><span class="on">M</span><span>Y</span><span>All</span></span>
+        </div>
+        <div class="ring-wrap">
+          <div class="ring">
+            <svg width="168" height="168" viewBox="0 0 132 132">
+              <path d="M69.56 15.12 A51 51 0 0 1 111.84 88.36" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="9"/>
+              <path d="M69.56 15.12 A51 51 0 0 1 116.90 69.20" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+              <path d="M108.28 94.52 A51 51 0 0 1 23.72 94.52" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="9"/>
+              <path d="M108.28 94.52 A51 51 0 0 1 70.98 116.76" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+              <path d="M20.16 88.36 A51 51 0 0 1 62.44 15.12" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="9"/>
+              <path d="M20.16 88.36 A51 51 0 0 1 16.85 52.41" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+            </svg>
+            <div class="c"><div><div class="n">54</div><div class="w">Needs work</div></div></div>
+          </div>
+          <div class="axis-chips">
+            <div class="achip"><span class="an">Risk</span><span class="bar"><span style="width:80%"></span></span><span class="av">80</span></div>
+            <div class="achip"><span class="an">Entry</span><span class="bar"><span style="width:45%"></span></span><span class="av">45</span></div>
+            <div class="achip"><span class="an">Exit</span><span class="bar"><span style="width:37%"></span></span><span class="av">37</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Finding -->
+      <div class="panel p-finding">
+        <div class="phead">
+          <span class="find-tag"><span class="dot" style="background:var(--accent)"></span> Clear leak · July</span>
+          <span class="lab">30 trades</span>
+        </div>
+        <h1 class="find-h">Supply &amp; Demand cost you.</h1>
+        <p class="find-sub"><b class="neg">−0.4R per trade</b> across 12 trades — everything else you traded returned <b class="pos">+0.1R</b>.</p>
+        <div class="find-foot">
+          <span class="btn">Do next → Skip S&amp;D unless it's textbook</span>
+          <span class="metric-chip">Capture <b>+1.25×</b> / Giveback <b style="color:var(--neg)">−0.53×</b></span>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="panel p-pnl kpi">
+        <span class="lab">Net P&amp;L · 30 days</span>
+        <div class="big" style="color:var(--pos)">+$836</div>
+        <div class="foot">13 trading sessions</div>
+      </div>
+      <div class="panel p-win kpi">
+        <span class="lab">Day win</span>
+        <div class="big">46%</div>
+        <div class="foot">days green</div>
+      </div>
+      <div class="panel p-trade kpi">
+        <span class="lab">Trade win</span>
+        <div class="big">40%</div>
+        <div class="foot">55 trades</div>
+      </div>
+
+      <!-- Equity -->
+      <div class="panel p-equity">
+        <div class="phead"><span class="lab">Equity curve · 30 days</span><span class="cval">+$836</span></div>
+        <svg viewBox="0 0 720 170" width="100%" height="170" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="eq" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="rgba(63,214,154,0.28)"/><stop offset="1" stop-color="rgba(63,214,154,0)"/>
+            </linearGradient>
+          </defs>
+          <path d="M0 132 L60 96 L120 54 L180 28 L240 14 L300 46 L360 82 L420 56 L480 28 L540 52 L600 74 L660 98 L720 118 L720 170 L0 170 Z" fill="url(#eq)"/>
+          <polyline points="0,132 60,96 120,54 180,28 240,14 300,46 360,82 420,56 480,28 540,52 600,74 660,98 720,118" fill="none" stroke="var(--pos)" stroke-width="2.4" stroke-linejoin="round"/>
+          <circle cx="720" cy="118" r="3.5" fill="var(--pos)"/>
+        </svg>
+      </div>
+
+      <!-- Sessions -->
+      <div class="panel p-sessions">
+        <div class="phead"><span class="lab">Recent sessions</span></div>
+        <div class="srow"><span class="sd">Jul 24 <small>revenge PM</small></span><span class="badge" style="color:var(--neg); background:rgba(251,113,133,0.12)">54</span></div>
+        <div class="srow"><span class="sd">Jul 23 <small>textbook</small></span><span class="badge" style="color:var(--pos); background:rgba(63,214,154,0.12)">71</span></div>
+        <div class="srow"><span class="sd">Jul 22 <small>tilt</small></span><span class="badge" style="color:var(--neg); background:rgba(251,113,133,0.12)">38</span></div>
+        <div class="srow"><span class="sd">Jul 21 <small>timid exits</small></span><span class="badge" style="color:var(--warn); background:rgba(245,181,71,0.12)">63</span></div>
+        <div class="srow"><span class="sd">Jul 18 <small>chop</small></span><span class="badge" style="color:var(--neg); background:rgba(251,113,133,0.12)">49</span></div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

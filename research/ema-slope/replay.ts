@@ -1,13 +1,19 @@
 import { readFileSync, existsSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
-import { emaSeries } from './ema'
+import { emaSeries, smaSeries } from './ema'
 import { loadOhlcBars, pickBestSymbol, type OhlcBar } from './load'
 import { aggregate1mTo5m, isRTH, ptDateKey } from './aggregate'
 import { atrWilder } from './atr'
 import { listNqContracts } from './scid-discovery'
-import { readScidBars, makeTickReader } from '../../src/lib/scid-reader'
+import { readScidBars, makeTickReader, firstRawCloseAtOrAfter } from '../../src/lib/scid-reader'
 
 type TickReader = (startMs: number, endMs: number) => number[]
+
+// Moving-average selector for the two structure MAs (the 9 and the 20). Routed
+// through --ma-type; ATR is Wilder regardless and never comes through here.
+function maSeries(values: number[], period: number, type: 'ema' | 'sma'): number[] {
+  return type === 'sma' ? smaSeries(values, period) : emaSeries(values, period)
+}
 
 if (existsSync('.env.local')) {
   for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
@@ -22,14 +28,22 @@ type Args = {
   to: string | null
   symbol: string | null
   scidDir: string
-  entry: 'pullback' | 'break' | 'zone'
+  entry: 'pullback' | 'break' | 'zone' | 'zone-boc'
   decisionTfMin: number // timeframe (minutes) the EMA/slope/bias run on (default 5)
+  maType: 'ema' | 'sma' // moving-average type for BOTH the 9 and 20 MA (ATR stays Wilder regardless)
   ema: number
   ema2: number
   lookback: number
   atrPeriod: number
   targetR: number
   stopMult: number // scale the ATR stop/TP distance (1 = 1× ATR; ~2 ≈ 5m-ATR scale)
+  beAt: number // move stop to entry once price runs this many R in favor (0 = off)
+  firstPullback: boolean // only take the FIRST pullback entry of each bias segment
+  maxCrosses: number // max price-vs-EMA side flips in the last 10 5m bars at signal (chop memory)
+  htfAlign: boolean // require 15m 9 EMA vs 20 EMA aligned with the 5m bias
+  gapAlign: boolean // require the overnight gap (RTH open vs prior RTH close) in the bias direction
+  fillThrough: boolean // limit fills only when price trades THROUGH the level by a tick (queue realism)
+  commission: number // $ per contract round-turn, subtracted from every trade in KPI/risk stats
   side: 'long' | 'short' | 'both'
   contracts: number
   mult: number
@@ -115,14 +129,22 @@ function parseArgs(): Args {
     to: a.to ?? null,
     symbol: a.symbol ?? null,
     scidDir: a['scid-dir'] ?? process.env.SIERRA_DATA_DIR ?? 'D:\\SierraCharts\\Data',
-    entry: (a.entry ?? 'pullback') as 'pullback' | 'break' | 'zone',
+    entry: (a.entry ?? 'pullback') as 'pullback' | 'break' | 'zone' | 'zone-boc',
     decisionTfMin: Number(a['decision-tf'] ?? 5),
+    maType: (a['ma-type'] ?? 'ema') as 'ema' | 'sma',
     ema: Number(a.ema ?? 9),
     ema2: Number(a.ema2 ?? 20),
     lookback: Number(a.lookback ?? 3),
     atrPeriod: Number(a.atr ?? 10),
     targetR: Number(a.target ?? 2),
     stopMult: Number(a['stop-mult'] ?? 1),
+    beAt: Number(a['be-at'] ?? 0),
+    firstPullback: (a['first-pullback'] ?? '0') === '1',
+    maxCrosses: a['max-crosses'] != null ? Number(a['max-crosses']) : Number.POSITIVE_INFINITY,
+    htfAlign: (a['htf-align'] ?? '0') === '1',
+    gapAlign: (a['gap-align'] ?? '0') === '1',
+    fillThrough: (a['fill-through'] ?? '0') === '1',
+    commission: Number(a.commission ?? 0),
     side: (a.side ?? 'both') as Args['side'],
     contracts: Number(a.contracts ?? 5),
     mult: Number(a.mult ?? 2),
@@ -131,7 +153,9 @@ function parseArgs(): Args {
     minSlope: Number(a['min-slope'] ?? 0),
     maxSlope: a['max-slope'] != null ? Number(a['max-slope']) : Number.POSITIVE_INFINITY,
     minSep: Number(a['min-sep'] ?? 0),
-    minSpread: Number(a['min-spread'] ?? 0),
+    // NB: direction-aligned spread can be NEGATIVE (9 EMA on the wrong side of the 20).
+    // Default must be -∞, not 0 — a 0 default silently imposed "9 beyond 20" on every run.
+    minSpread: a['min-spread'] != null ? Number(a['min-spread']) : Number.NEGATIVE_INFINITY,
     maxSep: a['max-sep'] != null ? Number(a['max-sep']) : Number.POSITIVE_INFINITY,
     minTrendDay: Number(a['min-trend-day'] ?? 0),
     fillbarTarget: (a['fillbar-target'] ?? '1') === '1',
@@ -167,6 +191,7 @@ type OpenPos = {
   accelDir?: number
   crossCount?: number
   entryIsStop?: boolean // stop-breakout entry (fills going with the move) vs limit fade
+  beArmed?: boolean // --be-at: stop has been moved to entry (breakeven)
   scaled?: boolean // scale-out mode: partial booked at +1R, runner active
   runnerStopPrice?: number // stop on the runner leg after the scale
   debugExample?: number
@@ -204,14 +229,18 @@ function ptTime(iso: string): string {
   return PT_LONG.format(new Date(iso)) + ' PT'
 }
 
-function fillLong(bar1m: OhlcBar, limit: number): number | null {
-  if (bar1m.open <= limit) return bar1m.open
-  if (bar1m.low <= limit) return limit
+const NQ_TICK = 0.25
+
+// throughTick > 0 = queue-realism mode: a resting limit only fills when price trades
+// THROUGH the level (touch alone doesn't guarantee a fill at the back of the queue).
+function fillLong(bar1m: OhlcBar, limit: number, throughTick = 0): number | null {
+  if (bar1m.open <= limit - throughTick) return bar1m.open
+  if (bar1m.low <= limit - throughTick) return limit
   return null
 }
-function fillShort(bar1m: OhlcBar, limit: number): number | null {
-  if (bar1m.open >= limit) return bar1m.open
-  if (bar1m.high >= limit) return limit
+function fillShort(bar1m: OhlcBar, limit: number, throughTick = 0): number | null {
+  if (bar1m.open >= limit + throughTick) return bar1m.open
+  if (bar1m.high >= limit + throughTick) return limit
   return null
 }
 
@@ -244,6 +273,7 @@ function checkExit(
 function simulate(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx, tickReader?: TickReader): { trades: Trade[]; unresolved: number } {
   if (args.entry === 'break') return simulateBreak(bars1m, args, dbg)
   if (args.entry === 'zone') return simulateZone(bars1m, args)
+  if (args.entry === 'zone-boc') return simulateZoneBoc(bars1m, args, tickReader)
   return simulatePullback(bars1m, args, tickReader)
 }
 
@@ -264,11 +294,26 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
   const rthMask5m = ranges.map(r => isRTH1m[r.start])
 
   const closes5m = bars5m.map(b => b.close)
-  const ema5m = emaSeries(closes5m, args.ema)
-  const ema20s = emaSeries(closes5m, args.ema2) // companion EMA for the 9-20 spread metric
+  const ema5m = maSeries(closes5m, args.ema, args.maType)
+  const ema20s = maSeries(closes5m, args.ema2, args.maType) // companion MA for the 9-20 spread metric
   const slope5m: (number | null)[] = bars5m.map((_, i) =>
     i >= args.lookback ? (ema5m[i] - ema5m[i - args.lookback]) / args.lookback : null,
   )
+
+  // --htf-align: 9/20 EMAs on the 15-minute; a 5m signal requires the last CLOSED
+  // 15m bar's structure (9 vs 20) to agree with the bias. No lookahead: only 15m
+  // bars whose last 1m sub-bar has closed by the 5m signal close are eligible.
+  const htf = args.htfAlign ? aggregate1mTo5m(bars1m, 15 * 60 * 1000) : null
+  const ema9htf = htf ? maSeries(htf.bars5m.map(b => b.close), args.ema, args.maType) : []
+  const ema20htf = htf ? maSeries(htf.bars5m.map(b => b.close), args.ema2, args.maType) : []
+  const htfLastClosed = new Array<number>(bars5m.length).fill(-1)
+  if (htf) {
+    let k = -1
+    for (let i = 0; i < bars5m.length; i++) {
+      while (k + 1 < htf.ranges.length && htf.ranges[k + 1].end <= ranges[i].end) k++
+      htfLastClosed[i] = k
+    }
+  }
 
   // Scale-out (Test 1): book scaleQty contracts at +1R, run the remainder until
   // a 1m close back through the EMA. Only active when 0 < scaleQty < contracts.
@@ -282,6 +327,21 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
       for (let j = ranges[i].start; j < ranges[i].end; j++) emaFor1m[j] = e
     }
   }
+  // --gap-align: prior session's last RTH 1m close, applicable to each 1m bar's date.
+  // Known before the open — no lookahead. First session of a contract slice has none.
+  const prevRthClose1m = new Array<number>(bars1m.length).fill(NaN)
+  if (args.gapAlign) {
+    let curDate = ''
+    let lastRthClose = NaN // last RTH close seen so far (rolls into prevClose on date change)
+    let prevClose = NaN
+    for (let j = 0; j < bars1m.length; j++) {
+      const d = ptDate1m[j]
+      if (d !== curDate) { prevClose = lastRthClose; curDate = d }
+      prevRthClose1m[j] = prevClose
+      if (isRTH1m[j]) lastRthClose = bars1m[j].close
+    }
+  }
+
   // 24h VWAP anchored at 15:00 PT (Test 3): volume-weighted typical price,
   // reset each day at 3pm PT, accumulated across ETH + RTH.
   const vwap1m = new Array<number>(bars1m.length).fill(NaN)
@@ -306,6 +366,7 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
   // riding the same continuous trend.
   let needCompress = false
   let consecAgainst = 0
+  let entriesThisBias = 0 // fills taken in the current bias segment (--first-pullback gate)
   let pendingLimit: { side: Side; price: number; slopeAtSignal: number; emaDistAtSignal: number; signalTs5m: string; atrAtSignal: number; spreadDir: number; accelDir: number; crossCount: number } | null = null
   let pulledBack = false // (stop mode) price has retested the EMA since arming
   let prevBar1m: OhlcBar | null = null // (stop mode) prior 1m bar — the breakout trigger
@@ -365,23 +426,32 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
       let f = -1
       for (let t = 0; t < ticks.length; t++) {
         // Limit fades INTO the level (long fills on a tick ≤ entry); a stop breaks
-        // through it WITH the move (long fills on a tick ≥ entry).
+        // through it WITH the move (long fills on a tick ≥ entry). Fill-through mode
+        // demands a tick strictly beyond the limit (queue realism).
+        const thr = !pos.entryIsStop && args.fillThrough ? NQ_TICK : 0
         const reached = pos.entryIsStop
           ? (pos.side === 'long' ? ticks[t] >= pos.entry : ticks[t] <= pos.entry)
-          : (pos.side === 'long' ? ticks[t] <= pos.entry : ticks[t] >= pos.entry)
+          : (pos.side === 'long' ? ticks[t] <= pos.entry - thr : ticks[t] >= pos.entry + thr)
         if (reached) { f = t; break }
       }
       if (f < 0) return 'open' // no tick reached the fill price this bar (guard)
       start = f
     }
+    // --be-at: the stop is DYNAMIC — once a tick runs beAt×R in favor, the stop
+    // jumps to entry. Mutating pos here is safe: state persists if the bar ends 'open'.
+    const beTrig = args.beAt > 0
+      ? (pos.side === 'long' ? pos.entry + args.beAt * pos.stopDist : pos.entry - args.beAt * pos.stopDist)
+      : NaN
     for (let t = start; t < ticks.length; t++) {
       const p = ticks[t]
       if (pos.side === 'long') {
         if (p <= pos.stop) return 'stop'
         if (p >= pos.target) return 'target'
+        if (!pos.beArmed && Number.isFinite(beTrig) && p >= beTrig) { pos.stop = pos.entry; pos.beArmed = true }
       } else {
         if (p >= pos.stop) return 'stop'
         if (p <= pos.target) return 'target'
+        if (!pos.beArmed && Number.isFinite(beTrig) && p <= beTrig) { pos.stop = pos.entry; pos.beArmed = true }
       }
     }
     return 'open'
@@ -398,25 +468,38 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
     if (!pos.scaled) {
       const stopIn = pos.side === 'long' ? b.low <= pos.stop : b.high >= pos.stop
       const tgtIn = pos.side === 'long' ? b.high >= pos.target : b.low <= pos.target
-      if (!stopIn && !tgtIn) return false
+      // --be-at: bar reaches the BE trigger while the stop hasn't moved yet.
+      const beTrig = args.beAt > 0 && !pos.beArmed
+        ? (pos.side === 'long' ? pos.entry + args.beAt * pos.stopDist : pos.entry - args.beAt * pos.stopDist)
+        : NaN
+      const beTrigIn = Number.isFinite(beTrig) && (pos.side === 'long' ? b.high >= beTrig : b.low <= beTrig)
+      // R paid on a stop exit — -1 on the original stop, 0 once moved to breakeven.
+      const stopR = () => pos.side === 'long' ? (pos.stop - pos.entry) / pos.stopDist : (pos.entry - pos.stop) / pos.stopDist
+      if (!stopIn && !tgtIn) {
+        if (beTrigIn) { pos.stop = pos.entry; pos.beArmed = true } // arm for later bars
+        return false
+      }
       const isFill = j === pos.fillIdx1m
       const hitTarget = (): boolean => {
         if (scaleActive) { pos.scaled = true; pos.runnerStopPrice = args.runnerStop === 'be' ? pos.entry : pos.stop; return false }
         finalize(j, pos.target, pos.side === 'long' ? (pos.target - pos.entry) / pos.stopDist : (pos.entry - pos.target) / pos.stopDist)
         return true
       }
-      // Tick resolution when the order matters: the fill bar (fill-vs-target), or any
-      // bar whose range straddles BOTH stop and target. Other bars are unambiguous via OHLC.
-      if (useTicks && (isFill || (stopIn && tgtIn))) {
+      // Tick resolution when the order matters: the fill bar (fill-vs-target), any bar
+      // straddling BOTH stop and target, or a stop-touch bar that also reaches the
+      // not-yet-armed BE trigger (did we get to BE before the stop?).
+      if (useTicks && (isFill || (stopIn && tgtIn) || (stopIn && beTrigIn))) {
         const r = tickExit(pos, j, isFill)
-        if (r === 'stop') { finalize(j, pos.stop, -1); return true }
+        if (r === 'stop') { finalize(j, pos.stop, stopR()); return true }
         if (r === 'target') return hitTarget()
+        if (beTrigIn && !pos.beArmed && !(pos.side === 'long' ? b.low <= pos.stop : b.high >= pos.stop)) { pos.stop = pos.entry; pos.beArmed = true }
         return false
       }
       // OHLC fallback: pessimistic stop-first; on the fill bar honor --fillbar-target.
       const allowTarget = args.fillbarTarget || !isFill
-      if (stopIn) { finalize(j, pos.stop, -1); return true }
+      if (stopIn) { finalize(j, pos.stop, stopR()); return true }
       if (allowTarget && tgtIn) return hitTarget()
+      if (beTrigIn) { pos.stop = pos.entry; pos.beArmed = true }
       return false
     } else {
       // Runner: exit on runner stop (intrabar) or first 1m close back through the EMA.
@@ -450,6 +533,7 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
       armed = false
       needCompress = false
       consecAgainst = 0
+      entriesThisBias = 0
       pendingLimit = null
       pulledBack = false
       prevBar1m = null
@@ -492,7 +576,8 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
         let isStop = false
         if (args.entryTrigger === 'limit') {
           // LIMIT: fade into the EMA — fill on touch.
-          const fp = lim.side === 'long' ? fillLong(sub, lim.price) : fillShort(sub, lim.price)
+          const thr = args.fillThrough ? NQ_TICK : 0
+          const fp = lim.side === 'long' ? fillLong(sub, lim.price, thr) : fillShort(sub, lim.price, thr)
           if (fp != null) entry = fp
         } else {
           // STOP: require a pullback to the EMA, then enter on a break of the prior
@@ -516,6 +601,7 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
             mfe: 0, mae: 0, atrAtSignal: lim.atrAtSignal, spreadDir: lim.spreadDir, accelDir: lim.accelDir,
             crossCount: lim.crossCount, entryIsStop: isStop,
           }
+          entriesThisBias++
           const closed = stepExit(j)
           if (!closed) posOpen.scanStart1m = j + 1
           pendingLimit = null
@@ -577,6 +663,18 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
         newBias = null
       }
     }
+    // 15m structure agreement: last CLOSED 15m bar must have the 9 EMA on the bias side of the 20.
+    if (newBias != null && args.htfAlign) {
+      const k = htfLastClosed[i]
+      const ok = k >= args.ema2 && (newBias === 'long' ? ema9htf[k] > ema20htf[k] : ema9htf[k] < ema20htf[k])
+      if (!ok) newBias = null
+    }
+    // Overnight-gap agreement: the RTH open must have gapped in the bias direction.
+    if (newBias != null && args.gapAlign) {
+      const pc = prevRthClose1m[range.start]
+      const ok = Number.isFinite(rthOpen) && Number.isFinite(pc) && (newBias === 'long' ? rthOpen > pc : rthOpen < pc)
+      if (!ok) newBias = null
+    }
 
     if (newBias !== bias) {
       armed = false
@@ -585,6 +683,7 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
       pulledBack = false
       needCompress = false
       consecAgainst = 0
+      entriesThisBias = 0 // fresh bias segment → first pullback available again
     }
 
     if (bias && !armed && !posOpen) {
@@ -610,7 +709,8 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
       // (in the trend direction). The spread floor is the "is the trend strong enough to look at" gate.
       const dirSpread = bias === 'long' ? ema - ema20s[i] : ema20s[i] - ema
       const spreadAtr = Number.isFinite(ema20s[i]) && sigAtr > 0 ? dirSpread / sigAtr : 0
-      if (sepNow < args.minSep || sepNow > args.maxSep || spreadAtr < args.minSpread) {
+      if (sepNow < args.minSep || sepNow > args.maxSep || spreadAtr < args.minSpread
+        || (args.firstPullback && entriesThisBias > 0)) {
         pendingLimit = null
       } else {
         const prevSlope = i >= 1 ? slope5m[i - 1] : null
@@ -621,7 +721,10 @@ function simulatePullback(bars1m: OhlcBar[], args: Args, tickReader?: TickReader
           const b = Math.sign(closes5m[k - 1] - ema5m[k - 1])
           if (a !== 0 && b !== 0 && a !== b) crosses++
         }
-        pendingLimit = {
+        // Chop memory (--max-crosses): too many recent side-flips = the EMA isn't holding.
+        if (crosses > args.maxCrosses) {
+          pendingLimit = null
+        } else pendingLimit = {
           side: bias,
           price: ema,
           slopeAtSignal: bias === 'long' ? slope : -slope,
@@ -660,7 +763,7 @@ function simulateBreak(bars1m: OhlcBar[], args: Args, dbg?: DebugCtx): { trades:
   const rthMask5m = ranges.map(r => isRTH1m[r.start])
 
   const closes5m = bars5m.map(b => b.close)
-  const ema5m = emaSeries(closes5m, args.ema)
+  const ema5m = maSeries(closes5m, args.ema, args.maType)
   const slope5m: (number | null)[] = bars5m.map((_, i) =>
     i >= args.lookback ? (ema5m[i] - ema5m[i - args.lookback]) / args.lookback : null,
   )
@@ -950,8 +1053,8 @@ function simulateZone(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresol
   const { bars5m, ranges } = aggregate1mTo5m(bars1m)
   const rthMask5m = ranges.map(r => isRTH1m[r.start])
   const closes5m = bars5m.map(b => b.close)
-  const ema9 = emaSeries(closes5m, args.ema)
-  const ema20 = emaSeries(closes5m, args.ema2)
+  const ema9 = maSeries(closes5m, args.ema, args.maType)
+  const ema20 = maSeries(closes5m, args.ema2, args.maType)
   const slope5m: (number | null)[] = bars5m.map((_, i) =>
     i >= args.lookback ? (ema9[i] - ema9[i - args.lookback]) / args.lookback : null,
   )
@@ -1090,6 +1193,353 @@ function simulateZone(bars1m: OhlcBar[], args: Args): { trades: Trade[]; unresol
   return { trades, unresolved }
 }
 
+// Zone-BOC mode: trend-persistent bias (9-vs-20 EMA stack + slope sign). When price
+// pulls back and TOUCHES the 9 EMA (enters the 9-20 zone), we wait for the FIRST
+// break of a completed 5m candle's extreme in the trend direction and enter on that
+// stop-breakout. Stop = the pullback swing low/high since the zone touch (−1 tick).
+// TP = 2R. One entry per zone visit (a fresh 9-touch re-arms). Invalidation: a 5m
+// close beyond the far (20) band kills the setup.
+//
+// Filter parity with the daily pullback config:
+//  - min-slope / max-slope, VWAP, entry-window, side, htf/gap/min-trend-day: same as pullback.
+//  - min-spread: the 9-20 spread (in ATR) — here it is the ZONE WIDTH floor.
+//  - min-sep / max-sep: applied at the ENTRY as |entry − 9EMA| in ATR (how near the 9
+//    we actually filled) — NOT at the signal bar (a zone pullback is never extended,
+//    so signal-bar sep would either be trivial or reject the strong-trend runs we want).
+//  NB: bias is the EMA STACK, not close>9EMA — a pullback closes below the 9 by
+//  definition, which would nuke a close-based bias mid-setup.
+function simulateZoneBoc(bars1m: OhlcBar[], args: Args, tickReader?: TickReader): { trades: Trade[]; unresolved: number } {
+  if (bars1m.length < args.atrPeriod + 10) return { trades: [], unresolved: 0 }
+  const useTicks = args.tickResolve && !!tickReader
+
+  const isRTH1m = bars1m.map(b => isRTH(b.ts))
+  const ptDate1m = bars1m.map(b => ptDateKey(b.ts))
+  const atr1m = atrWilder(bars1m, args.atrPeriod)
+
+  const { bars5m, ranges } = aggregate1mTo5m(bars1m, args.decisionTfMin * 60 * 1000)
+  const rthMask5m = ranges.map(r => isRTH1m[r.start])
+  const closes5m = bars5m.map(b => b.close)
+  const ema9s = maSeries(closes5m, args.ema, args.maType)
+  const ema20s = maSeries(closes5m, args.ema2, args.maType)
+  const slope5m: (number | null)[] = bars5m.map((_, i) =>
+    i >= args.lookback ? (ema9s[i] - ema9s[i - args.lookback]) / args.lookback : null,
+  )
+
+  // --htf-align: 9/20 on the 15m; require the last CLOSED 15m bar's stack to agree.
+  const htf = args.htfAlign ? aggregate1mTo5m(bars1m, 15 * 60 * 1000) : null
+  const ema9htf = htf ? maSeries(htf.bars5m.map(b => b.close), args.ema, args.maType) : []
+  const ema20htf = htf ? maSeries(htf.bars5m.map(b => b.close), args.ema2, args.maType) : []
+  const htfLastClosed = new Array<number>(bars5m.length).fill(-1)
+  if (htf) {
+    let k = -1
+    for (let i = 0; i < bars5m.length; i++) {
+      while (k + 1 < htf.ranges.length && htf.ranges[k + 1].end <= ranges[i].end) k++
+      htfLastClosed[i] = k
+    }
+  }
+
+  // --gap-align: prior session's last RTH 1m close, applicable to each 1m bar's date.
+  const prevRthClose1m = new Array<number>(bars1m.length).fill(NaN)
+  if (args.gapAlign) {
+    let curDate = ''
+    let lastRthClose = NaN
+    let prevClose = NaN
+    for (let j = 0; j < bars1m.length; j++) {
+      const d = ptDate1m[j]
+      if (d !== curDate) { prevClose = lastRthClose; curDate = d }
+      prevRthClose1m[j] = prevClose
+      if (isRTH1m[j]) lastRthClose = bars1m[j].close
+    }
+  }
+
+  // 24h VWAP anchored at 15:00 PT.
+  const vwap1m = new Array<number>(bars1m.length).fill(NaN)
+  if (args.vwapFilter) {
+    const ptDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' })
+    let cumPV = 0, cumV = 0, anchor = ''
+    for (let j = 0; j < bars1m.length; j++) {
+      const t = new Date(bars1m[j].ts).getTime()
+      const key = ptDay.format(new Date(t - 15 * 3600 * 1000))
+      if (key !== anchor) { cumPV = 0; cumV = 0; anchor = key }
+      const vol = bars1m[j].volume ?? 0
+      const tp = (bars1m[j].high + bars1m[j].low + bars1m[j].close) / 3
+      cumPV += tp * vol; cumV += vol
+      vwap1m[j] = cumV > 0 ? cumPV / cumV : NaN
+    }
+  }
+
+  let bias: Side | null = null
+  let watching = false      // trend qualified this bar → look for a pullback
+  let inZone = false        // price has touched the 9 EMA this visit
+  let zoneBarIdx = -1       // 5m bar index at which the zone was entered (need a completed candle after)
+  let swingExt = NaN        // running pullback extreme (low for long / high for short) since the touch
+  // signal metrics carried into the fill
+  let sigSlope = 0, sigTs = '', sigAtr = 0, sigSpread = 0
+  let rthOpen = NaN
+  let posOpen: OpenPos | null = null
+  let prevPtDate: string | null = null
+  let lastRthIdx = -1
+  const trades: Trade[] = []
+  let unresolved = 0
+
+  const finalize = (exitIdx: number, exitPrice: number, R: number) => {
+    if (!posOpen) return
+    trades.push({
+      signalTs: posOpen.signalTs,
+      fillTs: bars1m[posOpen.fillIdx1m].ts,
+      exitTs: bars1m[exitIdx].ts,
+      side: posOpen.side,
+      entry: posOpen.entry,
+      exit: exitPrice,
+      stop: posOpen.stop,
+      target: posOpen.target,
+      stopDist: posOpen.stopDist,
+      R,
+      slope: Math.abs(posOpen.slopeAtSignal),
+      emaDistAtSignal: posOpen.emaDistAtSignal,
+      mfeAtr: posOpen.stopDist > 0 ? posOpen.mfe / posOpen.stopDist : 0,
+      maeAtr: posOpen.stopDist > 0 ? posOpen.mae / posOpen.stopDist : 0,
+      atrAtSignal: posOpen.atrAtSignal,
+      spreadDir: posOpen.spreadDir,
+    })
+    posOpen = null
+    inZone = false // one shot per zone visit — a fresh 9-touch must re-arm
+  }
+
+  // Resolve TRUE intrabar order of stop vs target from ticks (identical to pullback mode).
+  const tickExit = (pos: OpenPos, j: number, isFill: boolean): 'stop' | 'target' | 'open' => {
+    const barMs = new Date(bars1m[j].ts).getTime()
+    const ticks = tickReader!(barMs, barMs + 60_000)
+    let start = 0
+    if (isFill) {
+      let f = -1
+      for (let t = 0; t < ticks.length; t++) {
+        // zone-BOC entry is always a stop-breakout (fills WITH the move): long fills on a tick ≥ entry.
+        const reached = pos.side === 'long' ? ticks[t] >= pos.entry : ticks[t] <= pos.entry
+        if (reached) { f = t; break }
+      }
+      if (f < 0) return 'open'
+      start = f
+    }
+    const beTrig = args.beAt > 0
+      ? (pos.side === 'long' ? pos.entry + args.beAt * pos.stopDist : pos.entry - args.beAt * pos.stopDist)
+      : NaN
+    for (let t = start; t < ticks.length; t++) {
+      const p = ticks[t]
+      if (pos.side === 'long') {
+        if (p <= pos.stop) return 'stop'
+        if (p >= pos.target) return 'target'
+        if (!pos.beArmed && Number.isFinite(beTrig) && p >= beTrig) { pos.stop = pos.entry; pos.beArmed = true }
+      } else {
+        if (p >= pos.stop) return 'stop'
+        if (p <= pos.target) return 'target'
+        if (!pos.beArmed && Number.isFinite(beTrig) && p <= beTrig) { pos.stop = pos.entry; pos.beArmed = true }
+      }
+    }
+    return 'open'
+  }
+
+  // One 1m bar of exit processing for the open position. Returns true if it closed.
+  const stepExit = (j: number): boolean => {
+    const pos = posOpen!
+    const b = bars1m[j]
+    const fav = pos.side === 'long' ? b.high - pos.entry : pos.entry - b.low
+    const adv = pos.side === 'long' ? pos.entry - b.low : b.high - pos.entry
+    if (fav > pos.mfe) pos.mfe = fav
+    if (adv > pos.mae) pos.mae = adv
+    const stopIn = pos.side === 'long' ? b.low <= pos.stop : b.high >= pos.stop
+    const tgtIn = pos.side === 'long' ? b.high >= pos.target : b.low <= pos.target
+    const beTrig = args.beAt > 0 && !pos.beArmed
+      ? (pos.side === 'long' ? pos.entry + args.beAt * pos.stopDist : pos.entry - args.beAt * pos.stopDist)
+      : NaN
+    const beTrigIn = Number.isFinite(beTrig) && (pos.side === 'long' ? b.high >= beTrig : b.low <= beTrig)
+    const stopR = () => pos.side === 'long' ? (pos.stop - pos.entry) / pos.stopDist : (pos.entry - pos.stop) / pos.stopDist
+    if (!stopIn && !tgtIn) {
+      if (beTrigIn) { pos.stop = pos.entry; pos.beArmed = true }
+      return false
+    }
+    const isFill = j === pos.fillIdx1m
+    if (useTicks && (isFill || (stopIn && tgtIn) || (stopIn && beTrigIn))) {
+      const r = tickExit(pos, j, isFill)
+      if (r === 'stop') { finalize(j, pos.stop, stopR()); return true }
+      if (r === 'target') { finalize(j, pos.target, pos.side === 'long' ? (pos.target - pos.entry) / pos.stopDist : (pos.entry - pos.target) / pos.stopDist); return true }
+      if (beTrigIn && !pos.beArmed && !(pos.side === 'long' ? b.low <= pos.stop : b.high >= pos.stop)) { pos.stop = pos.entry; pos.beArmed = true }
+      return false
+    }
+    const allowTarget = args.fillbarTarget || !isFill
+    if (stopIn) { finalize(j, pos.stop, stopR()); return true }
+    if (allowTarget && tgtIn) { finalize(j, pos.target, pos.side === 'long' ? (pos.target - pos.entry) / pos.stopDist : (pos.entry - pos.target) / pos.stopDist); return true }
+    if (beTrigIn) { pos.stop = pos.entry; pos.beArmed = true }
+    return false
+  }
+
+  for (let i = 0; i < bars5m.length; i++) {
+    const range = ranges[i]
+    const bar5m = bars5m[i]
+    const slope = slope5m[i]
+    const e9cur = ema9s[i]
+    const e20cur = ema20s[i]
+    const inRTH = rthMask5m[i]
+    const ptDate = ptDate1m[range.start]
+
+    if (ptDate !== prevPtDate) {
+      if (posOpen) unresolved++
+      bias = null
+      watching = false
+      inZone = false
+      zoneBarIdx = -1
+      rthOpen = NaN
+      posOpen = null
+      prevPtDate = ptDate
+    }
+    if (!inRTH) continue
+    if (Number.isNaN(rthOpen)) rthOpen = bar5m.open
+
+    // Prior completed 5m values drive intrabar decisions (no lookahead).
+    const e9 = i > 0 ? ema9s[i - 1] : NaN
+    const e20 = i > 0 ? ema20s[i - 1] : NaN
+    const prev5m = i > 0 ? bars5m[i - 1] : null
+    const trigHigh = prev5m ? prev5m.high : NaN
+    const trigLow = prev5m ? prev5m.low : NaN
+
+    for (let j = range.start; j < range.end; j++) {
+      if (!isRTH1m[j]) break
+      lastRthIdx = j
+      const sub = bars1m[j]
+
+      if (posOpen) {
+        const closed = stepExit(j)
+        if (!closed) { posOpen.scanStart1m = j + 1; continue }
+      }
+
+      if (!bias || !watching || !Number.isFinite(e9) || !Number.isFinite(e20)) continue
+
+      // Pullback into the zone: a touch of the near (9) band arms the visit.
+      const touched = bias === 'long' ? sub.low <= e9 : sub.high >= e9
+      if (touched && !inZone) {
+        inZone = true
+        zoneBarIdx = i
+        swingExt = bias === 'long' ? sub.low : sub.high
+      }
+      if (!inZone) continue
+      swingExt = bias === 'long' ? Math.min(swingExt, sub.low) : Math.max(swingExt, sub.high)
+
+      // Need at least one COMPLETED candle at/after the zone touch before a BOC entry.
+      if (i <= zoneBarIdx) continue
+      // Entry-window gate is applied at the entry moment (when the trade actually goes on).
+      if (!inEntryWindow(sub.ts, args.entryStartMin, args.entryEndMin)) continue
+      const atrIdx = j - 1
+      const atrOk = atrIdx >= 0 && Number.isFinite(atr1m[atrIdx]) && atr1m[atrIdx] > 0
+      if (!atrOk) continue
+      const atrHere = atr1m[atrIdx]
+
+      if (bias === 'long' && Number.isFinite(trigHigh)) {
+        const trig = trigHigh + NQ_TICK
+        if (sub.high >= trig) {
+          const entry = Math.max(sub.open, trig)
+          // min-sep / max-sep applied here: how near the 9 we filled (in ATR).
+          const distAtr = Math.abs(entry - e9) / atrHere
+          if (distAtr < args.minSep || distAtr > args.maxSep) { inZone = false; continue }
+          const stop = Math.min(swingExt, sub.low) - NQ_TICK
+          const stopDist = entry - stop
+          if (stopDist > 0) {
+            const target = entry + stopDist * args.targetR
+            posOpen = {
+              side: 'long', entry, stop, target, stopDist, fillIdx1m: j, scanStart1m: j,
+              signalTs: sigTs, slopeAtSignal: sigSlope, emaDistAtSignal: Math.abs(entry - e9),
+              mfe: 0, mae: 0, atrAtSignal: sigAtr, spreadDir: sigSpread, entryIsStop: true,
+            }
+            const closed = stepExit(j)
+            if (!closed) posOpen.scanStart1m = j + 1
+            inZone = false
+            continue
+          }
+        }
+      } else if (bias === 'short' && Number.isFinite(trigLow)) {
+        const trig = trigLow - NQ_TICK
+        if (sub.low <= trig) {
+          const entry = Math.min(sub.open, trig)
+          const distAtr = Math.abs(entry - e9) / atrHere
+          if (distAtr < args.minSep || distAtr > args.maxSep) { inZone = false; continue }
+          const stop = Math.max(swingExt, sub.high) + NQ_TICK
+          const stopDist = stop - entry
+          if (stopDist > 0) {
+            const target = entry - stopDist * args.targetR
+            posOpen = {
+              side: 'short', entry, stop, target, stopDist, fillIdx1m: j, scanStart1m: j,
+              signalTs: sigTs, slopeAtSignal: sigSlope, emaDistAtSignal: Math.abs(entry - e9),
+              mfe: 0, mae: 0, atrAtSignal: sigAtr, spreadDir: sigSpread, entryIsStop: true,
+            }
+            const closed = stepExit(j)
+            if (!closed) posOpen.scanStart1m = j + 1
+            inZone = false
+            continue
+          }
+        }
+      }
+    }
+
+    // 5m close: refresh trend bias + gates (EMA-stack bias — trend-persistent).
+    if (slope == null || !Number.isFinite(e9cur) || !Number.isFinite(e20cur)) continue
+    let newBias: Side | null = e9cur > e20cur && slope > 0 ? 'long' : e9cur < e20cur && slope < 0 ? 'short' : null
+    if (args.side === 'long' && newBias === 'short') newBias = null
+    if (args.side === 'short' && newBias === 'long') newBias = null
+    if (newBias != null && (Math.abs(slope) < args.minSlope || Math.abs(slope) > args.maxSlope)) newBias = null
+    if (newBias != null && args.vwapFilter) {
+      const v = vwap1m[range.end - 1]
+      if (Number.isFinite(v)) {
+        if (newBias === 'long' && bar5m.close <= v) newBias = null
+        else if (newBias === 'short' && bar5m.close >= v) newBias = null
+      }
+    }
+    if (newBias != null && args.minTrendDay > 0) {
+      const a = atr1m[range.end - 1]
+      if (Number.isFinite(rthOpen) && Number.isFinite(a) && a > 0) {
+        const dayMoveAtr = (bar5m.close - rthOpen) / a
+        if (newBias === 'long' && dayMoveAtr < args.minTrendDay) newBias = null
+        else if (newBias === 'short' && dayMoveAtr > -args.minTrendDay) newBias = null
+      } else newBias = null
+    }
+    if (newBias != null && args.htfAlign) {
+      const k = htfLastClosed[i]
+      const ok = k >= args.ema2 && (newBias === 'long' ? ema9htf[k] > ema20htf[k] : ema9htf[k] < ema20htf[k])
+      if (!ok) newBias = null
+    }
+    if (newBias != null && args.gapAlign) {
+      const pc = prevRthClose1m[range.start]
+      const ok = Number.isFinite(rthOpen) && Number.isFinite(pc) && (newBias === 'long' ? rthOpen > pc : rthOpen < pc)
+      if (!ok) newBias = null
+    }
+
+    if (newBias !== bias) { bias = newBias; watching = false; inZone = false; zoneBarIdx = -1 }
+
+    if (bias) {
+      const a = atr1m[range.end - 1]
+      const dirSpread = bias === 'long' ? e9cur - e20cur : e20cur - e9cur
+      const spreadAtr = Number.isFinite(a) && a > 0 ? dirSpread / a : 0
+      // Zone-width floor (min-spread). Slope/VWAP/window already gated the bias above.
+      if (spreadAtr >= args.minSpread) {
+        watching = true
+        sigSlope = bias === 'long' ? slope : -slope
+        sigTs = bar5m.ts
+        sigAtr = Number.isFinite(a) ? a : 0
+        sigSpread = dirSpread
+      } else {
+        watching = false
+        inZone = false
+      }
+      // Invalidation: a 5m close beyond the far (20) band kills the setup.
+      if (bias === 'long' ? bar5m.close < e20cur : bar5m.close > e20cur) { watching = false; inZone = false }
+    } else {
+      watching = false
+      inZone = false
+    }
+  }
+  if (posOpen) unresolved++
+
+  return { trades, unresolved }
+}
+
 function fmtDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10)
 }
@@ -1123,10 +1573,12 @@ async function loadAllTradesFromScid(args: Args): Promise<{ trades: Trade[]; unr
 
     process.stdout.write(`  ${c.contract.padEnd(8)} ${fmtDate(startMs)} → ${fmtDate(endMs)}  `)
     // Probe price scaling: some .scid files store prices unscaled (divisor=1)
-    // rather than ×100. Sniff the first bar to pick the right divisor — without
-    // this, EMA slope/ATR come out 100× too small and the strategy never arms.
-    const probe = readScidBars(c.path, startMs, startMs + 60 * 60 * 1000, { priceDivisor: 100, bucketMs: 60_000 })
-    const priceDivisor = probe.bars.length > 0 && probe.bars[0].close < 1000 ? 1 : 100
+    // rather than ×100. Binary-search the first real record at/after the window
+    // start — the old fixed one-hour probe window silently defaulted to ÷100
+    // whenever the roll date fell in a closed session (a Sunday), which zeroed
+    // out whole quarters of unscaled files. Raw NQ closes: ×100 ≥ ~800k, unscaled ≤ ~35k.
+    const rawClose = firstRawCloseAtOrAfter(c.path, startMs)
+    const priceDivisor = rawClose != null && rawClose < 100_000 ? 1 : 100
     const { bars } = readScidBars(c.path, startMs, endMs, { priceDivisor, bucketMs: 60_000 })
     if (bars.length === 0) {
       console.log('(no bars)')
@@ -1195,26 +1647,70 @@ function printMasterKpi(trades: Trade[], args: Args) {
     timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
   })
   const days = new Set(trades.map(t => ptDate.format(new Date(t.fillTs)))).size
-  const wins = trades.filter(t => t.R > 0)
+  // Net of commission ($/contract round-turn). A small gross win can be a net loss.
+  const commish = args.commission * args.contracts
+  const netOf = (t: Trade) => t.R * t.stopDist * dollarPerPoint - commish
+  const wins = trades.filter(t => netOf(t) > 0)
   const med = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)] }
   const medMFE = med(trades.map(t => t.mfeAtr))
   const medMAE = med(trades.map(t => t.maeAtr))
-  const totalPnL = trades.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0)
-  const winPnL = wins.reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0)
-  const lossPnL = Math.abs(trades.filter(t => t.R <= 0).reduce((a, t) => a + t.R * t.stopDist * dollarPerPoint, 0))
+  const totalPnL = trades.reduce((a, t) => a + netOf(t), 0)
+  const winPnL = wins.reduce((a, t) => a + netOf(t), 0)
+  const lossPnL = Math.abs(trades.filter(t => netOf(t) <= 0).reduce((a, t) => a + netOf(t), 0))
   const pf = lossPnL > 0 ? winPnL / lossPnL : Infinity
   const row = (label: string, value: string) => console.log(`  ${label.padEnd(36)} ${value}`)
   const win = args.entryStartMin != null || args.entryEndMin != null
     ? `${fmtMin(args.entryStartMin)}-${fmtMin(args.entryEndMin)} PT` : 'all RTH'
   console.log('\n================== MASTER KPI ==================')
   console.log(`  ${args.entry} · ${args.targetR}R target · min-slope ${args.minSlope} · ${win} · ${args.side} · ${args.contracts} MNQ x $${args.mult}/pt`)
+  console.log(`  fill=${args.fillThrough ? 'TRADE-THROUGH (queue-realistic)' : 'touch'} · commission $${args.commission.toFixed(2)}/ct RT${commish > 0 ? ` ($${commish.toFixed(2)}/trade)` : ''}`)
   console.log('  ' + '-'.repeat(45))
   row('1. Trades / day', `${(n / days).toFixed(2)}   (${n} trades / ${days} days)`)
-  row('2. Win rate', `${(wins.length / n * 100).toFixed(1)}%`)
+  row('2. Win rate (net)', `${(wins.length / n * 100).toFixed(1)}%`)
   row('3. Median MFE vs MAE (ATR)', `${medMFE.toFixed(2)} captured  vs  ${medMAE.toFixed(2)} taken`)
-  row('4. EV / trade', `$${(totalPnL / n).toFixed(2)}`)
-  row('5. Profit factor', `${Number.isFinite(pf) ? pf.toFixed(2) : '∞'}`)
-  row('6. Total PnL', `$${Math.round(totalPnL).toLocaleString('en-US')}`)
+  row('4. EV / trade (net)', `$${(totalPnL / n).toFixed(2)}`)
+  row('5. Profit factor (net)', `${Number.isFinite(pf) ? pf.toFixed(2) : '∞'}`)
+  row('6. Total PnL (net)', `$${Math.round(totalPnL).toLocaleString('en-US')}`)
+  console.log('===============================================')
+  printRiskStats(trades, args)
+}
+
+// Risk profile: equity-curve drawdown, streaks, day-level distribution — the numbers
+// that decide position size. Chronological, net of commission.
+function printRiskStats(trades: Trade[], args: Args) {
+  if (trades.length === 0) return
+  const dollarPerPoint = args.mult * args.contracts
+  const commish = args.commission * args.contracts
+  const ptDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  })
+  const sorted = [...trades].sort((a, b) => (a.fillTs < b.fillTs ? -1 : 1))
+  let eq = 0, peak = 0, maxDD = 0
+  let peakTs = '', ddStart = '', ddEnd = ''
+  let streak = 0, worstStreak = 0
+  const daily = new Map<string, number>()
+  for (const t of sorted) {
+    const net = t.R * t.stopDist * dollarPerPoint - commish
+    eq += net
+    if (eq > peak) { peak = eq; peakTs = t.fillTs }
+    const dd = peak - eq
+    if (dd > maxDD) { maxDD = dd; ddStart = peakTs; ddEnd = t.fillTs }
+    if (net < 0) { streak++; if (streak > worstStreak) worstStreak = streak }
+    else if (net > 0) streak = 0
+    const d = ptDate.format(new Date(t.fillTs))
+    daily.set(d, (daily.get(d) ?? 0) + net)
+  }
+  const dayVals = [...daily.values()]
+  const worstDay = Math.min(...dayVals)
+  const bestDay = Math.max(...dayVals)
+  const greenDays = dayVals.filter(v => v > 0).length
+  const d10 = (s: string) => s.slice(0, 10)
+  console.log('  -------------------- risk --------------------')
+  const row = (label: string, value: string) => console.log(`  ${label.padEnd(36)} ${value}`)
+  row('7. Max drawdown', `$${Math.round(maxDD).toLocaleString('en-US')}   (${d10(ddStart)} → ${d10(ddEnd)})`)
+  row('8. Worst losing streak', `${worstStreak} trades`)
+  row('9. Worst / best day', `$${Math.round(worstDay).toLocaleString('en-US')} / +$${Math.round(bestDay).toLocaleString('en-US')}`)
+  row('10. Green days', `${(greenDays / dayVals.length * 100).toFixed(0)}%  (${greenDays}/${dayVals.length})`)
   console.log('===============================================')
 }
 
@@ -1254,8 +1750,13 @@ function printReport(trades: Trade[], unresolved: number, args: Args) {
 
   const stopDesc = args.entry === 'break'
     ? `stop=prior 1m rejection bar low/high`
+    : args.entry === 'zone-boc'
+    ? `stop=pullback swing low/high (−1 tick)`
     : `stop=1x ATR(${args.atrPeriod}) Wilder on 1m`
-  console.log(`\n9 EMA ${args.entry} test — 5m bias, 1m ${args.entry === 'break' ? 'break entry' : 'limit pullback'}, ${args.targetR}R target, ${stopDesc}`)
+  const entryDesc = args.entry === 'break' ? 'break entry'
+    : args.entry === 'zone-boc' ? '5m BOC after 9-20 zone pullback'
+    : 'limit pullback'
+  console.log(`\n9 EMA ${args.entry} test — 5m bias, ${entryDesc}, ${args.targetR}R target, ${stopDesc}`)
   console.log(`side=${args.side}  contracts=${args.contracts}  $/pt=${args.mult}\n`)
 
   const cols = ['bucket', 'n', 'WR%', 'avgR', 'totalR', 'EV $', 'totalPnL $', 'PF', 'avgWin $', 'avgLoss $', 'avgEMAdist']

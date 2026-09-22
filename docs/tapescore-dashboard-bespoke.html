@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapeScore · De-templated (structure + motif, on dark)</title>
+<style>
+  :root {
+    /* Tungsten ground — warm dark */
+    --ground:  #100D0A;
+    --panel:   #17130E;
+    --line:    #322B20;
+    --hair:    #241E15;
+    --ink:     #F3EEE3;   /* high-contrast key text (was timid gray) */
+    --ink-2:   #C7BDAB;
+    --mut:     #8F8574;
+    --faint:   #605646;
+    --accent:  #4F97CE;   /* scoreboard blue — UI only */
+    --pos:     #4FC58E;
+    --neg:     #E0685F;
+    --gold:    #D6B24E;   /* film / brand ornament */
+    --gold-dim:rgba(214,178,78,0.42);
+    --pos-fill:rgba(79,197,142,0.10);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ground); }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 60px;
+  }
+  /* subtle film-grain so the dark isn't a flat digital void */
+  body::before {
+    content:""; position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: .035;
+    background-image: radial-gradient(rgba(255,240,210,0.9) 0.5px, transparent 0.5px);
+    background-size: 3px 3px;
+  }
+  .display { font-family: "Archivo", "Arial Narrow", "Helvetica Neue", system-ui, sans-serif; }
+  .num { font-family: "Archivo", "Arial Narrow", "Helvetica Neue", system-ui, sans-serif; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .code { font-family: "SFMono-Regular", Consolas, "Roboto Mono", monospace; }
+  .lab { font-family: "SFMono-Regular", Consolas, "Roboto Mono", monospace; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--mut); }
+
+  /* ── Masthead ── */
+  .masthead { display: flex; align-items: center; gap: 40px; padding: 0 34px; height: 58px; position: relative; z-index: 2; }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .brand .glyph { width: 27px; height: 27px; border-radius: 7px; }
+  .brand .word { font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+  nav { display: flex; gap: 24px; }
+  nav a { color: var(--mut); text-decoration: none; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-family: "SFMono-Regular", Consolas, monospace; padding: 6px 0; position: relative; }
+  nav a.active { color: var(--ink); }
+  nav a.active::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background: var(--gold); }
+  .mast-right { margin-left: auto; display: flex; align-items: center; gap: 20px; }
+  .mast-right .lab { padding: 6px 0; }
+  .mast-right .lab.on { color: var(--ink); border-bottom: 2px solid var(--accent); }
+
+  /* ── 35mm sprocket rule (the film motif, straight from the logo) ── */
+  .filmstrip { position: relative; z-index: 2; height: 16px; margin: 0 0 4px; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair);
+    display: flex; align-items: center; gap: 12px; padding: 0 20px; overflow: hidden; }
+  .filmstrip span { flex: 0 0 auto; width: 13px; height: 7px; border-radius: 1.5px; background: var(--gold-dim); }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 34px 0; position: relative; z-index: 2; }
+
+  /* ── Hero ── */
+  .hero { display: grid; grid-template-columns: auto 1fr; gap: 46px; align-items: stretch; }
+  @media (max-width: 820px){ .hero { grid-template-columns: 1fr; gap: 26px; } }
+  .score-col { display: flex; flex-direction: column; }
+  .eyebrow { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .eyebrow .tick { color: var(--gold); }
+  .cluster { display: flex; align-items: center; gap: 26px; }
+  .ring { position: relative; width: 150px; height: 150px; flex-shrink: 0; }
+  .ring .c { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  .ring .c .n { font-size: 46px; line-height: 1; color: var(--neg); }
+  .ring .c .w { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--mut); margin-top: 7px; font-family: "SFMono-Regular", Consolas, monospace; }
+  .axes { display: flex; flex-direction: column; gap: 0; }
+  .axis { display: grid; grid-template-columns: 54px auto; align-items: baseline; gap: 14px; padding: 7px 0; }
+  .axis + .axis { border-top: 1px solid var(--hair); }
+  .axis .an { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--mut); font-family: "SFMono-Regular", Consolas, monospace; }
+  .axis .av { font-size: 22px; color: var(--ink); }
+
+  .find-col { border-left: 1px solid var(--line); padding-left: 46px; display: flex; flex-direction: column; }
+  @media (max-width: 820px){ .find-col { border-left: none; padding-left: 0; border-top: 1px solid var(--line); padding-top: 24px; } }
+  .find-eyebrow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .leak-tag { font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 3px 8px; }
+  .headline { font-size: clamp(30px, 4vw, 46px); font-weight: 800; line-height: 1.02; letter-spacing: -0.035em; max-width: 15ch; }
+  .headline em { font-style: normal; color: var(--neg); }
+  .find-sub { margin-top: 16px; font-size: 15px; color: var(--ink-2); max-width: 46ch; line-height: 1.5; }
+  .find-sub b.neg { color: var(--neg); } .find-sub b.pos { color: var(--pos); }
+  .do-next { margin-top: auto; padding-top: 20px; display: flex; align-items: baseline; gap: 14px; }
+  .do-next .k { color: var(--accent); }
+  .do-next .v { font-size: 15px; font-weight: 600; }
+
+  /* ── Section rule ── */
+  .srule { display: flex; align-items: center; gap: 14px; margin: 34px 0 18px; }
+  .srule .t { color: var(--ink); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; font-family: "SFMono-Regular", Consolas, monospace; }
+  .srule .rng { color: var(--faint); font-size: 10px; letter-spacing: 0.14em; font-family: "SFMono-Regular", Consolas, monospace; }
+  .srule .rule { flex: 1; height: 1px; background: var(--line); }
+
+  /* ── Scoreboard strip (replaces the four cards) ── */
+  .scoreboard { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1.2fr; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  @media (max-width: 820px){ .scoreboard { grid-template-columns: 1fr 1fr; } }
+  .cell { padding: 18px 22px; border-right: 1px solid var(--hair); }
+  .cell:last-child { border-right: none; }
+  @media (max-width: 820px){ .cell { border-bottom: 1px solid var(--hair); } }
+  .cell .lab { margin-bottom: 10px; }
+  .cell .big { font-size: 40px; line-height: 1; }
+  .cell .big.lede { font-size: 46px; }
+  .cell .sub { margin-top: 9px; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); font-family: "SFMono-Regular", Consolas, monospace; }
+
+  /* ── Charts (no card chrome; framed like film cells) ── */
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; margin-top: 6px; }
+  @media (max-width: 820px){ .charts { grid-template-columns: 1fr; } }
+  .frame { position: relative; padding: 14px 6px 4px; }
+  .frame .fc { position: absolute; width: 9px; height: 9px; border-color: var(--gold-dim); border-style: solid; }
+  .frame .tl { top: 0; left: 0; border-width: 1px 0 0 1px; }
+  .frame .tr { top: 0; right: 0; border-width: 1px 1px 0 0; }
+  .frame .bl { bottom: 0; left: 0; border-width: 0 0 1px 1px; }
+  .frame .br { bottom: 0; right: 0; border-width: 0 1px 1px 0; }
+  .chead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; padding: 0 6px; }
+  .chead .ct { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-2); font-family: "SFMono-Regular", Consolas, monospace; }
+  .chead .cm { font-size: 13px; font-weight: 700; }
+  .gl { stroke: var(--hair); stroke-width: 1; }
+  .ax { fill: var(--faint); font-size: 9px; font-family: "SFMono-Regular", Consolas, monospace; letter-spacing: 0.06em; }
+</style>
+</head>
+<body>
+
+  <header class="masthead">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 128 128" aria-label="TapeScore">
+        <rect width="128" height="128" rx="28" fill="#0F1318"/>
+        <rect x="22" y="24" width="17" height="80" rx="3" fill="#E3A62F"/>
+        <g fill="#0F1318"><rect x="27" y="30" width="7" height="8" rx="1.6"/><rect x="27" y="44" width="7" height="8" rx="1.6"/><rect x="27" y="58" width="7" height="8" rx="1.6"/><rect x="27" y="72" width="7" height="8" rx="1.6"/><rect x="27" y="86" width="7" height="8" rx="1.6"/></g>
+        <rect x="89" y="24" width="17" height="80" rx="3" fill="#E3A62F"/>
+        <g fill="#0F1318"><rect x="94" y="30" width="7" height="8" rx="1.6"/><rect x="94" y="44" width="7" height="8" rx="1.6"/><rect x="94" y="58" width="7" height="8" rx="1.6"/><rect x="94" y="72" width="7" height="8" rx="1.6"/><rect x="94" y="86" width="7" height="8" rx="1.6"/></g>
+        <rect x="39" y="24" width="50" height="5" fill="#E3A62F"/><rect x="39" y="99" width="50" height="5" fill="#E3A62F"/>
+        <line x1="50" y1="66" x2="50" y2="92" stroke="#F3F5F7" stroke-width="3.2"/><rect x="44.5" y="71" width="11" height="16" rx="1.5" fill="#F3F5F7"/>
+        <line x1="64" y1="48" x2="64" y2="80" stroke="#F3F5F7" stroke-width="3.2"/><rect x="58.5" y="53" width="11" height="21" rx="1.5" fill="#F3F5F7"/>
+        <line x1="78" y1="34" x2="78" y2="68" stroke="#F3F5F7" stroke-width="3.2"/><rect x="72.5" y="38" width="11" height="25" rx="1.5" fill="#F3F5F7"/>
+      </svg>
+      <span class="word">TapeScore</span>
+    </div>
+    <nav>
+      <a class="active" href="#">Dashboard</a><a href="#">Prep</a><a href="#">Trade</a><a href="#">Review</a><a href="#">Patterns</a>
+    </nav>
+    <div class="mast-right">
+      <span class="lab">Import</span>
+      <span class="lab">Highlights</span>
+      <span class="lab on">Detailed Tape</span>
+      <span class="lab">Account ▾</span>
+    </div>
+  </header>
+
+  <!-- film sprocket rule -->
+  <div class="filmstrip" id="strip"></div>
+
+  <div class="wrap">
+
+    <!-- Hero -->
+    <div class="hero">
+      <div class="score-col">
+        <div class="eyebrow"><span class="lab"><span class="tick">▸</span> TapeScore · July</span></div>
+        <div class="cluster">
+          <div class="ring">
+            <svg width="150" height="150" viewBox="0 0 132 132">
+              <path d="M69.56 15.12 A51 51 0 0 1 111.84 88.36" fill="none" stroke="var(--hair)" stroke-width="9"/>
+              <path d="M69.56 15.12 A51 51 0 0 1 116.90 69.20" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+              <path d="M108.28 94.52 A51 51 0 0 1 23.72 94.52" fill="none" stroke="var(--hair)" stroke-width="9"/>
+              <path d="M108.28 94.52 A51 51 0 0 1 70.98 116.76" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+              <path d="M20.16 88.36 A51 51 0 0 1 62.44 15.12" fill="none" stroke="var(--hair)" stroke-width="9"/>
+              <path d="M20.16 88.36 A51 51 0 0 1 16.85 52.41" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+            </svg>
+            <div class="c"><div><div class="n num">54</div><div class="w">Needs work</div></div></div>
+          </div>
+          <div class="axes">
+            <div class="axis"><span class="an">Risk</span><span class="av num">80</span></div>
+            <div class="axis"><span class="an">Entry</span><span class="av num">45</span></div>
+            <div class="axis"><span class="an">Exit</span><span class="av num">37</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="find-col">
+        <div class="find-eyebrow">
+          <span class="lab code">JUL 2026 · 30 TRADES</span>
+          <span class="leak-tag">Clear leak</span>
+        </div>
+        <h1 class="headline display">Supply &amp; Demand <em>cost you.</em></h1>
+        <p class="find-sub"><b class="neg">−0.4R per trade</b> across 12 trades · everything else <b class="pos">+0.1R</b>.</p>
+        <div class="do-next"><span class="k lab">Do next →</span><span class="v">Skip the Supply &amp; Demand unless it is textbook.</span></div>
+      </div>
+    </div>
+
+    <!-- Scoreboard strip -->
+    <div class="srule"><span class="t">The Tape</span><span class="rule"></span><span class="rng">LAST 30 DAYS · 13 SESSIONS</span></div>
+    <div class="scoreboard">
+      <div class="cell">
+        <div class="lab">Net P&amp;L</div>
+        <div class="big lede num" style="color:var(--pos)">+$836</div>
+        <div class="sub">13 trading days</div>
+      </div>
+      <div class="cell">
+        <div class="lab">Day Win</div>
+        <div class="big num">46%</div>
+        <div class="sub">days green</div>
+      </div>
+      <div class="cell">
+        <div class="lab">Trade Win</div>
+        <div class="big num">40%</div>
+        <div class="sub">55 trades</div>
+      </div>
+      <div class="cell">
+        <div class="lab">Avg MFE / MAE</div>
+        <div class="big num">+1.25<span style="font-size:24px">×</span> <span style="color:var(--neg)">−0.53<span style="font-size:24px">×</span></span></div>
+        <div class="sub">× ATR per trade</div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="srule"><span class="t">The Film</span><span class="rule"></span><span class="rng">LAST 30 DAYS</span></div>
+    <div class="charts">
+      <div class="frame">
+        <span class="fc tl"></span><span class="fc tr"></span><span class="fc bl"></span><span class="fc br"></span>
+        <div class="chead"><span class="ct">Equity Curve</span><span class="cm" style="color:var(--pos)">+$836</span></div>
+        <svg viewBox="0 0 580 250" width="100%" height="220" preserveAspectRatio="none">
+          <line class="gl" x1="34" y1="18" x2="576" y2="18"/><line class="gl" x1="34" y1="76" x2="576" y2="76"/><line class="gl" x1="34" y1="134" x2="576" y2="134"/><line class="gl" x1="34" y1="192" x2="576" y2="192"/>
+          <text class="ax" x="0" y="21">2.5K</text><text class="ax" x="0" y="79">1.5K</text><text class="ax" x="6" y="137">500</text><text class="ax" x="14" y="195">0</text>
+          <path d="M34 205 L79 150 L124 88 L169 45 L214 26 L259 62 L304 112 L349 86 L394 48 L439 76 L484 104 L529 132 L576 160 L576 230 L34 230 Z" fill="var(--pos-fill)"/>
+          <polyline points="34,205 79,150 124,88 169,45 214,26 259,62 304,112 349,86 394,48 439,76 484,104 529,132 576,160" fill="none" stroke="var(--pos)" stroke-width="2" stroke-linejoin="round"/>
+          <text class="ax" x="34" y="246">06-24</text><text class="ax" x="290" y="246">07-08</text><text class="ax" x="545" y="246">07-24</text>
+        </svg>
+      </div>
+      <div class="frame">
+        <span class="fc tl"></span><span class="fc tr"></span><span class="fc bl"></span><span class="fc br"></span>
+        <div class="chead"><span class="ct">Daily Results</span><span class="cm" style="color:var(--faint)">13 DAYS</span></div>
+        <svg viewBox="0 0 580 250" width="100%" height="220">
+          <line class="gl" x1="34" y1="36" x2="576" y2="36"/><line class="gl" x1="34" y1="140" x2="576" y2="140" style="stroke:var(--line)"/><line class="gl" x1="34" y1="210" x2="576" y2="210"/>
+          <text class="ax" x="0" y="39">+1K</text><text class="ax" x="14" y="143">0</text><text class="ax" x="2" y="213">−500</text>
+          <rect x="46" y="88"  width="26" height="52"  rx="1.5" fill="var(--pos)"/>
+          <rect x="88" y="26"  width="26" height="114" rx="1.5" fill="var(--pos)"/>
+          <rect x="130" y="32" width="26" height="108" rx="1.5" fill="var(--pos)"/>
+          <rect x="172" y="98" width="26" height="42"  rx="1.5" fill="var(--pos)"/>
+          <rect x="214" y="140" width="26" height="64" rx="1.5" fill="var(--neg)"/>
+          <rect x="256" y="140" width="26" height="56" rx="1.5" fill="var(--neg)"/>
+          <rect x="298" y="62" width="26" height="78"  rx="1.5" fill="var(--pos)"/>
+          <rect x="340" y="124" width="26" height="16" rx="1.5" fill="var(--pos)"/>
+          <rect x="382" y="140" width="26" height="58" rx="1.5" fill="var(--neg)"/>
+          <rect x="424" y="116" width="26" height="24" rx="1.5" fill="var(--pos)"/>
+          <rect x="466" y="140" width="26" height="8"  rx="1.5" fill="var(--neg)"/>
+          <rect x="508" y="140" width="26" height="48" rx="1.5" fill="var(--neg)"/>
+          <rect x="550" y="140" width="20" height="40" rx="1.5" fill="var(--neg)"/>
+          <text class="ax" x="46" y="230">06-24</text><text class="ax" x="298" y="230">07-02</text><text class="ax" x="545" y="230">07-24</text>
+        </svg>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    /* purely cosmetic: fill the sprocket rule with holes to fit the width.
+       If JS is blocked, the strip still shows as a thin ruled band. */
+    (function(){
+      var s = document.getElementById('strip'); if(!s) return;
+      var n = Math.ceil((s.clientWidth || 1180) / 25);
+      for (var i=0;i<n;i++){ s.appendChild(document.createElement('span')); }
+    })();
+  </script>
+</body>
+</html>

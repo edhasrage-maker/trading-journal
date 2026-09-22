@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapeScore · Widget container treatments</title>
+<style>
+  :root {
+    --ground:#0C0D10; --surf:#131519; --inset:#08090B;
+    --line:#282C32; --hair:#20242B;
+    --ink:#E8EAED; --mut:#8A909A; --faint:#5E636B;
+    --accent:#4F97CE; --pos:#4FC58E; --neg:#E0685F;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ground); }
+  body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; padding: 40px 0 70px; }
+  .num { font-variant-numeric: tabular-nums; letter-spacing: -0.02em; font-weight: 700; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+
+  .caseh { display: flex; align-items: baseline; gap: 12px; margin: 46px 0 16px; }
+  .caseh:first-child { margin-top: 0; }
+  .caseh .tag { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+  .caseh .desc { font-size: 12.5px; color: var(--faint); }
+
+  .lab { font-size: 12px; color: var(--mut); font-weight: 500; }
+  .val { font-size: 28px; margin-top: 10px; line-height: 1; }
+  .val .u { font-size: 15px; color: var(--mut); font-weight: 600; }
+  .sub { font-size: 11px; color: var(--faint); margin-top: 10px; }
+
+  /* ── A · The tell: shadcn Card (rounded border box on gray) ── */
+  .a { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+  .a .cell { background: var(--surf); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+
+  /* ── B · Borderless, hairline-divided (no box at all) ── */
+  .b { display: grid; grid-template-columns: repeat(4,1fr); }
+  .b .cell { padding: 6px 26px; border-left: 1px solid var(--hair); }
+  .b .cell:first-child { padding-left: 0; border-left: none; }
+  .b .val { font-size: 34px; }
+
+  /* ── C · Recessed wells (inset instead of raised) ── */
+  .c { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+  .c .cell { background: var(--inset); border-radius: 10px; padding: 18px;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.02); }
+
+  .gauge { position: relative; height: 6px; margin-top: 12px; border-radius: 3px; background: rgba(255,255,255,0.05); }
+  .gauge > span { position: absolute; top: 0; height: 6px; border-radius: 3px; }
+  .gauge .heat { left: 0; width: 30%; background: rgba(224,104,95,0.5); }
+  .gauge .fav  { left: 30%; width: 40%; background: var(--pos); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- A -->
+    <div class="caseh"><span class="tag">A · The tell</span><span class="desc">shadcn Card — rounded border box on gray, ×4 in a grid. This is the "every Claude dashboard" look.</span></div>
+    <div class="a">
+      <div class="cell"><div class="lab">Last 30 Days P&amp;L</div><div class="val num" style="color:var(--pos)">+$481</div><div class="sub">12 trading days</div></div>
+      <div class="cell"><div class="lab">Day Win %</div><div class="val num">42%</div><div class="sub">% of days green</div></div>
+      <div class="cell"><div class="lab">Trade Win %</div><div class="val num">39%</div><div class="sub">49 trades</div></div>
+      <div class="cell"><div class="lab">Avg MFE / MAE</div><div class="val num">+1.26<span class="u">×</span> / <span style="color:var(--neg)">−0.53<span class="u">×</span></span></div><div class="sub">× ATR per trade</div></div>
+    </div>
+
+    <!-- B -->
+    <div class="caseh"><span class="tag">B · Borderless</span><span class="desc">No box. Numbers sit on the page, split by hairlines. Bigger figures, more air. (Mercury / Stripe.)</span></div>
+    <div class="b">
+      <div class="cell"><div class="lab">Net P&amp;L · 30d</div><div class="val num" style="color:var(--pos)">+$481</div><div class="sub">12 trading days</div></div>
+      <div class="cell"><div class="lab">Day win</div><div class="val num">42<span class="u">%</span></div><div class="sub">days green</div></div>
+      <div class="cell"><div class="lab">Trade win</div><div class="val num">39<span class="u">%</span></div><div class="sub">49 trades</div></div>
+      <div class="cell"><div class="lab">MFE / MAE</div><div class="val num">+1.26<span class="u">×</span> <span style="color:var(--neg)">−0.53<span class="u">×</span></span></div><div class="sub">× ATR per trade</div></div>
+    </div>
+
+    <!-- C -->
+    <div class="caseh"><span class="tag">C · Recessed</span><span class="desc">Inset wells instead of raised cards — the depth is carved in, not floated. Inverts the shadcn look.</span></div>
+    <div class="c">
+      <div class="cell"><div class="lab">Last 30 Days P&amp;L</div><div class="val num" style="color:var(--pos)">+$481</div><div class="sub">12 trading days</div></div>
+      <div class="cell"><div class="lab">Day Win %</div><div class="val num">42%</div><div class="sub">% of days green</div></div>
+      <div class="cell"><div class="lab">Trade Win %</div><div class="val num">39%</div><div class="sub">49 trades</div></div>
+      <div class="cell"><div class="lab">Avg MFE / MAE</div><div class="val num">+1.26<span class="u">×</span> <span style="color:var(--neg)">−0.53<span class="u">×</span></span></div><div class="gauge"><span class="heat"></span><span class="fav"></span></div></div>
+    </div>
+
+  </div>
+</body>
+</html>

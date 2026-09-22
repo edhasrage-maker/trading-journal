@@ -153,6 +153,36 @@ export function readScidBars(
 }
 
 /**
+ * Raw (unscaled) close of the first record at/after targetMs — cheap divisor probe.
+ * Unlike a fixed probe window, this cannot come back empty just because the target
+ * lands in a closed session (e.g. a Sunday roll date): it takes the next record
+ * wherever it is. Returns null only if the file has no records at/after targetMs.
+ */
+export function firstRawCloseAtOrAfter(path: string, targetMs: number): number | null {
+  const fd = openSync(path, 'r')
+  try {
+    const size = fstatSync(fd).size
+    const recCount = size >= HEADER_SIZE + RECORD_SIZE ? Math.floor((size - HEADER_SIZE) / RECORD_SIZE) : 0
+    if (recCount === 0) return null
+    let lo = 0, hi = recCount
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (recordTimeMs(fd, mid) < targetMs) lo = mid + 1
+      else hi = mid
+    }
+    const buf = Buffer.alloc(RECORD_SIZE)
+    for (let idx = lo; idx < recCount; idx++) {
+      readSync(fd, buf, 0, RECORD_SIZE, HEADER_SIZE + idx * RECORD_SIZE)
+      const close = buf.readFloatLE(20)
+      if (Number.isFinite(close) && close > 0) return close
+    }
+    return null
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/**
  * Random-access tick reader. Keeps the file open so the same handle can be
  * re-queried cheaply (binary-search by time) for many small windows — used to
  * resolve the *true intrabar order* of price within a single 1-minute bar

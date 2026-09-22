@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 150" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore Concept 2 light wordmark with auction structure</title>
+  <desc id="desc">TapeScore wordmark over one double-distribution volume profile with two high-volume nodes, a sharp low-volume waist, and an amber point of control.</desc>
+  <g shape-rendering="geometricPrecision">
+    <g>
+      <rect x="249" y="12" width="55" height="6" rx="1.5" fill="#A6A6A6"/><rect x="234" y="20" width="80" height="6" rx="1.5" fill="#A6A6A6"/><rect x="219" y="28" width="112" height="6" rx="1.5" fill="#D6D8D5"/><rect x="202" y="36" width="145" height="6" rx="1.5" fill="#A6A6A6"/><rect x="192" y="44" width="164" height="7" rx="1.5" fill="#D6D8D5"/><rect x="200" y="53" width="150" height="6" rx="1.5" fill="#A6A6A6"/><rect x="216" y="61" width="118" height="6" rx="1.5" fill="#D6D8D5"/><rect x="240" y="69" width="72" height="5" rx="1.5" fill="#A6A6A6"/><rect x="254" y="77" width="48" height="5" rx="1.5" fill="#D6D8D5"/><rect x="238" y="85" width="74" height="5" rx="1.5" fill="#A6A6A6"/><rect x="214" y="93" width="120" height="6" rx="1.5" fill="#D6D8D5"/><rect x="198" y="101" width="152" height="6" rx="1.5" fill="#A6A6A6"/><rect x="188" y="109" width="168" height="7" rx="1.5" fill="#D6D8D5"/><rect x="201" y="118" width="148" height="6" rx="1.5" fill="#A6A6A6"/><rect x="220" y="126" width="108" height="6" rx="1.5" fill="#D6D8D5"/><rect x="242" y="134" width="68" height="6" rx="1.5" fill="#A6A6A6"/>
+    </g>
+    <g fill="#B9802B"><rect x="326" y="36" width="21" height="6" rx="1.5"/><rect x="278" y="44" width="78" height="7" rx="1.5"/><rect x="330" y="101" width="20" height="6" rx="1.5"/><rect x="268" y="109" width="88" height="7" rx="1.5"/></g>
+    <text x="20" y="113" fill="#17181A" font-family="Inter, Geist, 'Helvetica Neue', Arial, sans-serif" font-size="104" letter-spacing="-4.2"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+  </g>
+</svg>

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore Concept 2 symbol</title>
+  <desc id="desc">Capital S over an asymmetric horizontal volume-by-price profile.</desc>
+  <g shape-rendering="geometricPrecision">
+    <rect x="43" y="10" width="32" height="5" rx="1.5" fill="#2B2F34"/>
+    <rect x="29" y="18" width="57" height="5" rx="1.5" fill="#4A4D50" opacity="0.68"/>
+    <rect x="21" y="26" width="78" height="5" rx="1.5" fill="#2B2F34"/>
+    <rect x="35" y="34" width="67" height="5" rx="1.5" fill="#4A4D50" opacity="0.64"/>
+    <rect x="15" y="42" width="91" height="5" rx="1.5" fill="#2B2F34"/>
+    <rect x="24" y="50" width="76" height="5" rx="1.5" fill="#4A4D50" opacity="0.72"/>
+    <rect x="12" y="58" width="98" height="5" rx="1.5" fill="#2B2F34"/>
+    <rect x="20" y="66" width="86" height="5" rx="1.5" fill="#4A4D50" opacity="0.7"/>
+    <rect x="29" y="74" width="76" height="5" rx="1.5" fill="#2B2F34"/>
+    <rect x="18" y="82" width="82" height="5" rx="1.5" fill="#4A4D50" opacity="0.66"/>
+    <rect x="34" y="90" width="60" height="5" rx="1.5" fill="#2B2F34"/>
+    <rect x="40" y="98" width="43" height="5" rx="1.5" fill="#4A4D50" opacity="0.62"/>
+    <rect x="76" y="34" width="26" height="5" rx="1.5" fill="#E0A33C"/>
+    <rect x="74" y="58" width="36" height="5" rx="1.5" fill="#E0A33C"/>
+    <rect x="70" y="82" width="30" height="5" rx="1.5" fill="#E0A33C"/>
+    <text x="60" y="94" text-anchor="middle" fill="#E7E8E5" font-family="Inter, Geist, 'Helvetica Neue', Arial, sans-serif" font-size="94" font-weight="800" letter-spacing="-4">S</text>
+  </g>
+</svg>

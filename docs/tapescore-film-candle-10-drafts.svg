@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1510" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore film and candlestick logo explorations</title>
+  <desc id="desc">Ten clean logo drafts combining trader-obvious candlesticks with film reels, film strips, and game-tape motifs.</desc>
+  <defs>
+    <style>
+      .label{font:700 16px Inter,Geist,Arial,sans-serif;letter-spacing:1.5px;fill:#E0A33C}
+      .note{font:500 13px Inter,Geist,Arial,sans-serif;letter-spacing:.8px;fill:#858A90}
+      .word{font-family:Inter,Geist,'Helvetica Neue',Arial,sans-serif;font-size:86px;letter-spacing:-3.6px;fill:#E7E8E5}
+      .hair{stroke:#A6A6A6;stroke-width:3;stroke-linecap:round}
+      .wick{stroke:#E0A33C;stroke-width:2.5;stroke-linecap:round}
+    </style>
+    <symbol id="reel" viewBox="-40 -40 80 80">
+      <circle r="34" fill="#111316" stroke="#A6A6A6" stroke-width="4"/>
+      <circle cx="0" cy="-18" r="7" fill="#2B2F34"/><circle cx="17" cy="6" r="7" fill="#2B2F34"/><circle cx="-17" cy="6" r="7" fill="#2B2F34"/><circle r="5" fill="#E0A33C"/>
+    </symbol>
+    <symbol id="up" viewBox="-8 -24 16 48">
+      <line x1="0" y1="-21" x2="0" y2="21" class="wick"/><rect x="-5" y="-10" width="10" height="22" rx="2" fill="#E0A33C"/>
+    </symbol>
+    <symbol id="down" viewBox="-8 -24 16 48">
+      <line x1="0" y1="-21" x2="0" y2="21" stroke="#A6A6A6" stroke-width="2.5" stroke-linecap="round"/><rect x="-5" y="-12" width="10" height="20" rx="2" fill="#6B6B6B"/>
+    </symbol>
+    <symbol id="tiny-reel" viewBox="-18 -18 36 36">
+      <circle r="16" fill="#111316" stroke="#A6A6A6" stroke-width="2"/><circle cx="0" cy="-8" r="3.2" fill="#2B2F34"/><circle cx="7" cy="4" r="3.2" fill="#2B2F34"/><circle cx="-7" cy="4" r="3.2" fill="#2B2F34"/><circle r="2.5" fill="#E0A33C"/>
+    </symbol>
+  </defs>
+  <rect width="1800" height="1510" fill="#0E0F11"/>
+  <text x="60" y="58" font-family="Inter,Geist,Arial,sans-serif" font-size="24" font-weight="800" letter-spacing="2" fill="#E7E8E5">TAPESCORE — FILM × CANDLESTICK EXPLORATIONS</text>
+  <text x="60" y="88" font-family="Inter,Geist,Arial,sans-serif" font-size="14" letter-spacing="1.2" fill="#858A90">TEN ROUGH DIRECTIONS · TRADER-OBVIOUS · WOVEN INTO THE WORDMARK · CLEAN ENOUGH TO SCALE</text>
+
+  <!-- Card backgrounds -->
+  <g fill="#141619" stroke="#2B2F34" stroke-width="1.5">
+    <rect x="60" y="120" width="820" height="240" rx="18"/><rect x="920" y="120" width="820" height="240" rx="18"/>
+    <rect x="60" y="380" width="820" height="240" rx="18"/><rect x="920" y="380" width="820" height="240" rx="18"/>
+    <rect x="60" y="640" width="820" height="240" rx="18"/><rect x="920" y="640" width="820" height="240" rx="18"/>
+    <rect x="60" y="900" width="820" height="240" rx="18"/><rect x="920" y="900" width="820" height="240" rx="18"/>
+    <rect x="60" y="1160" width="820" height="240" rx="18"/><rect x="920" y="1160" width="820" height="240" rx="18"/>
+  </g>
+
+  <!-- 01: Reel replaces the o -->
+  <g transform="translate(60 120)">
+    <text x="24" y="34" class="label">01 · REEL “O”</text><text x="24" y="57" class="note">The film reel becomes a letter; a central candle makes the trading read immediate.</text>
+    <text x="65" y="165" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+    <circle cx="391" cy="136" r="35" fill="#141619"/>
+    <use href="#reel" x="354" y="99" width="74" height="74"/>
+    <use href="#up" x="383" y="112" width="16" height="48"/>
+  </g>
+
+  <!-- 02: Film frame behind the S -->
+  <g transform="translate(920 120)">
+    <text x="24" y="34" class="label">02 · CANDLE FRAME “S”</text><text x="24" y="57" class="note">A single film frame behind the S contains three unmistakable candles.</text>
+    <g transform="translate(245 77)">
+      <rect width="102" height="104" rx="13" fill="#0F1113" stroke="#6B6B6B" stroke-width="3"/>
+      <g fill="#A6A6A6"><rect x="12" y="8" width="12" height="6" rx="2"/><rect x="32" y="8" width="12" height="6" rx="2"/><rect x="52" y="8" width="12" height="6" rx="2"/><rect x="72" y="8" width="12" height="6" rx="2"/><rect x="12" y="90" width="12" height="6" rx="2"/><rect x="32" y="90" width="12" height="6" rx="2"/><rect x="52" y="90" width="12" height="6" rx="2"/><rect x="72" y="90" width="12" height="6" rx="2"/></g>
+      <use href="#down" x="22" y="27" width="16" height="48"/><use href="#up" x="44" y="22" width="16" height="48"/><use href="#up" x="67" y="34" width="16" height="48"/>
+    </g>
+    <text x="65" y="165" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+  </g>
+
+  <!-- 03: Film strip across e/S -->
+  <g transform="translate(60 380)">
+    <text x="24" y="34" class="label">03 · GAME-TAPE STRIP</text><text x="24" y="57" class="note">Candles live in sequential film frames passing through the e/S junction.</text>
+    <g transform="translate(205 101)">
+      <rect width="190" height="54" rx="8" fill="#0F1113" stroke="#6B6B6B" stroke-width="3"/>
+      <g fill="#A6A6A6"><rect x="9" y="6" width="13" height="5" rx="1"/><rect x="34" y="6" width="13" height="5" rx="1"/><rect x="59" y="6" width="13" height="5" rx="1"/><rect x="84" y="6" width="13" height="5" rx="1"/><rect x="109" y="6" width="13" height="5" rx="1"/><rect x="134" y="6" width="13" height="5" rx="1"/><rect x="159" y="6" width="13" height="5" rx="1"/><rect x="9" y="43" width="13" height="5" rx="1"/><rect x="34" y="43" width="13" height="5" rx="1"/><rect x="59" y="43" width="13" height="5" rx="1"/><rect x="84" y="43" width="13" height="5" rx="1"/><rect x="109" y="43" width="13" height="5" rx="1"/><rect x="134" y="43" width="13" height="5" rx="1"/><rect x="159" y="43" width="13" height="5" rx="1"/></g>
+      <use href="#down" x="32" y="10" width="14" height="36"/><use href="#up" x="70" y="9" width="14" height="36"/><use href="#down" x="108" y="11" width="14" height="36"/><use href="#up" x="146" y="7" width="14" height="39"/>
+    </g>
+    <text x="65" y="165" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+  </g>
+
+  <!-- 04: Reel O unwinds into an annotated candle tape -->
+  <g transform="translate(920 380)">
+    <text x="24" y="34" class="label">04 · REEL + PLAYBACK LINE</text><text x="24" y="57" class="note">The O is a reel; its tape unwinds into a candlestick review timeline.</text>
+    <text x="65" y="150" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+    <circle cx="391" cy="121" r="35" fill="#141619"/><use href="#reel" x="354" y="84" width="74" height="74"/>
+    <path d="M391 157 C 390 181, 357 184, 329 184 L 160 184" fill="none" stroke="#A6A6A6" stroke-width="3" stroke-linecap="round"/>
+    <use href="#down" x="210" y="160" width="13" height="38"/><use href="#up" x="252" y="158" width="13" height="38"/><use href="#up" x="294" y="162" width="13" height="38"/>
+  </g>
+
+  <!-- 05: S itself is a perforated film strip -->
+  <g transform="translate(60 640)">
+    <text x="24" y="34" class="label">05 · PERFORATED “S”</text><text x="24" y="57" class="note">The S becomes the film strip; amber candles mark reviewed trade moments.</text>
+    <text x="65" y="165" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+    <g fill="#141619"><rect x="258" y="92" width="9" height="7" rx="2"/><rect x="283" y="82" width="9" height="7" rx="2"/><rect x="301" y="101" width="9" height="7" rx="2"/><rect x="270" y="128" width="9" height="7" rx="2"/><rect x="294" y="143" width="9" height="7" rx="2"/></g>
+    <use href="#down" x="244" y="86" width="13" height="45"/><use href="#up" x="307" y="112" width="13" height="45"/>
+  </g>
+
+  <!-- 06: Film reel integrated behind S -->
+  <g transform="translate(920 640)">
+    <text x="24" y="34" class="label">06 · REEL-BACKED “S”</text><text x="24" y="57" class="note">A restrained reel sits behind the S; two candles replace decorative reel spokes.</text>
+    <use href="#reel" x="229" y="70" width="110" height="110"/>
+    <use href="#down" x="251" y="94" width="15" height="55"/><use href="#up" x="292" y="87" width="15" height="55"/>
+    <text x="65" y="165" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+  </g>
+
+  <!-- 07: O as a candle aperture -->
+  <g transform="translate(60 900)">
+    <text x="24" y="34" class="label">07 · CANDLE APERTURE “O”</text><text x="24" y="57" class="note">The O reads as both a reel aperture and a chart window with three candles.</text>
+    <text x="65" y="165" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+    <circle cx="391" cy="136" r="35" fill="#141619"/>
+    <circle cx="391" cy="136" r="30" fill="none" stroke="#E7E8E5" stroke-width="8"/>
+    <circle cx="391" cy="136" r="22" fill="#101215" stroke="#6B6B6B" stroke-width="2" stroke-dasharray="4 5"/>
+    <use href="#down" x="374" y="114" width="11" height="43"/><use href="#up" x="386" y="108" width="11" height="43"/><use href="#up" x="398" y="118" width="11" height="43"/>
+  </g>
+
+  <!-- 08: Filmstrip underline / game-tape timeline -->
+  <g transform="translate(920 900)">
+    <text x="24" y="34" class="label">08 · GAME-TAPE UNDERLINE</text><text x="24" y="57" class="note">The wordmark sits on a film timeline; each frame holds a reviewed candle.</text>
+    <text x="65" y="145" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+    <g transform="translate(92 163)">
+      <rect width="455" height="34" rx="7" fill="#101215" stroke="#6B6B6B" stroke-width="2.5"/>
+      <g fill="#A6A6A6"><rect x="10" y="5" width="11" height="4"/><rect x="38" y="5" width="11" height="4"/><rect x="66" y="5" width="11" height="4"/><rect x="94" y="5" width="11" height="4"/><rect x="122" y="5" width="11" height="4"/><rect x="150" y="5" width="11" height="4"/><rect x="178" y="5" width="11" height="4"/><rect x="206" y="5" width="11" height="4"/><rect x="234" y="5" width="11" height="4"/><rect x="262" y="5" width="11" height="4"/><rect x="290" y="5" width="11" height="4"/><rect x="318" y="5" width="11" height="4"/><rect x="346" y="5" width="11" height="4"/><rect x="374" y="5" width="11" height="4"/><rect x="402" y="5" width="11" height="4"/><rect x="430" y="5" width="11" height="4"/></g>
+      <use href="#down" x="110" y="7" width="10" height="28"/><use href="#up" x="170" y="5" width="10" height="28"/><use href="#down" x="230" y="8" width="10" height="28"/><use href="#up" x="290" y="4" width="10" height="28"/><use href="#up" x="350" y="7" width="10" height="28"/>
+    </g>
+  </g>
+
+  <!-- 09: T is both film strip and candle -->
+  <g transform="translate(60 1160)">
+    <text x="24" y="34" class="label">09 · CANDLE-FILM “T”</text><text x="24" y="57" class="note">The first letter carries both signals: film perforations above, candle body below.</text>
+    <rect x="57" y="79" width="84" height="19" rx="5" fill="#6B6B6B"/>
+    <g fill="#141619"><rect x="64" y="84" width="10" height="7" rx="2"/><rect x="82" y="84" width="10" height="7" rx="2"/><rect x="100" y="84" width="10" height="7" rx="2"/><rect x="118" y="84" width="10" height="7" rx="2"/></g>
+    <line x1="99" y1="94" x2="99" y2="177" class="wick"/><rect x="89" y="108" width="20" height="48" rx="4" fill="#E0A33C"/>
+    <text x="118" y="165" class="word"><tspan font-weight="500">ape</tspan><tspan font-weight="800">Score</tspan></text>
+  </g>
+
+  <!-- 10: Two reels define a tape loop around S -->
+  <g transform="translate(920 1160)">
+    <text x="24" y="34" class="label">10 · TAPE-LOOP “S”</text><text x="24" y="57" class="note">Two compact reels create a game-tape loop; candles punctuate the path through the S.</text>
+    <use href="#tiny-reel" x="246" y="68" width="38" height="38"/><use href="#tiny-reel" x="298" y="148" width="38" height="38"/>
+    <path d="M265 104 C 318 95, 330 118, 287 128 C 250 138, 263 156, 309 159" fill="none" stroke="#A6A6A6" stroke-width="5" stroke-linecap="round"/>
+    <use href="#down" x="278" y="96" width="11" height="39"/><use href="#up" x="299" y="117" width="11" height="39"/>
+    <text x="65" y="165" class="word"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+  </g>
+
+  <text x="60" y="1450" font-family="Inter,Geist,Arial,sans-serif" font-size="13" letter-spacing="1.2" fill="#858A90">DRAFT BOARD · DARK MODE · PALETTE: #E7E8E5 / #A6A6A6 / #6B6B6B / #E0A33C / #0E0F11</text>
+</svg>

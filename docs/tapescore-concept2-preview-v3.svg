@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore Concept 2 auction-structure preview</title>
+  <desc id="desc">TapeScore wordmark with two obvious high-volume nodes separated by a low-volume node.</desc>
+  <rect width="1440" height="900" fill="#0E0F11"/>
+  <text x="72" y="72" fill="#E0A33C" font-family="Inter, Geist, Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="1.6">CONCEPT 2 — AUCTION STRUCTURE</text>
+  <text x="430" y="72" fill="#A6A6A6" font-family="Inter, Geist, Arial, sans-serif" font-size="18" letter-spacing="1.6">ONE PROFILE, READABLE NODES</text>
+  <image href="tapescore-concept2-logo-dark-v3.svg" x="72" y="118" width="970" height="260"/>
+  <g font-family="Inter, Geist, Arial, sans-serif">
+    <text x="1090" y="135" fill="#A6A6A6" font-size="13" font-weight="700" letter-spacing="1.3">UPPER HVN</text>
+    <line x1="1080" y1="142" x2="1018" y2="184" stroke="#A6A6A6" stroke-width="1.5"/>
+    <circle cx="1018" cy="184" r="4" fill="#A6A6A6"/>
+    <text x="1090" y="235" fill="#E0A33C" font-size="15" font-weight="800" letter-spacing="1.4">LVN — CLEAR WAIST</text>
+    <line x1="1080" y1="240" x2="1004" y2="245" stroke="#E0A33C" stroke-width="2"/>
+    <circle cx="1004" cy="245" r="5" fill="#E0A33C"/>
+    <text x="1090" y="328" fill="#A6A6A6" font-size="13" font-weight="700" letter-spacing="1.3">LOWER HVN / POC</text>
+    <line x1="1080" y1="320" x2="1010" y2="304" stroke="#A6A6A6" stroke-width="1.5"/>
+    <circle cx="1010" cy="304" r="4" fill="#A6A6A6"/>
+  </g>
+  <line x1="72" y1="428" x2="1368" y2="428" stroke="#404347"/>
+  <rect x="72" y="478" width="828" height="250" rx="18" fill="#F7F7F4"/>
+  <text x="102" y="520" fill="#6B6B6B" font-family="Inter, Geist, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1.5">LIGHT MODE</text>
+  <image href="tapescore-concept2-logo-light-v3.svg" x="96" y="535" width="770" height="184"/>
+  <text x="960" y="510" fill="#E0A33C" font-family="Inter, Geist, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1.5">SYMBOL MARK</text>
+  <rect x="960" y="540" width="220" height="220" rx="28" fill="#0B0B0D" stroke="#4A4D50"/>
+  <image href="tapescore-concept2-mark-v3.svg" x="993" y="573" width="154" height="154"/>
+  <g font-family="Inter, Geist, Arial, sans-serif"><text x="1222" y="574" fill="#A6A6A6" font-size="13" letter-spacing="1.3">SILHOUETTE LOGIC</text><text x="1222" y="610" fill="#E7E8E5" font-size="20" font-weight="700">HVN → LVN → HVN</text><text x="1222" y="649" fill="#A6A6A6" font-size="15"><tspan x="1222" dy="0">The waist is deliberately severe.</tspan><tspan x="1222" dy="25">Amber marks meaningful price</tspan><tspan x="1222" dy="25">nodes, not decorative stripes.</tspan></text></g>
+  <line x1="72" y1="814" x2="1368" y2="814" stroke="#404347"/>
+  <g font-family="Inter, Geist, Arial, sans-serif" font-size="14" letter-spacing="1"><rect x="72" y="846" width="28" height="28" rx="5" fill="#E7E8E5"/><text x="114" y="866" fill="#A6A6A6">WORDMARK</text><rect x="330" y="846" width="28" height="28" rx="5" fill="#A6A6A6"/><text x="372" y="866" fill="#A6A6A6">PROFILE MASS</text><rect x="650" y="846" width="28" height="28" rx="5" fill="#0E0F11" stroke="#6B6B6B"/><text x="692" y="866" fill="#A6A6A6">LVN / NEGATIVE SPACE</text><rect x="1040" y="846" width="28" height="28" rx="5" fill="#E0A33C"/><text x="1082" y="866" fill="#A6A6A6">POC / NODE</text></g>
+</svg>

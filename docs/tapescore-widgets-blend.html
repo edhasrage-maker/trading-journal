@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapeScore · Blend-in widget treatments</title>
+<style>
+  :root {
+    --ground:#0C0D10;      /* app ground */
+    --panel:#131519;       /* current tile fill */
+    --line:#282C32;        /* current border */
+    --line-bright:#3A4048;
+    --line-dim:#1E2229;
+    --ink:#E8EAED; --mut:#969BA3; --faint:#5E636B;
+    --pos:#4FC58E; --neg:#E0685F;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ground); }
+  body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; padding: 34px 0 70px; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 0 34px; }
+
+  .caseh { display: flex; align-items: baseline; gap: 12px; margin: 40px 0 14px; }
+  .caseh:first-child { margin-top: 0; }
+  .caseh .tag { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #4F97CE; }
+  .caseh .desc { font-size: 12.5px; color: var(--faint); }
+
+  /* identical type in every variant — only the container changes */
+  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .cell { padding: 16px 18px; }
+  .lab { font-size: 12px; color: var(--mut); }
+  .val { font-size: 27px; font-weight: 600; margin-top: 8px; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .sub { font-size: 11px; color: var(--faint); margin-top: 9px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 9px; font-size: 11px; color: var(--mut); border: 1px solid var(--line); border-radius: 5px; padding: 3px 8px; }
+
+  /* A — current */
+  .a .cell { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  /* B — blend, same border, same radius */
+  .b .cell { background: transparent; border: 1px solid var(--line); border-radius: 12px; }
+  /* C — blend, squared */
+  .c .cell { background: transparent; border: 1px solid var(--line); border-radius: 3px; }
+  /* D — blend, brighter border, tighter radius */
+  .d .cell { background: transparent; border: 1px solid var(--line-bright); border-radius: 6px; }
+  /* E — blend, dim border, tighter radius */
+  .e .cell { background: transparent; border: 1px solid var(--line-dim); border-radius: 6px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="caseh"><span class="tag">A · Current</span><span class="desc">Filled panel (#131519) + border, 12px radius — today's build, for reference.</span></div>
+    <div class="row a">
+      <div class="cell"><div class="lab">Last 30 Days P&amp;L</div><div class="val" style="color:var(--pos)">+$836</div><div class="sub">13 trading days</div></div>
+      <div class="cell"><div class="lab">Day Win %</div><div class="val">46%</div><div class="sub">% of days green</div></div>
+      <div class="cell"><div class="lab">Trade Win %</div><div class="val">40%</div><div class="sub">55 trades</div></div>
+      <div class="cell"><div class="lab">Avg MFE / MAE</div><div class="val">+1.25× / <span style="color:var(--neg)">−0.53×</span></div><div class="chip">× ATR per trade ▾</div></div>
+    </div>
+
+    <div class="caseh"><span class="tag">B · Blend + border</span><span class="desc">No fill — outline only, same border and radius. The panel disappears; the rule defines it.</span></div>
+    <div class="row b">
+      <div class="cell"><div class="lab">Last 30 Days P&amp;L</div><div class="val" style="color:var(--pos)">+$836</div><div class="sub">13 trading days</div></div>
+      <div class="cell"><div class="lab">Day Win %</div><div class="val">46%</div><div class="sub">% of days green</div></div>
+      <div class="cell"><div class="lab">Trade Win %</div><div class="val">40%</div><div class="sub">55 trades</div></div>
+      <div class="cell"><div class="lab">Avg MFE / MAE</div><div class="val">+1.25× / <span style="color:var(--neg)">−0.53×</span></div><div class="chip">× ATR per trade ▾</div></div>
+    </div>
+
+    <div class="caseh"><span class="tag">C · Blend + squared</span><span class="desc">Outline only, 3px radius. Squared corners read more terminal / instrument than app-card.</span></div>
+    <div class="row c">
+      <div class="cell"><div class="lab">Last 30 Days P&amp;L</div><div class="val" style="color:var(--pos)">+$836</div><div class="sub">13 trading days</div></div>
+      <div class="cell"><div class="lab">Day Win %</div><div class="val">46%</div><div class="sub">% of days green</div></div>
+      <div class="cell"><div class="lab">Trade Win %</div><div class="val">40%</div><div class="sub">55 trades</div></div>
+      <div class="cell"><div class="lab">Avg MFE / MAE</div><div class="val">+1.25× / <span style="color:var(--neg)">−0.53×</span></div><div class="chip">× ATR per trade ▾</div></div>
+    </div>
+
+    <div class="caseh"><span class="tag">D · Blend + brighter rule</span><span class="desc">Outline only, lighter border (#3A4048), 6px radius — more defined, more drafted.</span></div>
+    <div class="row d">
+      <div class="cell"><div class="lab">Last 30 Days P&amp;L</div><div class="val" style="color:var(--pos)">+$836</div><div class="sub">13 trading days</div></div>
+      <div class="cell"><div class="lab">Day Win %</div><div class="val">46%</div><div class="sub">% of days green</div></div>
+      <div class="cell"><div class="lab">Trade Win %</div><div class="val">40%</div><div class="sub">55 trades</div></div>
+      <div class="cell"><div class="lab">Avg MFE / MAE</div><div class="val">+1.25× / <span style="color:var(--neg)">−0.53×</span></div><div class="chip">× ATR per trade ▾</div></div>
+    </div>
+
+    <div class="caseh"><span class="tag">E · Blend + dim rule</span><span class="desc">Outline only, quieter border (#1E2229), 6px radius — barely-there containment.</span></div>
+    <div class="row e">
+      <div class="cell"><div class="lab">Last 30 Days P&amp;L</div><div class="val" style="color:var(--pos)">+$836</div><div class="sub">13 trading days</div></div>
+      <div class="cell"><div class="lab">Day Win %</div><div class="val">46%</div><div class="sub">% of days green</div></div>
+      <div class="cell"><div class="lab">Trade Win %</div><div class="val">40%</div><div class="sub">55 trades</div></div>
+      <div class="cell"><div class="lab">Avg MFE / MAE</div><div class="val">+1.25× / <span style="color:var(--neg)">−0.53×</span></div><div class="chip">× ATR per trade ▾</div></div>
+    </div>
+
+  </div>
+</body>
+</html>

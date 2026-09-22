@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore Concept 2 clean-knockout preview</title>
+  <desc id="desc">An irregular auction profile with a clean S knockout, uneven HVNs, a severe LVN, and no tree-like radial taper.</desc>
+  <rect width="1440" height="900" fill="#0E0F11"/>
+  <text x="72" y="72" fill="#E0A33C" font-family="Inter, Geist, Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="1.6">CONCEPT 2 — CLEAN S</text>
+  <text x="330" y="72" fill="#A6A6A6" font-family="Inter, Geist, Arial, sans-serif" font-size="18" letter-spacing="1.6">IRREGULAR AUCTION PROFILE</text>
+  <image href="tapescore-concept2-logo-dark-v4.svg" x="72" y="118" width="970" height="260"/>
+  <g font-family="Inter, Geist, Arial, sans-serif">
+    <text x="1082" y="145" fill="#E0A33C" font-size="15" font-weight="800" letter-spacing="1.4">NO BARS THROUGH “S”</text>
+    <text x="1082" y="185" fill="#D6D8D5" font-size="16"><tspan x="1082" dy="0">The entire glyph—including</tspan><tspan x="1082" dy="26">its counters—has a hard</tspan><tspan x="1082" dy="26">knockout from the profile.</tspan></text>
+    <text x="1082" y="290" fill="#A6A6A6" font-size="13" font-weight="700" letter-spacing="1.2">AUCTION SHAPE</text>
+    <text x="1082" y="322" fill="#E7E8E5" font-size="18" font-weight="700">Uneven HVNs. Severe LVN.</text>
+  </g>
+  <line x1="72" y1="428" x2="1368" y2="428" stroke="#404347"/>
+  <rect x="72" y="478" width="828" height="250" rx="18" fill="#F7F7F4"/>
+  <text x="102" y="520" fill="#6B6B6B" font-family="Inter, Geist, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1.5">LIGHT MODE</text>
+  <image href="tapescore-concept2-logo-light-v4.svg" x="96" y="535" width="770" height="184"/>
+  <text x="960" y="510" fill="#E0A33C" font-family="Inter, Geist, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1.5">SYMBOL MARK</text>
+  <rect x="960" y="540" width="220" height="220" rx="28" fill="#0B0B0D" stroke="#4A4D50"/>
+  <image href="tapescore-concept2-mark-v4.svg" x="993" y="573" width="154" height="154"/>
+  <g font-family="Inter, Geist, Arial, sans-serif"><text x="1222" y="574" fill="#A6A6A6" font-size="13" letter-spacing="1.3">WHAT CHANGED</text><text x="1222" y="610" fill="#E7E8E5" font-size="20" font-weight="700">Profile ≠ ornament</text><text x="1222" y="649" fill="#A6A6A6" font-size="15"><tspan x="1222" dy="0">No circular envelope.</tspan><tspan x="1222" dy="25">No top/bottom tree taper.</tspan><tspan x="1222" dy="25">No bars inside the S.</tspan></text></g>
+  <line x1="72" y1="814" x2="1368" y2="814" stroke="#404347"/>
+  <g font-family="Inter, Geist, Arial, sans-serif" font-size="14" letter-spacing="1"><rect x="72" y="846" width="28" height="28" rx="5" fill="#E7E8E5"/><text x="114" y="866" fill="#A6A6A6">CLEAN LETTER</text><rect x="350" y="846" width="28" height="28" rx="5" fill="#A6A6A6"/><text x="392" y="866" fill="#A6A6A6">HVN MASS</text><rect x="650" y="846" width="28" height="28" rx="5" fill="#0E0F11" stroke="#6B6B6B"/><text x="692" y="866" fill="#A6A6A6">LVN NOTCH</text><rect x="990" y="846" width="28" height="28" rx="5" fill="#E0A33C"/><text x="1032" y="866" fill="#A6A6A6">POC / NODE</text></g>
+</svg>

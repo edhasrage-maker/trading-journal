@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapeScore · Palette comparison (Carbon / Tungsten / Paper)</title>
+<style>
+  /* ── Theme tokens ──────────────────────────────────────────────────────
+     LIGHT is the mockup subject. DARK mirrors the real app (globals.css)
+     so you can flip and compare. Toggle bottom-right. */
+  :root {
+    /* CARBON — the current app (default) */
+    --ground:      #0C0D10;
+    --panel:       #131519;
+    --panel-2:     #1B1E23;
+    --line:        #282C32;
+    --hair:        #1C2026;
+    --ink:         #E8EAED;
+    --mut:         #969BA3;
+    --faint:       #5E636B;
+    --accent:      #4F97CE;
+    --accent-deep: #2C5A7E;
+    --pos:         #4FC58E;
+    --neg:         #E0685F;
+    --gold:        #D6B24E;
+    --gold-bg:     rgba(214,178,78,0.08);
+    --gold-border: rgba(214,178,78,0.32);
+    --ring-track:  #282C32;
+    --chip-bg:     #1B1E24;
+    --tile-shadow: none;
+    --pos-fill:    rgba(79,197,142,0.10);
+    color-scheme: dark;
+  }
+  :root:has(#theme-paper:checked) {
+    /* PAPER — light / editorial */
+    --ground:      #F4F2EC;   /* warm paper, not stark white — reads editorial */
+    --panel:       #FFFFFF;
+    --panel-2:     #FAF8F3;
+    --line:        #E4E1D8;   /* section rules, control borders */
+    --hair:        #ECEAE2;   /* quieter row hairlines */
+    --ink:         #1A1B1E;
+    --mut:         #6A6E75;
+    --faint:       #9A9DA3;
+    --accent:      #2E6DA4;   /* scoreboard-blue, darkened for contrast on paper */
+    --accent-deep: #2E6DA4;
+    --pos:         #12875A;   /* trading green, darkened to hold on white */
+    --neg:         #C4443C;
+    --gold:        #A87E1E;   /* caution gold, darkened */
+    --gold-bg:     rgba(168,126,30,0.09);
+    --gold-border: rgba(168,126,30,0.30);
+    --ring-track:  #E7E4DA;
+    --chip-bg:     #F0EEE6;
+    --tile-shadow: 0 1px 2px rgba(20,18,12,0.04), 0 1px 0 rgba(20,18,12,0.02);
+    --pos-fill:    rgba(18,135,90,0.12);
+    color-scheme: light;
+  }
+  /* TUNGSTEN — same darkness + the SAME meaning colours (green/red/gold/blue),
+     but every neutral warmed toward the amber logo. Only the canvas changed. */
+  :root:has(#theme-tungsten:checked) {
+    --ground:      #100D0A;
+    --panel:       #1A1712;
+    --panel-2:     #221D16;
+    --line:        #322B20;
+    --hair:        #221D15;
+    --ink:         #ECE7DD;
+    --mut:         #9E9384;
+    --faint:       #6A6051;
+    --accent:      #4F97CE;
+    --accent-deep: #2C5A7E;
+    --pos:         #4FC58E;
+    --neg:         #E0685F;
+    --gold:        #D6B24E;
+    --gold-bg:     rgba(214,178,78,0.09);
+    --gold-border: rgba(214,178,78,0.34);
+    --ring-track:  #322B20;
+    --chip-bg:     #221D16;
+    --tile-shadow: none;
+    --pos-fill:    rgba(79,197,142,0.10);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ground); }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    transition: background .25s ease, color .25s ease;
+    padding-bottom: 64px;
+  }
+  .display { font-family: "Archivo", "Arial Narrow", "Helvetica Neue", system-ui, sans-serif; letter-spacing: -0.02em; }
+  .mono { font-family: "SFMono-Regular", Consolas, "Roboto Mono", monospace; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* ── Masthead ── */
+  .masthead {
+    display: flex; align-items: center; gap: 40px;
+    padding: 0 32px; height: 60px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .glyph { width: 28px; height: 28px; display: block; border-radius: 7px; }
+  .brand .word { font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+  nav { display: flex; gap: 26px; }
+  nav a { color: var(--mut); text-decoration: none; font-size: 14px; font-weight: 500; padding: 6px 0; position: relative; }
+  nav a.active { color: var(--ink); }
+  nav a.active::after { content:""; position:absolute; left:0; right:0; bottom:-2px; height:2px; background: var(--accent); border-radius: 2px; }
+  .mast-right { margin-left: auto; display: flex; align-items: center; gap: 22px; }
+  .mast-right .lnk { color: var(--faint); font-size: 13px; font-weight: 500; }
+  .seg { display: inline-flex; gap: 18px; }
+  .seg .opt { color: var(--faint); font-size: 13px; font-weight: 500; position: relative; padding: 6px 0; }
+  .seg .opt.on { color: var(--ink); }
+  .seg .opt.on::after { content:""; position:absolute; left:0; right:0; bottom:-2px; height:2px; background: var(--accent); border-radius:2px; }
+  .acct { color: var(--mut); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
+
+  .wrap { max-width: 1640px; margin: 0 auto; padding: 26px 32px 0; }
+
+  /* ── Hero ── */
+  .hero-grid { display: grid; grid-template-columns: auto 1fr; gap: 40px; align-items: start; }
+  @media (max-width: 900px){ .hero-grid { grid-template-columns: 1fr; } }
+  .score-col { border-right: 1px solid var(--line); padding-right: 36px; }
+  @media (max-width: 900px){ .score-col { border-right: none; border-bottom: 1px solid var(--line); padding-right: 0; padding-bottom: 22px; } }
+  .col-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  .col-head .label { display: flex; align-items: center; gap: 7px; }
+  .col-head .label .t { font-weight: 800; font-size: 16px; letter-spacing: -0.02em; }
+  .col-head .label .p { font-size: 11px; color: var(--mut); }
+  .info { width: 14px; height: 14px; border-radius: 50%; border: 1.2px solid var(--faint); color: var(--faint); font-size: 9px; font-weight: 700; display: grid; place-items: center; font-style: italic; }
+
+  .picker { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+  .picker button { border: none; background: transparent; color: var(--faint); font-size: 11px; padding: 3px 9px; border-right: 1px solid var(--line); cursor: pointer; font-weight: 500; }
+  .picker button:last-child { border-right: none; }
+  .picker button.on { background: var(--chip-bg); color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent-deep); }
+
+  .score-cluster { display: flex; align-items: center; gap: 26px; flex-wrap: wrap; }
+  .ring { position: relative; width: 148px; height: 148px; flex-shrink: 0; }
+  .ring .center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  .ring .center .n { font-size: 40px; font-weight: 800; line-height: 1; color: var(--neg); }
+  .ring .center .w { font-size: 11px; color: var(--mut); margin-top: 5px; }
+  .axes { min-width: 150px; }
+  .axis-row { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; padding: 9px 0; }
+  .axis-row + .axis-row { border-top: 1px solid var(--hair); }
+  .axis-row .a-name { font-size: 13.5px; color: var(--ink); }
+  .axis-row .a-score { font-size: 17px; font-weight: 800; }
+
+  .find-col { padding-left: 4px; }
+  .find-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .find-head .eyebrow { font-size: 11.5px; color: var(--mut); letter-spacing: 0.02em; }
+  .find-state { font-size: 12.5px; font-weight: 700; color: var(--accent); margin-bottom: 10px; display: flex; align-items: center; gap: 7px; }
+  .find-state .caret { font-size: 10px; opacity: .7; }
+  .find-headline { font-size: clamp(26px, 3.1vw, 34px); font-weight: 800; line-height: 1.06; letter-spacing: -0.025em; max-width: 20ch; }
+  .find-sub { margin-top: 14px; font-size: 15px; color: var(--ink); max-width: 54ch; line-height: 1.5; }
+  .find-sub .neg { color: var(--neg); font-weight: 600; }
+  .find-sub .pos { color: var(--pos); font-weight: 600; }
+  .do-next { margin-top: 16px; display: flex; gap: 12px; align-items: baseline; }
+  .do-next .k { font-size: 13px; font-weight: 800; color: var(--accent); flex-shrink: 0; }
+  .do-next .v { font-size: 15px; font-weight: 600; line-height: 1.4; max-width: 54ch; }
+
+  /* ── Evidence ── */
+  .evidence { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .ev-head { display: flex; justify-content: space-between; align-items: baseline; max-width: 560px; margin-bottom: 13px; }
+  .ev-head .l { font-size: 12.5px; color: var(--mut); }
+  .ev-head .r { font-size: 12px; color: var(--faint); }
+  .ev-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 14px; align-items: center; max-width: 560px; margin-bottom: 11px; }
+  .ev-row .name { font-size: 13px; color: var(--mut); }
+  .ev-bar { height: 6px; border-radius: 4px; background: var(--chip-bg); overflow: hidden; }
+  .ev-bar > span { display: block; height: 100%; border-radius: 4px; }
+  .ev-val { font-size: 13px; font-weight: 700; }
+  .ev-val .n { font-size: 11px; color: var(--faint); font-weight: 400; margin-left: 6px; }
+
+  /* ── Period control + tiles ── */
+  .section-label { display: flex; align-items: center; gap: 10px; margin: 30px 0 14px; }
+  .section-label .lab { font-size: 12.5px; color: var(--mut); }
+  .dd { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 7px; padding: 5px 11px; font-size: 12.5px; color: var(--ink); background: var(--panel); }
+  .dd .car { color: var(--faint); font-size: 10px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  @media (max-width: 900px){ .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; box-shadow: var(--tile-shadow); }
+  .tile .t-lab { font-size: 12px; color: var(--mut); margin-bottom: 7px; }
+  .tile .t-val { font-size: 27px; font-weight: 800; letter-spacing: -0.02em; }
+  .tile .t-sub { font-size: 11px; color: var(--faint); margin-top: 7px; }
+  .tile .t-chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 9px; font-size: 11px; color: var(--mut); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+
+  /* ── Charts ── */
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; }
+  @media (max-width: 900px){ .charts { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 14px; box-shadow: var(--tile-shadow); }
+  .card .c-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .card .c-head .c-title { font-size: 14px; font-weight: 700; }
+  .card .c-head .c-meta { font-size: 12px; }
+  .grid-line { stroke: var(--hair); stroke-width: 1; }
+  .axis-txt { fill: var(--faint); font-size: 10px; font-family: system-ui, sans-serif; }
+
+  /* ── Theme toggle ── */
+  .theme-radio { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .theme-toggle { position: fixed; right: 20px; bottom: 20px; z-index: 50; display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px; box-shadow: 0 6px 22px rgba(0,0,0,0.28); }
+  .theme-toggle label { color: var(--mut); font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 999px; cursor: pointer; user-select: none; }
+  #theme-carbon:checked   ~ .theme-toggle label[for="theme-carbon"],
+  #theme-tungsten:checked ~ .theme-toggle label[for="theme-tungsten"],
+  #theme-paper:checked    ~ .theme-toggle label[for="theme-paper"] { background: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+
+  <!-- Masthead -->
+  <header class="masthead">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 128 128" role="img" aria-label="TapeScore">
+        <rect width="128" height="128" rx="28" fill="#0F1318"/>
+        <rect x="22" y="24" width="17" height="80" rx="3" fill="#E3A62F"/>
+        <g fill="#0F1318">
+          <rect x="27" y="30" width="7" height="8" rx="1.6"/><rect x="27" y="44" width="7" height="8" rx="1.6"/><rect x="27" y="58" width="7" height="8" rx="1.6"/><rect x="27" y="72" width="7" height="8" rx="1.6"/><rect x="27" y="86" width="7" height="8" rx="1.6"/>
+        </g>
+        <rect x="89" y="24" width="17" height="80" rx="3" fill="#E3A62F"/>
+        <g fill="#0F1318">
+          <rect x="94" y="30" width="7" height="8" rx="1.6"/><rect x="94" y="44" width="7" height="8" rx="1.6"/><rect x="94" y="58" width="7" height="8" rx="1.6"/><rect x="94" y="72" width="7" height="8" rx="1.6"/><rect x="94" y="86" width="7" height="8" rx="1.6"/>
+        </g>
+        <rect x="39" y="24" width="50" height="5" fill="#E3A62F"/>
+        <rect x="39" y="99" width="50" height="5" fill="#E3A62F"/>
+        <line x1="50" y1="66" x2="50" y2="92" stroke="#F3F5F7" stroke-width="3.2"/><rect x="44.5" y="71" width="11" height="16" rx="1.5" fill="#F3F5F7"/>
+        <line x1="64" y1="48" x2="64" y2="80" stroke="#F3F5F7" stroke-width="3.2"/><rect x="58.5" y="53" width="11" height="21" rx="1.5" fill="#F3F5F7"/>
+        <line x1="78" y1="34" x2="78" y2="68" stroke="#F3F5F7" stroke-width="3.2"/><rect x="72.5" y="38" width="11" height="25" rx="1.5" fill="#F3F5F7"/>
+      </svg>
+      <span class="word">TapeScore</span>
+    </div>
+    <nav>
+      <a class="active" href="#">Dashboard</a>
+      <a href="#">Prep</a>
+      <a href="#">Trade</a>
+      <a href="#">Review</a>
+      <a href="#">Patterns</a>
+    </nav>
+    <div class="mast-right">
+      <span class="lnk">Import</span>
+      <span class="seg">
+        <span class="opt">Highlights</span>
+        <span class="opt on">Detailed Tape</span>
+      </span>
+      <span class="acct">Account <span style="font-size:9px">▼</span></span>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+    <!-- Hero -->
+    <div class="hero-grid">
+      <!-- Score -->
+      <div class="score-col">
+        <div class="col-head">
+          <span class="label">
+            <span class="t">TapeScore</span>
+            <span class="p">· this month</span>
+            <span class="info">i</span>
+          </span>
+          <span class="picker"><button class="on">Month</button><button>Year</button><button>All</button></span>
+        </div>
+        <div class="score-cluster">
+          <div class="ring">
+            <svg width="148" height="148" viewBox="0 0 132 132">
+              <!-- three equal segments (⅓ each), all in the low band colour at 54 -->
+              <!-- Risk 80 -->
+              <path d="M69.56 15.12 A51 51 0 0 1 111.84 88.36" fill="none" stroke="var(--ring-track)" stroke-width="9" stroke-linecap="butt"/>
+              <path d="M69.56 15.12 A51 51 0 0 1 116.90 69.20" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+              <!-- Entry 45 -->
+              <path d="M108.28 94.52 A51 51 0 0 1 23.72 94.52" fill="none" stroke="var(--ring-track)" stroke-width="9" stroke-linecap="butt"/>
+              <path d="M108.28 94.52 A51 51 0 0 1 70.98 116.76" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+              <!-- Exit 37 -->
+              <path d="M20.16 88.36 A51 51 0 0 1 62.44 15.12" fill="none" stroke="var(--ring-track)" stroke-width="9" stroke-linecap="butt"/>
+              <path d="M20.16 88.36 A51 51 0 0 1 16.85 52.41" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+            </svg>
+            <div class="center">
+              <div>
+                <div class="n display tnum">54</div>
+                <div class="w">Needs work</div>
+              </div>
+            </div>
+          </div>
+          <div class="axes">
+            <div class="axis-row"><span class="a-name">Risk</span><span class="a-score display tnum">80</span></div>
+            <div class="axis-row"><span class="a-name">Entry</span><span class="a-score display tnum">45</span></div>
+            <div class="axis-row"><span class="a-name">Exit</span><span class="a-score display tnum">37</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Finding -->
+      <div class="find-col">
+        <div class="find-head">
+          <span class="eyebrow mono">July · 30 trades</span>
+          <span class="picker"><button class="on">Month</button><button>Year</button><button>All</button></span>
+        </div>
+        <div class="find-state">Clear leak <span class="caret">▸</span></div>
+        <h1 class="find-headline display">Supply And Demand cost you.</h1>
+        <p class="find-sub"><span class="neg">−0.4R per trade</span> across 12 trades · everything else <span class="pos">+0.1R</span>.</p>
+        <div class="do-next">
+          <span class="k">Do next</span>
+          <span class="v">Skip the Supply And Demand unless it is textbook.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Evidence -->
+    <div class="evidence">
+      <div class="ev-head"><span class="l">The evidence</span><span class="r">R per trade</span></div>
+      <div class="ev-row">
+        <span class="name">Supply And Demand</span>
+        <span class="ev-bar"><span style="width:82%; background:var(--neg)"></span></span>
+        <span class="ev-val" style="color:var(--neg)">−0.4R <span class="n">n=12</span></span>
+      </div>
+      <div class="ev-row">
+        <span class="name">Other setups</span>
+        <span class="ev-bar"><span style="width:34%; background:var(--pos)"></span></span>
+        <span class="ev-val" style="color:var(--pos)">+0.1R <span class="n">n=10</span></span>
+      </div>
+    </div>
+
+    <!-- Period + tiles -->
+    <div class="section-label">
+      <span class="lab">Period:</span>
+      <span class="dd">Last 30 Days <span class="car">▼</span></span>
+    </div>
+    <div class="tiles">
+      <div class="tile">
+        <div class="t-lab">Last 30 Days P&amp;L</div>
+        <div class="t-val display" style="color:var(--pos)">+$836</div>
+        <div class="t-sub">13 trading days</div>
+      </div>
+      <div class="tile">
+        <div class="t-lab">Day Win %</div>
+        <div class="t-val display">46%</div>
+        <div class="t-sub">% of days green</div>
+      </div>
+      <div class="tile">
+        <div class="t-lab">Trade Win %</div>
+        <div class="t-val display">40%</div>
+        <div class="t-sub">55 trades</div>
+      </div>
+      <div class="tile">
+        <div class="t-lab">Avg MFE / MAE</div>
+        <div class="t-val display tnum">+1.25× / <span style="color:var(--neg)">−0.53×</span></div>
+        <div class="t-chip">× ATR per trade <span class="car" style="font-size:9px">▼</span></div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="section-label">
+      <span class="lab">Chart range:</span>
+      <span class="dd">Last 30 Days <span class="car">▼</span></span>
+    </div>
+    <div class="charts">
+      <!-- Equity curve -->
+      <div class="card">
+        <div class="c-head"><span class="c-title">Equity Curve</span><span class="c-meta" style="color:var(--pos); font-weight:700">+$836</span></div>
+        <svg viewBox="0 0 580 260" width="100%" height="240" preserveAspectRatio="none">
+          <!-- gridlines -->
+          <line class="grid-line" x1="30" y1="20"  x2="580" y2="20"/>
+          <line class="grid-line" x1="30" y1="64"  x2="580" y2="64"/>
+          <line class="grid-line" x1="30" y1="108" x2="580" y2="108"/>
+          <line class="grid-line" x1="30" y1="152" x2="580" y2="152"/>
+          <line class="grid-line" x1="30" y1="196" x2="580" y2="196"/>
+          <line class="grid-line" x1="30" y1="240" x2="580" y2="240"/>
+          <text class="axis-txt" x="0" y="23">$2,500</text>
+          <text class="axis-txt" x="0" y="67">$2,000</text>
+          <text class="axis-txt" x="0" y="111">$1,500</text>
+          <text class="axis-txt" x="0" y="155">$1,000</text>
+          <text class="axis-txt" x="6" y="199">$500</text>
+          <text class="axis-txt" x="14" y="243">$0</text>
+          <!-- area + line: mapped x 30..580, y=240 - v*0.096 -->
+          <path d="M30 211 L76 149 L122 82 L168 38 L214 19 L260 58 L306 110 L352 82 L398 43 L444 72 L490 101 L536 130 L580 160 L580 240 L30 240 Z"
+                fill="var(--pos-fill)" stroke="none"/>
+          <polyline points="30,211 76,149 122,82 168,38 214,19 260,58 306,110 352,82 398,43 444,72 490,101 536,130 580,160"
+                fill="none" stroke="var(--pos)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          <text class="axis-txt" x="30" y="256">06-24</text>
+          <text class="axis-txt" x="290" y="256">07-08</text>
+          <text class="axis-txt" x="548" y="256">07-24</text>
+        </svg>
+      </div>
+      <!-- Daily results -->
+      <div class="card">
+        <div class="c-head"><span class="c-title">Daily Results</span><span class="c-meta" style="color:var(--faint)">13 days</span></div>
+        <svg viewBox="0 0 580 260" width="100%" height="240">
+          <line class="grid-line" x1="30" y1="40"  x2="580" y2="40"/>
+          <line class="grid-line" x1="30" y1="150" x2="580" y2="150" style="stroke:var(--line)"/>
+          <line class="grid-line" x1="30" y1="220" x2="580" y2="220"/>
+          <text class="axis-txt" x="0" y="43">$1,000</text>
+          <text class="axis-txt" x="14" y="153">$0</text>
+          <text class="axis-txt" x="4" y="223">−$500</text>
+          <!-- zero line at y=150; up=green above, down=red below. bar width 26, gap ~16 -->
+          <!-- 1 +380 -->  <rect x="42"  y="96"  width="26" height="54"  rx="2" fill="var(--pos)"/>
+          <!-- 2 +820 -->  <rect x="84"  y="33"  width="26" height="117" rx="2" fill="var(--pos)"/>
+          <!-- 3 +780 -->  <rect x="126" y="39"  width="26" height="111" rx="2" fill="var(--pos)"/>
+          <!-- 4 +300 -->  <rect x="168" y="107" width="26" height="43"  rx="2" fill="var(--pos)"/>
+          <!-- 5 -480 -->  <rect x="210" y="150" width="26" height="67"  rx="2" fill="var(--neg)"/>
+          <!-- 6 -420 -->  <rect x="252" y="150" width="26" height="59"  rx="2" fill="var(--neg)"/>
+          <!-- 7 +560 -->  <rect x="294" y="70"  width="26" height="80"  rx="2" fill="var(--pos)"/>
+          <!-- 8 +120 -->  <rect x="336" y="133" width="26" height="17"  rx="2" fill="var(--pos)"/>
+          <!-- 9 -430 -->  <rect x="378" y="150" width="26" height="61"  rx="2" fill="var(--neg)"/>
+          <!-- 10 +180 --> <rect x="420" y="124" width="26" height="26"  rx="2" fill="var(--pos)"/>
+          <!-- 11 -60 -->  <rect x="462" y="150" width="26" height="9"   rx="2" fill="var(--neg)"/>
+          <!-- 12 -360 --> <rect x="504" y="150" width="26" height="51"  rx="2" fill="var(--neg)"/>
+          <!-- 13 -300 --> <rect x="546" y="150" width="26" height="43"  rx="2" fill="var(--neg)"/>
+          <text class="axis-txt" x="42"  y="238">06-24</text>
+          <text class="axis-txt" x="290" y="238">07-02</text>
+          <text class="axis-txt" x="540" y="238">07-24</text>
+        </svg>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Ground comparison (mockup control, not part of the app) — pure CSS, no JS -->
+  <input class="theme-radio" type="radio" name="theme" id="theme-carbon" checked>
+  <input class="theme-radio" type="radio" name="theme" id="theme-tungsten">
+  <input class="theme-radio" type="radio" name="theme" id="theme-paper">
+  <div class="theme-toggle">
+    <label for="theme-carbon">Carbon</label>
+    <label for="theme-tungsten">Tungsten</label>
+    <label for="theme-paper">Paper</label>
+  </div>
+</body>
+</html>

@@ -1,0 +1,61 @@
+/** Hour-by-hour, REACHERS only (hit +2xATR before -1xATR stop). For each, after
+ * the 2xATR touch, put a BE stop at entry and measure the CAPTURABLE peak = max
+ * favorable excursion (ATR) BEFORE price returns to entry (BE stop). Compare raw
+ * MFE (whole session) vs capturable MFE, and % that reach 3x/4x/5x before BE. */
+import { readFileSync } from 'fs'
+import { join } from 'path'
+import { readScidBars } from '../src/lib/scid-reader'
+const ENTRIES = 'D:/Documents/NQ_backtest/entries_full2.csv', DATA_DIR = 'D:/SierraCharts/Data'
+const FILES = ['NQH5.CME.scid', 'NQM5.CME.scid', 'NQU5.CME.scid', 'NQz5.CME.scid', 'NQH6.CME.scid', 'NQM6.CME.scid', 'NQU6.CME.scid', 'NQZ6.CME.scid']
+interface Row { ms: number; date: string; hour: number; min: number; side: 'long' | 'short'; entry: number }
+function parse(): Row[] { const L = readFileSync(ENTRIES, 'utf8').split(/\r?\n/).filter(l => l.trim()); const o: Row[] = []
+  for (let i = 1; i < L.length; i++) { const c = L[i].split(','); if (+c[4] !== 1) continue; const e = +c[6], q = +c[9], s = c[5]
+    if (!(e > 15000 && e < 50000) || !(q > 0) || (s !== 'long' && s !== 'short')) continue
+    o.push({ ms: +c[0], date: c[1], hour: +c[2], min: +c[3], side: s, entry: e }) } return o }
+interface Bar { ms: number; o: number; h: number; l: number; c: number }
+function atrSeries(b: Bar[]) { const out = new Map<number, number>(); let a: number | null = null, pc: number | null = null; const sd: number[] = []
+  for (const x of b) { const tr = pc == null ? x.h - x.l : Math.max(x.h - x.l, Math.abs(x.h - pc), Math.abs(x.l - pc)); if (a == null) { sd.push(tr); if (sd.length === 10) a = sd.reduce((s, v) => s + v, 0) / 10 } else a = (9 * a + tr) / 10; pc = x.c; if (a != null) out.set(x.ms, a) } return out }
+const probe = new Map<string, number | null>()
+function priceAt(f: string, ms: number) { const k = f + ':' + ms; if (probe.has(k)) return probe.get(k)!; let v: number | null = null; try { const b = readScidBars(join(DATA_DIR, f), ms - 120000, ms + 120000, { priceDivisor: 100, bucketMs: 60000 }).bars; if (b.length) v = b[Math.floor(b.length / 2)].close } catch {}; probe.set(k, v); return v }
+function pick(ms: number, p: number) { let best: string | null = null, bd = 40; for (const f of FILES) { const x = priceAt(f, ms); if (x == null) continue; const d = Math.abs(x - p); if (d < bd) { bd = d; best = f } } return best }
+const med = (a: number[]) => { if (!a.length) return NaN; const s = a.slice().sort((x, y) => x - y); const h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2 }
+interface Rec { hour: number; rawMFE: number; capMFE: number }
+function main() {
+  const rows = parse(); const byDate = new Map<string, Row[]>(); for (const r of rows) (byDate.get(r.date) ?? byDate.set(r.date, []).get(r.date)!).push(r)
+  const recs: Rec[] = []
+  for (const date of [...byDate.keys()].sort()) {
+    const list = byDate.get(date)!; const s0 = list[0]
+    const off = Math.round((s0.ms - Date.parse(`${date}T${String(s0.hour).padStart(2, '0')}:${String(s0.min).padStart(2, '0')}:00Z`)) / 3600_000)
+    const file = pick(s0.ms, s0.entry); if (!file) continue
+    const warm = new Date(Date.parse(date + 'T00:00:00Z') - 4 * 86400000).toISOString().slice(0, 10)
+    const closeMs = Date.parse(`${date}T13:00:00Z`) + off * 3600_000, rthStart = Date.parse(`${date}T06:30:00Z`) + off * 3600_000
+    let all: Bar[]; try { all = readScidBars(join(DATA_DIR, file), Date.parse(warm + 'T00:00:00Z'), closeMs, { priceDivisor: 100, bucketMs: 60000 }).bars.map(x => ({ ms: Date.parse(x.ts), o: x.open, h: x.high, l: x.low, c: x.close })) } catch { continue }
+    const atr = atrSeries(all); const day = all.filter(b => b.ms >= rthStart && b.ms < closeMs); if (!day.length) continue
+    for (const r of list) {
+      let eatr = 0; for (const b of all) { if (b.ms <= r.ms && atr.has(b.ms)) eatr = atr.get(b.ms)! }; if (eatr <= 0) continue
+      const dir = r.side === 'long' ? 1 : -1, stop = r.entry - dir * eatr, tgt = r.entry + dir * 2 * eatr
+      const i0 = day.findIndex(b => b.ms >= r.ms); if (i0 < 0) continue
+      // find target-hit bar (must precede -1xATR stop)
+      let k = -1, rawMFE = 0
+      for (let j = i0; j < day.length; j++) { const b = day[j]
+        const fav = (dir > 0 ? b.h - r.entry : r.entry - b.l) / eatr; if (fav > rawMFE) rawMFE = fav
+        if (k === -1) { const stopHit = dir > 0 ? b.l <= stop : b.h >= stop; const tgtHit = dir > 0 ? b.h >= tgt : b.l <= tgt
+          if (stopHit) { k = -2; break } else if (tgtHit) k = j } }
+      if (k < 0) continue   // not a reacher
+      // capturable peak: from target bar, BE stop at entry, stop until price touches entry
+      let capMFE = 2   // already at 2xATR
+      for (let j = k; j < day.length; j++) { const b = day[j]
+        const fav = (dir > 0 ? b.h - r.entry : r.entry - b.l) / eatr; if (fav > capMFE) capMFE = fav
+        if (j > k && (dir > 0 ? b.l <= r.entry : b.h >= r.entry)) break }   // BE stop
+      recs.push({ hour: r.hour, rawMFE, capMFE })
+    }
+  }
+  const grp: [string, (h: number) => boolean][] = [['08-09', h => h === 8 || h === 9], ['10-11', h => h === 10 || h === 11], ['12+', h => h >= 12], ['ALL', () => true]]
+  console.log(`reachers: ${recs.length}  (raw MFE = whole-session peak; cap MFE = peak before BE stop after 2xATR)`)
+  console.log(`\n${'window'.padEnd(7)} ${'n'.padStart(4)} ${'rawMedMFE'.padStart(10)} ${'capMedMFE'.padStart(10)} ${'>=3xBE'.padStart(7)} ${'>=4xBE'.padStart(7)} ${'>=5xBE'.padStart(7)} ${'stoppedAtBE'.padStart(11)}`)
+  for (const [name, f] of grp) { const a = recs.filter(r => f(r.hour)); if (!a.length) continue
+    const p = (t: number) => (100 * a.filter(r => r.capMFE >= t).length / a.length).toFixed(0) + '%'
+    const beOnly = 100 * a.filter(r => r.capMFE < 2.001).length / a.length   // never extended past 2x before BE
+    console.log(`${name.padEnd(7)} ${String(a.length).padStart(4)} ${med(a.map(r => r.rawMFE)).toFixed(1).padStart(10)} ${med(a.map(r => r.capMFE)).toFixed(1).padStart(10)} ${p(3).padStart(7)} ${p(4).padStart(7)} ${p(5).padStart(7)} ${(beOnly.toFixed(0) + '%').padStart(11)}`) }
+}
+main()

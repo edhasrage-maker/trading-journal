@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 562" width="1000" height="562" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore flat film-ribbon rebuild V4</title>
+  <desc id="desc">A flat, clean TapeScore identity using true film-strip construction: parallel bronze rails, open film cells, square ends, vertical candles, and mixed-weight TapeScore typography.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="80%"><stop offset="0" stop-color="#282828"/><stop offset="1" stop-color="#1B1B1B"/></radialGradient>
+    <linearGradient id="bronze" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#C19A68"/><stop offset=".5" stop-color="#A67D4B"/><stop offset="1" stop-color="#79532B"/></linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#777A7C"/><stop offset=".28" stop-color="#E3E4E4"/><stop offset=".7" stop-color="#B7B9BA"/><stop offset="1" stop-color="#6E7173"/></linearGradient>
+    <linearGradient id="grey" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#55595C"/><stop offset=".5" stop-color="#939698"/><stop offset="1" stop-color="#44484B"/></linearGradient>
+    <linearGradient id="dark" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#16181A"/><stop offset=".5" stop-color="#44484B"/><stop offset="1" stop-color="#111315"/></linearGradient>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="2" dy="4" stdDeviation="3.5" flood-color="#000" flood-opacity=".58"/></filter>
+    <filter id="word-shadow" x="-20%" y="-40%" width="140%" height="190%"><feDropShadow dx="0" dy="4" stdDeviation="2" flood-color="#000" flood-opacity=".95"/></filter>
+    <filter id="grain" x="-10%" y="-10%" width="120%" height="120%"><feTurbulence type="fractalNoise" baseFrequency=".82" numOctaves="2" seed="31"/><feColorMatrix type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 .035 0"/></filter>
+  </defs>
+
+  <g id="background">
+    <rect width="1000" height="562" fill="url(#bg)"/>
+    <rect width="1000" height="562" filter="url(#grain)"/>
+  </g>
+
+  <!-- Rear borders sit behind the candles. These are the back edges of two folded film sections. -->
+  <g id="rear-film-rails" fill="none" stroke-linecap="butt" stroke-linejoin="miter" filter="url(#shadow)">
+    <path d="M475 240 L610 105 L685 185" stroke="#5E3E20" stroke-width="20" transform="translate(3 4)"/>
+    <path d="M475 240 L610 105 L685 185" stroke="url(#bronze)" stroke-width="18"/>
+    <path d="M390 350 L445 295 L505 375 L625 255" stroke="#5E3E20" stroke-width="20" transform="translate(3 4)"/>
+    <path d="M390 350 L445 295 L505 375 L625 255" stroke="url(#bronze)" stroke-width="18"/>
+  </g>
+
+  <!-- Seven vertical candles occupy the open film cells. -->
+  <g id="candlestick-clusters" filter="url(#shadow)">
+    <g id="lower-candle-1" transform="translate(425 396)"><line y1="-26" y2="29" stroke="#8F9294" stroke-width="2.2"/><rect x="-8" y="-9" width="16" height="18" fill="url(#grey)"/></g>
+    <g id="lower-candle-2" transform="translate(454 370)"><line y1="-34" y2="34" stroke="#BFC1C2" stroke-width="2.3"/><rect x="-9" y="-16" width="18" height="30" fill="url(#silver)"/></g>
+    <g id="lower-candle-3" transform="translate(484 346)"><line y1="-36" y2="37" stroke="#BFC1C2" stroke-width="2.3"/><rect x="-9" y="-18" width="18" height="34" fill="url(#silver)"/></g>
+    <g id="lower-candle-4" transform="translate(514 320)"><line y1="-38" y2="39" stroke="#5D6164" stroke-width="2.3"/><rect x="-9" y="-20" width="18" height="36" fill="url(#dark)"/></g>
+    <g id="upper-candle-1" transform="translate(569 232)"><line y1="-37" y2="40" stroke="#5D6164" stroke-width="2.3"/><rect x="-9" y="-19" width="18" height="36" fill="url(#dark)"/></g>
+    <g id="upper-candle-2" transform="translate(600 207)"><line y1="-42" y2="42" stroke="#BFC1C2" stroke-width="2.3"/><rect x="-9" y="-24" width="18" height="42" fill="url(#silver)"/></g>
+    <g id="upper-candle-3" transform="translate(639 171)"><line y1="-39" y2="41" stroke="#5D6164" stroke-width="2.3"/><rect x="-9" y="-21" width="18" height="38" fill="url(#dark)"/></g>
+  </g>
+
+  <!-- Front borders pass over the candles, creating real film-frame occlusion. -->
+  <g id="front-film-rails" fill="none" stroke-linecap="butt" stroke-linejoin="miter" filter="url(#shadow)">
+    <path d="M505 270 L610 165 L645 215" stroke="#5E3E20" stroke-width="20" transform="translate(3 4)"/>
+    <path d="M505 270 L610 165 L645 215" stroke="url(#bronze)" stroke-width="18"/>
+    <path d="M420 380 L445 355 L485 415 L655 245" stroke="#5E3E20" stroke-width="20" transform="translate(3 4)"/>
+    <path d="M420 380 L445 355 L485 415 L655 245" stroke="url(#bronze)" stroke-width="18"/>
+    <!-- Flat end caps close each open film section without rounded edges. -->
+    <path d="M475 240 L505 270 M685 185 L645 215 M390 350 L420 380 M625 255 L655 245" stroke="url(#bronze)" stroke-width="18"/>
+  </g>
+
+  <!-- Perforations appear on the four exterior rails, matching the simplified reference. -->
+  <g id="film-perforations" fill="#25201A">
+    <g transform="translate(542 172) rotate(-45)"><rect x="-76" y="-4" width="8" height="8"/><rect x="-57" y="-4" width="8" height="8"/><rect x="-38" y="-4" width="8" height="8"/><rect x="-19" y="-4" width="8" height="8"/><rect x="0" y="-4" width="8" height="8"/><rect x="19" y="-4" width="8" height="8"/><rect x="38" y="-4" width="8" height="8"/><rect x="57" y="-4" width="8" height="8"/></g>
+    <g transform="translate(628 190) rotate(55)"><rect x="-23" y="-4" width="8" height="8"/><rect x="-4" y="-4" width="8" height="8"/><rect x="15" y="-4" width="8" height="8"/></g>
+    <g transform="translate(418 322) rotate(-45)"><rect x="-23" y="-4" width="8" height="8"/><rect x="-4" y="-4" width="8" height="8"/><rect x="15" y="-4" width="8" height="8"/></g>
+    <g transform="translate(570 330) rotate(-45)"><rect x="-95" y="-4" width="8" height="8"/><rect x="-76" y="-4" width="8" height="8"/><rect x="-57" y="-4" width="8" height="8"/><rect x="-38" y="-4" width="8" height="8"/><rect x="-19" y="-4" width="8" height="8"/><rect x="0" y="-4" width="8" height="8"/><rect x="19" y="-4" width="8" height="8"/><rect x="38" y="-4" width="8" height="8"/><rect x="57" y="-4" width="8" height="8"/><rect x="76" y="-4" width="8" height="8"/></g>
+  </g>
+
+  <g id="tapescore-wordmark" filter="url(#word-shadow)">
+    <text x="530" y="315" text-anchor="middle" fill="#E7E8E5" font-family="'Helvetica Neue', Arial, sans-serif" font-size="82" letter-spacing="-1.4"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+  </g>
+
+  <g id="spark-accent">
+    <path transform="translate(938 470)" d="M0 -20C3 -6 6 -3 20 0C6 3 3 6 0 20C-3 6 -6 3 -20 0C-6 -3 -3 -6 0 -20Z" fill="#8F9294" opacity=".8"/>
+    <path transform="translate(972 488)" d="M0 -21C4 -7 7 -4 21 0C7 4 4 7 0 21C-4 7 -7 4 -21 0C-7 -4 -4 -7 0 -21Z" fill="#D1B17D" opacity=".92"/>
+  </g>
+</svg>

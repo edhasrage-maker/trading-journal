@@ -11,6 +11,23 @@ export function emaSeries(closes: number[], length: number): number[] {
   return out
 }
 
+// Simple rolling mean over `length` bars. The first `length-1` values are NaN
+// (no partial-window average) so immature windows never leak into slope/spread —
+// downstream NaN comparisons are all false, which naturally suppresses signals
+// on those bars. Unlike emaSeries (which seeds out[0] = closes[0]).
+export function smaSeries(closes: number[], length: number): number[] {
+  const n = closes.length
+  const out: number[] = new Array(n).fill(NaN)
+  if (n === 0 || length <= 0) return out
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    sum += closes[i]
+    if (i >= length) sum -= closes[i - length]
+    if (i >= length - 1) out[i] = sum / length
+  }
+  return out
+}
+
 // Average % change of the EMA per bar, across `lookback` bars ending at idx.
 // Returns null if there isn't enough history at idx.
 export function slopePercent(ema: number[], idx: number, lookback: number): number | null {

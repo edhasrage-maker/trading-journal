@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore gold film-strip and candlestick identity</title>
+  <desc id="desc">A layered 16:9 brand presentation combining a brushed-gold film strip, five metallic candlesticks in a higher-high higher-low sequence, and a centered TAPESCORE wordmark.</desc>
+  <defs>
+    <radialGradient id="background-vignette" cx="50%" cy="43%" r="74%">
+      <stop offset="0" stop-color="#2A2A2A"/><stop offset=".52" stop-color="#202020"/><stop offset="1" stop-color="#121212"/>
+    </radialGradient>
+    <linearGradient id="gold-metallic" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6E4516"/><stop offset=".22" stop-color="#B77928"/><stop offset=".48" stop-color="#E4BE73"/><stop offset=".66" stop-color="#A56822"/><stop offset=".84" stop-color="#F0D390"/><stop offset="1" stop-color="#714515"/>
+    </linearGradient>
+    <linearGradient id="gold-edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F0D79B"/><stop offset=".42" stop-color="#C58B3B"/><stop offset="1" stop-color="#714515"/>
+    </linearGradient>
+    <linearGradient id="silver-metallic" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#777A7D"/><stop offset=".25" stop-color="#E9EAEB"/><stop offset=".52" stop-color="#B9BCBE"/><stop offset=".78" stop-color="#F7F7F6"/><stop offset="1" stop-color="#777A7D"/>
+    </linearGradient>
+    <linearGradient id="slate-metallic" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#202327"/><stop offset=".34" stop-color="#555A5F"/><stop offset=".62" stop-color="#30343A"/><stop offset="1" stop-color="#17191C"/>
+    </linearGradient>
+    <filter id="grain" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency=".82" numOctaves="2" seed="41" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .065 0"/>
+    </filter>
+    <filter id="emblem-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity=".48"/>
+    </filter>
+    <filter id="text-shadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="5" stdDeviation="3" flood-color="#000000" flood-opacity=".9"/>
+    </filter>
+    <filter id="spark-glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="technical-grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" fill="none" stroke="#FFFFFF" stroke-opacity=".022" stroke-width="1"/>
+    </pattern>
+    <mask id="film-center-cutout">
+      <rect width="1600" height="900" fill="white"/>
+      <path d="M455 690 L742 403 L916 575 L1190 301" fill="none" stroke="black" stroke-width="48" stroke-linecap="square" stroke-linejoin="bevel"/>
+    </mask>
+  </defs>
+
+  <!-- Layer 1: background and presentation-only effects -->
+  <g id="background-and-effects">
+    <rect width="1600" height="900" fill="url(#background-vignette)"/>
+    <rect width="1600" height="900" fill="url(#technical-grid)"/>
+    <rect width="1600" height="900" filter="url(#grain)" opacity=".9"/>
+    <ellipse cx="800" cy="462" rx="560" ry="325" fill="#000000" opacity=".11"/>
+  </g>
+
+  <!-- Layer 2: five metallic candles in a strict HL/HH progression -->
+  <g id="candlestick-bodies-and-wicks" filter="url(#emblem-shadow)">
+    <g id="candle-1" transform="translate(590 594)">
+      <line x1="0" y1="-78" x2="0" y2="74" stroke="#AEB1B3" stroke-width="5"/>
+      <rect x="-17" y="-35" width="34" height="74" rx="2" fill="url(#silver-metallic)" stroke="#D6D7D8" stroke-width="1.5"/>
+      <path d="M17 -35L24 -29V39L17 39Z" fill="#666A6D" opacity=".72"/>
+    </g>
+    <g id="candle-2" transform="translate(688 514)">
+      <line x1="0" y1="-82" x2="0" y2="76" stroke="#666B70" stroke-width="5"/>
+      <rect x="-18" y="-42" width="36" height="76" rx="2" fill="url(#slate-metallic)" stroke="#64696E" stroke-width="1.5"/>
+      <path d="M18 -42L25 -36V34L18 34Z" fill="#111316" opacity=".8"/>
+    </g>
+    <g id="candle-3" transform="translate(790 442)">
+      <line x1="0" y1="-88" x2="0" y2="78" stroke="#BFC1C3" stroke-width="5"/>
+      <rect x="-19" y="-50" width="38" height="84" rx="2" fill="url(#silver-metallic)" stroke="#E4E5E6" stroke-width="1.5"/>
+      <path d="M19 -50L27 -43V34L19 34Z" fill="#666A6D" opacity=".7"/>
+    </g>
+    <g id="candle-4" transform="translate(900 376)">
+      <line x1="0" y1="-82" x2="0" y2="72" stroke="#666B70" stroke-width="5"/>
+      <rect x="-18" y="-34" width="36" height="70" rx="2" fill="url(#slate-metallic)" stroke="#64696E" stroke-width="1.5"/>
+      <path d="M18 -34L25 -28V36L18 36Z" fill="#111316" opacity=".8"/>
+    </g>
+    <g id="candle-5" transform="translate(1016 296)">
+      <line x1="0" y1="-92" x2="0" y2="76" stroke="#C8CACC" stroke-width="5"/>
+      <rect x="-20" y="-54" width="40" height="88" rx="2" fill="url(#silver-metallic)" stroke="#ECEDEE" stroke-width="1.5"/>
+      <path d="M20 -54L28 -46V34L20 34Z" fill="#666A6D" opacity=".7"/>
+    </g>
+  </g>
+
+  <!-- Layer 3: brushed-gold film framework and continuous zig-zag track -->
+  <g id="film-strip-shape" filter="url(#emblem-shadow)">
+    <path d="M455 690 L742 403 L916 575 L1190 301" fill="none" stroke="#5B3711" stroke-width="92" stroke-linecap="square" stroke-linejoin="bevel" opacity=".72"/>
+    <path d="M455 680 L742 393 L916 565 L1190 291" fill="none" stroke="url(#gold-metallic)" stroke-width="82" stroke-linecap="square" stroke-linejoin="bevel"/>
+    <path d="M455 680 L742 393 L916 565 L1190 291" fill="none" stroke="#1B1B1B" stroke-width="48" stroke-linecap="square" stroke-linejoin="bevel" opacity=".94"/>
+    <path d="M456 645 L741 360 L916 532 L1188 260" fill="none" stroke="url(#gold-edge)" stroke-width="4" opacity=".85"/>
+    <path d="M482 706 L744 444 L916 616 L1215 317" fill="none" stroke="#6D4315" stroke-width="4" opacity=".9"/>
+  </g>
+
+  <!-- Layer 4: independent sprocket-hole cutouts along both rails -->
+  <g id="film-perforations" fill="#171717" stroke="#D4A85F" stroke-opacity=".28" stroke-width="1">
+    <!-- lower-left ascending segment -->
+    <g transform="rotate(-45 600 535)">
+      <rect x="450" y="493" width="18" height="12" rx="3"/><rect x="486" y="493" width="18" height="12" rx="3"/><rect x="522" y="493" width="18" height="12" rx="3"/><rect x="558" y="493" width="18" height="12" rx="3"/><rect x="594" y="493" width="18" height="12" rx="3"/><rect x="630" y="493" width="18" height="12" rx="3"/><rect x="666" y="493" width="18" height="12" rx="3"/><rect x="702" y="493" width="18" height="12" rx="3"/>
+      <rect x="450" y="563" width="18" height="12" rx="3"/><rect x="486" y="563" width="18" height="12" rx="3"/><rect x="522" y="563" width="18" height="12" rx="3"/><rect x="558" y="563" width="18" height="12" rx="3"/><rect x="594" y="563" width="18" height="12" rx="3"/><rect x="630" y="563" width="18" height="12" rx="3"/><rect x="666" y="563" width="18" height="12" rx="3"/><rect x="702" y="563" width="18" height="12" rx="3"/>
+    </g>
+    <!-- central pullback segment -->
+    <g transform="rotate(45 830 480)">
+      <rect x="748" y="438" width="18" height="12" rx="3"/><rect x="784" y="438" width="18" height="12" rx="3"/><rect x="820" y="438" width="18" height="12" rx="3"/><rect x="856" y="438" width="18" height="12" rx="3"/>
+      <rect x="748" y="508" width="18" height="12" rx="3"/><rect x="784" y="508" width="18" height="12" rx="3"/><rect x="820" y="508" width="18" height="12" rx="3"/><rect x="856" y="508" width="18" height="12" rx="3"/>
+    </g>
+    <!-- upper-right continuation segment -->
+    <g transform="rotate(-45 1050 430)">
+      <rect x="908" y="388" width="18" height="12" rx="3"/><rect x="944" y="388" width="18" height="12" rx="3"/><rect x="980" y="388" width="18" height="12" rx="3"/><rect x="1016" y="388" width="18" height="12" rx="3"/><rect x="1052" y="388" width="18" height="12" rx="3"/><rect x="1088" y="388" width="18" height="12" rx="3"/><rect x="1124" y="388" width="18" height="12" rx="3"/><rect x="1160" y="388" width="18" height="12" rx="3"/>
+      <rect x="908" y="458" width="18" height="12" rx="3"/><rect x="944" y="458" width="18" height="12" rx="3"/><rect x="980" y="458" width="18" height="12" rx="3"/><rect x="1016" y="458" width="18" height="12" rx="3"/><rect x="1052" y="458" width="18" height="12" rx="3"/><rect x="1088" y="458" width="18" height="12" rx="3"/><rect x="1124" y="458" width="18" height="12" rx="3"/><rect x="1160" y="458" width="18" height="12" rx="3"/>
+    </g>
+  </g>
+
+  <!-- Layer 5: editable uppercase wordmark and crisp shadow -->
+  <g id="tapescore-wordmark" filter="url(#text-shadow)">
+    <text id="text-shadow" x="800" y="510" text-anchor="middle" fill="#000000" opacity=".7" font-family="Montserrat, 'Proxima Nova', Inter, Arial, sans-serif" font-size="112" font-weight="900" letter-spacing="4">TAPESCORE</text>
+    <text id="wordmark-text" x="800" y="503" text-anchor="middle" fill="#FFFFFF" font-family="Montserrat, 'Proxima Nova', Inter, Arial, sans-serif" font-size="112" font-weight="900" letter-spacing="4">TAPESCORE</text>
+  </g>
+
+  <!-- Layer 6: presentation accent, isolated for easy removal -->
+  <g id="spark-accent" transform="translate(1450 760)" filter="url(#spark-glow)">
+    <path d="M0 -34 C5 -10 10 -5 34 0 C10 5 5 10 0 34 C-5 10 -10 5 -34 0 C-10 -5 -5 -10 0 -34Z" fill="url(#silver-metallic)" opacity=".86"/>
+    <path d="M0 -27 C4 -8 8 -4 27 0 C8 4 4 8 0 27 C-4 8 -8 4 -27 0 C-8 -4 -4 -8 0 -27Z" fill="url(#gold-metallic)" opacity=".72" transform="rotate(45)"/>
+  </g>
+</svg>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore film-ribbon logo refinement</title>
+  <desc id="desc">A simplified refinement of the selected candlestick film-strip concept.</desc>
+  <rect width="1440" height="900" fill="#0E0F11"/>
+  <text x="72" y="70" fill="#E0A33C" font-family="Inter,Geist,Arial,sans-serif" font-size="18" font-weight="800" letter-spacing="1.6">FILM × CANDLESTICK — REFINED</text>
+  <text x="455" y="70" fill="#A6A6A6" font-family="Inter,Geist,Arial,sans-serif" font-size="18" letter-spacing="1.6">GAME TAPE MEETS MARKET STRUCTURE</text>
+  <image href="tapescore-film-ribbon-logo-dark-v1.svg" x="55" y="104" width="1040" height="301"/>
+  <g font-family="Inter,Geist,Arial,sans-serif"><text x="1120" y="138" fill="#E0A33C" font-size="14" font-weight="800" letter-spacing="1.3">WHAT CHANGED</text><text x="1120" y="178" fill="#D6D8D5" font-size="16"><tspan x="1120" dy="0">One ribbon.</tspan><tspan x="1120" dy="27">Eight candles.</tspan><tspan x="1120" dy="27">No texture or glow.</tspan><tspan x="1120" dy="27">No decorative sparkle.</tspan></text><text x="1120" y="315" fill="#A6A6A6" font-size="13" font-weight="700" letter-spacing="1.2">MARKET READ</text><text x="1120" y="348" fill="#E7E8E5" font-size="18" font-weight="700">Impulse → pullback → continuation</text></g>
+  <line x1="72" y1="430" x2="1368" y2="430" stroke="#404347"/>
+  <rect x="72" y="478" width="848" height="250" rx="18" fill="#F7F7F4"/>
+  <text x="102" y="520" fill="#6B6B6B" font-family="Inter,Geist,Arial,sans-serif" font-size="14" font-weight="800" letter-spacing="1.5">LIGHT MODE</text>
+  <image href="tapescore-film-ribbon-logo-light-v1.svg" x="92" y="520" width="808" height="214"/>
+  <text x="972" y="510" fill="#E0A33C" font-family="Inter,Geist,Arial,sans-serif" font-size="15" font-weight="800" letter-spacing="1.5">STANDALONE MARK</text>
+  <rect x="972" y="540" width="220" height="220" rx="28" fill="#0B0B0D" stroke="#4A4D50"/>
+  <image href="tapescore-film-ribbon-mark-v1.svg" x="992" y="560" width="180" height="180"/>
+  <g font-family="Inter,Geist,Arial,sans-serif"><text x="1218" y="575" fill="#A6A6A6" font-size="13" letter-spacing="1.3">SYSTEM LOGIC</text><text x="1218" y="612" fill="#E7E8E5" font-size="17" font-weight="700">Same ribbon. Same candles.</text><text x="1218" y="652" fill="#A6A6A6" font-size="14"><tspan x="1218" dy="0">The mark is derived directly</tspan><tspan x="1218" dy="24">from the wordmark rather than</tspan><tspan x="1218" dy="24">being a separate icon idea.</tspan></text></g>
+  <line x1="72" y1="814" x2="1368" y2="814" stroke="#404347"/>
+  <g font-family="Inter,Geist,Arial,sans-serif" font-size="14" letter-spacing="1"><rect x="72" y="846" width="28" height="28" rx="5" fill="#E7E8E5"/><text x="114" y="866" fill="#A6A6A6">WORDMARK</text><rect x="330" y="846" width="28" height="28" rx="5" fill="#777B80"/><text x="372" y="866" fill="#A6A6A6">FILM RIBBON</text><rect x="680" y="846" width="28" height="28" rx="5" fill="#24282D"/><text x="722" y="866" fill="#A6A6A6">FILM BED</text><rect x="1030" y="846" width="28" height="28" rx="5" fill="#E0A33C"/><text x="1072" y="866" fill="#A6A6A6">CANDLE SIGNAL</text></g>
+</svg>

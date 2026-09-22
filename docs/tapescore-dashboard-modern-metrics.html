@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TapeScore · Modern-tech · smarter metrics</title>
+<style>
+  :root {
+    --ground:#0A0B0E; --p-top:#16191F; --p-bot:#101216; --inset:#0D0F13;
+    --border:rgba(255,255,255,0.07); --border-2:rgba(255,255,255,0.11);
+    --ink:#F2F4F7; --ink-2:#AEB6C2; --mut:#6E7681; --faint:#4B5563;
+    --accent:#5EA8EE; --accent-2:#3B82CE; --glow:rgba(94,168,238,0.30);
+    --pos:#3FD69A; --neg:#FB7185; --warn:#F5B547;
+    --sans:"Geist","Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ground); }
+  body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; padding-bottom: 64px; position: relative; }
+  body::before { content:""; position: fixed; top:-30%; left:50%; transform:translateX(-50%); width:900px; height:500px; pointer-events:none;
+    background: radial-gradient(ellipse at center, rgba(94,168,238,0.12), transparent 62%); filter: blur(20px); z-index:0; }
+  .num { font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: -0.03em; }
+  .lab { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--mut); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
+
+  .masthead { display: flex; align-items: center; gap: 34px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .glyph { width: 27px; height: 27px; border-radius: 8px; }
+  .brand .word { font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+  nav { display: flex; gap: 8px; }
+  nav a { color: var(--mut); text-decoration: none; font-size: 13px; font-weight: 500; padding: 7px 12px; border-radius: 8px; }
+  nav a.on { color: var(--ink); background: rgba(255,255,255,0.05); }
+  .m-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .m-right .ghost { color: var(--mut); font-size: 13px; font-weight: 500; padding: 7px 12px; }
+  .seg { display: inline-flex; background: var(--inset); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
+  .seg span { font-size: 12px; font-weight: 600; color: var(--mut); padding: 5px 11px; border-radius: 7px; }
+  .seg span.on { color: var(--ink); background: rgba(94,168,238,0.16); box-shadow: inset 0 0 0 1px rgba(94,168,238,0.35); }
+
+  .bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin-top: 14px; }
+  .panel { background: linear-gradient(180deg, var(--p-top), var(--p-bot)); border: 1px solid var(--border); border-radius: 18px; padding: 22px;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 12px 34px rgba(0,0,0,0.36); position: relative; }
+  .p-score   { grid-column: 1 / span 2; grid-row: 1 / span 2; }
+  .p-finding { grid-column: 3 / span 4; grid-row: 1; }
+  .p-equity  { grid-column: 3 / span 4; grid-row: 2; }
+  .p-pnl     { grid-column: 1 / span 2; grid-row: 3; }
+  .p-edge    { grid-column: 3 / span 2; grid-row: 3; }
+  .p-cap     { grid-column: 5 / span 2; grid-row: 3; }
+  .p-sessions{ grid-column: 1 / span 6; grid-row: 4; }
+  @media (max-width: 900px){ .bento { grid-template-columns: 1fr 1fr; } .panel { grid-column: auto !important; grid-row: auto !important; } .p-score,.p-finding,.p-equity,.p-sessions { grid-column: 1 / span 2 !important; } }
+
+  .phead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  /* Score */
+  .ring-wrap { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .ring { position: relative; width: 168px; height: 168px; }
+  .ring .c { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  .ring .c .n { font-size: 56px; font-weight: 800; letter-spacing: -0.04em; line-height: 1; color: var(--neg); text-shadow: 0 0 24px rgba(251,113,133,0.35); }
+  .ring .c .w { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--neg); margin-top: 8px; }
+  .axis-chips { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+  .achip { display: grid; grid-template-columns: 44px 1fr 26px; align-items: center; gap: 10px; }
+  .achip .an { font-size: 11px; color: var(--mut); font-weight: 600; }
+  .achip .bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
+  .achip .bar > span { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+  .achip .av { font-size: 13px; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Finding */
+  .find-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: var(--accent);
+    background: rgba(94,168,238,0.10); border: 1px solid rgba(94,168,238,0.28); padding: 4px 10px; border-radius: 999px; }
+  .find-h { font-size: clamp(26px, 3vw, 34px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; margin-top: 16px; max-width: 18ch; }
+  .find-sub { margin-top: 12px; font-size: 15px; color: var(--ink-2); line-height: 1.5; max-width: 56ch; }
+  .find-sub b.neg { color: var(--neg); } .find-sub b.pos { color: var(--pos); }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #06121F; margin-top: 18px;
+    background: linear-gradient(180deg, #7CBAF3, var(--accent)); padding: 9px 15px; border-radius: 10px; box-shadow: 0 6px 18px rgba(94,168,238,0.28); }
+
+  /* delta chip — the "vs what?" context */
+  .delta { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
+  .delta.up { color: var(--pos); background: rgba(63,214,154,0.12); }
+  .delta.dn { color: var(--neg); background: rgba(251,113,133,0.12); }
+
+  /* P&L widget */
+  .pnl-top { display: flex; align-items: baseline; gap: 12px; }
+  .pnl-top .big { font-size: 34px; color: var(--pos); }
+  .foot { font-size: 11.5px; color: var(--faint); margin-top: 12px; }
+  .spark { margin-top: 12px; }
+
+  /* Edge / expectancy widget */
+  .exp-top { display: flex; align-items: baseline; gap: 10px; }
+  .exp-top .big { font-size: 30px; color: var(--ink); }
+  .exp-top .u { font-size: 13px; color: var(--mut); font-weight: 600; }
+  .wl { display: flex; height: 26px; border-radius: 7px; overflow: hidden; margin-top: 16px; font-size: 11px; font-weight: 700; }
+  .wl .w { background: rgba(63,214,154,0.22); color: var(--pos); display: flex; align-items: center; padding-left: 10px; }
+  .wl .l { background: rgba(251,113,133,0.16); color: var(--neg); display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; }
+  .exp-legend { display: flex; justify-content: space-between; margin-top: 9px; font-size: 11px; color: var(--mut); }
+  .exp-legend b { color: var(--ink-2); font-weight: 700; }
+
+  /* Capture / efficiency gauge */
+  .gauge { position: relative; height: 12px; margin: 22px 0 0; }
+  .gauge .track { position: absolute; top: 3px; height: 6px; border-radius: 3px; }
+  .gauge .heat { background: linear-gradient(90deg, rgba(251,113,133,0.15), rgba(251,113,133,0.55)); }
+  .gauge .favor-t { background: rgba(63,214,154,0.13); }
+  .gauge .favor-f { background: linear-gradient(90deg, rgba(63,214,154,0.55), var(--pos)); }
+  .gauge .entry { position: absolute; top: -2px; width: 2px; height: 16px; background: var(--ink-2); }
+  .gauge .exit { position: absolute; top: -4px; width: 10px; height: 20px; border-radius: 3px; border: 2px solid var(--ground); background: var(--pos); box-shadow: 0 0 10px rgba(63,214,154,0.5); transform: translateX(-5px); }
+  .g-ends { display: flex; justify-content: space-between; margin-top: 14px; font-size: 11px; }
+  .g-ends .heatl { color: var(--neg); } .g-ends .favl { color: var(--pos); }
+  .g-cap { font-size: 12px; color: var(--ink-2); margin-top: 10px; } .g-cap b { color: var(--ink); font-weight: 800; }
+
+  /* Sessions */
+  .srow { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .srow:first-of-type { border-top: none; }
+  .srow .sd { font-size: 13px; color: var(--ink-2); } .srow .sd small { color: var(--faint); margin-left: 8px; }
+  .badge { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 7px; font-variant-numeric: tabular-nums; justify-self: end; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <header class="masthead">
+      <div class="brand">
+        <svg class="glyph" viewBox="0 0 128 128" aria-label="TapeScore">
+          <rect width="128" height="128" rx="28" fill="#0F1318"/>
+          <rect x="22" y="24" width="17" height="80" rx="3" fill="#E3A62F"/>
+          <g fill="#0F1318"><rect x="27" y="30" width="7" height="8" rx="1.6"/><rect x="27" y="44" width="7" height="8" rx="1.6"/><rect x="27" y="58" width="7" height="8" rx="1.6"/><rect x="27" y="72" width="7" height="8" rx="1.6"/><rect x="27" y="86" width="7" height="8" rx="1.6"/></g>
+          <rect x="89" y="24" width="17" height="80" rx="3" fill="#E3A62F"/>
+          <g fill="#0F1318"><rect x="94" y="30" width="7" height="8" rx="1.6"/><rect x="94" y="44" width="7" height="8" rx="1.6"/><rect x="94" y="58" width="7" height="8" rx="1.6"/><rect x="94" y="72" width="7" height="8" rx="1.6"/><rect x="94" y="86" width="7" height="8" rx="1.6"/></g>
+          <rect x="39" y="24" width="50" height="5" fill="#E3A62F"/><rect x="39" y="99" width="50" height="5" fill="#E3A62F"/>
+          <line x1="50" y1="66" x2="50" y2="92" stroke="#F3F5F7" stroke-width="3.2"/><rect x="44.5" y="71" width="11" height="16" rx="1.5" fill="#F3F5F7"/>
+          <line x1="64" y1="48" x2="64" y2="80" stroke="#F3F5F7" stroke-width="3.2"/><rect x="58.5" y="53" width="11" height="21" rx="1.5" fill="#F3F5F7"/>
+          <line x1="78" y1="34" x2="78" y2="68" stroke="#F3F5F7" stroke-width="3.2"/><rect x="72.5" y="38" width="11" height="25" rx="1.5" fill="#F3F5F7"/>
+        </svg>
+        <span class="word">TapeScore</span>
+      </div>
+      <nav><a class="on" href="#">Dashboard</a><a href="#">Prep</a><a href="#">Trade</a><a href="#">Review</a><a href="#">Patterns</a></nav>
+      <div class="m-right"><span class="ghost">Import</span><span class="seg"><span>Highlights</span><span class="on">Detailed</span></span></div>
+    </header>
+
+    <div class="bento">
+
+      <!-- Score -->
+      <div class="panel p-score">
+        <div class="phead"><span class="lab">TapeScore</span><span class="seg"><span class="on">M</span><span>Y</span><span>All</span></span></div>
+        <div class="ring-wrap">
+          <div class="ring">
+            <svg width="168" height="168" viewBox="0 0 132 132">
+              <path d="M69.56 15.12 A51 51 0 0 1 111.84 88.36" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="9"/>
+              <path d="M69.56 15.12 A51 51 0 0 1 116.90 69.20" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+              <path d="M108.28 94.52 A51 51 0 0 1 23.72 94.52" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="9"/>
+              <path d="M108.28 94.52 A51 51 0 0 1 70.98 116.76" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+              <path d="M20.16 88.36 A51 51 0 0 1 62.44 15.12" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="9"/>
+              <path d="M20.16 88.36 A51 51 0 0 1 16.85 52.41" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"/>
+            </svg>
+            <div class="c"><div><div class="n">54</div><div class="w">Needs work</div></div></div>
+          </div>
+          <div class="axis-chips">
+            <div class="achip"><span class="an">Risk</span><span class="bar"><span style="width:80%"></span></span><span class="av">80</span></div>
+            <div class="achip"><span class="an">Entry</span><span class="bar"><span style="width:45%"></span></span><span class="av">45</span></div>
+            <div class="achip"><span class="an">Exit</span><span class="bar"><span style="width:37%"></span></span><span class="av">37</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Finding -->
+      <div class="panel p-finding">
+        <div class="phead"><span class="find-tag"><span class="dot" style="background:var(--accent)"></span> Clear leak · July</span><span class="lab">30 trades</span></div>
+        <h1 class="find-h">Supply &amp; Demand cost you.</h1>
+        <p class="find-sub"><b class="neg">−0.4R per trade</b> across 12 trades — everything else you traded returned <b class="pos">+0.1R</b>.</p>
+        <span class="btn">Do next → Skip S&amp;D unless it's textbook</span>
+      </div>
+
+      <!-- Equity -->
+      <div class="panel p-equity">
+        <div class="phead"><span class="lab">Equity curve · 30 days</span><span class="delta up">▲ 18% vs prior 30d</span></div>
+        <svg viewBox="0 0 720 150" width="100%" height="150" preserveAspectRatio="none">
+          <defs><linearGradient id="eq" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="rgba(63,214,154,0.28)"/><stop offset="1" stop-color="rgba(63,214,154,0)"/></linearGradient></defs>
+          <path d="M0 116 L60 84 L120 47 L180 24 L240 12 L300 40 L360 72 L420 49 L480 24 L540 46 L600 65 L660 86 L720 104 L720 150 L0 150 Z" fill="url(#eq)"/>
+          <polyline points="0,116 60,84 120,47 180,24 240,12 300,40 360,72 420,49 480,24 540,46 600,65 660,86 720,104" fill="none" stroke="var(--pos)" stroke-width="2.4" stroke-linejoin="round"/>
+          <circle cx="720" cy="104" r="3.5" fill="var(--pos)"/>
+        </svg>
+      </div>
+
+      <!-- P&L widget: value + delta + sparkline + range -->
+      <div class="panel p-pnl">
+        <span class="lab">Net P&amp;L · 30 days</span>
+        <div class="pnl-top" style="margin-top:6px">
+          <span class="big num">+$836</span>
+          <span class="delta up">▲ 18%</span>
+        </div>
+        <svg class="spark" width="100%" height="34" viewBox="0 0 240 34" preserveAspectRatio="none">
+          <polyline points="0,27 20,20 40,10 60,5 80,3 100,12 120,22 140,14 160,6 180,13 200,19 220,25 240,28" fill="none" stroke="var(--pos)" stroke-width="2"/>
+        </svg>
+        <div class="foot">Best +$1,020 · worst −$540 · 13 sessions</div>
+      </div>
+
+      <!-- Edge widget: win% composed into expectancy -->
+      <div class="panel p-edge">
+        <span class="lab">Your edge · expectancy per trade</span>
+        <div class="exp-top" style="margin-top:6px">
+          <span class="big num" style="color:var(--pos)">+0.16R</span>
+          <span class="delta up">▲ from +0.09R</span>
+        </div>
+        <div class="wl"><span class="w" style="width:40%">40% win</span><span class="l" style="width:60%">60% loss</span></div>
+        <div class="exp-legend"><span>avg win <b>+1.9R</b></span><span>avg loss <b>−1.0R</b></span></div>
+      </div>
+
+      <!-- Capture widget: MFE/MAE as a diverging efficiency gauge -->
+      <div class="panel p-cap">
+        <span class="lab">Trade efficiency · heat vs capture</span>
+        <div class="gauge">
+          <span class="track heat"   style="left:0; width:30%"></span>
+          <span class="track favor-t" style="left:30%; width:70%"></span>
+          <span class="track favor-f" style="left:30%; width:38.5%"></span>
+          <span class="entry" style="left:30%"></span>
+          <span class="exit"  style="left:68.5%"></span>
+        </div>
+        <div class="g-ends"><span class="heatl">−0.53× heat</span><span style="color:var(--mut)">entry</span><span class="favl">+1.25× ran</span></div>
+        <div class="g-cap">Kept <b>55%</b> of the average move — the rest walked after you exited.</div>
+      </div>
+
+      <!-- Sessions -->
+      <div class="panel p-sessions">
+        <div class="phead"><span class="lab">Recent sessions</span><span class="lab">newest first</span></div>
+        <div class="srow"><span class="sd">Jul 24</span><span class="sd" style="color:var(--mut)">Gave back a clean morning to an afternoon revenge trade</span><span class="badge" style="color:var(--neg); background:rgba(251,113,133,0.12)">54</span></div>
+        <div class="srow"><span class="sd">Jul 23</span><span class="sd" style="color:var(--mut)">Textbook — waited for the A+ and sized it right</span><span class="badge" style="color:var(--pos); background:rgba(63,214,154,0.12)">71</span></div>
+        <div class="srow"><span class="sd">Jul 22</span><span class="sd" style="color:var(--mut)">Revenge re-entries after the first stop</span><span class="badge" style="color:var(--neg); background:rgba(251,113,133,0.12)">38</span></div>
+        <div class="srow"><span class="sd">Jul 21</span><span class="sd" style="color:var(--mut)">Solid reads, timid exits — left the back half on the table</span><span class="badge" style="color:var(--warn); background:rgba(245,181,71,0.12)">63</span></div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

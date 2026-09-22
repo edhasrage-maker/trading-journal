@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore Concept 2 anchored-profile symbol</title>
+  <desc id="desc">A clean capital S beside one right-anchored volume-by-price histogram.</desc>
+  <g shape-rendering="geometricPrecision">
+    <rect x="36" y="7" width="14" height="6" rx="1.5" fill="#4A4D50"/>
+    <rect x="27" y="15" width="23" height="6" rx="1.5" fill="#6B6B6B"/>
+    <rect x="13" y="23" width="37" height="7" rx="1.5" fill="#A6A6A6"/>
+    <rect x="6" y="32" width="44" height="7" rx="1.5" fill="#6B6B6B"/>
+    <rect x="18" y="41" width="32" height="6" rx="1.5" fill="#A6A6A6"/>
+    <rect x="34" y="49" width="16" height="6" rx="1.5" fill="#4A4D50"/>
+    <rect x="43" y="57" width="7" height="5" rx="1.5" fill="#6B6B6B"/>
+    <rect x="38" y="65" width="12" height="5" rx="1.5" fill="#A6A6A6"/>
+    <rect x="26" y="73" width="24" height="6" rx="1.5" fill="#4A4D50"/>
+    <rect x="11" y="81" width="39" height="6" rx="1.5" fill="#6B6B6B"/>
+    <rect x="4" y="89" width="46" height="7" rx="1.5" fill="#E0A33C"/>
+    <rect x="15" y="98" width="35" height="7" rx="1.5" fill="#6B6B6B"/>
+    <rect x="28" y="107" width="22" height="6" rx="1.5" fill="#4A4D50"/>
+    <rect x="40" y="23" width="10" height="7" rx="1.5" fill="#E0A33C"/>
+  </g>
+  <text x="82" y="101" text-anchor="middle" fill="#E7E8E5" font-family="Inter, Geist, 'Helvetica Neue', Arial, sans-serif" font-size="94" font-weight="800" letter-spacing="-4">S</text>
+</svg>

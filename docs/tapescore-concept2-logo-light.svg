@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 150" role="img" aria-labelledby="title desc">
+  <title id="title">TapeScore Concept 2 light wordmark</title>
+  <desc id="desc">TapeScore wordmark with a horizontal volume-by-price profile integrated behind the capital S.</desc>
+  <g shape-rendering="geometricPrecision">
+    <g opacity="0.94">
+      <rect x="252" y="18" width="46" height="5" rx="1.5" fill="#D6D8D5"/>
+      <rect x="230" y="26" width="84" height="5" rx="1.5" fill="#A6A6A6" opacity="0.72"/>
+      <rect x="214" y="34" width="114" height="5" rx="1.5" fill="#D6D8D5"/>
+      <rect x="239" y="42" width="95" height="5" rx="1.5" fill="#A6A6A6" opacity="0.66"/>
+      <rect x="205" y="50" width="126" height="5" rx="1.5" fill="#D6D8D5"/>
+      <rect x="222" y="58" width="84" height="5" rx="1.5" fill="#A6A6A6" opacity="0.74"/>
+      <rect x="208" y="66" width="132" height="5" rx="1.5" fill="#D6D8D5"/>
+      <rect x="216" y="74" width="121" height="5" rx="1.5" fill="#A6A6A6" opacity="0.72"/>
+      <rect x="228" y="82" width="104" height="5" rx="1.5" fill="#D6D8D5"/>
+      <rect x="211" y="90" width="122" height="5" rx="1.5" fill="#A6A6A6" opacity="0.68"/>
+      <rect x="235" y="98" width="89" height="5" rx="1.5" fill="#D6D8D5"/>
+      <rect x="219" y="106" width="109" height="5" rx="1.5" fill="#A6A6A6" opacity="0.72"/>
+      <rect x="242" y="114" width="76" height="5" rx="1.5" fill="#D6D8D5"/>
+      <rect x="231" y="122" width="68" height="5" rx="1.5" fill="#A6A6A6" opacity="0.64"/>
+      <rect x="254" y="130" width="42" height="5" rx="1.5" fill="#D6D8D5"/>
+    </g>
+    <g fill="#B9802B">
+      <rect x="300" y="42" width="34" height="5" rx="1.5" opacity="0.92"/>
+      <rect x="294" y="66" width="46" height="5" rx="1.5"/>
+      <rect x="283" y="90" width="50" height="5" rx="1.5"/>
+      <rect x="285" y="114" width="33" height="5" rx="1.5" opacity="0.9"/>
+    </g>
+    <text x="20" y="113" fill="#17181A" font-family="Inter, Geist, 'Helvetica Neue', Arial, sans-serif" font-size="104" letter-spacing="-4.2"><tspan font-weight="500">Tape</tspan><tspan font-weight="800">Score</tspan></text>
+  </g>
+</svg>
