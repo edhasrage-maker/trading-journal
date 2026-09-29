@@ -1,4 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
+import { symbolRoot } from '@/lib/futures-symbols'
+
 import { NextResponse } from 'next/server'
 import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
@@ -8,6 +10,22 @@ import { anchorExcursionToFills } from '@/lib/excursion-guard'
 import { resolveTagCategories } from '@/lib/tag-categories'
 import { todayPT } from '@/lib/pt-time'
 import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
+
+/**
+ * The instrument column: the TRADE's own contract root — MNQ, MES, NQ, ES.
+ *
+ * Native rows used to print the day's market-context symbol in preference to
+ * the trade's, so a micro traded on a day whose context was the mini came out
+ * as the mini: 183 MNQ trades exported as "NQ" (a 10x difference in dollars
+ * per point), and an MNQ short on an ES-context day exported as "ES". Rows
+ * that had no context printed the raw contract instead ("MNQM6.CME"), so one
+ * column carried three formats. Imported (Tradezella) rows already give the
+ * bare root, "MNQ"; everything now matches that. The contract month is dropped
+ * on purpose — it identifies the expiry, not the instrument.
+ */
+function exportSymbol(symbol: string | null | undefined): string {
+  return symbol ? symbolRoot(symbol) : ''
+}
 
 /**
  * Drop a copy of every export into the project's exports/ folder. The dev
@@ -276,7 +294,7 @@ export async function GET(req: Request) {
       day.date,
       t.entry_time ?? '',
       t.exit_time ?? '',
-      ctx?.symbol ?? t.symbol ?? '',
+      exportSymbol(t.symbol) || ctx?.symbol || '',
       t.direction ?? '',
       t.quantity ?? '',
       t.entry_price ?? '',
@@ -353,7 +371,7 @@ export async function GET(req: Request) {
       date,
       h.open_at ?? '',
       h.close_at ?? '',
-      h.symbol ?? '',
+      exportSymbol(h.symbol),
       direction,
       h.quantity ?? '',
       h.entry_price ?? '',
