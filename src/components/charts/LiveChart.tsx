@@ -112,6 +112,9 @@ export interface ChartPrefs {
   showProfile: boolean
   /** Share of the pane width the widest profile row reaches (0.1–0.6). */
   profileWidth: number
+  /** The overnight (ETH) profile, anchored at the 06:30 boundary. Rides the
+   *  showProfile master switch; this turns off just the overnight one. */
+  showEthProfile: boolean
 }
 const DEFAULT_PREFS: ChartPrefs = {
   background: '#030712',
@@ -130,6 +133,7 @@ const DEFAULT_PREFS: ChartPrefs = {
   hiddenLevels: [],
   showProfile: true,
   profileWidth: PROFILE_WIDTH_DEFAULT,
+  showEthProfile: true,
 }
 const PREFS_KEY = 'livechart-prefs-v2'
 // Per-(symbol, date) active-TF persistence. Each calendar day remembers its own
@@ -370,9 +374,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // type / recolor / delete), left-drag draws a zone once armed.
   const annotationsPrimRef = useRef<AnnotationsPrimitive | null>(null)
   const profilePrimRef = useRef<VolumeProfilePrimitive | null>(null)
-  // Last profile handed to the primitive — replayed onto the fresh primitive
+  const ethProfilePrimRef = useRef<VolumeProfilePrimitive | null>(null)
+  // Last profiles handed to the primitives — replayed onto fresh primitives
   // each time the chart is rebuilt (timeframe / height change).
-  const profileDrawRef = useRef<{ data: ProfileDrawData | null; width: number }>({ data: null, width: PROFILE_WIDTH_DEFAULT })
+  const profileDrawRef = useRef<{ rth: ProfileDrawData | null; eth: ProfileDrawData | null; width: number }>({ rth: null, eth: null, width: PROFILE_WIDTH_DEFAULT })
   const [annotations, setAnnotations] = useState<ChartAnnotation[]>([])
   const [drawingMode, setDrawingMode] = useState(false)
   const [armedTool, setArmedTool] = useState<'zone' | null>(null)
@@ -924,7 +929,10 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
     // timeframe change, so hand the new primitive whatever was last showing.
     profilePrimRef.current = new VolumeProfilePrimitive()
     candleRef.current.attachPrimitive(profilePrimRef.current)
-    profilePrimRef.current.setData(profileDrawRef.current.data, profileDrawRef.current.width)
+    profilePrimRef.current.setData(profileDrawRef.current.rth, profileDrawRef.current.width)
+    ethProfilePrimRef.current = new VolumeProfilePrimitive()
+    candleRef.current.attachPrimitive(ethProfilePrimRef.current)
+    ethProfilePrimRef.current.setData(profileDrawRef.current.eth, profileDrawRef.current.width)
     // VWAP/EMA overlays must NOT drive the price axis — on a trend day the
     // session-anchored VWAP sits far from the candles and would blow out the
     // vertical scale (squashing the candles). Returning null keeps the price
@@ -1029,6 +1037,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
       tradeArrowsRef.current = null
       annotationsPrimRef.current = null
       profilePrimRef.current = null
+      ethProfilePrimRef.current = null
     }
   }, [effHeight, chartTfMins])
 
@@ -1719,35 +1728,47 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   }, [annotations, selectedAnnId])
 
   // ── Volume profile ─────────────────────────────────────────────────────
-  // The session's tick-true RTH profile. Null whenever no true profile exists
-  // (before the open, a date older than the feed, table not migrated) — and
-  // then the Profile toggle doesn't render at all, rather than offering a
-  // switch that draws nothing. Refetches on the poll tick so today's profile
-  // develops through the session the way Sierra's does.
+  // The session's tick-true profiles: RTH (right edge) and overnight ETH
+  // (ending at the 06:30 boundary, like Sierra's left profile). Each is null
+  // whenever no true profile exists (before it opens, a date older than the
+  // feed, table not migrated) — and with both null the Profile toggle doesn't
+  // render at all, rather than offering a switch that draws nothing. Refetches
+  // on the poll tick so today's profiles develop the way Sierra's do.
   const [profile, setProfile] = useState<ProfileDrawData | null>(null)
+  const [ethProfile, setEthProfile] = useState<(ProfileDrawData & { anchorMs: number }) | null>(null)
   useEffect(() => {
-    if (!symbol) { setProfile(null); return }
+    const clear = () => { setProfile(null); setEthProfile(null) }
+    if (!symbol) { clear(); return }
     let cancelled = false
     ;(async () => {
       try {
         const res = await fetch(`/api/bars/profile?symbol=${encodeURIComponent(symbol)}&date=${date}`)
-        if (!res.ok) { if (!cancelled) setProfile(null); return }
-        const { profile: p } = await res.json() as { profile: ProfileDrawData | null }
-        if (!cancelled) setProfile(p && Array.isArray(p.rows) && p.rows.length > 0 ? p : null)
-      } catch { if (!cancelled) setProfile(null) }
+        if (!res.ok) { if (!cancelled) clear(); return }
+        const { profile: p, eth: e } = await res.json() as {
+          profile: ProfileDrawData | null
+          eth?: (ProfileDrawData & { anchorMs: number }) | null
+        }
+        if (cancelled) return
+        setProfile(p && Array.isArray(p.rows) && p.rows.length > 0 ? p : null)
+        setEthProfile(e && Array.isArray(e.rows) && e.rows.length > 0 && Number.isFinite(e.anchorMs) ? e : null)
+      } catch { if (!cancelled) clear() }
     })()
     return () => { cancelled = true }
   }, [symbol, date, refreshKey, pollTick])
 
-  // Push into the primitive. Declared AFTER the chart-creation effect on
+  // Push into the primitives. Declared AFTER the chart-creation effect on
   // purpose, and keyed on the same effHeight/chartTfMins: React runs effects in
   // declaration order, so on a timeframe change the chart is rebuilt first and
-  // this then repaints the profile onto the new instance.
+  // this then repaints the profiles onto the new instance.
   useEffect(() => {
-    const data = prefs.showProfile ? profile : null
-    profileDrawRef.current = { data, width: prefs.profileWidth }
-    profilePrimRef.current?.setData(data, prefs.profileWidth)
-  }, [profile, prefs.showProfile, prefs.profileWidth, effHeight, chartTfMins])
+    const rth = prefs.showProfile ? profile : null
+    const eth = prefs.showProfile && prefs.showEthProfile && ethProfile
+      ? { ...ethProfile, anchor: { timeSec: ethProfile.anchorMs / 1000, barSec: chartTfMins * 60 } }
+      : null
+    profileDrawRef.current = { rth, eth, width: prefs.profileWidth }
+    profilePrimRef.current?.setData(rth, prefs.profileWidth)
+    ethProfilePrimRef.current?.setData(eth, prefs.profileWidth)
+  }, [profile, ethProfile, prefs.showProfile, prefs.showEthProfile, prefs.profileWidth, effHeight, chartTfMins])
 
   // Esc closes menus / disarms / clears selection. Delete or Backspace removes
   // the selected annotation (unless typing in a field — e.g. the text editor).
@@ -2072,14 +2093,14 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
           {/* Volume profile toggle. Only rendered when a tick-true profile exists
               for this session — a switch that draws nothing is worse than no
               switch. Width lives in the settings popover. */}
-          {profile && (
+          {(profile || ethProfile) && (
             <button
               type="button"
               onClick={() => updatePref({ showProfile: !prefs.showProfile })}
               aria-pressed={prefs.showProfile}
               title={prefs.showProfile
-                ? `Hide the session volume profile (POC ${profile.poc}) — width in chart settings`
-                : 'Show the session volume profile'}
+                ? `Hide the session volume profiles (${[profile && `RTH POC ${profile.poc}`, ethProfile && `overnight POC ${ethProfile.poc}`].filter(Boolean).join(', ')}) — width in chart settings`
+                : 'Show the session volume profiles'}
               className={`flex items-center gap-1 rounded px-1.5 py-0.5 border transition-colors ${
                 prefs.showProfile
                   ? 'border-blue-700 bg-blue-950/60 text-blue-300 hover:bg-blue-900/60'
@@ -2162,12 +2183,24 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                   </label>
 
                   {/* Volume profile controls — only when there's a profile to size. */}
-                  {profile && (
+                  {(profile || ethProfile) && (
                     <div className="border-t border-gray-800 pt-2 mt-1 space-y-2">
                       <label className="flex items-center justify-between">
                         <span>Volume profile</span>
                         <input type="checkbox" checked={prefs.showProfile} onChange={e => updatePref({ showProfile: e.target.checked })} className="accent-blue-600" />
                       </label>
+                      {ethProfile && (
+                        <label className={`flex items-center justify-between ${prefs.showProfile ? '' : 'opacity-40'}`}>
+                          <span>Overnight profile <span className="text-gray-500">(ends 06:30)</span></span>
+                          <input
+                            type="checkbox"
+                            checked={prefs.showEthProfile}
+                            onChange={e => updatePref({ showEthProfile: e.target.checked })}
+                            disabled={!prefs.showProfile}
+                            className="accent-blue-600"
+                          />
+                        </label>
+                      )}
                       <label className="block">
                         <span className="flex items-center justify-between">
                           <span>Profile width</span>

@@ -4,11 +4,13 @@
  *   npx tsx scripts/test-volume-profile.ts
  * Plain tsx asserts; exits non-zero if anything failed.
  *
- * The headline case is a REAL session: ES RTH 2026-09-14, read tick by tick
- * from Sierra, whose POC matches the one Sierra draws on that day.
+ * The headline cases are REAL sessions: ES RTH and overnight ETH for
+ * 2026-09-14, read tick by tick from Sierra, whose POCs match the ones Sierra
+ * draws on that day.
  */
 import { readFileSync, existsSync } from 'fs'
-import { valueArea, fromTuples, PROFILE_RTH, type ProfileRow, type ProfileRowTuple } from '../src/lib/volume-profile.ts'
+import { valueArea, fromTuples, profileWindowMs, PROFILE_RTH, type ProfileRow, type ProfileRowTuple } from '../src/lib/volume-profile.ts'
+import { anchorSlot } from '../src/components/charts/VolumeProfilePrimitive.ts'
 import { readScidVolumeAtPrice } from '../src/lib/scid-volume-profile.ts'
 import { ptDateSodToUtcMs } from '../src/lib/pt-time.ts'
 
@@ -63,6 +65,54 @@ if (!existsSync(scid)) {
   check(`reader reproduces the fixture row-for-row (${rows.length} rows, ${trades.toLocaleString()} trades)`, same,
     `rows=${rows.length} first=${JSON.stringify(rows[0])}`)
 }
+
+console.log('\nREAL SESSION — ES overnight ETH for 2026-09-14 (Sun 15:00 → 06:30 PT)')
+const ethFixture = JSON.parse(readFileSync(new URL('./fixtures/es-2026-09-14-eth-vap.json', import.meta.url), 'utf8')) as {
+  expect: { poc: number; vah: number; val: number; total: number; rows: number; low: number; high: number; trades: number }
+  rows: ProfileRowTuple[]
+}
+const ethRows = fromTuples(ethFixture.rows)
+const ethVa = valueArea(ethRows)
+check('overnight POC is 7,607.50 — Sierra\'s left profile', ethVa?.poc === 7607.5, `got ${ethVa?.poc}`)
+check('overnight VA is 7,596.00–7,617.25', ethVa?.val === 7596 && ethVa?.vah === 7617.25, `got ${ethVa?.val}–${ethVa?.vah}`)
+// Top and bottom rows are the overnight extremes — Sierra's ONL / ONH lines that day.
+check('overnight range is ONL 7,593.75 → ONH 7,634.50',
+  ethRows[0].price === 7593.75 && ethRows[ethRows.length - 1].price === 7634.5,
+  `got ${ethRows[0].price}–${ethRows[ethRows.length - 1].price}`)
+check('overnight total is 164,559 contracts', ethVa?.total === 164559, `got ${ethVa?.total}`)
+
+console.log('\nSESSION WINDOWS')
+const iso = (ms: number) => new Date(ms).toISOString().slice(0, 16)
+const rthW = profileWindowMs('rth', '2026-09-14')
+check('RTH is 06:30–13:15 PDT', iso(rthW.startMs) === '2026-09-14T13:30' && iso(rthW.endMs) === '2026-09-14T20:15',
+  `${iso(rthW.startMs)} → ${iso(rthW.endMs)}`)
+const ethW = profileWindowMs('eth', '2026-09-14')
+check('Monday\'s ETH opens Sunday 15:00 PDT and ends where RTH starts',
+  iso(ethW.startMs) === '2026-09-13T22:00' && ethW.endMs === rthW.startMs, `${iso(ethW.startMs)} → ${iso(ethW.endMs)}`)
+// DST ends 2026-11-01 02:00: the evening before is PDT, the 06:30 end is PST.
+const dstW = profileWindowMs('eth', '2026-11-02')
+check('across the fall-back weekend both ends stay on the PT clock',
+  iso(dstW.startMs) === '2026-11-01T23:00' && iso(dstW.endMs) === '2026-11-02T14:30', `${iso(dstW.startMs)} → ${iso(dstW.endMs)}`)
+const dstEdge = profileWindowMs('eth', '2026-11-01')
+check('a window spanning the switch itself: 15:00 PDT → 06:30 PST',
+  iso(dstEdge.startMs) === '2026-10-31T22:00' && iso(dstEdge.endMs) === '2026-11-01T14:30', `${iso(dstEdge.startMs)} → ${iso(dstEdge.endMs)}`)
+
+console.log('\nCHART ANCHOR — where 06:30 lands on the candle axis')
+const at0630 = ethW.endMs / 1000
+const bars = (fromSec: number, stepSec: number, n: number) => Array.from({ length: n }, (_, k) => fromSec + k * stepSec)
+const five = bars(at0630 - 30 * 60, 300, 13)                    // 06:00 … 07:00, 5m
+const s5 = anchorSlot(five, at0630, 300)
+check('5m: the 06:30 candle\'s left edge', s5?.i === 6 && s5.frac === 0, JSON.stringify(s5))
+const hourly = bars(at0630 - 90 * 60, 3600, 4)                  // 05:00, 06:00, 07:00, 08:00
+const s60 = anchorSlot(hourly, at0630, 3600)
+check('60m: halfway across the 06:00 candle', s60?.i === 1 && s60.frac === 0.5, JSON.stringify(s60))
+const gapped = [at0630 - 600, at0630 + 600]                     // 06:20, then 06:40
+const sGap = anchorSlot(gapped, at0630, 300)
+check('a gap at 06:30 snaps to the next candle\'s left edge', sGap?.i === 1 && sGap.frac === 0, JSON.stringify(sGap))
+const preOpen = bars(at0630 - 3600, 300, 7)                     // 05:30 … 06:00, still overnight
+const sPre = anchorSlot(preOpen, at0630, 300)
+check('before the open: extrapolated past the last candle', sPre?.i === 6 && sPre.frac === 6, JSON.stringify(sPre))
+check('no candles → no anchor', anchorSlot([], at0630, 300) === null)
 
 if (failures > 0) { console.error(`\n${failures} failed`); process.exit(1) }
 console.log('\nall passed')

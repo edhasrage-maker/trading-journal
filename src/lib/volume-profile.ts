@@ -10,6 +10,7 @@
  * spike under a broad plateau. The value area survives smearing; the POC does
  * not, and the POC is the level a trader actually uses.
  */
+import { ptDateSodToUtcMs } from './pt-time'
 
 /** One price row. `ask`/`bid` are the aggressor split, carried for a future
  *  delta column — the chart does not draw them yet. */
@@ -47,6 +48,39 @@ export const PROFILE_RTH = {
   startSec: 6 * 3600 + 30 * 60,
   endSec: 13 * 3600 + 15 * 60,
 } as const
+
+/**
+ * The overnight (ETH) profile's window: 15:00 PT on the PRIOR calendar day →
+ * 06:30 PT on the session date. 15:00 is the Globex reopen after the daily
+ * 14:00–15:00 halt (for a Monday, Sunday's 15:00 open), and it is the same
+ * window session-levels uses for ONH/ONL, so the profile's top and bottom rows
+ * are those levels. It ends where RTH begins, which is where the chart anchors
+ * it — the way Sierra draws its left profile, so the two sessions read apart.
+ *
+ * Measured on ES 2026-09-14 against Sierra: range 7,593.75–7,634.50 (Sierra's
+ * ONL/ONH), POC 7,607.50, value area 7,596.00–7,617.25.
+ */
+export const PROFILE_ETH = {
+  /** Seconds-of-day on the day BEFORE the session date. */
+  startSec: 15 * 3600,
+  endSec: PROFILE_RTH.startSec,
+} as const
+
+export type ProfileSession = 'rth' | 'eth'
+export const PROFILE_SESSIONS: readonly ProfileSession[] = ['rth', 'eth']
+
+/** UTC bounds [startMs, endMs) of one session's profile for a PT session date. */
+export function profileWindowMs(session: ProfileSession, date: string): { startMs: number; endMs: number } {
+  if (session === 'rth') {
+    return { startMs: ptDateSodToUtcMs(date, PROFILE_RTH.startSec), endMs: ptDateSodToUtcMs(date, PROFILE_RTH.endSec) }
+  }
+  const prev = new Date(`${date}T12:00:00Z`)
+  prev.setUTCDate(prev.getUTCDate() - 1)
+  return {
+    startMs: ptDateSodToUtcMs(prev.toISOString().slice(0, 10), PROFILE_ETH.startSec),
+    endMs: ptDateSodToUtcMs(date, PROFILE_ETH.endSec),
+  }
+}
 
 /** Tick size per mini root. Both current roots trade in quarter points. */
 export const PROFILE_TICK: Record<string, number> = { ES: 0.25, NQ: 0.25 }
