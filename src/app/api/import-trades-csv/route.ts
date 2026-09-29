@@ -8,6 +8,24 @@ import { excursionContainsFills } from '@/lib/excursion-guard'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { liveAtr, postExitExtension, POST_EXIT_WINDOW_MIN } from '@/lib/atr'
 import { clientError } from '@/lib/api-error'
+import { todayPT } from '@/lib/pt-time'
+
+/**
+ * The trading day a trade belongs to: the PT calendar date of its entry — the
+ * same rule /api/import-sc-log uses.
+ *
+ * This used to be `entry_time_iso.slice(0, 10)`, the first ten characters of a
+ * UTC timestamp. Every trade entered after 17:00 PT (16:00 in winter) is already
+ * the next day in UTC, so evening Globex trades were filed a day late — a short
+ * at 18:48 PT on 2026-09-28 landed on 2026-09-29 and created that day's page.
+ * Only valid for real instants (ISO with Z/offset), which is what the Sierra,
+ * NinjaTrader and pre-combined paths below carry.
+ */
+function ptTradeDate(iso: unknown): string {
+  if (typeof iso !== 'string' || iso === '') return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : todayPT(d)
+}
 
 /**
  * POST /api/import-trades-csv
@@ -261,7 +279,7 @@ export async function POST(req: Request) {
     grossSource = true
     total = directTrades.length
     for (const t of directTrades) {
-      const trade_date = (typeof t.entry_time === 'string' ? t.entry_time : '').slice(0, 10)
+      const trade_date = ptTradeDate(t.entry_time)
       if (!trade_date || !t.symbol) { skipped++; continue }
       pending.push({
         trade_date,
@@ -297,7 +315,7 @@ export async function POST(req: Request) {
       warnings.push('Your timezone wasn\'t detected, so Sierra times were read as server time and may display shifted. P&L, MFE/MAE, and pairing are unaffected.')
     }
     for (const r of rows) {
-      const trade_date = (r.entry_time_iso || '').slice(0, 10)
+      const trade_date = ptTradeDate(r.entry_time_iso)
       if (!trade_date) { skipped++; continue }
       pending.push({
         trade_date,
@@ -327,7 +345,7 @@ export async function POST(req: Request) {
       warnings.push('Your timezone wasn\'t detected, so NinjaTrader times were read as server time and may display shifted.')
     }
     for (const r of rows) {
-      const trade_date = (r.entry_time_iso || '').slice(0, 10)
+      const trade_date = ptTradeDate(r.entry_time_iso)
       if (!trade_date) { skipped++; continue }
       pending.push({
         trade_date,
