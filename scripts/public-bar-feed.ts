@@ -38,9 +38,10 @@
  *   npx tsx scripts/public-bar-feed.ts --from 2026-09-01 --to 2026-09-14 --profile-only
  *
  * VOLUME PROFILE
- *   Every run also publishes the day's RTH volume profile to
- *   `session_volume_profile`, read tick by tick from the same .scid. It is the
- *   only place a TRUE profile can come from — one smeared from 1-minute bars
+ *   Every run also publishes the day's volume profiles to
+ *   `session_volume_profile`, read tick by tick from the same .scid: RTH
+ *   (06:30–13:15 PT) and overnight ETH (15:00 PT the day before → 06:30). It is
+ *   the only place a TRUE profile can come from — one smeared from 1-minute bars
  *   put the ES 2026-09-14 POC nine points away from where it really was. A
  *   failure here is logged and never blocks the bar feed, so charts keep their
  *   candles even before the table exists.
@@ -52,11 +53,11 @@ import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { createClient } from '@supabase/supabase-js'
 import { importScidDay } from '../src/lib/import-scid-day'
-import { todayPT, sessionUtcWindow, ptDateSodToUtcMs } from '../src/lib/pt-time'
+import { todayPT, sessionUtcWindow } from '../src/lib/pt-time'
 import { contractFileForRoot, type ContractRoot } from '../src/lib/futures-contracts'
 import { SIERRA_DATA_DIR } from '../src/lib/import-scid-day'
 import { readScidVolumeAtPrice } from '../src/lib/scid-volume-profile'
-import { valueArea, toTuples, PROFILE_RTH, PROFILE_TICK } from '../src/lib/volume-profile'
+import { valueArea, toTuples, profileWindowMs, PROFILE_SESSIONS, PROFILE_TICK, type ProfileSession } from '../src/lib/volume-profile'
 
 const ROOTS: ContractRoot[] = ['NQ', 'ES']
 
@@ -188,24 +189,24 @@ async function main() {
   // Once the table is known to be missing, stop asking for the rest of the run.
   let profileTableMissing = false
 
-  /** Publish one session's tick-true RTH profile. Never throws, never fails the
-   *  run: the profile is additive, and the bars are what charts cannot live
-   *  without. Returns a short status for the log line. */
-  const publishProfile = async (scidFile: string, root: string, date: string): Promise<string> => {
-    if (profileTableMissing) return 'profile skipped (table missing)'
-    const startMs = ptDateSodToUtcMs(date, PROFILE_RTH.startSec)
-    // Before the open there is nothing to publish yet.
-    if (Date.now() < startMs) return 'profile: session not open'
-    const endMs = ptDateSodToUtcMs(date, PROFILE_RTH.endSec)
+  /** Publish one session's tick-true profile (RTH or overnight ETH). Never
+   *  throws, never fails the run: the profile is additive, and the bars are what
+   *  charts cannot live without. Returns a short status for the log line. */
+  const publishProfile = async (scidFile: string, root: string, date: string, session: ProfileSession): Promise<{ ok: boolean; status: string }> => {
+    const tag = session.toUpperCase()
+    if (profileTableMissing) return { ok: false, status: `${tag} skipped (table missing)` }
+    const { startMs, endMs } = profileWindowMs(session, date)
+    // Before the session opens there is nothing to publish yet.
+    if (Date.now() < startMs) return { ok: false, status: `${tag} not open` }
     const path = join(SIERRA_DATA_DIR, scidFile)
-    if (!existsSync(path)) return 'profile: no .scid'
+    if (!existsSync(path)) return { ok: false, status: `${tag} no .scid` }
     try {
       const tick = PROFILE_TICK[root] ?? 0.25
       const { rows, trades } = readScidVolumeAtPrice(path, startMs, endMs, { priceDivisor: 100, tick })
       const va = valueArea(rows)
-      if (!va) return 'profile: no trades'
+      if (!va) return { ok: false, status: `${tag} no trades` }
       const { error } = await sb.from('session_volume_profile').upsert({
-        symbol: root, date, session: 'rth', tick,
+        symbol: root, date, session, tick,
         rows: toTuples(rows),
         poc: va.poc, vah: va.vah, val: va.val,
         total_volume: va.total, trades, source: 'scid',
@@ -215,14 +216,21 @@ async function main() {
         // 42P01 (Postgres) / PGRST205 (PostgREST): the migration hasn't run.
         if (error.code === '42P01' || error.code === 'PGRST205') {
           profileTableMissing = true
-          return 'profile skipped — run 20260914_session_volume_profile.public.sql'
+          return { ok: false, status: `${tag} skipped — run 20260914_session_volume_profile.public.sql` }
         }
-        return `profile error: ${error.message}`
+        return { ok: false, status: `${tag} error: ${error.message}` }
       }
-      return `profile POC ${va.poc} VA ${va.val}–${va.vah} (${rows.length} rows)`
+      return { ok: true, status: `${tag} POC ${va.poc} VA ${va.val}–${va.vah} (${rows.length} rows)` }
     } catch (e) {
-      return `profile error: ${e instanceof Error ? e.message : String(e)}`
+      return { ok: false, status: `${tag} error: ${e instanceof Error ? e.message : String(e)}` }
     }
+  }
+
+  /** Both sessions for one symbol-day. `ok` if either published. */
+  const publishProfiles = async (scidFile: string, root: string, date: string): Promise<{ ok: boolean; status: string }> => {
+    const out = []
+    for (const session of PROFILE_SESSIONS) out.push(await publishProfile(scidFile, root, date, session))
+    return { ok: out.some(o => o.ok), status: `profile ${out.map(o => o.status).join(' · ')}` }
   }
 
   console.log(`[public-bar-feed] ${dates.length === 1 ? dates[0] : `${dates[0]}…${dates[dates.length - 1]}`} (${dates.length} d) roots=${roots.join(',')} → ${url.replace(/^https?:\/\//, '')}`)
@@ -233,9 +241,9 @@ async function main() {
   for (const date of dates) {
     for (const f of feedsForDate(date, roots)) {
       if (profileOnly) {
-        const status = await publishProfile(f.scidFile, f.root, date)
+        const { ok, status } = await publishProfiles(f.scidFile, f.root, date)
         console.log(`  ${date} ${f.root.padEnd(4)} ${status}`)
-        if (status.startsWith('profile POC')) { anyOk = true; done++ } else empty++
+        if (ok) { anyOk = true; done++ } else empty++
         continue
       }
       if (skipExisting) {
@@ -257,7 +265,7 @@ async function main() {
         if ((count ?? 0) >= FULL_SESSION_BARS[weekdayOf(date)]) {
           skipped++; anyOk = true
           // Bars are complete, but the profile may never have been published.
-          await publishProfile(f.scidFile, f.root, date)
+          await publishProfiles(f.scidFile, f.root, date)
           continue
         }
       }
@@ -278,7 +286,7 @@ async function main() {
         } else {
           console.log(`  ${date} ${f.root.padEnd(4)} upserted ${out.result.upserted} bars`)
         }
-        const status = await publishProfile(f.scidFile, f.root, date)
+        const { status } = await publishProfiles(f.scidFile, f.root, date)
         if (!from) console.log(`  ${date} ${f.root.padEnd(4)} ${status}`)
       } else {
         // A holiday or a not-yet-created contract file is expected noise in a
