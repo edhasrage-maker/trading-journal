@@ -12,8 +12,8 @@
  */
 import { ptDateSodToUtcMs } from './pt-time'
 
-/** One price row. `ask`/`bid` are the aggressor split, carried for a future
- *  delta column — the chart does not draw them yet. */
+/** One price row. `ask`/`bid` are the aggressor split (volume that lifted the
+ *  offer / hit the bid); the chart's delta column is ask − bid. */
 export interface ProfileRow {
   price: number
   volume: number
@@ -119,6 +119,66 @@ export function valueArea(rows: readonly ProfileRow[], pct = VALUE_AREA_PCT): { 
     if (up >= dn) { hi++; acc += up } else { lo--; acc += dn }
   }
   return { poc: rows[pocIdx].price, vah: rows[hi].price, val: rows[lo].price, total }
+}
+
+/**
+ * Delta-column cell sizes, in ticks. Only these, so cells sit on round prices
+ * (1 point = 4 ticks, then 2, 5, 10, 25, 50, 100 points) at every zoom.
+ */
+export const DELTA_GROUP_TICKS = [1, 2, 4, 8, 20, 40, 100, 200, 400] as const
+
+/** The smallest cell size that gives each cell at least `minCellPx` of height. */
+export function pickDeltaGroup(rowPx: number, minCellPx: number): number {
+  for (const g of DELTA_GROUP_TICKS) if (rowPx * g >= minCellPx) return g
+  return DELTA_GROUP_TICKS[DELTA_GROUP_TICKS.length - 1]
+}
+
+export interface DeltaCell {
+  /** The round price the cell is centred on. */
+  price: number
+  /** Lowest and highest row prices actually in the cell. */
+  lo: number
+  hi: number
+  /** Ask volume minus bid volume: aggressive buying minus aggressive selling. */
+  delta: number
+}
+
+/**
+ * Ask − bid volume summed into cells of `groupTicks` rows, the way Sierra's
+ * delta column reads. A row joins the cell whose centre is nearest, a half-way
+ * row rounding UP: at 4 ticks the cell for 7,651 holds 7,650.50–7,651.25.
+ * That boundary is not a guess — on ES 2026-09-14 RTH it reproduces 24 of the
+ * 25 delta numbers legible in the founder's Sierra screenshot exactly (7,651
+ * → 210, 7,650 → 166, 7,649 → −168, 7,648 → −110, …), where the obvious
+ * alternatives (floor to the point, or count from the session low) match
+ * almost none.
+ *
+ * Rows ascending by price; cells come back ascending too.
+ */
+export function deltaCells(rows: readonly ProfileRowTuple[], tick: number, groupTicks: number): DeltaCell[] {
+  const cells: DeltaCell[] = []
+  let cur: DeltaCell | null = null
+  let curKey = NaN
+  for (const [price, , ask, bid] of rows) {
+    const key = Math.round(Math.round(price / tick) / groupTicks)
+    if (key !== curKey) {
+      if (cur) cells.push(cur)
+      curKey = key
+      cur = { price: Math.round(key * groupTicks * tick * 1e6) / 1e6, lo: price, hi: price, delta: 0 }
+    }
+    cur!.hi = price
+    cur!.delta += ask - bid
+  }
+  if (cur) cells.push(cur)
+  return cells
+}
+
+/** A delta as it fits a narrow column: 784, −1,959 → -1959, 12,345 → 12.3k. */
+export function formatDelta(d: number): string {
+  const a = Math.abs(d)
+  if (a >= 100_000) return `${Math.round(d / 1000)}k`
+  if (a >= 10_000) return `${(d / 1000).toFixed(1)}k`
+  return String(d)
 }
 
 export function toTuples(rows: readonly ProfileRow[]): ProfileRowTuple[] {

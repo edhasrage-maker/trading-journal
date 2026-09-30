@@ -9,7 +9,10 @@
  * draws on that day.
  */
 import { readFileSync, existsSync } from 'fs'
-import { valueArea, fromTuples, profileWindowMs, PROFILE_RTH, type ProfileRow, type ProfileRowTuple } from '../src/lib/volume-profile.ts'
+import {
+  valueArea, fromTuples, profileWindowMs, deltaCells, pickDeltaGroup, formatDelta, PROFILE_RTH,
+  type ProfileRow, type ProfileRowTuple,
+} from '../src/lib/volume-profile.ts'
 import { anchorSlot } from '../src/components/charts/VolumeProfilePrimitive.ts'
 import { readScidVolumeAtPrice } from '../src/lib/scid-volume-profile.ts'
 import { ptDateSodToUtcMs } from '../src/lib/pt-time.ts'
@@ -113,6 +116,32 @@ const preOpen = bars(at0630 - 3600, 300, 7)                     // 05:30 … 06:
 const sPre = anchorSlot(preOpen, at0630, 300)
 check('before the open: extrapolated past the last candle', sPre?.i === 6 && sPre.frac === 6, JSON.stringify(sPre))
 check('no candles → no anchor', anchorSlot([], at0630, 300) === null)
+
+console.log('\nDELTA COLUMN — against the numbers in Sierra\'s own delta column (ES RTH 2026-09-14)')
+// Read off the founder's Sierra screenshot, one point (4 ticks) per cell. 24 of
+// the 25 legible numbers match; the 25th (7,623) sits where price was still
+// trading when the screenshot was taken, so it is left out rather than forced.
+const SIERRA_DELTA: Record<number, number> = {
+  7651: 210, 7650: 166, 7649: -168, 7648: -110, 7643: -289, 7642: 488, 7641: 458, 7640: 515,
+  7639: 751, 7638: -94, 7629: 408, 7620: 573, 7619: -145, 7618: -109, 7616: -258, 7615: 162,
+  7614: 643, 7611: 237, 7608: 152, 7606: 227, 7603: -146, 7602: -161, 7601: 784, 7595: -197,
+}
+const pointCells = new Map(deltaCells(fixture.rows, 0.25, 4).map(c => [c.price, c]))
+const misses = Object.entries(SIERRA_DELTA).filter(([p, d]) => pointCells.get(Number(p))?.delta !== d)
+check(`all ${Object.keys(SIERRA_DELTA).length} Sierra delta numbers reproduced`, misses.length === 0,
+  misses.map(([p, d]) => `${p}: Sierra ${d}, ours ${pointCells.get(Number(p))?.delta}`).join('; '))
+const c7651 = pointCells.get(7651)
+check('a 1-point cell runs x.50 → x+1.25 (7,651 holds 7,650.50–7,651.25)', c7651?.lo === 7650.5 && c7651?.hi === 7651.25,
+  `${c7651?.lo}–${c7651?.hi}`)
+const allTicks = deltaCells(fixture.rows, 0.25, 1)
+const sum = (cs: { delta: number }[]) => cs.reduce((a, c) => a + c.delta, 0)
+check('grouping never gains or loses a contract', sum(allTicks) === sum([...pointCells.values()]) && sum(allTicks) === sum(deltaCells(fixture.rows, 0.25, 40)))
+check('one cell per row at 1 tick', allTicks.length === fixture.rows.length)
+check('cell size: 3.5px ticks → 4 ticks for a 13px cell', pickDeltaGroup(3.5, 13) === 4, String(pickDeltaGroup(3.5, 13)))
+check('cell size: tall ticks stay 1 per cell', pickDeltaGroup(20, 13) === 1)
+check('cell size: zoomed far out caps at 100 points', pickDeltaGroup(0.001, 13) === 400)
+check('numbers: 784 / -1959 / 12.3k / -123k', formatDelta(784) === '784' && formatDelta(-1959) === '-1959' &&
+  formatDelta(12345) === '12.3k' && formatDelta(-123456) === '-123k')
 
 if (failures > 0) { console.error(`\n${failures} failed`); process.exit(1) }
 console.log('\nall passed')
