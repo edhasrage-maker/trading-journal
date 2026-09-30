@@ -115,6 +115,8 @@ export interface ChartPrefs {
   /** The overnight (ETH) profile, anchored at the 06:30 boundary. Rides the
    *  showProfile master switch; this turns off just the overnight one. */
   showEthProfile: boolean
+  /** Ask − bid delta column along each profile's base. */
+  showProfileDelta: boolean
 }
 const DEFAULT_PREFS: ChartPrefs = {
   background: '#030712',
@@ -134,6 +136,7 @@ const DEFAULT_PREFS: ChartPrefs = {
   showProfile: true,
   profileWidth: PROFILE_WIDTH_DEFAULT,
   showEthProfile: true,
+  showProfileDelta: true,
 }
 const PREFS_KEY = 'livechart-prefs-v2'
 // Per-(symbol, date) active-TF persistence. Each calendar day remembers its own
@@ -1761,14 +1764,15 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   // declaration order, so on a timeframe change the chart is rebuilt first and
   // this then repaints the profiles onto the new instance.
   useEffect(() => {
-    const rth = prefs.showProfile ? profile : null
+    const delta = prefs.showProfileDelta
+    const rth = prefs.showProfile && profile ? { ...profile, delta } : null
     const eth = prefs.showProfile && prefs.showEthProfile && ethProfile
-      ? { ...ethProfile, anchor: { timeSec: ethProfile.anchorMs / 1000, barSec: chartTfMins * 60 } }
+      ? { ...ethProfile, delta, anchor: { timeSec: ethProfile.anchorMs / 1000, barSec: chartTfMins * 60 } }
       : null
     profileDrawRef.current = { rth, eth, width: prefs.profileWidth }
     profilePrimRef.current?.setData(rth, prefs.profileWidth)
     ethProfilePrimRef.current?.setData(eth, prefs.profileWidth)
-  }, [profile, ethProfile, prefs.showProfile, prefs.showEthProfile, prefs.profileWidth, effHeight, chartTfMins])
+  }, [profile, ethProfile, prefs.showProfile, prefs.showEthProfile, prefs.showProfileDelta, prefs.profileWidth, effHeight, chartTfMins])
 
   // Esc closes menus / disarms / clears selection. Delete or Backspace removes
   // the selected annotation (unless typing in a field — e.g. the text editor).
@@ -2201,6 +2205,16 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
                           />
                         </label>
                       )}
+                      <label className={`flex items-center justify-between ${prefs.showProfile ? '' : 'opacity-40'}`}>
+                        <span>Delta column <span className="text-gray-500">(ask − bid)</span></span>
+                        <input
+                          type="checkbox"
+                          checked={prefs.showProfileDelta}
+                          onChange={e => updatePref({ showProfileDelta: e.target.checked })}
+                          disabled={!prefs.showProfile}
+                          className="accent-blue-600"
+                        />
+                      </label>
                       <label className="block">
                         <span className="flex items-center justify-between">
                           <span>Profile width</span>

@@ -8,6 +8,10 @@
  * The anchor is the pane edge, not a time, so the profile stays put while the
  * candles move.
  *
+ * A delta column (ask − bid per price, Sierra's red/blue numbers) can sit along
+ * each profile's base. Cells group rows to whatever keeps a number legible at
+ * the current zoom, shaded by sign and strength.
+ *
  * The overnight (ETH) profile is the other anchor: pinned to a TIME, the 06:30
  * session boundary, with its bars reaching left over the overnight candles —
  * Sierra's left profile. It pans with the candles, because it belongs to them.
@@ -38,7 +42,7 @@ import type {
   Logical,
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
-import type { ProfileRowTuple } from '@/lib/volume-profile'
+import { deltaCells, formatDelta, pickDeltaGroup, type ProfileRowTuple } from '@/lib/volume-profile'
 
 export interface ProfileDrawData {
   /** [price, volume, ask, bid], ascending by price. */
@@ -52,7 +56,12 @@ export interface ProfileDrawData {
    *  `barSec` is the chart's candle interval, so an instant inside a candle
    *  (06:30 in an hourly 06:00 bar) lands part-way across it. */
   anchor?: { timeSec: number; barSec: number }
+  /** Draw the delta column along the base. */
+  delta?: boolean
 }
+
+/** A delta cell must be at least this tall to hold its number. */
+const DELTA_MIN_CELL_PX = 13
 
 /** Share of the pane width the widest row reaches. Clamped on the way in. */
 export const PROFILE_WIDTH_MIN = 0.1
@@ -144,7 +153,59 @@ class ProfileRenderer implements IPrimitivePaneRenderer {
         ctx.fillStyle = pal.inVa
         ctx.fillRect(Math.round(baseX) - 1, spanTop, 1, spanBot - spanTop)
       }
+      if (this._data.delta) this._drawDelta(ctx, baseX, paneH, rowPx)
     })
+  }
+
+  /**
+   * Ask − bid per cell, in a column along the profile's base: right-aligned
+   * against the pane edge for RTH, against the 06:30 line for ETH. Each cell is
+   * shaded in the chart's up or down candle colour, deeper with |delta|, and
+   * carries its number. Cell size follows the zoom (see pickDeltaGroup), so the
+   * numbers never overprint; at one point per cell they are Sierra's numbers.
+   */
+  private _drawDelta(ctx: CanvasRenderingContext2D, baseX: number, paneH: number, rowPx: number) {
+    const { rows, tick } = this._data
+    const series = this._series
+    const cells = deltaCells(rows, tick, pickDeltaGroup(rowPx, DELTA_MIN_CELL_PX))
+    let maxAbs = 0
+    for (const c of cells) if (Math.abs(c.delta) > maxAbs) maxAbs = Math.abs(c.delta)
+    if (maxAbs === 0) return
+
+    const layout = this._chart.options().layout
+    const fontPx = Math.min(11, Math.max(9, (layout?.fontSize ?? 12) - 1))
+    ctx.font = `${fontPx}px ${layout?.fontFamily ?? 'sans-serif'}`
+    const ink = layout?.textColor ?? '#d1d5db'
+    const { up, down } = candleColors(series)
+
+    type Cell = { top: number; h: number; text: string; delta: number }
+    const visible: Cell[] = []
+    let textW = 0
+    for (const c of cells) {
+      const yTop = series.priceToCoordinate(c.hi + tick)
+      const yBot = series.priceToCoordinate(c.lo)
+      if (yTop == null || yBot == null) continue
+      const top = Math.min(yTop, yBot)
+      const h = Math.abs(yBot - yTop)
+      if (top + h < 0 || top > paneH) continue
+      const text = formatDelta(c.delta)
+      textW = Math.max(textW, ctx.measureText(text).width)
+      visible.push({ top, h, text, delta: c.delta })
+    }
+    if (visible.length === 0) return
+
+    const colW = Math.ceil(textW) + 8
+    const x = baseX - colW
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'middle'
+    for (const c of visible) {
+      if (c.delta !== 0) {
+        ctx.fillStyle = withAlpha(c.delta > 0 ? up : down, 0.12 + 0.5 * (Math.abs(c.delta) / maxAbs))
+        ctx.fillRect(x, c.top, colW, Math.max(1, c.h - 1))
+      }
+      ctx.fillStyle = ink
+      ctx.fillText(c.text, baseX - 4, c.top + c.h / 2)
+    }
   }
 
   private _backgroundColor(): string {
@@ -198,6 +259,34 @@ export function anchorSlot(times: readonly number[], timeSec: number, barSec: nu
   // gap, so the boundary is that later candle's left edge.
   if (frac > 1 && i + 1 < times.length) return { i: i + 1, frac: 0 }
   return { i, frac }
+}
+
+/** The candle series' up/down colours, so delta reads in the trader's own
+ *  buy/sell colours (blue/red on a Sierra-style chart, green/red by default). */
+function candleColors(series: ISeriesApi<SeriesType>): { up: string; down: string } {
+  const o = series.options() as { upColor?: unknown; downColor?: unknown }
+  return {
+    up: typeof o.upColor === 'string' ? o.upColor : '#22c55e',
+    down: typeof o.downColor === 'string' ? o.downColor : '#ef4444',
+  }
+}
+
+/** #rgb / #rrggbb / rgb() / rgba() → rgba() at `alpha`. Anything unparseable
+ *  falls back to a neutral grey rather than an opaque fill over the profile. */
+function withAlpha(color: string, alpha: number): string {
+  const c = color.trim()
+  let rgb: [number, number, number] | null = null
+  const hex6 = /^#([0-9a-f]{6})$/i.exec(c)?.[1]
+  const hex3 = /^#([0-9a-f]{3})$/i.exec(c)?.[1]
+  const fn = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(c)
+  if (hex6 || hex3) {
+    const n = parseInt(hex6 ?? hex3!.split('').map(ch => ch + ch).join(''), 16)
+    rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  } else if (fn) {
+    rgb = [Number(fn[1]), Number(fn[2]), Number(fn[3])]
+  }
+  const [r, g, b] = rgb ?? [150, 150, 150]
+  return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`
 }
 
 /** Greys tuned per ground. Translucent, so candles and grid read through them —
