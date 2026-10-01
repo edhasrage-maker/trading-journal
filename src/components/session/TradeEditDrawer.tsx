@@ -4,6 +4,8 @@ import { useEffect } from 'react'
 import { X, ExternalLink } from 'lucide-react'
 import { format } from 'date-fns'
 import TradeForm from '@/components/intraday/TradeForm'
+import CoachScorePanel from '@/components/intraday/CoachScorePanel'
+import type { TradeGrading } from '@/components/session/SessionTradeTable'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
 
 /**
@@ -27,10 +29,13 @@ interface Props {
   onOpenFullLog: (tradeId: string) => void
   /** Bubble up tags created inline from the drawer's TagSelector. */
   onTagCreated?: (tag: TradeTag) => void
+  /** Per-trade grade inputs — the same object the table's row badge uses, so
+   *  the breakdown here always matches the number on the row. */
+  grading?: TradeGrading
 }
 
 export default function TradeEditDrawer({
-  trade, date, allTags, defaultSymbol, onSave, onClose, onOpenFullLog, onTagCreated,
+  trade, date, allTags, defaultSymbol, onSave, onClose, onOpenFullLog, onTagCreated, grading,
 }: Props) {
   // Esc closes the drawer (matches the app's other overlays).
   useEffect(() => {
@@ -77,7 +82,20 @@ export default function TradeEditDrawer({
           </button>
         </div>
 
-        <div className="p-4 overflow-y-auto flex-1">
+        <div className="p-4 overflow-y-auto flex-1 space-y-4">
+          {/* The grade sits above the form: this drawer is the post-session
+              place to read a trade, and the July table split meant to put the
+              breakdown "behind the edit form" but never did. Grades the SAVED
+              trade, so edits below show up after Save. */}
+          {grading && (
+            <CoachScorePanel
+              trade={trade}
+              notes={trade.notes}
+              setupLibrary={grading.setupLibrary}
+              instrumentHasBars={grading.tradeHasBars(trade)}
+              scoringProfile={grading.scoringProfile}
+            />
+          )}
           <TradeForm
             compact
             date={date}

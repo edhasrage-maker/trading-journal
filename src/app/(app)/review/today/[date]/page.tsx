@@ -13,6 +13,7 @@ import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
 import { achievementCounts } from '@/lib/achievements'
 import { pickMarketContext } from '@/lib/market-context-select'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
+import type { ScoringProfile } from '@/lib/scoring-profile'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -24,7 +25,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   // atrCfg = the trader's chosen ATR measurement (drives the ATR@ column);
   // giveBackAtr = their "was up" multiple; tags = the tag library; pnlHistory +
   // achievements are all-days rollups. All independent → one round-trip stage.
-  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes, heatRes] = await Promise.all([
+  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes, heatRes, profRes] = await Promise.all([
     getAtrConfig(supabase),
     getGiveBackAtr(supabase),
     supabase.from('trading_days').select('*').eq('date', date).maybeSingle(),
@@ -41,9 +42,15 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       .not('high_during_position', 'is', null)
       .order('entry_time', { ascending: false })
       .limit(HEAT_BASELINE_WINDOW),
+    // The trader's own rails, for the per-trade grade. Missing or unreadable
+    // simply means the default rubric, exactly as on Intraday.
+    supabase.from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle(),
   ])
   const day = dayRes.data as TradingDay | null
   const tags = tagsRes.data as TradeTag[] | null
+  const profRow = profRes.data as { scoring_profile_json?: unknown } | null
+  const scoringProfile = (profRow?.scoring_profile_json && typeof profRow.scoring_profile_json === 'object'
+    ? profRow.scoring_profile_json : null) as ScoringProfile | null
   const pnlHistory = ((dayPnlRes.data ?? []) as { date: string; eod_pnl: number }[]).map(d => ({ date: d.date, pnl: d.eod_pnl }))
   // achievements_json select errors before its migration/backfill exists — guard
   // so counts stay undefined (showcase falls back to "First time!").
@@ -144,6 +151,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         heatBaseline={heatBaseline}
         achievementCounts={counts}
         giveBackAtr={giveBackAtr}
+        scoringProfile={scoringProfile}
       />
     </>
   )

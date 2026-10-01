@@ -12,6 +12,7 @@ import CalibrationOverlay, { type CalibStep, type CalibDraft } from './Calibrati
 import TradeArrowOverlay from './TradeArrowOverlay'
 import LiveChart, { type LiveChartHandle } from '@/components/charts/LiveChart'
 import { useChartInstruments } from '@/lib/use-chart-instruments'
+import type { ScoringProfile } from '@/lib/scoring-profile'
 import BarWatcher from '@/components/charts/BarWatcher'
 import TradeList from './TradeList'
 import TradeContextMenu, { type TradeContextMenuState } from '@/components/session/TradeContextMenu'
@@ -69,6 +70,8 @@ interface Props {
   /** The trader's round-trip "was up" multiple (×ATR) from Settings → ATR
    *  measurement. Defaults to 1× when unset / pre-migration. */
   giveBackAtr?: number
+  /** The trader's own rails, for the per-trade grade. Null → default rubric. */
+  scoringProfile?: ScoringProfile | null
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -104,6 +107,7 @@ export default function EodClient({
   achievementCounts,
   heatBaseline = null,
   giveBackAtr = 1,
+  scoringProfile = null,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -116,6 +120,14 @@ export default function EodClient({
   // Tags are local so a label created inline from the drawer's TagSelector
   // shows up immediately instead of waiting for a page reload.
   const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
+  // Curated setup labels (lowercased) — the grade's "setup in your playbook"
+  // check. Same recipe Intraday used before the July table split dropped the
+  // per-trade grade; built from the live tag list so a label created in the
+  // drawer counts immediately.
+  const setupLibrary = useMemo(
+    () => new Set(allTags.filter(t => t.category === 'setups').map(t => t.label.toLowerCase())),
+    [allTags],
+  )
   const addTag = (tag: TradeTag) =>
     setAllTags(prev => (prev.some(t => t.id === tag.id) ? prev : [...prev, tag]))
   // Time-aware seam (Pt 13 step 3). `endedAt` = the manual end-session stamp.
@@ -275,7 +287,10 @@ export default function EodClient({
     return best
   }, [initialTrades])
   // ES/NQ instrument switcher for the chart (shared with intraday + prep).
-  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades } = useChartInstruments(chartSymbol, trades, date)
+  const { activeSymbol, symbolOptions, onSymbolChange, chartTrades, tradeHasBars } = useChartInstruments(chartSymbol, trades, date)
+  // Everything the per-trade grade needs, handed to the table and the editor
+  // together so the badge and the breakdown can never disagree.
+  const grading = { setupLibrary, scoringProfile, tradeHasBars }
 
   // Generate (or reuse cached) AI Overview summaries whenever trades change.
   // Pulls hits from localStorage by content hash; batches the misses into one
@@ -1329,6 +1344,7 @@ export default function EodClient({
 
       <TradeList
         trades={trades}
+        grading={grading}
         hoveredTradeId={hoveredTradeId}
         flashTradeId={flashTradeId}
         onHoverEnter={handleHoverEnter}
@@ -1368,6 +1384,7 @@ export default function EodClient({
         return (
           <TradeEditDrawer
             trade={editingTrade}
+            grading={grading}
             date={date}
             allTags={allTags}
             defaultSymbol={chartSymbol}

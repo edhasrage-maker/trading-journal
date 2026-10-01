@@ -26,6 +26,8 @@ import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
+import type { ScoringProfile } from '@/lib/scoring-profile'
+import CoachScoreBadge from '@/components/intraday/CoachScoreBadge'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
@@ -144,7 +146,22 @@ function captureBlankReason(t: Trade, bars?: BarLike[]): string | null {
   return 'Capture is unavailable for this trade.'
 }
 
+/** Everything the per-trade grade needs. Handed to the table AND the editor
+ *  from one place so the row badge and the editor's breakdown can never
+ *  disagree. Review only — capture never grades (no scores while the market
+ *  is open). */
+export interface TradeGrading {
+  /** Lowercased curated setup labels — the "setup in your playbook" check. */
+  setupLibrary: Set<string>
+  /** The trader's own rails; null grades against the default rubric. */
+  scoringProfile: ScoringProfile | null
+  /** Whether bars exist for this trade's instrument; gates bar-derived criteria. */
+  tradeHasBars: (t: Trade) => boolean
+}
+
 interface Props {
+  /** Per-trade grade inputs. Rendered as a badge beside P&L in review only. */
+  grading?: TradeGrading
   /** `review` (default) = the full EOD table with scores/verdicts/AI, rendered
    *  byte-identical to the pre-merge TradeList. `capture` = the reduced live
    *  Intraday table (no scores, no AI) with an edit action per row. */
@@ -244,6 +261,7 @@ function ClampedNote({ text, italic, title }: { text: string; italic: boolean; t
 }
 
 export default function SessionTradeTable({
+  grading,
   config = 'review',
   trades,
   hoveredTradeId,
@@ -720,6 +738,14 @@ export default function SessionTradeTable({
                   {isLong ? '▲ LONG' : isShort ? '▼ SHORT' : '—'}
                 </span>
                 <span className="flex-1" />
+                {!isCapture && grading && (
+                  <CoachScoreBadge
+                    trade={t}
+                    setupLibrary={grading.setupLibrary}
+                    instrumentHasBars={grading.tradeHasBars(t)}
+                    scoringProfile={grading.scoringProfile}
+                  />
+                )}
                 <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                   {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
                 </span>
@@ -1052,10 +1078,20 @@ export default function SessionTradeTable({
                     )
                   })()}
                   <td
-                    className={`py-1.5 pr-3 text-right font-bold ${
+                    className={`py-1.5 pr-3 text-right font-bold whitespace-nowrap ${
                       pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-500'
                     }`}
                   >
+                    {!isCapture && grading && (
+                      <span className="mr-2 align-middle">
+                        <CoachScoreBadge
+                          trade={t}
+                          setupLibrary={grading.setupLibrary}
+                          instrumentHasBars={grading.tradeHasBars(t)}
+                          scoringProfile={grading.scoringProfile}
+                        />
+                      </span>
+                    )}
                     {pnl >= 0 ? '+' : ''}
                     {pnl.toFixed(2)}
                   </td>
