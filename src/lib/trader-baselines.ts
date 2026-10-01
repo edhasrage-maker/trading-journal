@@ -209,9 +209,16 @@ export function computeTraderBaselines(
       .filter((r): r is BaselineRow => r != null && r.n >= MIN_TAG_N)
       .sort((a, b) => Math.abs(b.avgR) - Math.abs(a.avgR)),
     participation: byBand([
-      { label: 'RVOL under 100% (quiet)', test: c => c.rvol != null && c.rvol < 100 },
-      { label: 'RVOL 100-150% (normal)', test: c => c.rvol != null && c.rvol >= 100 && c.rvol < 150 },
-      { label: 'RVOL 150%+ (busy)', test: c => c.rvol != null && c.rvol >= 150 },
+      // 100% IS normal by definition, so "normal" has to straddle it — the old
+      // 100-150% band started at the midpoint and swept the 47th through 92nd
+      // percentile into one label, calling 150% (a top-8% day) "normal". The
+      // outer cuts are the 80% / 130% already used for the Low Participation and
+      // High Action Market day types, so the coach and the day-type chips name a
+      // given RVOL the same way. On the owner book: 18% / 45% / 19% / 19%.
+      { label: 'RVOL under 80% (quiet)', test: c => c.rvol != null && c.rvol < 80 },
+      { label: 'RVOL 80-110% (normal)', test: c => c.rvol != null && c.rvol >= 80 && c.rvol < 110 },
+      { label: 'RVOL 110-130% (elevated)', test: c => c.rvol != null && c.rvol >= 110 && c.rvol < 130 },
+      { label: 'RVOL 130%+ (high)', test: c => c.rvol != null && c.rvol >= 130 },
     ]),
     rangeUsed: byBand([
       { label: 'day used under 80% of ADR', test: c => c.rangeUsedPct != null && c.rangeUsedPct < 80 },
