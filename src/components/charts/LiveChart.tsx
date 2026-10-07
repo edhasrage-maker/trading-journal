@@ -2115,6 +2115,27 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
               Profile
             </button>
           )}
+          {/* Delta column toggle — one click, beside Profile, and only while the
+              profile is drawn: the column lives on the profile's base, so with
+              the profile off there is nothing for it to switch. */}
+          {(profile || ethProfile) && prefs.showProfile && (
+            <button
+              type="button"
+              onClick={() => updatePref({ showProfileDelta: !prefs.showProfileDelta })}
+              aria-pressed={prefs.showProfileDelta}
+              title={prefs.showProfileDelta
+                ? 'Hide the delta column (ask − bid per price)'
+                : 'Show the delta column (ask − bid per price)'}
+              className={`flex items-center gap-1 rounded px-1.5 py-0.5 border transition-colors ${
+                prefs.showProfileDelta
+                  ? 'border-blue-700 bg-blue-950/60 text-blue-300 hover:bg-blue-900/60'
+                  : 'border-transparent text-gray-500 hover:text-gray-200 hover:bg-gray-800'
+              }`}
+            >
+              <span className="w-3 text-center leading-none" aria-hidden>Δ</span>
+              Delta
+            </button>
+          )}
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.vwapColor }} />VWAP</span>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema9Color }} />EMA 9</span>
           <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: prefs.ema20Color }} />EMA 20</span>
