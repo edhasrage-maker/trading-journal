@@ -58,7 +58,14 @@ export default function AuthCard({ authError }: { authError?: string | null }) {
   const oauth = async (provider: 'google' | 'discord') => {
     setError(null); setLoading(true)
     const { error } = await createClient().auth.signInWithOAuth({
-      provider, options: { redirectTo: redirectTo() },
+      provider,
+      options: {
+        redirectTo: redirectTo(),
+        // Without this Google skips its chooser and silently signs in with
+        // whichever account the browser already has (or used here last), so
+        // someone with a personal + trading Google can't pick the right one.
+        ...(provider === 'google' ? { queryParams: { prompt: 'select_account' } } : {}),
+      },
     })
     if (error) { setError(error.message); setLoading(false) }
     // On success the browser redirects to the provider — nothing else to do.
