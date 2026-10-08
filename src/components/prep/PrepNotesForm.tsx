@@ -35,13 +35,23 @@ interface Props {
 // initial dropdown value when ib_behaviour has no saved value yet.
 const IB_BREAK_TIMING_DEFAULT = 'Still developing'
 const ibBreakTimingOptions = [IB_BREAK_TIMING_DEFAULT, 'Early (within first 15min)', 'Normal (15-60min)', 'Late (60min+)']
-const volumeShapeOptions = ['Balanced (D-shape)', 'Skewed up (P-shape)', 'Skewed down (b-shape)', 'Trending (elongated)', 'Bimodal (double distribution)']
+const volumeShapeOptions = ['Balanced (D-shape)', 'Skewed up (P-shape)', 'Skewed down (b-shape)', 'Trending (elongated)', 'Multiple distributions']
+/** Preps saved before the rename carry the old label. Without this they'd hit a
+ *  <select> with no matching <option>, render blank, and lose the shape on the
+ *  next save — so map the old value onto the new one on read; it rewrites itself
+ *  the next time the prep saves. */
+const LEGACY_VOLUME_SHAPE: Record<string, string> = {
+  'Bimodal (double distribution)': 'Multiple distributions',
+}
 const biasOptions = ['bullish', 'bearish', 'neutral'] as const
 
 const EXT_LEVELS = ['25', '50', '100'] as const
 const EXT_MULT: Record<string, number> = { '25': 0.25, '50': 0.50, '100': 1.00 }
 
-const HTF_MGI_LEVELS = ['PDH', 'PDL', 'ONH', 'ONL', 'IBH', 'IBL', 'HTF S/R', 'HTF S/D', 'WK-OP', 'PWH', 'PWL', 'VWAP', 'EMA']
+// `htf_mgi` is keyed by these labels (free-form Record), so adding a level is
+// additive — existing saved preps keep every tag they already have. RTH-OP sits
+// next to WK-OP so the two session opens read together.
+const HTF_MGI_LEVELS = ['PDH', 'PDL', 'ONH', 'ONL', 'IBH', 'IBL', 'HTF S/R', 'HTF S/D', 'RTH-OP', 'WK-OP', 'PWH', 'PWL', 'VWAP', 'EMA']
 
 // Beginner readiness chips — one-tap emotional state, stored in the `mood`
 // field (single-select). Split so "clear" states read emerald and the
@@ -209,7 +219,9 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Profile Shape</label>
-            <select value={value.volume_profile_shape ?? ''} onChange={e => set('volume_profile_shape', e.target.value)}
+            <select
+              value={(() => { const v = value.volume_profile_shape ?? ''; return LEGACY_VOLUME_SHAPE[v] ?? v })()}
+              onChange={e => set('volume_profile_shape', e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
               <option value="">Select...</option>

@@ -87,11 +87,15 @@ function Row({
 }
 
 function Group({
-  title, verdict, verdictTone = 'dim', note, children,
+  title, verdict, verdictTone = 'dim', meta, note, children,
 }: {
   title: string
   verdict: string
   verdictTone?: VerdictTone
+  /** A measured figure for the group, shown quietly ahead of the verdict word —
+   *  e.g. the IB's own range. The verdict says what the number MEANS; this says
+   *  what it IS, so the reader never has to subtract two rows in their head. */
+  meta?: string | null
   note?: string
   children: React.ReactNode
 }) {
@@ -104,7 +108,12 @@ function Group({
         >
           {title}
         </span>
-        <span className={cn('text-xs font-semibold', VERDICT_CLS[verdictTone])}>{verdict}</span>
+        <span className="flex items-baseline gap-2 min-w-0">
+          {meta && (
+            <span className="text-xs tabular-nums text-gray-400 whitespace-nowrap">{meta}</span>
+          )}
+          <span className={cn('text-xs font-semibold', VERDICT_CLS[verdictTone])}>{verdict}</span>
+        </span>
       </div>
       {children}
       {note && <p className="text-[11px] text-gray-500 pt-1.5">{note}</p>}
@@ -113,6 +122,10 @@ function Group({
 }
 
 const pts = (v: number | null) => (v == null ? null : `${Math.round(v)} pts`)
+/** Hi − Lo as "213.5 pt range". Exact rather than rounded: the IB range drives
+ *  the extension levels, so a dropped quarter-point matters here. */
+const ptRange = (hi: number | null, lo: number | null) =>
+  hi == null || lo == null ? null : `${+(hi - lo).toFixed(2)} pt range`
 const price = (v: number | null) => (v == null ? null : v.toLocaleString('en-US', { maximumFractionDigits: 2 }))
 
 export default function PrepLedger({
@@ -205,6 +218,9 @@ export default function PrepLedger({
         title="Initial balance"
         verdict={ibPrinted ? (openingRange?.verdict ?? 'printed') : 'not printed'}
         verdictTone={ibPrinted ? (openingRange?.tone ?? 'dim') : 'dim'}
+        // Derived from the IBH/IBL rows directly below, so the subtraction is
+        // checkable on screen rather than taken on trust.
+        meta={ptRange(ibh, ibl)}
         note={ibPrinted ? undefined : 'Fills in once the 06:30–07:30 PT range prints.'}
       >
         <Row label="IBH" value={price(ibh)} chip={ibh == null ? 'pending' : 'high'} />
