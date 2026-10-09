@@ -129,7 +129,7 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
     <PeriodRecapClient
       scope="week"
       periodKey={weekStart}
-      eyebrow={`review · week of ${weekLabel(weekStart).toLowerCase()} · ${summary.trades} trade${summary.trades === 1 ? '' : 's'} · ${summary.tradedDays} session${summary.tradedDays === 1 ? '' : 's'}`}
+      eyebrow={`recap · week of ${weekLabel(weekStart).toLowerCase()} · ${summary.trades} trade${summary.trades === 1 ? '' : 's'} · ${summary.tradedDays} session${summary.tradedDays === 1 ? '' : 's'}`}
       pager={{
         prevHref: `/review/week/${prevStart}`,
         prevLabel: weekLabel(prevStart),
@@ -154,7 +154,7 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
         dollarsPerTrade: summary.dollarsPerTrade,
       }}
       commitment={commitment}
-      ledger={{ title: 'The sessions', hint: 'each row opens that day’s review', rows: ledgerRows }}
+      ledger={{ title: 'The sessions', hint: 'each row opens that day’s recap', rows: ledgerRows }}
       vs={vs}
       initialSynthesis={recap?.ai_synthesis_json ?? null}
       initialNotes={recap?.notes_md ?? ''}
@@ -404,7 +404,7 @@ function weeklyCommitment(days: PeriodDay[]): RecapCommitment | null {
   if (report.held > 0) parts.push(`held it ${report.held} of ${report.tracked} tracked day${report.tracked === 1 ? '' : 's'}`)
   else parts.push(`tracked ${report.tracked} day${report.tracked === 1 ? '' : 's'}`)
   if (report.broke > 0) parts.push(`slipped ${report.broke}`)
-  if (report.unresolved > 0) parts.push(`${report.unresolved} not resolved yet — close ${report.unresolved === 1 ? 'it' : 'them'} in Review · Today`)
+  if (report.unresolved > 0) parts.push(`${report.unresolved} not resolved yet — close ${report.unresolved === 1 ? 'it' : 'them'} in Recap · Today`)
   return {
     mode,
     text: report.top.text,

@@ -116,7 +116,7 @@ export default async function MonthlyRecapPage({ params }: PageProps) {
     <PeriodRecapClient
       scope="month"
       periodKey={month}
-      eyebrow={`review · ${label.toLowerCase()} · ${summary.trades} trade${summary.trades === 1 ? '' : 's'} · ${summary.tradedDays} session${summary.tradedDays === 1 ? '' : 's'}`}
+      eyebrow={`recap · ${label.toLowerCase()} · ${summary.trades} trade${summary.trades === 1 ? '' : 's'} · ${summary.tradedDays} session${summary.tradedDays === 1 ? '' : 's'}`}
       pager={{
         prevHref: `/review/month/${prevM}`,
         prevLabel: monthLabel(prevM).split(' ')[0],

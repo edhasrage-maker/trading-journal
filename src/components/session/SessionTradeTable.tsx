@@ -516,7 +516,7 @@ export default function SessionTradeTable({
             </div>
             <p className="mt-3 text-gray-500 text-xs">
               Reads a Sierra Chart <span className="font-mono">.txt</span> or a broker CSV — or log
-              trades yourself on the Trade page.
+              trades yourself on the Log page.
             </p>
           </>
         )}

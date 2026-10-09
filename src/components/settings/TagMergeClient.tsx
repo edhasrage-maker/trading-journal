@@ -847,7 +847,7 @@ export default function TagMergeClient({
           Tag along whatever axis you actually think in — a{' '}
           <span className="text-gray-400">4h Candle Shape</span> or{' '}
           <span className="text-gray-400">News Regime</span> category works exactly like the built-in
-          ones: it shows up in the trade tagger and breaks out in Patterns.
+          ones: it shows up in the trade tagger and breaks out in Edge Analysis.
         </p>
 
         {newCatOpen ? (

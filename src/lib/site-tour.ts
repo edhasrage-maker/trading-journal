@@ -101,9 +101,9 @@ export const TOUR_STEPS: TourStep[] = [
   {
     route: '/prep',
     anchor: 'nav-eod',
-    title: 'Next: review your day',
+    title: 'Next: recap your day',
     description:
-      'After the session, EOD Recap is where you grade what you actually did. Click Next →',
+      'After the session, Recap is where you grade what you actually did. Click Next →',
   },
   // ---------------------------------------------------------------------- EOD
   {
@@ -129,13 +129,13 @@ export const TOUR_STEPS: TourStep[] = [
     anchor: 'nav-analytics',
     title: 'Next: the big picture',
     description:
-      'Analytics rolls up every trade to show where your real edge is. Last stop — click Next →',
+      'Edge Analysis rolls up every trade to show where your real edge is. Last stop — click Next →',
   },
   // ---------------------------------------------------------------- Analytics
   {
     route: '/analytics',
     anchor: 'analytics-header',
-    title: 'Analytics',
+    title: 'Edge Analysis',
     description:
       'Your edge across every trade — win rate and expectancy broken down by setup, structure, day type, and more.',
     side: 'bottom',

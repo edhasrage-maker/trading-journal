@@ -100,7 +100,7 @@ export default function TradeContextMenu({
       className="fixed z-50 w-52 py-1 bg-gray-900 border border-gray-700 rounded-lg shadow-xl"
       onContextMenu={e => e.preventDefault()}
     >
-      <MenuItem icon={ExternalLink} label="Intraday Review" hint="Open this trade's full log" onClick={run(onOpenIntraday)} />
+      <MenuItem icon={ExternalLink} label="Open in Log" hint="Open this trade's full log" onClick={run(onOpenIntraday)} />
       <MenuItem
         icon={Highlighter}
         label={isHighlighted?.(state.tradeId) ? 'Remove highlight' : 'Highlight'}

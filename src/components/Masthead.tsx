@@ -228,31 +228,33 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   // the dated links (/prep/2026-07-25) still match their section.
   // Dashboard is the home — the all-trades overview, front and centre, the first
   // thing everyone sees (it's also the signed-in landing). Then the daily loop:
-  // Prep → Trade → Review (per-session debrief; EOD folds into Review·Today).
+  // Prep → Log → Recap (per-session debrief; EOD folds into Recap·Today), then
+  // Edge Analysis across every trade. Names say what each page is FOR — the
+  // founder found Trade / Review / Patterns too vague (2026-10-08).
   // Calendar is gone as a destination — it's the Dashboard's list/calendar
   // toggle now.
   const navItems = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome', match: '/welcome' }] : []),
     { href: '/dashboard', label: 'Dashboard', match: '/dashboard' },
     { href: urlDate ? `/prep/${urlDate}` : '/prep', label: 'Prep', match: '/prep' },
-    { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
-    { href: reviewHref, label: 'Review', match: '/review' },
-    { href: '/analytics', label: 'Patterns', match: '/analytics' },
+    { href: `/intraday/${reviewDate}`, label: 'Log', match: '/intraday' },
+    { href: reviewHref, label: 'Recap', match: '/review' },
+    { href: '/analytics', label: 'Edge Analysis', match: '/analytics' },
   ]
 
   // Mobile bottom bar. Text-only, matching the masthead — the lucide icon set
   // is exactly what made the old rail read generic, and short labels are
-  // legible at this size. Patterns lives in the More sheet to keep four primary
+  // legible at this size. Edge Analysis lives in the More sheet to keep four primary
   // tabs.
   const mobileTabs = [
     { href: '/dashboard', label: 'Home', match: '/dashboard' },
     { href: urlDate ? `/prep/${urlDate}` : '/prep', label: 'Prep', match: '/prep' },
-    { href: `/intraday/${reviewDate}`, label: 'Trade', match: '/intraday' },
-    { href: reviewHref, label: 'Review', match: '/review' },
+    { href: `/intraday/${reviewDate}`, label: 'Log', match: '/intraday' },
+    { href: reviewHref, label: 'Recap', match: '/review' },
   ]
   const moreNav = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome' }] : []),
-    { href: '/analytics', label: 'Patterns' },
+    { href: '/analytics', label: 'Edge Analysis' },
     { href: '/import', label: 'Import' },
   ]
 
