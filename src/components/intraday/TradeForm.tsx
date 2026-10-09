@@ -16,6 +16,7 @@ import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { normalizeTradeLevels } from '@/lib/trade-geometry'
 import type { Trade, TradeTag, TradeTags, TagCategory } from '@/lib/supabase/types'
 import { offScalePrices } from '@/lib/trade-price-scale'
+import { entryTimeField, entryTimeForSave } from '@/lib/trade-entry-time'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { suggestTagsFromText, mergeTradeTags } from '@/lib/suggest-tags'
 import { downscaleForVision } from '@/lib/downscale-image'
@@ -81,7 +82,7 @@ const empty = (): FormState => ({
 })
 
 function fromTrade(t: Trade): FormState {
-  const timeStr = t.entry_time ? new Date(t.entry_time).toTimeString().slice(0, 5) : ''
+  const timeStr = t.entry_time ? entryTimeField(t.entry_time) : ''
   return {
     direction: t.direction ?? 'long',
     symbol: t.symbol ?? '',
@@ -440,10 +441,9 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
         if (!screenshotUrl) { setError('Screenshot upload failed'); setSaving(false); return }
       }
 
-      // Build ISO entry_time for today + the time the user entered
-      const entryIso = form.entry_time
-        ? new Date(`${date}T${form.entry_time}:00`).toISOString()
-        : null
+      // Keep the stored fill time to the millisecond unless the trader changed
+      // the minute — rebuilding from the HH:MM field rounded 176 imported fills.
+      const entryIso = entryTimeForSave(trade?.entry_time, form.entry_time, date)
 
       const payload = {
         date,
