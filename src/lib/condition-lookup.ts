@@ -13,6 +13,38 @@ import type {
  * row for each, and consolidate the two views into a single verdict.
  */
 
+/**
+ * ATR_730 as a RATIO — the 07:29 PT IB-close Wilder ATR-10 over its OWN
+ * trailing-10 average (`atr_at_ib_close / atr_10d_avg`, both IB-close basis).
+ *
+ * This metric used to be stored in raw POINTS while the other four are
+ * scale-free ratios, and the thresholds are cut from one pooled distribution
+ * across every instrument the trader has context rows for. NQ's IB-close ATR
+ * runs ~17.7 and ES's ~3.0, so on an ES morning ATR_730 fell in the bottom
+ * bucket every single session regardless of what the tape did — the same
+ * lookup row matched every ES day, and Morning Conditions had one fewer
+ * working dimension than it appeared to.
+ *
+ * As a ratio a normal day lands near 1.0 on any instrument (NQ prod: p10 0.65,
+ * median 0.99, p90 1.55), so the bucket finally means "fast or slow FOR THIS
+ * market" instead of "which market is this".
+ *
+ * Both arguments must be on the IB-close basis. Do NOT pass `atr_1m` (the
+ * 12:59 EOD reading) against `atr_10d_avg`: that is a full-session average over
+ * a busiest-hour baseline, the same mixed-basis error that made the bar-vol
+ * chip read ~0.77x on an ordinary day. Returns null unless both are present, so
+ * a row without the pair simply does not constrain the ATR_730 dimension.
+ */
+export function atrIbCloseRatio(
+  atrAtIbClose: number | null | undefined,
+  atr10dAvg: number | null | undefined,
+): number | null {
+  const a = atrAtIbClose == null ? null : Number(atrAtIbClose)
+  const b = atr10dAvg == null ? null : Number(atr10dAvg)
+  if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b) || b <= 0) return null
+  return a / b
+}
+
 export type MedianBucket = 'LOW' | 'HIGH'
 export type TertileBucket = 'L' | 'M' | 'H'
 

@@ -33,7 +33,7 @@ const METRICS: Array<{
   { metric: 'RVOL', field: 'rvol', label: 'RVOL', placeholder: '1.05', hint: 'Today\'s 6:30-7:30 volume / 10d avg of same window' },
   { metric: 'DR_ADR', field: 'dr_adr', label: 'DR vs ADR', placeholder: '0.60', hint: '(High-Low since 6:30) / 10d avg cash session range' },
   { metric: 'IB', field: 'ib', label: 'IB vs 10d Avg', placeholder: '0.93', hint: '(IBH-IBL) / 10d avg IB range' },
-  { metric: 'ATR_730', field: 'atr_730', label: 'ATR-10 (1m)', placeholder: '18.0', hint: '1-min ATR-10 Wilder' },
+  { metric: 'ATR_730', field: 'atr_730', label: 'ATR vs typical', placeholder: '1.00', hint: 'IB-close 1-min ATR-10 / its own 10-day average' },
   { metric: 'IB_ATR', field: 'ib_atr', label: 'IB vs ATR (character)', placeholder: '9.3', hint: '(IBH-IBL) / meanHL10 — choppy < 7.7, expanded >= 13' },
   // ATR_entry was retired here (the live per-trade ATR-10 added in a9f6161 made
   // the manual field obsolete) and its slot was reused for IB_ATR in Pt 23 —
@@ -77,8 +77,9 @@ interface MarketContextPrefill {
   /** RVOL at the 07:30 PT IB close, EOD RVOL as fallback. */
   rvol?: number | null
   ib_vs_10d_avg?: number | null
-  /** Wilder ATR-10 at the 07:29 PT IB close, EOD ATR as fallback — the metric
-   *  is ATR_730 and the IB-close reading is what history is cut on. */
+  /** ATR_730 as a RATIO — the 07:29 PT IB-close Wilder ATR-10 over its own
+   *  trailing-10 average (atrIbCloseRatio). Scale-free, so the same cuts are
+   *  valid on NQ and ES; a normal day is ~1.0. */
   atr_730?: number | null
   /** DR/ADR as a PERCENT (75.9 = 75.9% of a normal day's range), matching
    *  condition_thresholds.DR_ADR. */
@@ -145,7 +146,15 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
     rvol: inputs.rvol || fromContext(marketContext?.rvol),
     dr_adr: legacyDrAdrPct(inputs.dr_adr) || fromContext(marketContext?.dr_adr),
     ib: inputs.ib || fromContext(marketContext?.ib_vs_10d_avg),
-    atr_730: inputs.atr_730 || fromContext(marketContext?.atr_730),
+    // Deliberately NOT `inputs.atr_730 || ...`. Snapshots saved before
+    // 2026-10-08 hold ATR_730 in raw POINTS (prod: 14 rows, 2.97-44.26) and it
+    // is now a ratio (~1.0). Unlike dr_adr, a stored points value cannot be
+    // converted back — the denominator was never saved with it — and the two
+    // ranges overlap (an ES day's 2.97 points is a plausible-looking ratio), so
+    // there is no sniff that is safe. The metric is fully derived from
+    // market_context anyway, so the live value simply wins and the column
+    // self-heals on the next save.
+    atr_730: fromContext(marketContext?.atr_730),
     ib_atr: inputs.ib_atr || fromContext(marketContext?.ib_atr_ratio),
   }
   // ── Load existing prep + run initial lookup on mount ──────────────────────

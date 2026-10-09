@@ -8,6 +8,7 @@ import type {
 import { REGIME_CUTS_MEANHL10 } from '@/lib/ib-day-type'
 import { MIN_SAMPLE } from '@/lib/sample-size'
 import { drAdrPercent } from '@/lib/dr-adr'
+import { atrIbCloseRatio } from '@/lib/condition-lookup'
 
 // Supabase clients are structurally identical for our purposes (server session
 // client OR service-role client); we only call .from(...).select/insert/delete.
@@ -43,8 +44,9 @@ export interface MarketContextLite {
   ib_vs_10d_avg: number | null      // → IB metric
   adr: number | null
   day_range: number | null          // for DR_ADR derivation
-  atr_at_ib_close: number | null    // → ATR_730 metric (preferred)
-  atr_1m: number | null             // → ATR_730 fallback when atr_at_ib_close is null
+  atr_at_ib_close: number | null    // → ATR_730 numerator (07:29 PT Wilder ATR-10)
+  atr_10d_avg: number | null        // → ATR_730 denominator (trailing-10 of the same)
+  atr_1m: number | null             // EOD ATR — NOT a valid ATR_730 fallback, see atrIbCloseRatio
   ib_atr_ratio: number | null       // → IB_ATR metric (day character, ib-day-type.ts)
 }
 
@@ -64,8 +66,9 @@ export interface MetricRow {
 }
 
 /** Derive the 5 prep metrics from a market_context row. RVOL/IB pass through;
- *  DR_ADR is computed from day_range/adr; ATR_730 uses our new IB-close ATR
- *  with EOD ATR fallback; IB_ATR is the persisted day-character ratio. */
+ *  DR_ADR is a percent (drAdrPercent); ATR_730 is the IB-close ATR over its own
+ *  trailing-10 (atrIbCloseRatio); IB_ATR is the persisted day-character ratio.
+ *  All five are now scale-free, so one threshold set is valid across NQ and ES. */
 export function deriveMetrics(ctx: MarketContextLite | null): MetricRow {
   if (!ctx) return { rvol: null, dr_adr: null, ib: null, atr_730: null, ib_atr: null }
   // DR_ADR is a PERCENT (thresholds are cut in percent — median 75.9). The
@@ -80,7 +83,10 @@ export function deriveMetrics(ctx: MarketContextLite | null): MetricRow {
     rvol: ctx.rvol_at_ib_close ?? ctx.rvol,
     dr_adr,
     ib: ctx.ib_vs_10d_avg,
-    atr_730: ctx.atr_at_ib_close ?? ctx.atr_1m,
+    // A RATIO, not points — see atrIbCloseRatio. The old raw-points value was
+    // the only non-scale-free metric of the five, so one pooled threshold set
+    // across NQ and ES pinned every ES day to the bottom bucket.
+    atr_730: atrIbCloseRatio(ctx.atr_at_ib_close, ctx.atr_10d_avg),
     // Day character (IB range / meanHL10). Only days the IB day-type backfill
     // (or a live prep) has classified carry this; older rows stay null and
     // simply don't match a non-ANY IB_ATR constraint.
@@ -546,7 +552,7 @@ export async function refreshConditionLookup(
 
   // ── 1. market_context + trading_days (id → date) ──
   const [{ data: contextsRaw, error: cErr }, { data: daysRaw, error: dErr }] = await Promise.all([
-    scope(supabase.from('market_context').select('trading_day_id, rvol, rvol_at_ib_close, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_1m, ib_atr_ratio')),
+    scope(supabase.from('market_context').select('trading_day_id, rvol, rvol_at_ib_close, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_10d_avg, atr_1m, ib_atr_ratio')),
     scope(supabase.from('trading_days').select('id, date')),
   ]) as [
     { data: MarketContextLite[] | null; error: { message: string } | null },

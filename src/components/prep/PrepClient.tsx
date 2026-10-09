@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { drAdrPercent } from '@/lib/dr-adr'
+import { atrIbCloseRatio } from '@/lib/condition-lookup'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 import { todayPT } from '@/lib/pt-time'
@@ -302,6 +303,9 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           // enough to shift a day a whole bucket low.
           atr_at_ib_close: stats.atr_at_ib_close,
           rvol_at_ib_close: stats.rvol_at_ib_close,
+          // The ATR_730 denominator. Without it the metric is a bare points
+          // value and cannot be made scale-free — see atrIbCloseRatio.
+          atr_10d_avg: stats.atr_10d_avg,
         }
         // Numbers this effect filled for a DIFFERENT instrument are stale, not
         // trader input — a switch must replace them, or the form keeps NQ's ADR
@@ -1359,7 +1363,11 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               // value as the fallback, exactly as deriveMetrics() does.
               rvol: context.rvol_at_ib_close ?? context.rvol ?? null,
               ib_vs_10d_avg: context.ib_vs_10d_avg ?? null,
-              atr_730: context.atr_at_ib_close ?? context.atr_1m ?? null,
+              // A RATIO (IB-close ATR ÷ its own trailing-10), matching
+              // deriveMetrics. As raw points this was the one non-scale-free
+              // metric of the five, so every ES morning scored its ~3.0 against
+              // cuts drawn from NQ's ~17.7 and landed in the bottom bucket.
+              atr_730: atrIbCloseRatio(context.atr_at_ib_close, context.atr_10d_avg),
               // PERCENT (thresholds median 75.9). This fed a RATIO (0.76) until
               // 2026-08-24, which is below every cut — DR/ADR bucketed LOW on
               // 100% of days, pinning one of the five lookup dimensions.
