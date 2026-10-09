@@ -213,6 +213,10 @@ export interface RoundTripStats {
   /** The ×ATR multiple used to classify "was up" — echoed so callers can render
    *  "≥N×ATR" without re-plumbing the trader's setting. */
   thresholdAtr: number
+  /** Trade ids of the round-trips, in session order. Lets a caller point at
+   *  WHICH trades gave it back ("trades 2, 4") instead of only how many — the
+   *  difference between a statistic and something you can go look at. */
+  ids: string[]
 }
 
 /**
@@ -228,11 +232,16 @@ export function aggregateRoundTrips(
   roundTripAtr: number = ROUND_TRIP_MFE_ATR,
 ): RoundTripStats {
   let count = 0, measurable = 0, giveBackUsd = 0
+  const ids: string[] = []
   for (const t of trades) {
     const live = t.id != null ? atrByTradeId?.[t.id] : undefined
     const x = interpretExcursion(live != null ? { ...t, entry_atr_1m: live } : t, roundTripAtr)
     if (x.roundTripMeasurable) measurable++
-    if (x.roundTripped) { count++; giveBackUsd += x.roundTripGiveBackUsd ?? 0 }
+    if (x.roundTripped) {
+      count++
+      giveBackUsd += x.roundTripGiveBackUsd ?? 0
+      if (t.id != null) ids.push(t.id)
+    }
   }
-  return { count, total: trades.length, measurable, giveBackUsd, thresholdAtr: roundTripAtr }
+  return { count, total: trades.length, measurable, giveBackUsd, thresholdAtr: roundTripAtr, ids }
 }

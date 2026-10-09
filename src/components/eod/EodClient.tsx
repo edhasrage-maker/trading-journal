@@ -1172,7 +1172,7 @@ export default function EodClient({
           item 23) — self-suppressing, so an empty day shows nothing. The heat
           read that used to sit beside it moved down to the trade table, where
           the MAE column it interprets actually lives. */}
-      <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} />
+      <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} />
 
       {/* Chart area — toggle between legacy screenshot+calibration and the
           new live-bars rendering. Screenshot path will be removed in Phase 5
