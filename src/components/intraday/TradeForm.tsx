@@ -15,6 +15,7 @@ import { deleteBlob } from '@/lib/storage'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { normalizeTradeLevels } from '@/lib/trade-geometry'
 import type { Trade, TradeTag, TradeTags, TagCategory } from '@/lib/supabase/types'
+import { offScalePrices } from '@/lib/trade-price-scale'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { suggestTagsFromText, mergeTradeTags } from '@/lib/suggest-tags'
 import { downscaleForVision } from '@/lib/downscale-image'
@@ -134,6 +135,9 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   const [saving, setSaving] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Off-scale price warning: the values the trader was warned about. Saving the
+  // SAME values again is the deliberate "yes, keep them"; any edit re-arms it.
+  const [scaleWarnedFor, setScaleWarnedFor] = useState<string | null>(null)
   // Track the originally-saved screenshot URL so we can delete it from storage
   // if the user replaces or removes it on save.
   const [savedScreenshotUrl, setSavedScreenshotUrl] = useState<string | null>(trade?.screenshot_url ?? null)
@@ -416,6 +420,16 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   }
 
   const save = async () => {
+    // A price on a different scale from this trade's own fills is almost always
+    // another instrument's level — 2026-10-08 an MES copy trade was saved with
+    // the MNQ chart's entry/stop/target (31,230 against an MES exit of 7,821.75)
+    // and its MAE came out at 9,216×ATR. Ask once before writing it.
+    const offScale = offScalePrices(trade, form)
+    if (offScale && scaleWarnedFor !== offScale.signature) {
+      setScaleWarnedFor(offScale.signature)
+      setError(offScale.message)
+      return
+    }
     setSaving(true)
     setError(null)
     try {

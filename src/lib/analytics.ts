@@ -1,6 +1,6 @@
 import type { Trade, TradeTags, TradingDay, MarketContext } from '@/lib/supabase/types'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
-import { anchorExcursionToFills } from '@/lib/excursion-guard'
+import { anchorExcursionToFills, EXCURSION_TOLERANCE_POINTS } from '@/lib/excursion-guard'
 
 /**
  * Pure aggregation helpers for the Journal + Analytics views.
@@ -159,6 +159,12 @@ export function rMultiple(t: TradeLike, atrAtEntry?: number | null): number | nu
 export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number } | null {
   if (t.entry_price == null || t.direction == null) return null
   if (t.high_during_position == null || t.low_during_position == null) return null
+  // A fill far outside the range the position traded through means the row
+  // mixes prices from two places (an NQ entry typed onto an MES copy trade, a
+  // mis-scaled read). Its "excursion" is fabricated — 2026-10-08 produced a
+  // 23,408-pt MAE, 9,216×ATR, and one such row dragged the day's average to
+  // −1,843×. No excursion beats a made-up one, for every consumer at once.
+  if (excursionContradictsFills(t)) return null
   const isLong = t.direction === 'long'
   // Measure against a window that contains the trade's own fills. A feed can
   // start recording just after the entry tick, leaving a stored high a tick
@@ -194,6 +200,39 @@ export function mfeMaePoints(t: TradeWithExcursion): { mfe: number; mae: number 
 const EXCURSION_ENTRY_TOL_ATR = 2
 
 /**
+ * Fallback when the trade carries no ATR: a fill this far outside its range, as
+ * a share of price, is never bar noise. 0.5% ≈ 155 NQ / 39 ES points — loose
+ * next to 2×ATR, yet a cross-instrument or ×100 price misses it by thousands.
+ */
+const EXCURSION_FILL_TOL_PCT = 0.005
+
+/**
+ * True when the entry or exit price sits implausibly far outside the range the
+ * position actually traded through [low, high] — the row's prices cannot all
+ * belong to the same position, so its MFE/MAE would be fabricated. Tolerance is
+ * EXCURSION_ENTRY_TOL_ATR × ATR (the given one, else the trade's entry_atr_1m),
+ * or EXCURSION_FILL_TOL_PCT of price without one — never less than
+ * EXCURSION_TOLERANCE_POINTS, so a miss anchorExcursionToFills would repair
+ * (bar noise, ~5 pts observed) is never thrown away here. On the founder's 438
+ * trades with excursion data this flags none; it exists for the row that is
+ * wrong by hundreds or thousands.
+ */
+export function excursionContradictsFills(
+  t: TradeWithExcursion & { exit_price?: number | null; entry_atr_1m?: number | null },
+  atr?: number | null,
+): boolean {
+  const { high_during_position: hi, low_during_position: lo, entry_price: e } = t
+  if (hi == null || lo == null || e == null) return false
+  const a = atr ?? t.entry_atr_1m
+  const tol = Math.max(
+    EXCURSION_TOLERANCE_POINTS,
+    a != null && a > 0 ? EXCURSION_ENTRY_TOL_ATR * a : EXCURSION_FILL_TOL_PCT * Math.abs(e),
+  )
+  const outside = (p: number) => Math.max(p - hi, lo - p)
+  return outside(e) > tol || (t.exit_price != null && outside(t.exit_price) > tol)
+}
+
+/**
  * MFE and MAE in ATR units — excursion points ÷ ATR-at-entry. The stop-free unit
  * for the efficiency read ("took 0.4×ATR of heat", "captured 2.1×ATR"). Pass a
  * live ATR via `atrAtEntry`; otherwise falls back to the stored entry_atr_1m.
@@ -209,13 +248,9 @@ export function mfeMaeAtr(
   if (!pts) return null
   const atr = atrAtEntry ?? t.entry_atr_1m
   if (atr == null || atr <= 0) return null
-  // Data-integrity guard: entry_price must sit within the range the position
-  // actually traded through. When it doesn't, the excursion is fabricated and
-  // can be hundreds of ×ATR — discard rather than let one bad row dominate.
-  const { high_during_position: hi, low_during_position: lo, entry_price: e } = t
-  if (hi != null && lo != null && e != null && Math.max(e - hi, lo - e) > EXCURSION_ENTRY_TOL_ATR * atr) {
-    return null
-  }
+  // mfeMaePoints judged the row against the STORED ATR; a live ATR passed in
+  // here can be tighter, so re-check against the one actually used.
+  if (excursionContradictsFills(t, atr)) return null
   return { mfe: pts.mfe / atr, mae: pts.mae / atr }
 }
 

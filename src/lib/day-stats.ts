@@ -126,7 +126,11 @@ export interface DayStatsRollup {
 // comparison reads (risk/quantity sums + counts, instrument split, logged trade
 // P&L). Stored as SUMS so a period pools them correctly; every cached row must
 // recompute or the comparison silently drops its risk and size rows.
-export const STATS_VERSION = 7
+// v8 (2026-10-08): mfeMaePoints returns null for a row whose entry/exit sits far
+// outside its own traded range (excursionContradictsFills) instead of a
+// fabricated excursion. One such row (an NQ entry on an MES trade) put a day's
+// avg MAE at −1,843×ATR; cached rows must recompute to drop it.
+export const STATS_VERSION = 8
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
