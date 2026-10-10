@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import { Moon, Sun } from 'lucide-react'
 
 /**
@@ -19,39 +19,39 @@ import { Moon, Sun } from 'lucide-react'
 export const THEME_KEY = 'ts-theme'
 export type Theme = 'dark' | 'light'
 
+// The attribute is the live truth, watched rather than read once: ThemeKeeper
+// repairs a dropped attribute on navigation, and a second switch (Deep Dive's
+// toolbar) can flip it, so every reader updates the moment it changes.
+function subscribe(onChange: () => void) {
+  const mo = new MutationObserver(onChange)
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+  return () => mo.disconnect()
+}
+const snapshot = (): Theme => (document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark')
+
+/** The current app theme. 'dark' on the server and during hydration, so there
+ *  is no mismatch; it settles to the applied theme right after. */
+export function useTheme(): Theme {
+  return useSyncExternalStore(subscribe, snapshot, () => 'dark')
+}
+
+/** Switch the app theme and remember it. */
+export function applyTheme(next: Theme) {
+  const root = document.documentElement
+  if (next === 'light') root.setAttribute('data-theme', 'light')
+  else root.removeAttribute('data-theme')
+  try { localStorage.setItem(THEME_KEY, next) } catch { /* ignore */ }
+}
+
 export default function ThemeToggle({ compact = false }: { compact?: boolean }) {
-  // Starts 'dark' on BOTH server and first client render, so there is no
-  // hydration mismatch; the effect below corrects it to whatever the head
-  // script already applied. The control is therefore always painted — an
-  // earlier version withheld the icon until mount and simply looked missing.
-  const [theme, setTheme] = useState<Theme>('dark')
-
-  useEffect(() => {
-    // Read the SAVED choice, not the current attribute. ThemeKeeper repairs a
-    // dropped attribute on navigation, and reading the DOM here would race it —
-    // the icon would show "Light" on a page that is about to become light.
-    let saved: string | null = null
-    try { saved = localStorage.getItem(THEME_KEY) } catch { /* private mode / blocked */ }
-    const current = saved ?? document.documentElement.getAttribute('data-theme')
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reflect the already-applied theme
-    if (current === 'light') setTheme('light')
-  }, [])
-
-  const apply = (next: Theme) => {
-    setTheme(next)
-    const root = document.documentElement
-    if (next === 'light') root.setAttribute('data-theme', 'light')
-    else root.removeAttribute('data-theme')
-    try { localStorage.setItem(THEME_KEY, next) } catch { /* ignore */ }
-  }
-
+  const theme = useTheme()
   const next: Theme = theme === 'light' ? 'dark' : 'light'
   const Icon = theme === 'light' ? Moon : Sun
 
   return (
     <button
       type="button"
-      onClick={() => apply(next)}
+      onClick={() => applyTheme(next)}
       aria-label={`Switch to ${next} mode`}
       title={`Switch to ${next} mode`}
       // Matches the sibling masthead links (Import / Account) rather than

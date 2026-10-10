@@ -46,6 +46,17 @@
  *   failure here is logged and never blocks the bar feed, so charts keep their
  *   candles even before the table exists.
  *
+ * TICK TAPE (Deep Dive Review)
+ *   Every run also publishes the trade stream itself — one small compressed
+ *   chunk per instrument per hour — to the PRIVATE `tick-tape` storage bucket
+ *   (src/lib/orderflow/tape.ts). tapescore.app builds Deep Dive from it, cut at
+ *   the fill second, exactly as the local build does from .scid. Only hours that
+ *   changed are uploaded, and dates older than 90 days are pruned. Like the
+ *   profile, a failure here is logged and never blocks the bar feed.
+ *
+ *   npx tsx scripts/public-bar-feed.ts --tape-only --days 90   # one-time backfill
+ *   npx tsx scripts/public-bar-feed.ts --no-tape               # skip it for a run
+ *
  * SCHEDULE
  *   Task Scheduler, every ~3 min during your session — same cadence as BarWatcher.
  */
@@ -58,6 +69,7 @@ import { contractFileForRoot, type ContractRoot } from '../src/lib/futures-contr
 import { SIERRA_DATA_DIR } from '../src/lib/import-scid-day'
 import { readScidVolumeAtPrice } from '../src/lib/scid-volume-profile'
 import { valueArea, toTuples, profileWindowMs, PROFILE_SESSIONS, PROFILE_TICK, type ProfileSession } from '../src/lib/volume-profile'
+import { supabaseTapeStore, loadTapeIndex, saveTapeIndex, publishTapeDay, pruneTape } from '../src/lib/orderflow/server/tape-store'
 
 const ROOTS: ContractRoot[] = ['NQ', 'ES']
 
@@ -186,6 +198,9 @@ async function main() {
   // a long run is interrupted. --force re-feeds regardless.
   const skipExisting = Boolean(from) && !args.includes('--force')
   const profileOnly = args.includes('--profile-only')
+  // Tick tape for Deep Dive: on by default, alone with --tape-only, off with --no-tape.
+  const tapeOnly = args.includes('--tape-only')
+  const withTape = !args.includes('--no-tape') && !profileOnly
   // Once the table is known to be missing, stop asking for the rest of the run.
   let profileTableMissing = false
 
@@ -239,6 +254,7 @@ async function main() {
   let done = 0, skipped = 0, empty = 0, upsertedTotal = 0
   const startedAt = Date.now()
   for (const date of dates) {
+    if (tapeOnly) break
     for (const f of feedsForDate(date, roots)) {
       if (profileOnly) {
         const { ok, status } = await publishProfiles(f.scidFile, f.root, date)
@@ -294,6 +310,34 @@ async function main() {
         empty++
         if (!from) console.error(`  ${date} ${f.root.padEnd(4)} ${out.error}`)
       }
+    }
+  }
+  // Tick tape — after the bars, so nothing here can delay or fail them.
+  if (withTape) {
+    try {
+      const store = supabaseTapeStore(sb)
+      // The every-3-min run also looks back a day, so an hour that closed while
+      // this machine was off still gets published. Closed, published hours are
+      // skipped without a read, so the look-back costs almost nothing.
+      const prevDay = (d: string) => { const x = new Date(`${d}T12:00:00Z`); x.setUTCDate(x.getUTCDate() - 1); return x.toISOString().slice(0, 10) }
+      const oldestFirst = dates.length === 1 ? [prevDay(dates[0]), dates[0]] : [...dates].sort()
+      const force = args.includes('--force')
+      for (const root of roots) {
+        const index = await loadTapeIndex(store, root)
+        let up = 0, same = 0, bytes = 0
+        for (const date of oldestFirst) {
+          const r = await publishTapeDay(store, root, date, index, { dataDir: SIERRA_DATA_DIR, force })
+          up += r.uploaded; same += r.unchanged; bytes += r.bytes
+          // a long backfill saves its place as it goes, so an interrupted run resumes
+          if (r.uploaded && oldestFirst.length > 1) await saveTapeIndex(store, index)
+        }
+        const pruned = await pruneTape(store, index, todayPT())
+        if (up || pruned) await saveTapeIndex(store, index)
+        if (up) anyOk = true
+        console.log(`  tape ${root.padEnd(4)} ${up} hour${up === 1 ? '' : 's'} uploaded (${(bytes / 1024).toFixed(0)} KB), ${same} unchanged${pruned ? `, ${pruned} old day${pruned === 1 ? '' : 's'} pruned` : ''}`)
+      }
+    } catch (e) {
+      console.error(`  tape skipped: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
   if (from) {
