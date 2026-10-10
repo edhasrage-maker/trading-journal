@@ -18,7 +18,7 @@ import type { OfRoot, TickFrame } from '../ticks'
 import { utcMsToSierraUs } from '../ticks'
 import { ptToUtcMs, utcToPtMs, tradingDate, ptMidnight, ptDate, PT_HOUR_MS, PT_DAY_MS } from '../pt-clock'
 import {
-  TAPE_BUCKET, TAPE_KEEP_DAYS, tapeChunkKey, tapeIndexKey, emptyTapeIndex, encodeTape, decodeTape, tapeHourStat,
+  TAPE_BUCKET, TAPE_KEEP_DAYS, tapeChunkKey, tapeIndexKey, emptyTapeIndex, encodeTape, decodeTape, tapeHourStat, tapeHalfHours,
   type TapeIndex,
 } from '../tape'
 
@@ -119,18 +119,30 @@ export async function publishTapeDay(
       const startPt = day0 + h * HOUR
       if (startPt > nowPt) break
       // An hour that closed a while ago and is already published is final: no need to re-read it.
-      const known = index.days[date]?.hours[String(h).padStart(2, '0')]
-      if (known && !opts.force && startPt + HOUR + CLOSED_GRACE_MS < nowPt) { out.unchanged++; out.trades += known.n; continue }
+      const hh = String(h).padStart(2, '0')
+      const known = index.days[date]?.hours[hh]
+      const has30 = !!index.days[date]?.b30?.some(b => b[0] >> 1 === h)
+      if (known && has30 && !opts.force && startPt + HOUR + CLOSED_GRACE_MS < nowPt) { out.unchanged++; out.trades += known.n; continue }
       const f = open(tradingDate(startPt))
       if (!f) continue
       const t = f.read(usOfPt(startPt), usOfPt(startPt + HOUR))
-      if (!t.n) continue
+      if (!t.n) {
+        // an hour published earlier that now reads as empty (it only ever held a halt marker): withdraw it
+        if (known) {
+          await store.remove([tapeChunkKey(root, date, h)])
+          delete index.days[date].hours[hh]
+          index.days[date].b30 = index.days[date].b30?.filter(b => b[0] >> 1 !== h)
+          out.uploaded++
+        }
+        continue
+      }
       out.trades += t.n
       const day = (index.days[date] ??= { rth: false, hours: {} })
       if (!day.rth && h >= 6 && h <= 12) for (let i = 0; i < t.n; i++) if (t.us[i] >= rthLo && t.us[i] < rthHi) { day.rth = true; break }
-      const hh = String(h).padStart(2, '0')
+      day.b30 = [...(day.b30 ?? []).filter(b => b[0] >> 1 !== h), ...tapeHalfHours(t, day0)].sort((a, b) => a[0] - b[0])
       const stat = tapeHourStat(t), prev = day.hours[hh]
-      if (prev && prev.n === stat.n && prev.lastUs === stat.lastUs) { out.unchanged++; continue }
+      // same trades as published: nothing to upload, but an index that lacked this hour's 30m bars still needs saving
+      if (prev && prev.n === stat.n && prev.lastUs === stat.lastUs) { if (has30) out.unchanged++; else out.uploaded++; continue }
       const enc = encodeTape(t)
       if (!sameFrame(t, decodeTape(enc))) throw new Error(`${root} ${date} ${hh}:00 would not round-trip exactly — not published`)
       const gz = gzipSync(enc, { level: 6 })

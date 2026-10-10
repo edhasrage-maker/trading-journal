@@ -85,7 +85,7 @@ export class BubbleChartController {
   constructor(readonly el: HTMLElement) {
     this.chart = createChart(el, {
       autoSize: true,
-      layout: { fontSize: 11 },
+      layout: { fontSize: 11, attributionLogo: false },
       timeScale: {
         rightOffset: 8,
         tickMarkFormatter: (t: Time) => { const j = slotOf(t as number); return this.B && j >= 0 && j < this.B.t.length ? fmtT(this.B.t[j]) : '' },

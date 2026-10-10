@@ -140,10 +140,15 @@ export function stableSortTicks(t: TickFrame, key: 'us' | 'ptMin'): TickFrame {
   }
 }
 
-/** Ticks stamped before `cutoffUs`, for frames that may not be time-sorted. */
+/**
+ * Real trades stamped before `cutoffUs`, for frames that may not be
+ * time-sorted. "Real" = price > 0: Sierra's halt marker (price 0, volume 1) is
+ * dropped here as well as in the .scid reader, so it can't reach a chart from
+ * any source.
+ */
 export function keepBefore(t: TickFrame, cutoffUs: number): TickFrame {
   let n = 0
-  for (let i = 0; i < t.n; i++) if (t.us[i] < cutoffUs) n++
+  for (let i = 0; i < t.n; i++) if (t.us[i] < cutoffUs && t.px[i] > 0) n++
   if (n === t.n) return t
   const out: TickFrame = {
     n, us: new Float64Array(n), ptMin: new Float64Array(n), px: new Float64Array(n),
@@ -152,7 +157,7 @@ export function keepBefore(t: TickFrame, cutoffUs: number): TickFrame {
   }
   let j = 0
   for (let i = 0; i < t.n; i++) {
-    if (t.us[i] >= cutoffUs) continue
+    if (t.us[i] >= cutoffUs || !(t.px[i] > 0)) continue
     out.us[j] = t.us[i]; out.ptMin[j] = t.ptMin[i]; out.px[j] = t.px[i]; out.hh[j] = t.hh[i]; out.ll[j] = t.ll[i]
     out.v[j] = t.v[i]; out.bv[j] = t.bv[i]; out.av[j] = t.av[i]; out.nt[j] = t.nt[i]; j++
   }

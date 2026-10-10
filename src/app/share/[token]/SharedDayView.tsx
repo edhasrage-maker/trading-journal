@@ -1,5 +1,6 @@
 'use client'
 
+import ChartAttribution from '@/components/ChartAttribution'
 import { Fragment, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import LiveChart, { type ChartPrefs, type SharedAnnotation } from '@/components/charts/LiveChart'
@@ -273,6 +274,7 @@ export default function SharedDayView({ day, trades, chartPrefs, annotations }: 
 
         <p className="mt-8 text-center text-xs text-gray-600">
           Read-only shared session · <span style={DISPLAY} className="text-gray-400">TapeScore</span> — game film for traders
+          {' · '}<ChartAttribution />
         </p>
       </main>
 

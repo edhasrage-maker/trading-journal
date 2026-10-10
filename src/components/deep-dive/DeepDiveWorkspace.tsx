@@ -10,14 +10,15 @@
  * published tick tape), so this component doesn't know or care which it is on.
  * Blind off is the same workspace as a deep chart review, run on past the exit.
  *
- * Order-flow panels (40-trade bubbles, 1m footprint) default ON only when the
- * trader's profile uses order flow; each is switchable.
+ * Order flow (40-trade bubbles, 1m footprint) is one switch. It starts ON only
+ * when the trader's profile uses order flow; with it off this is a clean
+ * price-action workspace — time chart, levels, bracket.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { DeepDivePayload } from '@/lib/orderflow/server/deep-dive-payload'
 import type { OfRoot } from '@/lib/orderflow/ticks'
-import { toBars1m, vapPerBar, buildAgg, atr1m5m, type AggBar } from '@/lib/orderflow/bars'
+import { toBars1m, vapPerBar, buildAgg, atr1m5m, htfToBars, SESSION_4H_OFFSET, type AggBar, type VapRow } from '@/lib/orderflow/bars'
 import { volumeProfile, profileWindow, type ProfileWindow } from '@/lib/orderflow/profile'
 import { vwap24h, vwapRth, emaOnTf } from '@/lib/orderflow/indicators'
 import { TimeChartController, fmtDT, fmtTs, type TimeChartOpts } from './time-chart'
@@ -30,27 +31,37 @@ import { useTheme, applyTheme } from '@/components/ThemeToggle'
 export interface PickerTrade { id: string; entryUtc: string; symbol: string; direction: 'long' | 'short' }
 type Payload = DeepDivePayload & { uses_order_flow: boolean }
 
-type Tf = 1 | 2 | 3 | 5 | 15
+/** Chart timeframes, in minutes: 1m · 5m · 30m · 4h. */
+const TFS = [1, 5, 30, 240] as const
+type Tf = (typeof TFS)[number]
+const tfLabel = (t: Tf) => (t === 240 ? '4h' : `${t}m`)
+/** 30m and 4h run on the 30-minute history, not just the 1m window. */
+const isHtf = (t: Tf) => t >= 30
+
 interface Settings {
   tf: Tf; ha: boolean; view: 'both' | 'time' | 'bubble'; boff: boolean; b40: boolean
   prof: ProfileWindow | 'off'; lv: boolean; vwap: boolean; ema: boolean; poc: boolean; dv: boolean
-  /** null = follow the profile's order-flow default. */
-  bubbles: boolean | null; fp: boolean | null
+  /** Order-flow master switch. null = follow the profile's default. */
+  of: boolean | null
+  bubbles: boolean; fp: boolean
+  /** Bracket + levels table panel. */
+  rail: boolean
   fpN: number; fpR: number
   g: Record<OfRoot, { fp: number; prof: number; min: number }>
 }
 const DEFAULTS: Settings = {
   tf: 1, ha: false, view: 'both', boff: true, b40: true, prof: 'session', lv: true, vwap: true, ema: true, poc: true, dv: false,
-  bubbles: null, fp: null, fpN: 10, fpR: 3,
+  of: null, bubbles: true, fp: true, rail: false, fpN: 10, fpR: 3,
   g: { NQ: { fp: 4, prof: 4, min: 5 }, ES: { fp: 1, prof: 1, min: 20 } },
 }
-const SETTINGS_KEY = 'deepdive-settings-v1'
+const SETTINGS_KEY = 'deepdive-settings-v2'
 
 const ptTime = (iso: string) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(iso))
 const rootOf = (symbol: string) => (/^M?NQ/i.test(symbol) ? 'NQ' : /^M?ES/i.test(symbol) ? 'ES' : symbol.slice(0, 3))
 
 const btn = (on: boolean) =>
   `px-2 py-[3px] text-[12px] border rounded-[3px] transition-colors ${on ? 'border-blue-500 text-gray-100 shadow-[inset_0_-2px_0_var(--color-blue-500)]' : 'border-gray-800 text-gray-400 hover:text-gray-100'}`
+const sel = 'bg-transparent border border-gray-800 rounded-[3px] px-1 py-[2px]'
 
 export default function DeepDiveWorkspace({
   date, trades, initialId, usesOrderFlow,
@@ -68,16 +79,17 @@ export default function DeepDiveWorkspace({
   const [selectedId, setSelectedId] = useState<string | null>(initialId)
   const [blind, setBlind] = useState(true)
   const [settings, setSettings] = useState<Settings>(DEFAULTS)
-  const [result, setResult] = useState<{ key: string; payload?: Payload; error?: string; ms?: number } | null>(null)
-  const key = `${selectedId}|${blind ? 1 : 0}`
-  const loading = !!selectedId && result?.key !== key
+  const [result, setResult] = useState<{ key: string; htf: boolean; payload?: Payload; error?: string; ms?: number } | null>(null)
 
   // per-browser view settings
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY)
+      if (!raw) return
+      const saved = JSON.parse(raw) as Partial<Settings>
+      if (!TFS.includes(saved.tf as Tf)) delete saved.tf
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from localStorage after mount (SSR has no storage)
-      if (raw) setSettings(s => ({ ...s, ...JSON.parse(raw), g: { ...s.g, ...(JSON.parse(raw).g ?? {}) } }))
+      setSettings(s => ({ ...s, ...saved, g: { ...s.g, ...(saved.g ?? {}) } }))
     } catch { /* storage unavailable: defaults */ }
   }, [])
   const update = useCallback((patch: Partial<Settings>) => {
@@ -88,21 +100,28 @@ export default function DeepDiveWorkspace({
     })
   }, [])
 
-  // fetch the trade (server-cut when blind)
+  // ---- fetch the trade (server-cut when blind) ----
+  // The 30m / 4h charts need 30-minute history. The hosted site always sends it;
+  // the local build only when asked (it is a longer read), so a switch to 30m /
+  // 4h refetches once if the payload on hand doesn't carry it.
+  const key = `${selectedId}|${blind ? 1 : 0}`
+  const wantHtf = isHtf(settings.tf)
+  const have = result?.key === key ? result : null
+  const satisfied = !!have && (!wantHtf || have.htf)
   useEffect(() => {
-    if (!selectedId) return
+    if (!selectedId || satisfied) return
     let live = true
     const t0 = performance.now()
-    fetch(`/api/deep-dive/trade?id=${selectedId}&blind=${blind ? 1 : 0}`, { cache: 'no-store' })
+    fetch(`/api/deep-dive/trade?id=${selectedId}&blind=${blind ? 1 : 0}${wantHtf ? '&htf=1' : ''}`, { cache: 'no-store' })
       .then(async r => {
         const j = await r.json()
         if (!live) return
-        if (!r.ok) setResult({ key, error: j.error ?? `HTTP ${r.status}` })
-        else setResult({ key, payload: j as Payload, ms: Math.round(performance.now() - t0) })
+        if (!r.ok) setResult({ key, htf: wantHtf, error: j.error ?? `HTTP ${r.status}` })
+        else setResult({ key, htf: wantHtf || !!(j as Payload).snapshot?.htf, payload: j as Payload, ms: Math.round(performance.now() - t0) })
       })
-      .catch(e => { if (live) setResult({ key, error: String(e) }) })
+      .catch(e => { if (live) setResult({ key, htf: wantHtf, error: String(e) }) })
     return () => { live = false }
-  }, [selectedId, blind, key])
+  }, [selectedId, blind, key, wantHtf, satisfied])
 
   const select = (id: string) => {
     setSelectedId(id)
@@ -110,13 +129,16 @@ export default function DeepDiveWorkspace({
   }
   const idx = trades.findIndex(t => t.id === selectedId)
 
-  const P = result?.key === key ? result.payload : undefined
+  const P = have?.payload
   const S = P?.snapshot
   const inst = (P?.trade.inst ?? 'NQ') as OfRoot
   const G = settings.g[inst]
-  const showBubbles = (settings.bubbles ?? usesOrderFlow) && settings.view !== 'time'
-  const showTime = settings.view !== 'bubble'
-  const showFp = settings.fp ?? usesOrderFlow
+  const ofOn = settings.of ?? usesOrderFlow
+  const bubblesOn = ofOn && settings.bubbles
+  const showBubbles = bubblesOn && settings.view !== 'time'
+  const showTime = !(bubblesOn && settings.view === 'bubble')
+  const showFp = ofOn && settings.fp
+  const htfChart = isHtf(settings.tf)
 
   // ---- derived data ----
   const D = useMemo(() => {
@@ -130,12 +152,23 @@ export default function DeepDiveWorkspace({
     const asOf = m1.slice(0, fillIdx + 1)
     return {
       m1, vap, fillIdx, asOf,
+      hist: S.htf ? htfToBars(S.htf) : [],
       vwap: vwap24h(m1), rvwap: vwapRth(m1), ema9: emaOnTf(m1, 9), ema20: emaOnTf(m1, 20),
       atr: atr1m5m(asOf, entry),
     }
   }, [S, P?.blind])
 
-  const agg: AggBar[] = useMemo(() => (D ? buildAgg(D.m1, D.vap, settings.tf) : []), [D, settings.tf])
+  // 1m / 5m: the 1-minute window. 30m / 4h: the 30-minute history, continued by the window.
+  const { agg, fillAt } = useMemo((): { agg: AggBar[]; fillAt: number } => {
+    if (!D) return { agg: [], fillAt: 0 }
+    if (!htfChart) return { agg: buildAgg(D.m1, D.vap, settings.tf), fillAt: D.fillIdx }
+    const empty: VapRow[][] = D.hist.map(() => [])
+    return {
+      agg: buildAgg([...D.hist, ...D.m1], [...empty, ...D.vap], settings.tf, settings.tf === 240 ? SESSION_4H_OFFSET : 0),
+      fillAt: D.hist.length + D.fillIdx,
+    }
+  }, [D, settings.tf, htfChart])
+
   const profile = useMemo(() => {
     if (!D || !S || settings.prof === 'off') return null
     const [t0, t1] = profileWindow(settings.prof, S.times)
@@ -164,9 +197,11 @@ export default function DeepDiveWorkspace({
   const [bubLegendSlot, setBubLegendSlot] = useState<number | null>(null)
   const lastKey = useRef<string>('')
 
+  // VWAP, the 5m EMAs and bar POC are intraday reads; they don't belong on a 30m / 4h chart
   const timeOpts: Omit<TimeChartOpts, 'palette'> = useMemo(() => ({
-    ha: settings.ha, levels: settings.lv, vwap: settings.vwap, ema: settings.ema, poc: settings.poc, deltaVol: settings.dv,
-  }), [settings.ha, settings.lv, settings.vwap, settings.ema, settings.poc, settings.dv])
+    ha: settings.ha, levels: settings.lv, vwap: settings.vwap && !htfChart, ema: settings.ema && !htfChart,
+    poc: settings.poc && !htfChart, deltaVol: settings.dv,
+  }), [settings.ha, settings.lv, settings.vwap, settings.ema, settings.poc, settings.dv, htfChart])
 
   useEffect(() => {
     if (!showTime || !timeEl.current || !D || !S) return
@@ -176,17 +211,19 @@ export default function DeepDiveWorkspace({
       timeCtl.current = new TimeChartController(timeEl.current, { ...timeOpts, palette: pal })
       timeCtl.current.onCrosshair = i => setLegendIdx(i)
     }
-    const at = (vals: (number | null)[]) => agg.map(b => vals[b.mins[b.mins.length - 1]] ?? null)
-    const entryIndex = Math.max(0, agg.findIndex(b => b.mins.includes(Math.max(0, D.fillIdx))))
-    const resetView = timeCtl.current.bars.length === 0 || lastKey.current !== `${key}|${settings.tf}|t`
-    lastKey.current = `${key}|${settings.tf}|t`
+    const none = agg.map(() => null)
+    const at = (vals: (number | null)[]) => (htfChart ? none : agg.map(b => vals[b.mins[b.mins.length - 1]] ?? null))
+    const entryIndex = Math.max(0, agg.findIndex(b => b.mins.includes(Math.max(0, fillAt))))
+    const viewKey = `${key}|${settings.tf}|${D.hist.length}`
+    const resetView = timeCtl.current.bars.length === 0 || lastKey.current !== viewKey
+    lastKey.current = viewKey
     timeCtl.current.render({
       agg, vwap: at(D.vwap), rvwap: at(D.rvwap), ema9: at(D.ema9), ema20: at(D.ema20), profile,
       levels: S.levels, bracket: S.bracket,
       entry: { price: S.row.price, direction: S.row.direction, time: S.times.entry, label: `fill ${S.row.time}` },
       exits: P?.exits ?? [], entryIndex,
     }, { ...timeOpts, palette: pal }, resetView)
-  }, [D, S, P?.exits, agg, profile, timeOpts, pal, showTime, key, settings.tf])
+  }, [D, S, P?.exits, agg, fillAt, htfChart, profile, timeOpts, pal, showTime, key, settings.tf])
 
   useEffect(() => () => { timeCtl.current?.destroy(); timeCtl.current = null }, [showTime])
 
@@ -206,12 +243,12 @@ export default function DeepDiveWorkspace({
 
   useEffect(() => () => { bubCtl.current?.destroy(); bubCtl.current = null }, [showBubbles])
 
-  // keyboard: 1 2 3 5 F timeframe · H Heiken-Ashi · [ ] previous / next trade
+  // keyboard: 1 = 1m · 5 = 5m · 3 = 30m · 4 = 4h · H Heiken-Ashi · [ ] previous / next trade
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.ctrlKey || e.altKey || e.metaKey) return
-      const tfMap: Record<string, Tf> = { '1': 1, '2': 2, '3': 3, '5': 5, f: 15, F: 15 }
+      const tfMap: Record<string, Tf> = { '1': 1, '5': 5, '3': 30, '4': 240 }
       if (tfMap[e.key]) update({ tf: tfMap[e.key] })
       else if (e.key === 'h' || e.key === 'H') update({ ha: !settings.ha })
       else if (e.key === '[' && idx > 0) select(trades[idx - 1].id)
@@ -226,7 +263,8 @@ export default function DeepDiveWorkspace({
     if (!agg.length) return ''
     const b = legendIdx != null && agg[legendIdx] ? agg[legendIdx] : agg[agg.length - 1]
     const f = (x: number) => x.toFixed(2)
-    return `${fmtDT(b.t)}${b.partial ? `  (partial → fill ${S?.row.time})` : ''}  ${settings.tf}m\nO ${f(b.o)}  H ${f(b.h)}  L ${f(b.l)}  C ${f(b.c)}  V ${b.v}\nΔ ${b.d}  (min ${b.dmin}  max ${b.dmax})  bid ${b.bv}  ask ${b.av}`
+    return `${fmtDT(b.t)}${b.partial ? `  (partial → fill ${S?.row.time})` : ''}  ${tfLabel(settings.tf)}\nO ${f(b.o)}  H ${f(b.h)}  L ${f(b.l)}  C ${f(b.c)}  V ${b.v}` +
+      (htfChart ? `\nΔ ${b.d}  bid ${b.bv}  ask ${b.av}` : `\nΔ ${b.d}  (min ${b.dmin}  max ${b.dmax})  bid ${b.bv}  ask ${b.av}`)
   })()
   const bubLegend = (() => {
     const B = S?.bubbles; if (!B) return ''
@@ -241,6 +279,8 @@ export default function DeepDiveWorkspace({
 
   // ---- render ----
   const r = S?.row
+  const B = S?.bracket
+  const rr = B && B.stop != null && B.tp != null && r ? Math.abs(B.tp - r.price) / Math.abs(r.price - B.stop) : null
   return (
     <div className="flex flex-col -mt-2" style={{ height: 'calc(100vh - 150px)', minHeight: 640 }}>
       {/* header: picker + trade facts (entry-time facts only) */}
@@ -265,6 +305,15 @@ export default function DeepDiveWorkspace({
             {' '}@ {r.price.toFixed(2)}
           </div>
         )}
+        {/* the planned bracket in one line; the full breakdown is in the Levels panel */}
+        {B && (B.stop != null || B.tp != null) && (
+          <div className="text-[12px] tabular-nums text-gray-400">
+            {B.stop != null && <>stop <span className="text-red-400">{B.stop.toFixed(2)}</span>{B.stop_src === 'assumed' ? ' (assumed)' : ''}</>}
+            {B.stop != null && B.tp != null && ' · '}
+            {B.tp != null && <>TP <span className="text-green-400">{B.tp.toFixed(2)}</span>{B.tp_src === 'assumed' ? ' (assumed)' : ''}</>}
+            {rr != null && <> · {rr.toFixed(2)}R</>}
+          </div>
+        )}
         {S && (
           <div className="text-[12px] tabular-nums" style={{ color: '#ff9f1a' }}>
             {P?.blind
@@ -273,7 +322,7 @@ export default function DeepDiveWorkspace({
           </div>
         )}
         <div className="ml-auto flex items-center gap-2">
-          {P && <span className="text-[11px] tabular-nums" style={{ color: 'var(--ts-faint)' }}>loaded {result?.ms} ms · built {P.build_ms} ms</span>}
+          {P && <span className="text-[11px] tabular-nums" style={{ color: 'var(--ts-faint)' }}>loaded {have?.ms} ms · built {P.build_ms} ms</span>}
           <span className="flex items-center gap-1 pr-2 mr-1 border-r" style={{ borderColor: 'var(--ts-line)' }}>
             <button className={btn(theme === 'light')} onClick={() => applyTheme('light')}>Light</button>
             <button className={btn(theme === 'dark')} onClick={() => applyTheme('dark')}>Dark</button>
@@ -285,39 +334,47 @@ export default function DeepDiveWorkspace({
 
       {/* toolbar */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 border-b text-[12px] text-gray-400" style={{ borderColor: 'var(--ts-line)' }}>
-        <span className="flex items-center gap-1">TF {([1, 2, 3, 5, 15] as Tf[]).map(t => <button key={t} className={btn(settings.tf === t)} onClick={() => update({ tf: t })}>{t}m</button>)}</span>
+        <span className="flex items-center gap-1">TF {TFS.map(t => <button key={t} className={btn(settings.tf === t)} onClick={() => update({ tf: t })}>{tfLabel(t)}</button>)}</span>
         <button className={btn(settings.ha)} onClick={() => update({ ha: !settings.ha })}>Heiken-Ashi</button>
         <span className="flex items-center gap-1">
           <button className={btn(settings.lv)} onClick={() => update({ lv: !settings.lv })}>Levels</button>
-          <button className={btn(settings.vwap)} onClick={() => update({ vwap: !settings.vwap })}>VWAP</button>
-          <button className={btn(settings.ema)} onClick={() => update({ ema: !settings.ema })}>EMA 9/20 (5m)</button>
-          <button className={btn(settings.poc)} onClick={() => update({ poc: !settings.poc })}>Bar POC</button>
+          {!htfChart && <>
+            <button className={btn(settings.vwap)} onClick={() => update({ vwap: !settings.vwap })}>VWAP</button>
+            <button className={btn(settings.ema)} onClick={() => update({ ema: !settings.ema })}>EMA 9/20 (5m)</button>
+            <button className={btn(settings.poc)} onClick={() => update({ poc: !settings.poc })}>Bar POC</button>
+          </>}
           <button className={btn(settings.dv)} onClick={() => update({ dv: !settings.dv })}>Delta / Vol panes</button>
         </span>
         <span className="flex items-center gap-1">Profile
-          <select className="bg-transparent border border-gray-800 rounded-[3px] px-1 py-[2px]" value={settings.prof} onChange={e => update({ prof: e.target.value as Settings['prof'] })}>
+          <select className={sel} value={settings.prof} onChange={e => update({ prof: e.target.value as Settings['prof'] })}>
             <option value="session">session (dev)</option><option value="on">overnight</option><option value="prior">prior RTH</option><option value="off">off</option>
           </select>
-          <select className="bg-transparent border border-gray-800 rounded-[3px] px-1 py-[2px]" value={G.prof} title="profile row size (ticks)"
+          <select className={sel} value={G.prof} title="profile row size (ticks)"
             onChange={e => update({ g: { ...settings.g, [inst]: { ...G, prof: +e.target.value } } })}>
             {[1, 2, 4, 8, 16].map(x => <option key={x} value={x}>{x}t</option>)}
           </select>
         </span>
-        <span className="flex items-center gap-1 pl-2 border-l" style={{ borderColor: 'var(--ts-line)' }}>Order flow
-          <button className={btn(settings.bubbles ?? usesOrderFlow)} onClick={() => update({ bubbles: !(settings.bubbles ?? usesOrderFlow) })}>40T bubbles</button>
-          <button className={btn(showFp)} onClick={() => update({ fp: !showFp })}>Footprint</button>
-          {showBubbles && <>
-            <select className="bg-transparent border border-gray-800 rounded-[3px] px-1 py-[2px]" value={settings.view} onChange={e => update({ view: e.target.value as Settings['view'] })}>
-              <option value="both">time + bubbles</option><option value="time">time only</option><option value="bubble">bubbles only</option>
-            </select>
-            <button className={btn(settings.boff)} onClick={() => update({ boff: !settings.boff })} title="Your study draws each bubble one bar to the left (Historical Horizontal Offset = -1)">-1 offset</button>
-            <button className={btn(settings.b40)} onClick={() => update({ b40: !settings.b40 })} title="Show the 40-trade bars behind the bubbles">40T bars</button>
+        <span className="flex items-center gap-1 pl-2 border-l" style={{ borderColor: 'var(--ts-line)' }}>
+          <button className={btn(ofOn)} onClick={() => update({ of: !ofOn })} title="Bubble chart and footprint. Turn off for a price-action-only workspace.">Order flow</button>
+          {ofOn && <>
+            <button className={btn(settings.bubbles)} onClick={() => update({ bubbles: !settings.bubbles })}>40T bubbles</button>
+            <button className={btn(settings.fp)} onClick={() => update({ fp: !settings.fp })}>Footprint</button>
+            {bubblesOn && <>
+              <select className={sel} value={settings.view} onChange={e => update({ view: e.target.value as Settings['view'] })}>
+                <option value="both">time + bubbles</option><option value="time">time only</option><option value="bubble">bubbles only</option>
+              </select>
+              <button className={btn(settings.boff)} onClick={() => update({ boff: !settings.boff })} title="Your study draws each bubble one bar to the left (Historical Horizontal Offset = -1)">-1 offset</button>
+              <button className={btn(settings.b40)} onClick={() => update({ b40: !settings.b40 })} title="Show the 40-trade bars behind the bubbles">40T bars</button>
+            </>}
           </>}
         </span>
+        <button className={`${btn(settings.rail)} ml-auto`} onClick={() => update({ rail: !settings.rail })} title="Planned bracket detail and every level near the entry, sorted by distance">
+          Levels panel
+        </button>
       </div>
 
-      {loading && <p className="p-6 text-[13px] text-gray-400">Building the chart as of the fill…</p>}
-      {result?.key === key && result.error && <p className="p-6 text-[13px] text-red-400">{result.error}</p>}
+      {!have && !!selectedId && <p className="p-6 text-[13px] text-gray-400">Building the chart as of the fill…</p>}
+      {have?.error && <p className="p-6 text-[13px] text-red-400">{have.error}</p>}
 
       {D && S && (
         <div className="flex flex-1 min-h-0">
@@ -326,7 +383,9 @@ export default function DeepDiveWorkspace({
               {showTime && (
                 <div className="relative flex-1 min-w-0">
                   <div ref={timeEl} className="absolute inset-0" />
-                  <pre className="absolute left-2 top-1.5 z-10 pointer-events-none m-0 px-1.5 py-0.5 rounded-[3px] font-mono text-[12px] leading-snug" style={{ background: pal.legend.bg, color: pal.legend.text }}>{legend}</pre>
+                  <pre className="absolute left-2 top-1.5 z-10 pointer-events-none m-0 px-1.5 py-0.5 rounded-[3px] font-mono text-[12px] leading-snug" style={{ background: pal.legend.bg, color: pal.legend.text }}>
+                    {legend}{htfChart && !satisfied ? `\nloading ${tfLabel(settings.tf)} history…` : htfChart && D.hist.length === 0 ? '\nno earlier history available for this date' : ''}
+                  </pre>
                 </div>
               )}
               {showBubbles && S.bubbles && (
@@ -343,13 +402,13 @@ export default function DeepDiveWorkspace({
               <div className="flex flex-col border-t" style={{ height: '38%', minHeight: 170, borderColor: 'var(--ts-line)' }}>
                 <div className="flex flex-wrap items-center gap-2 px-2 py-1 border-b text-[12px] text-gray-400" style={{ borderColor: 'var(--ts-line)' }}>
                   <span>Footprint 1m · last</span>
-                  <select className="bg-transparent border border-gray-800 rounded-[3px] px-1" value={settings.fpN} onChange={e => update({ fpN: +e.target.value })}>{[4, 6, 8, 10, 12, 15].map(x => <option key={x}>{x}</option>)}</select>
+                  <select className={sel} value={settings.fpN} onChange={e => update({ fpN: +e.target.value })}>{[4, 6, 8, 10, 12, 15].map(x => <option key={x}>{x}</option>)}</select>
                   <span>bars · rows</span>
-                  <select className="bg-transparent border border-gray-800 rounded-[3px] px-1" value={G.fp} onChange={e => update({ g: { ...settings.g, [inst]: { ...G, fp: +e.target.value } } })}>{[1, 2, 4, 8].map(x => <option key={x}>{x}</option>)}</select>
+                  <select className={sel} value={G.fp} onChange={e => update({ g: { ...settings.g, [inst]: { ...G, fp: +e.target.value } } })}>{[1, 2, 4, 8].map(x => <option key={x}>{x}</option>)}</select>
                   <span>ticks · imbalance</span>
-                  <select className="bg-transparent border border-gray-800 rounded-[3px] px-1" value={settings.fpR} onChange={e => update({ fpR: +e.target.value })}>{[2, 2.5, 3, 4].map(x => <option key={x} value={x}>{x * 100}%</option>)}</select>
+                  <select className={sel} value={settings.fpR} onChange={e => update({ fpR: +e.target.value })}>{[2, 2.5, 3, 4].map(x => <option key={x} value={x}>{x * 100}%</option>)}</select>
                   <span>min vol</span>
-                  <select className="bg-transparent border border-gray-800 rounded-[3px] px-1" value={G.min} onChange={e => update({ g: { ...settings.g, [inst]: { ...G, min: +e.target.value } } })}>{[1, 3, 5, 10, 20, 40].map(x => <option key={x}>{x}</option>)}</select>
+                  <select className={sel} value={G.min} onChange={e => update({ g: { ...settings.g, [inst]: { ...G, min: +e.target.value } } })}>{[1, 3, 5, 10, 20, 40].map(x => <option key={x}>{x}</option>)}</select>
                   <span className="text-[11px]" style={{ color: 'var(--ts-faint)' }}>side bars = 3+ stacked imbalances · yellow = bar POC · orange = entry · dashed = stop / TP · VPS bold at 2×/3×/4× the prior-10 median</span>
                 </div>
                 <div className="flex-1 min-h-0" style={{ background: pal.chart.bg }}>
@@ -364,21 +423,20 @@ export default function DeepDiveWorkspace({
               </div>
             )}
           </section>
-          <aside className="w-[380px] flex-none border-l overflow-y-auto px-3 py-3 space-y-4" style={{ borderColor: 'var(--ts-line)' }}>
-            <div>
-              <h3 className="text-[12px] mb-1.5" style={{ color: 'var(--ts-mut)' }}>Planned bracket at entry</h3>
-              <BracketBox bracket={S.bracket} entryPrice={S.row.price} />
-            </div>
-            <div>
-              <h3 className="text-[12px] mb-1.5" style={{ color: 'var(--ts-mut)' }}>
-                Levels near entry · ATR 1m {S.bracket.atr?.toFixed(2) ?? D.atr.atr1?.toFixed(2) ?? '—'} · 5m {D.atr.atr5?.toFixed(2) ?? '—'} pts
-              </h3>
-              <LevelsNearEntry items={nearLevels} entryPrice={S.row.price} atr={S.bracket.atr ?? D.atr.atr1} />
-            </div>
-            <p className="text-[11px] pt-2 border-t" style={{ color: 'var(--ts-faint)', borderColor: 'var(--ts-hair)' }}>
-              Blind tagging, the trade queue and the reveal come in the next phase.
-            </p>
-          </aside>
+          {settings.rail && (
+            <aside className="w-[380px] flex-none border-l overflow-y-auto px-3 py-3 space-y-4" style={{ borderColor: 'var(--ts-line)' }}>
+              <div>
+                <h3 className="text-[12px] mb-1.5" style={{ color: 'var(--ts-mut)' }}>Planned bracket at entry</h3>
+                <BracketBox bracket={S.bracket} entryPrice={S.row.price} />
+              </div>
+              <div>
+                <h3 className="text-[12px] mb-1.5" style={{ color: 'var(--ts-mut)' }}>
+                  Levels near entry · ATR 1m {S.bracket.atr?.toFixed(2) ?? D.atr.atr1?.toFixed(2) ?? '—'} · 5m {D.atr.atr5?.toFixed(2) ?? '—'} pts
+                </h3>
+                <LevelsNearEntry items={nearLevels} entryPrice={S.row.price} atr={S.bracket.atr ?? D.atr.atr1} />
+              </div>
+            </aside>
+          )}
         </div>
       )}
     </div>

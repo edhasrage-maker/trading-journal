@@ -48,11 +48,15 @@ export interface TapeHourStat {
   /** Last trade's time — with `n`, tells the feed whether the hour changed. */
   lastUs: number
 }
+/** A 30-minute bar in the index: [slot 0–47 of the PT date, open, high, low, close, volume, bid vol, ask vol]. */
+export type TapeHalfHour = [number, number, number, number, number, number, number, number]
 export interface TapeDay {
   /** Any trade in RTH (06:30–13:00 PT) on this date. */
   rth: boolean
   /** Keyed by two-digit PT hour. */
   hours: Record<string, TapeHourStat>
+  /** 30-minute bars for the date, ascending by slot — the 30m / 4h charts' history. */
+  b30?: TapeHalfHour[]
 }
 export interface TapeIndex {
   v: 1
@@ -108,6 +112,21 @@ export function decodeTape(buf: Uint8Array): TickFrame {
   }
   fillPtMinutes(t.us, t.ptMin, n, ptOffsetMs)
   return t
+}
+
+/** The (up to two) 30-minute bars of one hour's frame, file order. `dayStartPt` = PT-clock midnight (ms). */
+export function tapeHalfHours(t: TickFrame, dayStartPt: number): TapeHalfHour[] {
+  const bySlot = new Map<number, TapeHalfHour>()
+  for (let i = 0; i < t.n; i++) {
+    const slot = Math.floor((t.ptMin[i] - dayStartPt) / 1_800_000)
+    const p = t.px[i]
+    let b = bySlot.get(slot)
+    if (!b) { b = [slot, p, p, p, p, 0, 0, 0]; bySlot.set(slot, b) }
+    if (p > b[2]) b[2] = p
+    if (p < b[3]) b[3] = p
+    b[4] = p; b[5] += t.v[i]; b[6] += t.bv[i]; b[7] += t.av[i]
+  }
+  return [...bySlot.values()].sort((a, b) => a[0] - b[0])
 }
 
 /** Index stats for one hour's frame. */

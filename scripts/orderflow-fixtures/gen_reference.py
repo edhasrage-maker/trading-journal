@@ -16,6 +16,15 @@ Per row it writes <out_dir>/row-<seq>.json.gz holding
   ticks     - a digest of the exact tick frame build_row computed from
               (count, sums, first/last time, sha1 of the time + price columns)
   contracts - the (contract -> PT minutes) map build_row passed to load_ticks
+
+ONE CORRECTION to the reference, applied in this process's memory only:
+Sierra writes a marker record into the tick files during the daily maintenance
+halt (14:45 PT most days since late July 2026: price 0, volume 1). The
+reference keeps it — a 1-minute bar at price zero, and a "prior week low" of
+0.00 on any week that contains one. The TypeScript reader drops records whose
+price is not > 0 (as the app's own scid-reader does), so the same is done here:
+zero-price ticks and the bars made only of them are removed before build_row
+runs. Every other number is the reference's own.
 """
 import sys, os, json, gzip, hashlib, io, contextlib
 sys.dont_write_bytecode = True
@@ -31,8 +40,16 @@ captured = {}
 _orig_load_ticks = bs.load_ticks
 
 
+MARKER_BARS = {}
+for _inst in list(bs.BARS):
+    _b = bs.BARS[_inst]
+    MARKER_BARS[_inst] = int((_b.l <= 0).sum())
+    bs.BARS[_inst] = _b[_b.l > 0]            # halt-marker bars (see the docstring)
+
+
 def _capturing_load_ticks(inst, minutes_by_contract, lo_pt, cutoff_pt):
     T = _orig_load_ticks(inst, minutes_by_contract, lo_pt, cutoff_pt)
+    T = T[T.px > 0].reset_index(drop=True)   # halt-marker ticks
     captured["T"] = T
     captured["mins"] = minutes_by_contract
     captured["lo"] = str(lo_pt)
@@ -61,6 +78,7 @@ def main():
     out_dir = sys.argv[1]
     seqs = [int(s) for s in sys.argv[2:]] or DEFAULT_SEQS
     os.makedirs(out_dir, exist_ok=True)
+    print("halt-marker bars removed from the reference's bars:", MARKER_BARS)
     for seq in seqs:
         captured.clear()
         p = bs.build_row(seq)

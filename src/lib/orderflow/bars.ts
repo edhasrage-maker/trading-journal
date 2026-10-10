@@ -59,13 +59,31 @@ export interface AggBar {
   mark: SessionMark
 }
 
-/** Aggregate 1-minute bars to a `tf`-minute timeframe (viewer aggregateFrom). */
-export function aggregateFrom(src: Bar1m[], tf: number) {
+/** 30-minute history bars (payload `htf`) as bar records, so they aggregate like any others. */
+export function htfToBars(h: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[]; bv: number[]; av: number[] }): Bar1m[] {
+  return h.t.map((t, i) => {
+    const d = h.av[i] - h.bv[i]
+    return { t, o: h.o[i], h: h.h[i], l: h.l[i], c: h.c[i], v: h.v[i], bv: h.bv[i], av: h.av[i], d, dmin: Math.min(0, d), dmax: Math.max(0, d), pv: 0, vv: h.v[i], partial: false }
+  })
+}
+
+/**
+ * Bucket offset (seconds) that starts 4-hour bars at the 15:00 PT session open
+ * — 15, 19, 23, 03, 07, 11 — the way Sierra and exchange-session charts draw
+ * them, rather than at midnight.
+ */
+export const SESSION_4H_OFFSET = 3 * 3600
+
+/**
+ * Aggregate bars to a `tf`-minute timeframe (viewer aggregateFrom). Buckets
+ * start at multiples of the timeframe shifted by `offsetSec`.
+ */
+export function aggregateFrom(src: Bar1m[], tf: number, offsetSec = 0) {
   type Cur = Omit<AggBar, 'ho' | 'hc' | 'hh' | 'hl' | 'poc' | 'mark'>
   const out: Cur[] = []
   let cur: Cur | null = null
   src.forEach((b, i) => {
-    const bt = Math.floor(b.t / (tf * 60)) * tf * 60
+    const bt = Math.floor((b.t - offsetSec) / (tf * 60)) * tf * 60 + offsetSec
     if (!cur || cur.t !== bt) {
       cur = { t: bt, o: b.o, h: b.h, l: b.l, c: b.c, v: 0, bv: 0, av: 0, d: 0, dmin: Infinity, dmax: -Infinity, pv: 0, vv: 0, mins: [], partial: false }
       out.push(cur)
@@ -79,8 +97,8 @@ export function aggregateFrom(src: Bar1m[], tf: number) {
 }
 
 /** Timeframe bars with Heiken-Ashi, per-bar POC and session separators (viewer buildAgg). */
-export function buildAgg(m1: Bar1m[], vap: VapRow[][], tf: number): AggBar[] {
-  const agg = aggregateFrom(m1, tf) as AggBar[]
+export function buildAgg(m1: Bar1m[], vap: VapRow[][], tf: number, offsetSec = 0): AggBar[] {
+  const agg = aggregateFrom(m1, tf, offsetSec) as AggBar[]
   let ho = 0, hc = 0
   agg.forEach((b, k) => {
     const c = (b.o + b.h + b.l + b.c) / 4, o = k === 0 ? (b.o + b.c) / 2 : (ho + hc) / 2
@@ -88,7 +106,7 @@ export function buildAgg(m1: Bar1m[], vap: VapRow[][], tf: number): AggBar[] {
   })
   agg.forEach(b => {
     const m = new Map<number, number>()
-    b.mins.forEach(i => vap[i].forEach(([tk, bb, aa]) => m.set(tk, (m.get(tk) || 0) + bb + aa)))
+    b.mins.forEach(i => (vap[i] ?? []).forEach(([tk, bb, aa]) => m.set(tk, (m.get(tk) || 0) + bb + aa)))
     let best = -1, bt: number | null = null
     m.forEach((v, tk) => { if (v > best) { best = v; bt = tk } })
     b.poc = bt != null ? bt / 4 : null

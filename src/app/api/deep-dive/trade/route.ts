@@ -57,7 +57,8 @@ export async function GET(req: Request) {
   const sp = (profRow?.scoring_profile_json && typeof profRow.scoring_profile_json === 'object'
     ? profRow.scoring_profile_json : null) as ScoringProfile | null
   const rubric = resolveRubric(sp)
-  const opts = { blind, atrStopTarget: rubric.atrStopTarget, tp1RMultiple: rubric.tp1RMultiple }
+  // 30m / 4h history: free from the tape; from .scid it is a longer read, so only when the chart asks
+  const opts = { blind, atrStopTarget: rubric.atrStopTarget, tp1RMultiple: rubric.tp1RMultiple, htf: searchParams.get('htf') === '1' }
 
   try {
     let payload

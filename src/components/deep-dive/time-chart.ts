@@ -162,7 +162,8 @@ export class TimeChartController {
   constructor(readonly el: HTMLElement, private opts: TimeChartOpts) {
     this.chart = createChart(el, {
       autoSize: true,
-      layout: { fontSize: 11 },
+      // the Lightweight Charts attribution is in the app footer (ChartAttribution), as on the live chart
+      layout: { fontSize: 11, attributionLogo: false },
       timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 18 },
       crosshair: { mode: CrosshairMode.Normal },
       localization: { timeFormatter: (t: Time) => fmtDT(t as number), priceFormatter: (p: number) => p.toFixed(2) },

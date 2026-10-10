@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import ChartAttribution from '@/components/ChartAttribution'
 
 /**
  * The main content pane.
@@ -22,6 +23,8 @@ export default function AppMain({ children }: { children: React.ReactNode }) {
         <Link href="/privacy" className="text-gray-500 hover:text-gray-300">Privacy</Link>
         <Link href="/terms" className="text-gray-500 hover:text-gray-300">Terms</Link>
         <a href="mailto:support@tapescore.app" className="text-gray-500 hover:text-gray-300">Support</a>
+        <span aria-hidden className="text-gray-700">·</span>
+        <ChartAttribution className="text-gray-500" />
       </footer>
     </main>
   )

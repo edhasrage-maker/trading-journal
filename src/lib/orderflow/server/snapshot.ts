@@ -17,7 +17,7 @@
  * day), from the shared roll table in futures-contracts.ts.
  */
 import { SIERRA_DATA_DIR } from '@/lib/import-scid-day'
-import { ScidTickSource, priorRthDate, type TickSource } from './tick-source'
+import { ScidTickSource, priorRthDate, type TickSource, type HtfBars } from './tick-source'
 import type { OfRoot, TickFrame } from '../ticks'
 import { TICK, asOf, emptyTicks, isTimeSorted, keepBefore, stableSortTicks, utcMsToSierraUs, sierraUsToUtcMs } from '../ticks'
 import { utcToPtMs, tradingDate, ptMidnight, ptClock, ptDate, PT_DAY_MS, PT_HOUR_MS } from '../pt-clock'
@@ -46,7 +46,12 @@ export interface SnapshotRequest {
    * instant, while the levels, bracket and ATR stay computed as of the fill.
    */
   displayEndUtcMs?: number
+  /** Also return 30-minute history before the window, for the 30m / 4h charts. */
+  htf?: boolean
 }
+
+/** Days of 30-minute history returned before the window (≈ 170 four-hour bars). */
+export const HTF_LOOKBACK_DAYS = 40
 
 export interface SnapshotTimes {
   entry: number; rth_open: number; rth_close: number; ib_end: number
@@ -68,6 +73,12 @@ export interface DeepDiveSnapshot {
   lpt: number
   bracket: PlannedBracket
   bubbles: BubbleChart | null
+  /**
+   * 30-minute bars for the weeks BEFORE the window (every one ends at or before
+   * the prior RTH open, so all of it is older than the fill). The 30m / 4h
+   * charts continue from these with the window's own 1-minute bars.
+   */
+  htf?: HtfBars
   /** Proof of the cut: the fill instant, where the data ends and the newest tick that made it in. */
   cut: { blind: boolean; fill_utc: string; data_end_utc: string; last_tick_utc: string | null; ticks: number; contracts: string[] }
 }
@@ -143,6 +154,8 @@ export function buildSnapshot(req: SnapshotRequest, source?: TickSource): DeepDi
     const { bars, vap, hasPartial, nDone } = windowBars(ticks, byMinute, emin)
     const nBars = bars.t.length
 
+    const htf = req.htf ? fs.bars30(pOpen - HTF_LOOKBACK_DAYS * DAY, pOpen) : undefined
+
     // ---- weekly references ----
     const anchor = weeklyAnchor(entryPt)
     let weekOpen: number | null = null
@@ -209,6 +222,7 @@ export function buildSnapshot(req: SnapshotRequest, source?: TickSource): DeepDi
       lpt: BUBBLE_CFG[req.root].lpt,
       bracket,
       bubbles: bubbles40t(shownTicks, req.root),
+      ...(htf ? { htf } : {}),
       cut: {
         blind,
         fill_utc: new Date(req.entryUtcMs).toISOString(),

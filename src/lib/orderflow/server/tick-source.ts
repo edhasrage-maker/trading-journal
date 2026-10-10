@@ -11,10 +11,10 @@
  */
 import { join } from 'path'
 import { contractFileForRoot } from '@/lib/futures-contracts'
-import { ScidTickFile } from './scid-ticks'
+import { ScidTickFile, type HalfHourBar } from './scid-ticks'
 import type { OfRoot, TickFrame } from '../ticks'
 import { concatTicks, emptyTicks, utcMsToSierraUs } from '../ticks'
-import { ptToUtcMs, tradingDate, ptMidnight, ptDate, PT_DAY_MS, PT_HOUR_MS } from '../pt-clock'
+import { ptToUtcMs, utcToPtMs, tradingDate, ptMidnight, ptDate, PT_DAY_MS, PT_HOUR_MS } from '../pt-clock'
 import { tapeChunkKey, type TapeIndex } from '../tape'
 
 const HOUR = PT_HOUR_MS, DAY = PT_DAY_MS
@@ -30,10 +30,16 @@ export interface TickSource {
   firstTradePrice(fromPt: number, toPt: number): number | null
   /** High / low of trading date `d`'s trades within [startPt, endPt) (hour boundaries). */
   extremes(d: string, startPt: number, endPt: number): { h: number | null; l: number | null }
+  /** Complete 30-minute bars starting in [startPt, endPt) (both on a 30m boundary) — 30m / 4h chart history. */
+  bars30(startPt: number, endPt: number): HtfBars
   /** What the data came from (for the payload's `cut` proof). */
   names(): string[]
   close(): void
 }
+
+/** 30-minute bars, columnar. `t` = PT-clock epoch seconds of the bar start. */
+export interface HtfBars { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[]; bv: number[]; av: number[] }
+const emptyHtf = (): HtfBars => ({ t: [], o: [], h: [], l: [], c: [], v: [], bv: [], av: [] })
 
 /** Most recent trading date before `tdate` with any RTH trade. */
 export function priorRthDate(src: TickSource, tdate: string): string | null {
@@ -47,6 +53,7 @@ export function priorRthDate(src: TickSource, tdate: string): string | null {
 // ---------------------------------------------------------------- local .scid
 // Settled history only, per process: prior-week extremes scan five sessions.
 const extremesCache = new Map<string, { h: number | null; l: number | null }>()
+const bars30Cache = new Map<string, HalfHourBar[]>()
 
 export class ScidTickSource implements TickSource {
   private files = new Map<string, ScidTickFile | null>()
@@ -102,6 +109,30 @@ export class ScidTickSource implements TickSource {
     if (hit) return hit
     const out = f.priceExtremes(usOfPt(s), usOfPt(e))
     if (endPt <= Date.now() - DAY) extremesCache.set(key, out)
+    return out
+  }
+
+  bars30(startPt: number, endPt: number): HtfBars {
+    const out = emptyHtf()
+    let d = tradingDate(startPt)
+    const last = tradingDate(endPt - 1)
+    while (d <= last) {
+      const s = Math.max(startPt, ptMidnight(d) - 9 * HOUR), e = Math.min(endPt, ptMidnight(d) + 15 * HOUR)
+      const f = s < e ? this.forTradingDate(d) : null
+      if (f) {
+        const key = `${f.path}|${s}|${e}`
+        let bars = bars30Cache.get(key)
+        if (!bars) {
+          bars = f.halfHourBars(usOfPt(s), usOfPt(e))
+          if (e <= Date.now() - DAY) bars30Cache.set(key, bars)          // settled history only
+        }
+        for (const b of bars) {
+          out.t.push(utcToPtMs(b.utcMs) / 1000); out.o.push(b.o); out.h.push(b.h); out.l.push(b.l); out.c.push(b.c)
+          out.v.push(b.v); out.bv.push(b.bv); out.av.push(b.av)
+        }
+      }
+      d = addDays(d, 1)
+    }
     return out
   }
 
@@ -170,11 +201,25 @@ export class TapeTickSource implements TickSource {
     const s = Math.max(startPt, ptMidnight(d) - 9 * HOUR), e = Math.min(endPt, ptMidnight(d) + 15 * HOUR)
     let h: number | null = null, l: number | null = null
     if (s < e) for (const x of ptHours(s, e)) {
-      const st = this.stat(x.ptDate, x.hour); if (!st || !st.n) continue
+      const st = this.stat(x.ptDate, x.hour); if (!st || !st.n || !(st.lo > 0)) continue
       if (h == null || st.hi > h) h = st.hi
       if (l == null || st.lo < l) l = st.lo
     }
     return { h, l }
+  }
+
+  bars30(startPt: number, endPt: number): HtfBars {
+    const out = emptyHtf()
+    for (let d = ptDate(startPt); d <= ptDate(endPt - 1); d = addDays(d, 1)) {
+      const day0 = ptMidnight(d)
+      for (const b of this.index.days[d]?.b30 ?? []) {
+        const t = day0 + b[0] * 1_800_000
+        if (t < startPt || t >= endPt) continue
+        out.t.push(t / 1000); out.o.push(b[1]); out.h.push(b[2]); out.l.push(b[3]); out.c.push(b[4])
+        out.v.push(b[5]); out.bv.push(b[6]); out.av.push(b[7])
+      }
+    }
+    return out
   }
 
   names(): string[] { return [`tape:${this.root}`] }

@@ -7,9 +7,9 @@
  *
  * Cells: delta per row, blue/red by sign, shaded by |delta| vs the bar's max.
  * Yellow box = bar POC. Side bars = 3+ stacked imbalances (green ask, red bid).
- * Orange row = entry; dashed red / green rows = stop / TP. Header: time, range,
- * VPS (bolder + bigger at 2x / 3x / 4x the prior-10 median); footer: closed
- * delta (bold when both a delta spike and a VPS spike).
+ * Orange row = entry; dashed red / green rows = stop / TP. Header: time and VPS
+ * (bolder + bigger at 2x / 3x / 4x the prior-10 median); footer: closed delta
+ * (bold when both a delta spike and a VPS spike).
  */
 import { useEffect, useMemo, useRef } from 'react'
 import type { Bar1m, VapRow } from '@/lib/orderflow/bars'
@@ -93,14 +93,13 @@ export default function Footprint1m({
     <div className="flex flex-col h-full min-h-0 font-mono text-[11px]" style={{ color: 'var(--ts-mut)' }}>
       <div className="overflow-hidden flex-none">
         <div ref={headRef} className="flex whitespace-nowrap py-0.5 leading-[1.35]">
-          <div style={{ width: AX }} className="text-center flex-none"><div>1m</div><div>range</div><div>VPS</div></div>
+          <div style={{ width: AX }} className="text-center flex-none"><div>1m</div><div>VPS</div></div>
           {cols.map(c => {
             const s = c.stats
             const vcol = s.tier ? (s.up ? F.vpsUp : F.vpsDown) : 'var(--ts-mut)'
             return (
               <div key={c.i} style={{ width: CW }} className="text-center flex-none">
                 <div style={{ color: c.bar.partial ? F.entry : undefined }}>{fmtT(c.bar.t)}{c.bar.partial ? ' →fill' : ''}</div>
-                <div>{s.range.toFixed(2)}</div>
                 <div style={{ color: vcol, fontWeight: [400, 600, 700, 800][s.tier], fontSize: 11 + s.tier * 2 }}>{s.vps.toFixed(2)}</div>
               </div>
             )

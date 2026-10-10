@@ -329,11 +329,19 @@ async function tapeTests() {
         const q = mode === 'blind' ? req : { ...req, displayEndUtcMs: entryUtcMs + 40 * 60_000 }
         const t1 = performance.now()
         const src = await loadTapeSource(fsTapeStore(dir), r.inst, q.displayEndUtcMs ?? entryUtcMs, idx => snapshotWindow(idx, entryUtcMs)?.startPt ?? null)
-        const fromTape = buildSnapshot(q, src)
+        const fromTape = buildSnapshot({ ...q, htf: true }, src)
         const ms = performance.now() - t1
-        const fromScid = buildSnapshot(q)
-        const norm = (x: ReturnType<typeof buildSnapshot>) => ({ ...plain(x), cut: { ...x.cut, contracts: [] } })
+        const fromScid = buildSnapshot({ ...q, htf: true })
+        const norm = (x: ReturnType<typeof buildSnapshot>) => ({ ...plain(x), htf: null, cut: { ...x.cut, contracts: [] } })
         same(`${r.inst} ${r.date} ${r.time} ${mode}: snapshot from the tape == snapshot from .scid (load + build ${ms.toFixed(0)} ms)`, norm(fromTape), norm(fromScid))
+        if (mode === 'blind') {
+          // 30m history: the test tape only holds the days published above, so compare from its first day on
+          const t0 = ptMidnight(first) / 1000
+          const cut = (h: NonNullable<typeof fromScid.htf>) => { const i = h.t.findIndex(t => t >= t0); const s = i < 0 ? h.t.length : i; return Object.fromEntries(Object.entries(h).map(([k, v]) => [k, (v as number[]).slice(s)])) }
+          const a = cut(fromTape.htf!), b = cut(fromScid.htf!)
+          same(`${r.inst} ${r.date}: 30-minute history from the tape == from .scid (${(a.t as number[]).length} bars, all before the window)`, a, b)
+          check('  every 30-minute history bar ends at or before the window start', fromScid.htf!.t.every(t => t + 1800 <= fromScid.times.prior_open) && fromScid.htf!.t.length > 0)
+        }
       }
     } finally {
       rmSync(dir, { recursive: true, force: true })

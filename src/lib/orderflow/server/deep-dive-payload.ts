@@ -50,7 +50,11 @@ export interface DeepDivePayload {
   build_ms: number
 }
 
-export interface DeepDiveOptions { blind: boolean; atrStopTarget: number; tp1RMultiple: number; nowMs?: number }
+export interface DeepDiveOptions {
+  blind: boolean; atrStopTarget: number; tp1RMultiple: number; nowMs?: number
+  /** Include 30-minute history for the 30m / 4h charts (always on from the tape, where it is free). */
+  htf?: boolean
+}
 
 export class DeepDiveError extends Error {
   constructor(message: string, readonly status: number) { super(message) }
@@ -88,6 +92,7 @@ function prepare(row: DeepDiveTradeRow, opts: DeepDiveOptions): { req: SnapshotR
       atrStopTarget: opts.atrStopTarget, tp1RMultiple: opts.tp1RMultiple,
       recordedStop: num(row.stop_price), recordedTp: num(row.tp1_price), entryAtr: num(row.entry_atr_1m),
       displayEndUtcMs,
+      htf: opts.htf,
     },
     exits,
   }
@@ -113,7 +118,7 @@ export function buildDeepDivePayload(row: DeepDiveTradeRow, opts: DeepDiveOption
 /** Hosted build: fetch the hours this trade needs from the published tape, then the same builder. */
 export async function buildDeepDivePayloadFromTape(row: DeepDiveTradeRow, opts: DeepDiveOptions, store: TapeStore): Promise<DeepDivePayload> {
   const t0 = performance.now()
-  const p = prepare(row, opts)
+  const p = prepare(row, { ...opts, htf: true })
   try {
     const source = await loadTapeSource(store, p.req.root, p.req.displayEndUtcMs ?? p.req.entryUtcMs,
       idx => snapshotWindow(idx, p.req.entryUtcMs)?.startPt ?? null)
