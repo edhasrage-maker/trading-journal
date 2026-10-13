@@ -91,6 +91,27 @@ function hashTrade(t: Trade): string {
  *  shown; only its weight changes, so nothing the trader looks for disappears. */
 const MIN_RATE_SAMPLE = 5
 
+/** One of the day's plain facts (P&L, trades, win rate) as a box beside the
+ *  Trade management card. Wide screens only — see the row it is used in. */
+function DayFact({ label, value, valueClass, title }: {
+  label: string
+  value: string
+  valueClass?: string
+  title?: string
+}) {
+  return (
+    <div
+      className="hidden lg:flex flex-col justify-center min-w-0 border border-gray-800 rounded-[3px] p-[18px]"
+      title={title}
+    >
+      <p className="text-xs text-gray-500 whitespace-nowrap">{label}</p>
+      <p className={`font-bold leading-tight whitespace-nowrap text-[length:clamp(1.25rem,2.6vw,1.875rem)] ${valueClass ?? 'text-gray-200'}`}>
+        {value}
+      </p>
+    </div>
+  )
+}
+
 const summaryCacheKey = (id: string) => `trade-summary-${id}`
 
 export default function EodClient({
@@ -647,6 +668,9 @@ export default function EodClient({
   const winCount = trades.filter(t => (t.pnl ?? 0) > 0).length
   const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
+  // Detailed Tape with trades: the Trade management card shows, and on a wide
+  // screen the day's three facts sit in boxes beside it.
+  const showMgmtRow = mode === 'pro' && trades.length > 0
 
   // Trade management for the day: every trade sorted into "went your way" /
   // "never got going", with its MFE, MAE and result. One shared definition
@@ -936,10 +960,10 @@ export default function EodClient({
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2 text-sm">
-          {/* Stats strip: what the day did. How it was traded lives in the
-              Trade management card just below, which needs more room than a
-              strip gives it.
+        <div className={`flex items-center gap-2 text-sm ${showMgmtRow ? 'lg:hidden' : ''}`}>
+          {/* Stats strip: what the day did. On a wide screen in Detailed Tape
+              these three move down into boxes beside the Trade management card
+              (see the row below the score), so the strip steps aside there.
 
               W/L was dropped rather than moved: Win Rate sits right beside it and
               the TapeScore card below already prints "N trades - NW / NL", so the
@@ -977,17 +1001,6 @@ export default function EodClient({
           </div>
         </div>
       </div>
-
-      {/* Trade management — the day's trades sorted into went-your-way /
-          never-got-going. Replaces the old Avg MFE/MAE · Profit Captured ·
-          MFE:MAE trio, which were three different averages over three different
-          sets of trades. Detailed Tape only, like the figures it replaces. */}
-      {mode === 'pro' && trades.length > 0 && (
-        <TradeManagementCard
-          totals={mgmt}
-          className="border border-gray-800 rounded-[3px] p-[18px] max-w-[600px]"
-        />
-      )}
 
       {/* Time-aware seam (Pt 13 step 3): before the close the score hero is
           premature, so its slot shows a "session still live" state that points
@@ -1037,6 +1050,40 @@ export default function EodClient({
           lossCount={lossCount}
           pnl={computedPnl}
         />
+      )}
+
+      {/* Trade management — the day's trades sorted into went-your-way /
+          never-got-going. Replaces the old Avg MFE/MAE · Profit Captured ·
+          MFE:MAE trio, which were three different averages over three different
+          sets of trades. Detailed Tape only, like the figures it replaces.
+
+          It sits UNDER the score (the day's callout leads) and shares its row
+          with the day's three plain facts, so the card never has half a page of
+          nothing beside it. Below lg three boxes do not fit, so the facts stay
+          in the header strip and the card runs full width. */}
+      {showMgmtRow && (
+        <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,2.4fr)]">
+          <DayFact
+            label="Day P&L"
+            value={`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(computedPnl)).toLocaleString()}`}
+            valueClass={computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}
+          />
+          <DayFact label="Trades" value={String(trades.length)} />
+          {/* Muted below MIN_RATE_SAMPLE, same as the strip: the number is true,
+              it simply isn't evidence yet. */}
+          <DayFact
+            label="Win rate"
+            value={`${winRate.toFixed(0)}%`}
+            valueClass={trades.length < MIN_RATE_SAMPLE ? 'text-gray-500' : undefined}
+            title={trades.length < MIN_RATE_SAMPLE
+              ? `${trades.length} trade${trades.length === 1 ? '' : 's'} — too few to read as a rate`
+              : undefined}
+          />
+          <TradeManagementCard
+            totals={mgmt}
+            className="min-w-0 border border-gray-800 rounded-[3px] p-[18px]"
+          />
+        </div>
       )}
 
       {/* The behavioral flags stay promoted above the fold (alpha-readiness
