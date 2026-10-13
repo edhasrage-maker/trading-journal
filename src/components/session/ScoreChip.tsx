@@ -33,7 +33,7 @@ export function ScoreChip({ score, open, onToggle }: { score: TradeFlowScore; op
 export function ScoreDetail({ score }: { score: TradeFlowScore }) {
   return (
     <div className="font-sans text-xs text-gray-300 py-2 max-w-2xl">
-      <div className="grid grid-cols-[10px_minmax(96px,150px)_minmax(0,1fr)_40px] gap-x-2 gap-y-1 items-baseline">
+      <div className="grid grid-cols-[10px_minmax(120px,190px)_minmax(0,1fr)_40px] gap-x-2 gap-y-1 items-baseline">
         {score.facts.map(f => (
           <div key={f.k} className="contents">
             <span className={`w-1.5 h-1.5 rounded-full self-center ${DOT[f.state] ?? DOT.neutral}`} aria-hidden="true" />
@@ -44,7 +44,7 @@ export function ScoreDetail({ score }: { score: TradeFlowScore }) {
         ))}
       </div>
       <div className="mt-1.5 text-[11px] text-gray-600">
-        Score {score.total} of {score.max}. Read from the tape at {score.read_at} PT, before the result was known.
+        Score {score.total} of {score.max}. It reads the market at the moment you got in ({score.read_at} PT), not how the trade turned out.
       </div>
     </div>
   )
