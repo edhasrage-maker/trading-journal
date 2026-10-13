@@ -352,9 +352,14 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
                   asks the reader to work out whose break-even, measured in what.
                   This states the requirement in the same unit as the payoff
                   directly above it, so the pair reads as one sentence: you win
-                  31% of the time, that demands 2.24R, you are making 3.2R. */}
-              <div>
-                needs <span className="text-gray-300">{stats.breakEvenPayoff.toFixed(2)}R</span> to break even
+                  31% of the time, that demands 2.24R, you are making 3.2R.
+
+                  Kept short enough to sit on ONE line in a five-across tile on
+                  a 1280px laptop (179px of the 195 available) — the longer
+                  "needs 2.24R to break even — you're above" wrapped there, and
+                  two lines under the number read as clutter. */}
+              <div className="xl:whitespace-nowrap">
+                break even at <span className="text-gray-300">{stats.breakEvenPayoff.toFixed(2)}R</span>
                 {stats.payoffR > stats.breakEvenPayoff
                   ? <span className="text-green-500"> — you&rsquo;re above</span>
                   : <span className="text-amber-400"> — you&rsquo;re below</span>}
@@ -461,18 +466,24 @@ function StatCard({
   // rounded card read as generic template chrome; dropping the fill lets the
   // tile sit ON the page instead of floating above it, and the near-square
   // corner reads instrument rather than app-card.
+  // Centred, because in the five-across row these tiles stretch to the height
+  // of the Trade management card beside them: top-aligned, a small number sat
+  // above a hole. The value grows with the tile — today's 20px on a phone or a
+  // narrow row, 26px once the row is wide — and stops there, so P&L never
+  // out-shouts the score above it.
+  const valueSize = valueClass ?? 'text-[length:clamp(1.25rem,2vw,1.625rem)] leading-tight'
   return (
-    <div className={`border border-gray-800 rounded-[3px] p-[18px] ${className ?? ''}`} title={title}>
+    <div className={`border border-gray-800 rounded-[3px] p-[18px] flex flex-col justify-center ${className ?? ''}`} title={title}>
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       {/* Blank value is intentional (e.g. the MFE tile, whose numbers live at the
           bar ends) — skip the line entirely so it doesn't leave an empty gap. */}
       {valueNode ? (
-        <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'}`}>{valueNode}</p>
+        <p className={`font-bold ${valueColor} ${valueSize}`}>{valueNode}</p>
       ) : value !== '' && (
-        <p className={`font-bold ${valueColor} ${valueClass ?? 'text-xl'} whitespace-nowrap`}>{value}</p>
+        <p className={`font-bold ${valueColor} ${valueSize} whitespace-nowrap`}>{value}</p>
       )}
       {chartNode}
-      {subNode ? <div className="mt-1">{subNode}</div> : sub ? <p className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">{sub}</p> : null}
+      {subNode ? <div className="mt-1">{subNode}</div> : sub ? <p className="text-[11px] text-gray-600 mt-1 whitespace-nowrap">{sub}</p> : null}
     </div>
   )
 }
