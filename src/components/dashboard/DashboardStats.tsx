@@ -324,7 +324,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
         <StatCard
           className="col-span-2 lg:col-span-1"
           label={stats.payoffR == null ? 'Trade Win %' : 'Trade Win % · Payoff'}
-          title="Win rate, and how much bigger the average winner is than the average loser (in R, so position sizing doesn't distort it). At a 31% win rate you lose roughly two trades for every one you win, so each winner has to be worth about 2.2 losers just to come out flat — that break-even figure is computed from the win rate beside it and moves as the win rate does."
+          title={`Win rate, and how much bigger the average winner is than the average loser (in R, so position sizing doesn't distort it). At a 31% win rate you lose roughly two trades for every one you win, so each winner has to be worth about 2.2 losers just to come out flat — that break-even figure is computed from the win rate beside it and moves as the win rate does. Win rate counts ${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}; payoff counts the ${stats.rSample} with a stop logged.`}
           value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
           // Never red (see Day Win %): 38% trade win on a profitable stretch is
           // fine for a high-R approach. Neutral by default, green only when strong.
@@ -341,14 +341,19 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
           sub={`${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
           subNode={stats.payoffR != null && stats.breakEvenPayoff != null ? (
             <div className="text-[11px] text-gray-500">
-              {stats.totalTradesWithPnl} trade{stats.totalTradesWithPnl === 1 ? '' : 's'}
-              {stats.rSample < stats.totalTradesWithPnl ? ` · ${stats.rSample} with a stop` : ''}
+              {/* The trade counts moved to the tooltip — the tile reads as one
+                  sentence without them. They stay visible only when the payoff
+                  rests on a minority of the trades (few stops logged), where a
+                  bare ratio would pass a thin sample off as the whole book. */}
+              {stats.rSample * 2 < stats.totalTradesWithPnl && (
+                <div className="mb-1">payoff from {stats.rSample} of {stats.totalTradesWithPnl} trades</div>
+              )}
               {/* Say what the number IS, not where it sits. "break-even: 2.24"
                   asks the reader to work out whose break-even, measured in what.
                   This states the requirement in the same unit as the payoff
                   directly above it, so the pair reads as one sentence: you win
                   31% of the time, that demands 2.24R, you are making 3.2R. */}
-              <div className="mt-1 pt-1 border-t border-gray-800">
+              <div>
                 needs <span className="text-gray-300">{stats.breakEvenPayoff.toFixed(2)}R</span> to break even
                 {stats.payoffR > stats.breakEvenPayoff
                   ? <span className="text-green-500"> — you&rsquo;re above</span>
