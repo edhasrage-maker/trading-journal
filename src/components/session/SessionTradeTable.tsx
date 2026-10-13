@@ -28,7 +28,7 @@ import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
 import { ScoreChip, ScoreDetail } from './ScoreChip'
 
-type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
+type SortKey = 'time' | 'atr' | 'pnl' | 'score' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
 
 // Optional columns the user can show/hide in the Detailed (Pro) view. Core
@@ -47,6 +47,7 @@ const TOGGLEABLE_COLS = [
   { key: 'tp1', label: 'TP1' },
   { key: 'qty', label: 'Qty' },
   { key: 'atr', label: 'ATR@' },
+  { key: 'score', label: 'Score' },
   { key: 'r', label: 'R' },
   { key: 'mfe', label: 'MFE %' },
   { key: 'mae', label: 'MAE %' },
@@ -311,6 +312,8 @@ export default function SessionTradeTable({
           return (liveAtrByTradeId?.[t.id] ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m) ?? Number.NEGATIVE_INFINITY
         case 'pnl':
           return t.pnl ?? Number.NEGATIVE_INFINITY
+        case 'score':
+          return t.review_json?.score?.total ?? Number.NEGATIVE_INFINITY
         case 'r':
           return rMultiple(t, liveAtrByTradeId?.[t.id]) ?? Number.NEGATIVE_INFINITY
         case 'mfe':
@@ -425,6 +428,7 @@ export default function SessionTradeTable({
   const showTp1 = isCapture ? true : cols.tp1
   const showQty = isCapture ? true : cols.qty
   const showAtr = isCapture ? false : cols.atr
+  const showScore = isCapture ? false : cols.score
   const showR = isCapture ? false : cols.r
   const showMfe = isCapture ? false : cols.mfe
   const showMae = isCapture ? false : cols.mae
@@ -440,6 +444,7 @@ export default function SessionTradeTable({
     ...(showQty ? ['qty'] : []),
     ...(showAtr ? ['atr'] : []),
     'pnl',
+    ...(showScore ? ['score'] : []),
     ...(showR ? ['r'] : []),
     ...(showMfe ? ['mfe'] : []),
     ...(showMae ? ['mae'] : []),
@@ -653,6 +658,7 @@ export default function SessionTradeTable({
             {!isCapture && <option value="mfe">MFE</option>}
             {!isCapture && <option value="mae">MAE</option>}
             <option value="pnl">P&amp;L</option>
+            {!isCapture && <option value="score">Score</option>}
             {!isCapture && <option value="atr">ATR@</option>}
           </select>
           <button
@@ -805,6 +811,7 @@ export default function SessionTradeTable({
               {showQty && <th data-col="qty" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden">Qty<ResizeHandle id="qty" onStart={startResize} onReset={resetWidths} /></th>}
               {showAtr && <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." colId="atr" onResize={startResize} onResetWidths={resetWidths} />}
               <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} colId="pnl" onResize={startResize} onResetWidths={resetWidths} />
+              {showScore && <SortableHeader label="Score" sortKey="score" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Score out of 100, read from the tape at the fill. Click a score to see why." colId="score" onResize={startResize} onResetWidths={resetWidths} />}
               {showR && <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." colId="r" onResize={startResize} onResetWidths={resetWidths} />}
               {showMfe && <th data-col="mfe" className="relative text-center font-normal pb-2 pr-3 whitespace-nowrap">
                 {/* Centered rather than right-aligned: the header carries a sort
@@ -1068,12 +1075,16 @@ export default function SessionTradeTable({
                       pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-500'
                     }`}
                   >
-                    {flowScore && (
-                      <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
-                    )}
                     {pnl >= 0 ? '+' : ''}
                     {pnl.toFixed(2)}
                   </td>
+                  {showScore && (
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      {flowScore
+                        ? <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                        : <span className="text-gray-700">—</span>}
+                    </td>
+                  )}
                   {showR && (() => {
                     const liveAtr = liveAtrByTradeId?.[t.id]
                     const r = rMultiple(t, liveAtr)

@@ -10,7 +10,7 @@ const DOT: Record<string, string> = {
 }
 
 /**
- * The trade's Score: the order flow at the fill, out of 100, with one dot per
+ * The trade's Score, out of 100, read from the tape at the fill, with one dot per
  * fact (with you / neutral / against you). It describes what the tape showed
  * when the trade was entered — it is not derived from the result. Click to
  * open the five reasons (ScoreDetail) under the row.
@@ -21,8 +21,8 @@ export function ScoreChip({ score, open, onToggle }: { score: TradeFlowScore; op
       type="button"
       onClick={e => { e.stopPropagation(); onToggle() }}
       aria-expanded={open}
-      title="Order flow at the fill. Click to see why."
-      className="inline-flex items-center gap-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-700 bg-gray-900 text-gray-200 hover:border-gray-500 shrink-0 leading-none mr-2 align-middle"
+      title="Score out of 100. Click to see why."
+      className="inline-flex items-center gap-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-700 bg-gray-900 text-gray-200 hover:border-gray-500 shrink-0 leading-none align-middle"
     >
       <span className="tabular-nums">{score.total}</span>
       <span className="inline-flex items-center gap-0.5" aria-hidden="true">
@@ -48,7 +48,7 @@ export function ScoreDetail({ score }: { score: TradeFlowScore }) {
         ))}
       </div>
       <div className="mt-1.5 text-[11px] text-gray-600">
-        Order flow at the fill, {score.total} of {score.max}. Read from the tape at {score.read_at} PT, before the result was known.
+        Score {score.total} of {score.max}. Read from the tape at {score.read_at} PT, before the result was known.
       </div>
     </div>
   )
