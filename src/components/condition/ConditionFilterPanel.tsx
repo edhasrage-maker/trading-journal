@@ -503,11 +503,9 @@ function readState(match: MatchResult, baselineEv: number | null): ReadState {
 
 const READ_COPY: Record<ReadState, { head: string; sub: string | null; color: string; rule: string }> = {
   thin: { head: 'Too few trades to say.', sub: null, color: 'text-gray-400', rule: 'border-gray-700' },
-  same: {
-    head: 'No different from your average.',
-    sub: 'Nothing in today’s conditions separates your results from your average.',
-    color: 'text-gray-300', rule: 'border-gray-700',
-  },
+  // `sub` for this state is written per read (see sameSub) — it has to name the
+  // gap, or the headline contradicts the numbers printed beneath it.
+  same: { head: 'About your average.', sub: null, color: 'text-gray-300', rule: 'border-gray-700' },
   above: {
     head: 'Above your average so far.',
     sub: 'In your history only — a lead to watch, not a rule. It has not been tested on new trades.',
@@ -518,6 +516,26 @@ const READ_COPY: Record<ReadState, { head: string; sub: string | null; color: st
     sub: 'In your history only — a lead to watch, not a rule. It has not been tested on new trades.',
     color: 'text-red-400', rule: 'border-red-700',
   },
+}
+
+/**
+ * The sentence under "About your average." It used to say only "no different",
+ * directly above a win rate, EV and profit factor that were all visibly higher
+ * than the trader's — which reads as the panel contradicting itself. The honest
+ * version says both things: which way the numbers lean, and why that lean is
+ * too small to mean anything (how far this many trades swing by chance).
+ */
+function sameSub(match: MatchResult, baselineEv: number | null): string {
+  const r = match.row
+  if (baselineEv == null || r.ev_per_trade == null) return 'Nothing in today’s conditions separates your results from your average.'
+  const gap = r.ev_per_trade - baselineEv
+  const swing = r.ev_ci_lo != null && r.ev_ci_hi != null ? (r.ev_ci_hi - r.ev_ci_lo) / 2 : null
+  const n = r.n_trades ?? 0
+  if (Math.abs(gap) < 1) return 'Days like this have run right in line with your average.'
+  const lean = `$${Math.abs(gap).toFixed(0)} a trade ${gap > 0 ? 'better' : 'worse'} on paper`
+  return swing != null
+    ? `${lean}, but ${n} trades swing about ±$${swing.toFixed(0)} a trade by chance — too small a gap to lean on.`
+    : `${lean}, but not by enough to tell apart from chance.`
 }
 
 function DayRead({
@@ -535,7 +553,9 @@ function DayRead({
   onChangeOverride: (v: 'auto' | 'median' | 'tertile') => void
   isOverridden: boolean
 }) {
-  const copy = READ_COPY[readState(match, outcome.baseline_ev)]
+  const state = readState(match, outcome.baseline_ev)
+  const copy = READ_COPY[state]
+  const sub = state === 'same' ? sameSub(match, outcome.baseline_ev) : copy.sub
   // Show a per-view explanation when overridden so the user understands why
   // the read changed when they toggled.
   const explanation = isOverridden
@@ -551,7 +571,7 @@ function DayRead({
           >
             {copy.head}
           </div>
-          {copy.sub && <div className="text-xs text-gray-400 mt-1 max-w-[58ch] leading-normal">{copy.sub}</div>}
+          {sub && <div className="text-xs text-gray-400 mt-1 max-w-[58ch] leading-normal">{sub}</div>}
         </div>
         <div className="text-left sm:text-right text-xs text-gray-500 space-y-1.5">
           <div className="font-mono">{explanation}</div>
@@ -613,15 +633,23 @@ const shortDate = (iso: string) =>
  */
 function TrackedLeads({ result }: { result: LeadsResult }) {
   const since = shortDate(result.freezeDate)
+  const inPlay = result.leads.some(l => l.matchesDay === true)
   return (
-    <div className="pt-4 border-t border-gray-800">
-      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-2">
-        <span className="text-[13px] font-bold tracking-[-0.01em] text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
-          Being tracked this quarter
+    // Collapsed by default: this is reference material, and on most mornings the
+    // session isn't inside any tracked condition. The summary still says when it
+    // IS, so the one case worth opening it for is never hidden.
+    <details className="pt-3 border-t border-gray-800 group">
+      <summary className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer list-none marker:content-none inline-flex items-baseline gap-2">
+        <span>
+          Being tracked this quarter ({result.leads.length})
+          <span className="group-open:hidden"> ›</span><span className="hidden group-open:inline"> ‹</span>
         </span>
-        <span className="font-mono text-[10.5px] text-gray-500">
-          picked from sessions before {since} · scored on trades since
-        </span>
+        {inPlay && (
+          <span className="font-mono text-[9px] tracking-wider text-yellow-400 border border-yellow-700 rounded-sm px-1">THIS SESSION IS IN ONE</span>
+        )}
+      </summary>
+      <div className="font-mono text-[10.5px] text-gray-500 mt-2.5 mb-2">
+        picked from sessions before {since} · scored on trades since
       </div>
 
       {result.status === 'not-enough-history' && (
@@ -647,7 +675,7 @@ function TrackedLeads({ result }: { result: LeadsResult }) {
           on new trades less than half the time — which is why each one is scored going forward before it is believed.
         </p>
       )}
-    </div>
+    </details>
   )
 }
 
@@ -821,7 +849,7 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
           <div>
             <div className="font-semibold text-white text-sm mb-1">What the read says</div>
             <ul className="space-y-1 text-xs">
-              <li><span className="text-gray-200">No different from your average</span> — the usual answer. Days like today have not run clearly better or worse for you.</li>
+              <li><span className="text-gray-200">About your average</span> — the usual answer. The numbers may lean a little either way, and the line underneath says by how much and how far that many trades swing by chance.</li>
               <li><span className="text-green-400">Above</span> / <span className="text-red-400">Below your average so far</span> — the whole 95% range of those trades sits on one side of your average. It is a description of your history, not a prediction.</li>
               <li><span className="text-gray-400">Too few trades to say</span> — fewer than {MIN_SAMPLE} trades on days like today.</li>
             </ul>
