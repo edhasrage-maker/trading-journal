@@ -192,6 +192,13 @@ async function main() {
       adr: round(stats.adr),
       day_range: round(stats.day_range),
       atr_1m: round(stats.atr_1m),
+      // The 07:29/07:30 PT IB-close readings. The stats object always carried
+      // them; this script wrote atr_1m and dropped these, which is why every ES
+      // row it created had no computable ATR_730 (0 of 43) until
+      // backfill-atr-ib-close.ts filled them in afterwards.
+      atr_at_ib_close: round(stats.atr_at_ib_close, 3),
+      atr_10d_avg: round(stats.atr_10d_avg, 3),
+      rvol_at_ib_close: round(stats.rvol_at_ib_close, 1),
       ib_meanhl10: ibCols ? round(ibCols.ib_meanhl10, 3) : null,
       ib_atr_ratio: ibCols ? round(ibCols.ib_atr_ratio, 3) : null,
       ib_regime: ibCols?.ib_regime ?? null,

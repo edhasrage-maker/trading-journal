@@ -1368,13 +1368,15 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               // metric of the five, so every ES morning scored its ~3.0 against
               // cuts drawn from NQ's ~17.7 and landed in the bottom bucket.
               atr_730: atrIbCloseRatio(context.atr_at_ib_close, context.atr_10d_avg),
-              // PERCENT (thresholds median 75.9). This fed a RATIO (0.76) until
-              // 2026-08-24, which is below every cut — DR/ADR bucketed LOW on
-              // 100% of days, pinning one of the five lookup dimensions.
-              // Whole-day `adr` on purpose: history's day_range/adr is the
-              // whole-day pair, so the time-matched adr_at_now the ledger
-              // displays against would be a third basis.
-              dr_adr: drAdrPercent(context.day_range, context.adr) ?? drAdrPctAuto,
+              // The share of a normal day's range already used BY THE IB CLOSE
+              // (IB range ÷ ADR, percent) — the same basis deriveMetrics buckets
+              // history on. It was day-range ÷ ADR, but a stored day range is the
+              // prep-time range on some days and the finished day's on others,
+              // so history was scored partly on how the day ended.
+              dr_adr: drAdrPercent(
+                context.ib_size ?? (context.ibh != null && context.ibl != null ? Number(context.ibh) - Number(context.ibl) : null),
+                context.adr,
+              ),
               // Day character — persisted by the effect above once the IB has
               // printed, so the lookup buckets on the same number the panel shows.
               // meanHL10 basis only: history is bucketed on that basis, so

@@ -9,6 +9,7 @@ import { REGIME_CUTS_MEANHL10 } from '@/lib/ib-day-type'
 import { MIN_SAMPLE } from '@/lib/sample-size'
 import { drAdrPercent } from '@/lib/dr-adr'
 import { atrIbCloseRatio } from '@/lib/condition-lookup'
+import { chartSeriesRoot } from '@/lib/futures-symbols'
 
 // Supabase clients are structurally identical for our purposes (server session
 // client OR service-role client); we only call .from(...).select/insert/delete.
@@ -39,11 +40,17 @@ type AnyClient = any
 
 export interface MarketContextLite {
   trading_day_id: string
+  /** Instrument the row describes (bare root: NQ / ES). A day traded on two
+   *  instruments has two rows, and a trade must be scored on its own. */
+  symbol?: string | null
+  ib_size?: number | null           // → DR_ADR numerator (range used BY THE IB CLOSE)
+  ibh?: number | null
+  ibl?: number | null
   rvol: number | null
   rvol_at_ib_close: number | null   // → RVOL metric (preferred, 07:30 PT snapshot)
   ib_vs_10d_avg: number | null      // → IB metric
   adr: number | null
-  day_range: number | null          // for DR_ADR derivation
+  day_range: number | null          // NOT used for DR_ADR any more — see deriveMetrics
   atr_at_ib_close: number | null    // → ATR_730 numerator (07:29 PT Wilder ATR-10)
   atr_10d_avg: number | null        // → ATR_730 denominator (trailing-10 of the same)
   atr_1m: number | null             // EOD ATR — NOT a valid ATR_730 fallback, see atrIbCloseRatio
@@ -53,6 +60,9 @@ export interface MarketContextLite {
 export interface TradeLite {
   date: string                   // YYYY-MM-DD
   pnl: number | null
+  /** Key of the market-context row this trade is scored on (see
+   *  resolveContextKey). Absent → the date itself, the original behaviour. */
+  ctxKey?: string | null
 }
 
 // ─── Metric derivation from market_context ───────────────────────────────────
@@ -71,10 +81,19 @@ export interface MetricRow {
  *  All five are now scale-free, so one threshold set is valid across NQ and ES. */
 export function deriveMetrics(ctx: MarketContextLite | null): MetricRow {
   if (!ctx) return { rvol: null, dr_adr: null, ib: null, atr_730: null, ib_atr: null }
-  // DR_ADR is a PERCENT (thresholds are cut in percent — median 75.9). The
-  // definition lives in drAdrPercent so the prep page cannot feed the lookup a
-  // ratio while the thresholds are in percent, which is exactly what it did.
-  const dr_adr = drAdrPercent(ctx.day_range, ctx.adr)
+  // DR_ADR = the share of a normal day's range ALREADY USED BY THE IB CLOSE:
+  // IB range ÷ ADR, as a percent (drAdrPercent owns the unit).
+  //
+  // It used to be `day_range / adr`, and `day_range` has no fixed meaning in
+  // history: the prep page freezes it at whatever the range was when the prep
+  // was opened, while the backfills store the FINISHED day's range. Of the 90
+  // 2026 rows that had one, 30 equalled the IB and 60 were later or full-day
+  // values. Bucketing on that scores a trade by how the day ENDED — hindsight —
+  // and then compares it with a morning's partial range. Every other lookup
+  // metric is a 07:30 PT reading; this one now is too, so all five are knowable
+  // at the moment the trader reads the panel.
+  const ibRange = ctx.ib_size ?? (ctx.ibh != null && ctx.ibl != null ? ctx.ibh - ctx.ibl : null)
+  const dr_adr = drAdrPercent(ibRange, ctx.adr)
   return {
     // RVOL for the prep lookup uses the 07:30 PT snapshot (rvol_at_ib_close)
     // so it reflects what was actually visible at IB close — the moment the
@@ -158,7 +177,7 @@ const FIELD_MAP: Record<ConditionMetric, keyof MetricRow> = {
   RVOL: 'rvol', DR_ADR: 'dr_adr', IB: 'ib', ATR_730: 'atr_730', IB_ATR: 'ib_atr',
 }
 
-interface BucketedTrade {
+export interface BucketedTrade {
   trade: TradeLite
   median: Record<ConditionMetric, 'LOW' | 'HIGH' | null>
   tertile: Record<ConditionMetric, 'L' | 'M' | 'H' | null>
@@ -172,7 +191,7 @@ export function bucketTrades(
   const byMetric = new Map(thresholds.map(t => [t.metric, t]))
   const out: BucketedTrade[] = []
   for (const t of trades) {
-    const m = metricsByDate.get(t.date)
+    const m = t.ctxKey === null ? undefined : metricsByDate.get(t.ctxKey ?? t.date)
     if (!m) continue
     const median = {} as Record<ConditionMetric, 'LOW' | 'HIGH' | null>
     const tertile = {} as Record<ConditionMetric, 'L' | 'M' | 'H' | null>
@@ -405,7 +424,7 @@ function makeConditionId(buckets: Record<ConditionMetric, string>): string {
 }
 
 /** Match a bucketed trade against a constraint (mode + per-metric bucket constraints). */
-function matchesConstraint(
+export function matchesConstraint(
   bt: BucketedTrade,
   constraint: Record<ConditionMetric, string>,
   mode: 'median' | 'tertile',
@@ -496,6 +515,45 @@ export function buildLookupRows(
   return rows
 }
 
+// ─── Trade → context row ─────────────────────────────────────────────────────
+
+/** Instrument root shared by a trade symbol and a context row: MNQZ6.CME → NQ. */
+export function instrumentRoot(symbol: string | null | undefined): string | null {
+  if (!symbol) return null
+  const r = chartSeriesRoot(symbol)
+  return r ? r.toUpperCase() : null
+}
+
+export const contextKey = (date: string, root: string | null): string => `${date}|${root ?? ''}`
+
+/**
+ * Which context row does a trade belong to?
+ *
+ * The join used to be by DATE alone — `metricsByDate.set(date, …)`, last row
+ * wins — so on a day with both an NQ and an ES row every trade was scored on
+ * whichever row happened to load last. On the owner's account 39 trades were
+ * bucketed on the other instrument's opening range and volatility.
+ *
+ *   1. the row for the trade's own instrument, when there is one;
+ *   2. otherwise the day's ONLY row, but only when one side can't name its
+ *      instrument (an import with no symbol, or a hand-entered context row) —
+ *      that keeps single-instrument accounts working exactly as before;
+ *   3. otherwise nothing. A known-NQ trade is never scored on a known-ES row;
+ *      it drops out of the buckets, which is the honest outcome.
+ */
+export function resolveContextKey(
+  date: string,
+  tradeRoot: string | null,
+  rootsForDate: Array<string | null> | undefined,
+): string | null {
+  if (!rootsForDate || rootsForDate.length === 0) return null
+  if (tradeRoot && rootsForDate.includes(tradeRoot)) return contextKey(date, tradeRoot)
+  if (rootsForDate.length === 1 && (tradeRoot == null || rootsForDate[0] == null)) {
+    return contextKey(date, rootsForDate[0])
+  }
+  return null
+}
+
 // ─── Orchestration: read → build → write ─────────────────────────────────────
 
 export interface RefreshResult {
@@ -525,11 +583,29 @@ export interface RefreshResult {
  * `refreshedAtIso` is injected so a caller looping many users can stamp them all
  * with one consistent timestamp; defaults to now.
  */
-export async function refreshConditionLookup(
+/** A windowed context row with its session date and instrument attached. */
+export type DatedContext = MarketContextLite & { date: string; root: string | null }
+
+export interface ConditionData {
+  /** `condition_lookup_meta.history_start_date`, or null for all history. */
+  historyStart: string | null
+  contexts: DatedContext[]
+  /** contextKey(date, root) → the five metrics for that instrument's session. */
+  metricsByKey: Map<string, MetricRow>
+  /** Native + imported trades inside the window, each already pointed at the
+   *  context row it is scored on (`ctxKey`; null = no row for its instrument). */
+  trades: TradeLite[]
+}
+
+/**
+ * Read everything the Morning Conditions maths runs on — one definition, shared
+ * by the nightly rebuild and the forward-test read, so the two can never score
+ * the same trade against different rows.
+ */
+export async function loadConditionData(
   supabase: AnyClient,
   userId: string | null,
-  refreshedAtIso?: string,
-): Promise<RefreshResult> {
+): Promise<ConditionData> {
   const scope = <T extends { eq: (c: string, v: string) => T }>(q: T): T =>
     userId ? q.eq('user_id', userId) : q
 
@@ -552,7 +628,7 @@ export async function refreshConditionLookup(
 
   // ── 1. market_context + trading_days (id → date) ──
   const [{ data: contextsRaw, error: cErr }, { data: daysRaw, error: dErr }] = await Promise.all([
-    scope(supabase.from('market_context').select('trading_day_id, rvol, rvol_at_ib_close, ib_vs_10d_avg, adr, day_range, atr_at_ib_close, atr_10d_avg, atr_1m, ib_atr_ratio')),
+    scope(supabase.from('market_context').select('trading_day_id, symbol, rvol, rvol_at_ib_close, ib_vs_10d_avg, ib_size, ibh, ibl, adr, day_range, atr_at_ib_close, atr_10d_avg, atr_1m, ib_atr_ratio')),
     scope(supabase.from('trading_days').select('id, date')),
   ]) as [
     { data: MarketContextLite[] | null; error: { message: string } | null },
@@ -564,62 +640,74 @@ export async function refreshConditionLookup(
   const dayDateById = new Map(days.map(d => [d.id, d.date]))
   // Windowed at the source so every downstream count (including the returned
   // market_context_rows) describes the data the lookup was actually built from.
-  const contexts = (contextsRaw ?? []).filter(ctx => inWindow(dayDateById.get(ctx.trading_day_id)))
-
-  const metricsByDate = new Map<string, MetricRow>()
-  for (const ctx of contexts) {
+  const contexts: DatedContext[] = []
+  for (const ctx of contextsRaw ?? []) {
     const date = dayDateById.get(ctx.trading_day_id)
-    if (!date) continue
-    metricsByDate.set(date, deriveMetrics(ctx))
+    if (!date || !inWindow(date)) continue
+    contexts.push({ ...ctx, date, root: instrumentRoot(ctx.symbol) })
   }
 
-  // ── 2. thresholds ──
-  // Computed from the SAME windowed contexts as the aggregation below: the cuts
-  // have to describe the era whose trades will fill the buckets.
-  const thresholds = computeThresholds(contexts.map(ctx => deriveMetrics(ctx)))
+  const metricsByKey = new Map<string, MetricRow>()
+  const rootsByDate = new Map<string, Array<string | null>>()
+  for (const ctx of contexts) {
+    metricsByKey.set(contextKey(ctx.date, ctx.root), deriveMetrics(ctx))
+    const roots = rootsByDate.get(ctx.date) ?? []
+    if (!roots.includes(ctx.root)) roots.push(ctx.root)
+    rootsByDate.set(ctx.date, roots)
+  }
 
-  // ── 3. trades (native + historical), paginated past the 1000 cap ──
+  // ── 2. trades (native + historical), paginated past the 1000 cap ──
   const PAGE = 1000
-  const native: { pnl: number | null; entry_time: string | null; trading_day_id: string | null }[] = []
+  const native: { pnl: number | null; entry_time: string | null; trading_day_id: string | null; symbol: string | null }[] = []
   for (let p = 0; p < 50; p++) {
     const { data, error } = await scope(supabase
       .from('trades')
-      .select('pnl, entry_time, trading_day_id'))
+      .select('pnl, entry_time, trading_day_id, symbol'))
       .order('entry_time', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
-    if (error) { console.error('[refreshConditionLookup] trades page', p, error.message); break }
+    if (error) { console.error('[loadConditionData] trades page', p, error.message); break }
     const rows = (data ?? []) as typeof native
     native.push(...rows)
     if (rows.length < PAGE) break
   }
-  const hist: { net_pnl: number | null; trade_date: string | null }[] = []
+  const hist: { net_pnl: number | null; trade_date: string | null; symbol: string | null }[] = []
   for (let p = 0; p < 50; p++) {
     const { data, error } = await scope(supabase
       .from('historical_trades')
-      .select('net_pnl, trade_date'))
+      .select('net_pnl, trade_date, symbol'))
       .order('trade_date', { ascending: true })
       .order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
-    if (error) { console.error('[refreshConditionLookup] historical_trades page', p, error.message); break }
+    if (error) { console.error('[loadConditionData] historical_trades page', p, error.message); break }
     const rows = (data ?? []) as typeof hist
     hist.push(...rows)
     if (rows.length < PAGE) break
   }
 
   const trades: TradeLite[] = []
-  for (const t of native) {
-    const date = t.trading_day_id ? dayDateById.get(t.trading_day_id) : null
-    if (!inWindow(date)) continue
-    trades.push({ date: date!, pnl: t.pnl })
+  const add = (date: string | null | undefined, pnl: number | null, symbol: string | null) => {
+    if (!date || !inWindow(date)) return
+    trades.push({ date, pnl, ctxKey: resolveContextKey(date, instrumentRoot(symbol), rootsByDate.get(date)) })
   }
-  for (const t of hist) {
-    if (!inWindow(t.trade_date)) continue
-    trades.push({ date: t.trade_date!, pnl: t.net_pnl })
-  }
+  for (const t of native) add(t.trading_day_id ? dayDateById.get(t.trading_day_id) : null, t.pnl, t.symbol)
+  for (const t of hist) add(t.trade_date, t.net_pnl, t.symbol)
 
-  // ── 4. build lookup ──
-  const lookup = buildLookupRows(trades, metricsByDate, thresholds)
+  return { historyStart, contexts, metricsByKey, trades }
+}
+
+export async function refreshConditionLookup(
+  supabase: AnyClient,
+  userId: string | null,
+  refreshedAtIso?: string,
+): Promise<RefreshResult> {
+  const { contexts, metricsByKey, trades } = await loadConditionData(supabase, userId)
+
+  // Thresholds come from the SAME windowed contexts as the aggregation: the cuts
+  // have to describe the era whose trades will fill the buckets.
+  const thresholds = computeThresholds(contexts.map(ctx => deriveMetrics(ctx)))
+
+  const lookup = buildLookupRows(trades, metricsByKey, thresholds)
 
   // Stamp user_id on every written row in the per-user (cloud) pass.
   const stampedThresholds = userId ? thresholds.map(r => ({ ...r, user_id: userId })) : thresholds

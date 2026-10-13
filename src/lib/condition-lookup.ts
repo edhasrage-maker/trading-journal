@@ -88,6 +88,9 @@ export interface LookupOutcome {
   /** Trader's overall EV/trade (the all-conditions baseline row, specificity 0).
    *  Lets the UI flag whether the matched bucket runs above/below your average. */
   baseline_ev: number | null
+  /** The whole book the matched bucket is being compared with — n, win rate and
+   *  profit factor as well as EV, so a read can always show BOTH sides. */
+  baseline: { n: number; wr: number | null; pf: number | null; ev: number | null } | null
 }
 
 // Ordered metric keys (must match column names on rows)
@@ -336,6 +339,9 @@ export function runLookup(
     conflict: con.conflict,
     conflict_reason: con.conflict_reason,
     baseline_ev: baselineRow?.ev_per_trade ?? null,
+    baseline: baselineRow
+      ? { n: baselineRow.n_trades ?? 0, wr: baselineRow.trade_wr ?? null, pf: baselineRow.profit_factor ?? null, ev: baselineRow.ev_per_trade ?? null }
+      : null,
   }
 }
 

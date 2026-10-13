@@ -3,15 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { Loader2, AlertTriangle } from 'lucide-react'
-import {
-  VERDICT_LABELS,
-  VERDICT_DISPLAY,
-  VERDICT_TONE,
-  type LookupOutcome,
-  type MatchResult,
-} from '@/lib/condition-lookup'
+import { type LookupOutcome, type MatchResult } from '@/lib/condition-lookup'
+import type { Lead, LeadsResult } from '@/lib/condition-leads'
 import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
-import type { ConditionMetric, ConditionVerdict, DailyPrep } from '@/lib/supabase/types'
+import type { ConditionMetric, DailyPrep } from '@/lib/supabase/types'
 
 /**
  * Morning prep condition filter — input 5 metrics, get a verdict, save the snapshot.
@@ -101,23 +96,6 @@ interface Props {
   beginner?: boolean
 }
 
-/**
- * `daily_prep.dr_adr` snapshots written before 2026-08-24 stored a RATIO (0.82)
- * while the thresholds have always been cut in PERCENT (median 75.9), so a
- * restored snapshot bucketed LOW no matter what the day did. Twelve such rows
- * exist app-wide and every one is ratio-shaped (0.49-1.19); the single
- * percent-shaped value is 311.75. Scaling below 5 recovers them exactly.
- *
- * This is a one-off repair of a closed set, NOT a dual-unit contract — new
- * snapshots are written in percent, and the live path never comes through here.
- */
-const legacyDrAdrPct = (saved: string): string => {
-  if (!saved) return ''
-  const n = parseFloat(saved)
-  if (!Number.isFinite(n)) return saved
-  return n <= 5 ? String(n * 100) : saved
-}
-
 const EMPTY: InputState = { rvol: '', dr_adr: '', ib: '', atr_730: '', ib_atr: '' }
 
 export default function ConditionFilterPanel({ date, marketContext, beginner = false }: Props) {
@@ -134,6 +112,9 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
    *  other view. 'auto' = use the picker's choice. */
   const [viewOverride, setViewOverride] = useState<'auto' | 'median' | 'tertile'>('auto')
   const [migrationNeeded, setMigrationNeeded] = useState(false)
+  /** This quarter's forward tests (see condition-leads.ts). Null until loaded;
+   *  a failed load leaves it null and the block simply doesn't render. */
+  const [leads, setLeads] = useState<LeadsResult | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // "Effective" inputs — the user-typed value if present, otherwise the
@@ -144,7 +125,11 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
     raw != null && Number.isFinite(raw) ? String(raw) : ''
   const effectiveInputs: InputState = {
     rvol: inputs.rvol || fromContext(marketContext?.rvol),
-    dr_adr: legacyDrAdrPct(inputs.dr_adr) || fromContext(marketContext?.dr_adr),
+    // Derived only, like atr_730 below. Saved snapshots hold day-range ÷ ADR (and
+    // before that a bare ratio); the metric is now IB range ÷ ADR, a different
+    // quantity under the same name, so a restored value would be bucketed on
+    // the wrong basis.
+    dr_adr: fromContext(marketContext?.dr_adr),
     ib: inputs.ib || fromContext(marketContext?.ib_vs_10d_avg),
     // Deliberately NOT `inputs.atr_730 || ...`. Snapshots saved before
     // 2026-10-08 hold ATR_730 in raw POINTS (prod: 14 rows, 2.97-44.26) and it
@@ -230,17 +215,30 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
     }
   }, [])
 
+  const runLeads = useCallback(async (state: InputState) => {
+    const n = (v: string) => { const x = parseFloat(v); return Number.isFinite(x) ? x : null }
+    try {
+      const res = await fetch('/api/condition-leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rvol: n(state.rvol), dr_adr: n(state.dr_adr), ib: n(state.ib), atr_730: n(state.atr_730), ib_atr: n(state.ib_atr) }),
+      })
+      if (!res.ok) { setLeads(null); return }
+      setLeads(await res.json() as LeadsResult)
+    } catch { setLeads(null) }
+  }, [])
+
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     const snapshot = effectiveInputs
-    debounceRef.current = setTimeout(() => { void runLookup(snapshot) }, 400)
+    debounceRef.current = setTimeout(() => { void runLookup(snapshot); if (!beginner) void runLeads(snapshot) }, 400)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
     // Dep array intentionally tracks the merged values so lookup re-fires when
     // either user input or Market Context changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveInputs.rvol, effectiveInputs.dr_adr, effectiveInputs.ib, effectiveInputs.atr_730, effectiveInputs.ib_atr, runLookup])
+  }, [effectiveInputs.rvol, effectiveInputs.dr_adr, effectiveInputs.ib, effectiveInputs.atr_730, effectiveInputs.ib_atr, runLookup, runLeads, beginner])
 
   // ── Save snapshot ─────────────────────────────────────────────────────────
   const save = async () => {
@@ -294,9 +292,6 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
   const effectiveMatch = outcome
     ? (effectivePick === 'tertile' ? outcome.best_tertile : outcome.best_median)
     : null
-  const v: ConditionVerdict | null = effectiveMatch
-    ? effectiveMatch.row.verdict
-    : (outcome?.consolidated.verdict ?? null)
   const vintage = outcome?.vintage
   const vintageAge = vintage?.refreshed_at
     // eslint-disable-next-line react-hooks/purity
@@ -402,14 +397,15 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           </div>
         )}
 
-        {/* Consolidated verdict + view-override dropdown.
-            Default picker is tertile (more specific match for today's conditions);
-            user can override to inspect the median view when they want a wider
-            sample. The select sits inside the verdict card so the connection
-            between the verdict and which-view-drove-it is unmissable. */}
-        {v && outcome && !beginner && (
-          <ConsolidatedVerdict
-            verdict={v}
+        {/* The read, said plainly. There is no grade: a letter and an instruction
+            ("Grade C · Be selective") were shown on nearly every morning, and the
+            trader's whole book earned the same grade — it described the trader,
+            not the day. What can honestly be said is whether days like this one
+            have run differently from the trader's average, and usually they
+            have not. */}
+        {outcome && effectiveMatch && !beginner && (
+          <DayRead
+            match={effectiveMatch}
             outcome={outcome}
             effectivePick={effectivePick}
             viewOverride={viewOverride}
@@ -417,6 +413,10 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
             isOverridden={viewOverride !== 'auto' && viewOverride !== autoPick}
           />
         )}
+
+        {/* The five readings the comparison is made on, so the trader can see
+            why today landed where it did. All are 07:30 PT (IB close) values. */}
+        {!beginner && hasAnyMetric && <ConditionStrip inputs={effectiveInputs} />}
 
         {/* Highlights (beginner): just the two numbers that matter to a quick
             read — how often you win + your profit factor in conditions like
@@ -443,8 +443,12 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
             stats table (CI ranges, sessions, total PnL, condition id, vs-your-avg
             delta) was retired in favor of this simpler read. */}
         {!beginner && outcome && effectiveMatch && (
-          <ConditionsHighlight match={effectiveMatch} showEv baselineEv={outcome.baseline_ev} />
+          <ConditionsHighlight match={effectiveMatch} showEv baselineEv={outcome.baseline_ev} baseline={outcome.baseline} />
         )}
+
+        {/* Forward tests — what is being watched this quarter and how it has
+            done since it was picked. Detailed Tape only. */}
+        {!beginner && leads && <TrackedLeads result={leads} />}
 
         {/* Save. The notes textarea that used to live here was removed
             2026-07-27 — the prep page already owns free-text ("what you're
@@ -485,55 +489,69 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
 // Pt 14 Prep redesign that read lives in the page hero (PrepHero), which
 // absorbed the old Today's Tape card.
 
-function ConsolidatedVerdict({
-  verdict,
+type ReadState = 'thin' | 'same' | 'above' | 'below'
+
+/** Where the matched bucket sits against the trader's own average: only
+ *  'above' / 'below' when its whole 95% range clears that average. */
+function readState(match: MatchResult, baselineEv: number | null): ReadState {
+  const r = match.row
+  if ((r.n_trades ?? 0) < MIN_SAMPLE || baselineEv == null) return 'thin'
+  if (r.ev_ci_lo != null && r.ev_ci_lo > baselineEv) return 'above'
+  if (r.ev_ci_hi != null && r.ev_ci_hi < baselineEv) return 'below'
+  return 'same'
+}
+
+const READ_COPY: Record<ReadState, { head: string; sub: string | null; color: string; rule: string }> = {
+  thin: { head: 'Too few trades to say.', sub: null, color: 'text-gray-400', rule: 'border-gray-700' },
+  same: {
+    head: 'No different from your average.',
+    sub: 'Nothing in today’s conditions separates your results from your average.',
+    color: 'text-gray-300', rule: 'border-gray-700',
+  },
+  above: {
+    head: 'Above your average so far.',
+    sub: 'In your history only — a lead to watch, not a rule. It has not been tested on new trades.',
+    color: 'text-green-400', rule: 'border-green-700',
+  },
+  below: {
+    head: 'Below your average so far.',
+    sub: 'In your history only — a lead to watch, not a rule. It has not been tested on new trades.',
+    color: 'text-red-400', rule: 'border-red-700',
+  },
+}
+
+function DayRead({
+  match,
   outcome,
   effectivePick,
   viewOverride,
   onChangeOverride,
   isOverridden,
 }: {
-  verdict: ConditionVerdict
+  match: MatchResult
   outcome: LookupOutcome
   effectivePick: 'median' | 'tertile'
   viewOverride: 'auto' | 'median' | 'tertile'
   onChangeOverride: (v: 'auto' | 'median' | 'tertile') => void
   isOverridden: boolean
 }) {
-  const tone = VERDICT_TONE[verdict]
-  // Colour carries trading meaning only — the verdict word is tinted, the
-  // surface is not. The old washed panel + emoji was the loudest remaining
-  // "AI dashboard" tell on the prep page.
-  const rule = tone === 'good'
-    ? 'border-green-700'
-    : tone === 'bad'
-      ? 'border-red-700'
-      : tone === 'neutral'
-        ? 'border-yellow-700'
-        : 'border-gray-700'
-  const verdictColor = tone === 'good'
-    ? 'text-green-400'
-    : tone === 'bad'
-      ? 'text-red-400'
-      : tone === 'neutral'
-        ? 'text-yellow-400'
-        : 'text-gray-300'
+  const copy = READ_COPY[readState(match, outcome.baseline_ev)]
   // Show a per-view explanation when overridden so the user understands why
-  // the verdict changed when they toggled.
+  // the read changed when they toggled.
   const explanation = isOverridden
     ? `${effectivePick === 'tertile' ? 'Specific' : 'Broad'} match (manual override)`
     : outcome.consolidated.explanation
   return (
-    <div className={`border-l-2 pl-4 py-1 ${rule}`}>
+    <div className={`border-l-2 pl-4 py-1 ${copy.rule}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
         <div>
           <div
-            className={`text-[26px] font-bold tracking-[-0.02em] leading-tight ${verdictColor}`}
+            className={`text-[22px] font-bold tracking-[-0.02em] leading-tight ${copy.color}`}
             style={{ fontFamily: 'var(--font-display)' }}
           >
-            {VERDICT_LABELS[verdict]}
+            {copy.head}
           </div>
-          <div className="text-xs text-gray-400 mt-0.5" title={`Internal code: ${verdict}`}>{VERDICT_DISPLAY[verdict]}</div>
+          {copy.sub && <div className="text-xs text-gray-400 mt-1 max-w-[58ch] leading-normal">{copy.sub}</div>}
         </div>
         <div className="text-left sm:text-right text-xs text-gray-500 space-y-1.5">
           <div className="font-mono">{explanation}</div>
@@ -546,7 +564,7 @@ function ConsolidatedVerdict({
                 value={viewOverride}
                 onChange={e => onChangeOverride(e.target.value as 'auto' | 'median' | 'tertile')}
                 className="bg-gray-900 border border-gray-700 text-gray-300 text-[11px] rounded px-1.5 py-0.5 font-mono focus:outline-none focus:border-blue-500"
-                title="Pick which historical view drives the verdict. Auto uses the better-sampled match; Specific matches today's conditions more tightly, Broad trades precision for a larger sample."
+                title="Pick which slice of your history today is compared with. Auto uses the better-sampled match; Specific matches today's conditions more tightly, Broad trades precision for a larger sample."
               >
                 <option value="auto">Auto (best match)</option>
                 <option value="tertile">Specific match</option>
@@ -560,6 +578,124 @@ function ConsolidatedVerdict({
   )
 }
 
+/** The five 07:30 PT readings today is compared on. */
+function ConditionStrip({ inputs }: { inputs: InputState }) {
+  const num = (s: string) => { const x = parseFloat(s); return Number.isFinite(x) ? x : null }
+  const rvol = num(inputs.rvol), dr = num(inputs.dr_adr), ib = num(inputs.ib), atr = num(inputs.atr_730), ibAtr = num(inputs.ib_atr)
+  const items: Array<[string, string | null, string]> = [
+    ['RVOL at IB close', rvol != null ? rvol.toFixed(0) : null, 'Volume through the IB close vs your 10-day average for the same hour (100 = normal).'],
+    ['IB ÷ ADR', dr != null ? `${dr.toFixed(0)}%` : null, 'How much of a normal day’s range the opening hour already used: IB range ÷ ADR.'],
+    ['IB vs 10-day', ib != null ? `${ib.toFixed(2)}×` : null, 'Today’s IB range ÷ its own 10-day average.'],
+    ['ATR vs typical', atr != null ? `${atr.toFixed(2)}×` : null, '1-minute ATR at the IB close ÷ its own 10-day average at the same moment.'],
+    ['IB ÷ ATR', ibAtr != null ? ibAtr.toFixed(1) : null, 'IB range ÷ the average range of the last ten IB bars — low is choppy, high is clean.'],
+  ]
+  return (
+    <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[10.5px] text-gray-500">
+      {items.map(([label, value, title]) => (
+        <span key={label} title={title}>
+          {label} <b className="font-medium text-gray-300">{value ?? '—'}</b>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+const money = (v: number | null) => (v == null ? '—' : `${v >= 0 ? '+' : '−'}$${Math.abs(v).toFixed(0)}`)
+const pfText = (v: number | null) => (v == null ? '—' : v.toFixed(2))
+const shortDate = (iso: string) =>
+  new Date(`${iso}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+
+/**
+ * This quarter's forward tests. A lead is a condition whose results cleared the
+ * trader's average in the sessions BEFORE the quarter began; what matters is
+ * the second half of each row — what it has done on trades taken since, which
+ * had no part in choosing it.
+ */
+function TrackedLeads({ result }: { result: LeadsResult }) {
+  const since = shortDate(result.freezeDate)
+  return (
+    <div className="pt-4 border-t border-gray-800">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-2">
+        <span className="text-[13px] font-bold tracking-[-0.01em] text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+          Being tracked this quarter
+        </span>
+        <span className="font-mono text-[10.5px] text-gray-500">
+          picked from sessions before {since} · scored on trades since
+        </span>
+      </div>
+
+      {result.status === 'not-enough-history' && (
+        <p className="text-xs text-gray-500 max-w-[64ch] leading-normal">
+          Not enough history before {since} to pick anything worth tracking yet. Leads appear on their own once
+          one has 30 trades across 10 sessions behind it.
+        </p>
+      )}
+      {result.status === 'no-leads' && (
+        <p className="text-xs text-gray-400 max-w-[64ch] leading-normal">
+          Nothing cleared your average before {since}, so nothing is being tracked. That is a real answer — no
+          condition has run clearly better or worse for you.
+        </p>
+      )}
+
+      {result.leads.map(lead => (
+        <LeadRow key={lead.condition_id} lead={lead} since={since} baseline={result.pickedBaseline} />
+      ))}
+
+      {result.status === 'ok' && (
+        <p className="text-[11px] text-gray-500 mt-2 max-w-[70ch] leading-normal">
+          These are hypotheses, not findings. When this was tested, conditions picked this way kept their direction
+          on new trades less than half the time — which is why each one is scored going forward before it is believed.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function LeadRow({ lead, since, baseline }: { lead: Lead; since: string; baseline: LeadsResult['pickedBaseline'] }) {
+  const tone = lead.side === 'above' ? 'text-green-400' : 'text-red-400'
+  const f = lead.forwardIn, o = lead.forwardOut
+  const forwardWord =
+    lead.forwardState === 'holding' ? 'holding so far'
+      : lead.forwardState === 'not-holding' ? 'not holding so far'
+        : 'too few to judge'
+  const forwardTone =
+    lead.forwardState === 'holding' ? 'text-gray-100'
+      : lead.forwardState === 'not-holding' ? 'text-yellow-400'
+        : 'text-gray-500'
+  return (
+    <div className="py-2.5 border-t border-gray-800">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <span className="text-[13.5px] font-semibold text-gray-100">
+          {lead.name}
+          {lead.matchesDay === true && (
+            <span className="ml-2 font-mono text-[9px] tracking-wider text-yellow-400 border border-yellow-700 rounded-sm px-1 align-[1px]">THIS SESSION</span>
+          )}
+        </span>
+        <span className="font-mono text-[10.5px] text-gray-500">
+          {lead.matchesDay === false ? 'this session is not in it' : lead.matchesDay == null ? 'needs the IB close to check' : ''}
+        </span>
+      </div>
+      <div className="font-mono text-[10px] text-gray-500 mt-0.5">{lead.cuts.map(c => c.text).join(' · ')}</div>
+      <div className="grid gap-x-10 gap-y-1 md:grid-cols-2 mt-2 text-xs">
+        <div className="text-gray-400">
+          <span className="text-gray-500">When picked </span>
+          <b className={`font-bold tabular-nums ${tone}`}>{money(lead.picked.ev)}</b> a trade over {lead.picked.n} trades
+          {' '}({lead.picked.sessions} sessions), PF {pfText(lead.picked.pf)}
+          <span className="text-gray-500"> · your average then {money(baseline.ev)}, PF {pfText(baseline.pf)}</span>
+        </div>
+        <div className="text-gray-400">
+          <span className="text-gray-500">Since {since} </span>
+          {f.n === 0
+            ? <>no trades inside it yet</>
+            : <><b className="font-bold tabular-nums text-gray-100">{money(f.ev)}</b> a trade over {f.n} ({f.sessions} sessions), PF {pfText(f.pf)}</>}
+          <span className="text-gray-500"> · everything else {o.n === 0 ? '—' : `${money(o.ev)} over ${o.n}, PF ${pfText(o.pf)}`}</span>
+          <span className={`font-semibold ${forwardTone}`}> · {forwardWord}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Big-stat readout for a matched historical bucket. Win rate + Profit factor
  *  always; EV/trade (expectancy, avg $/trade) is added when `showEv` is set.
  *  Highlights (beginner) uses the 2-stat form; Detailed Tape uses the same card
@@ -567,7 +703,7 @@ function ConsolidatedVerdict({
  *  `baselineEv` (Detailed Tape only) draws the "vs your avg" delta under EV.
  *  Every read carries its sample size; below MIN_SAMPLE the stats are
  *  suppressed entirely — a confident WR from 6 trades is false precision. */
-function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: MatchResult; showEv?: boolean; baselineEv?: number | null }) {
+function ConditionsHighlight({ match, showEv = false, baselineEv, baseline }: { match: MatchResult; showEv?: boolean; baselineEv?: number | null; baseline?: LookupOutcome['baseline'] }) {
   const r = match.row
   const n = r.n_trades ?? 0
   if (n < MIN_SAMPLE) {
@@ -600,7 +736,7 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
           single most recognisable AI-dashboard move, and the locked language
           reads numbers as tabular display numerals on rules instead. */}
       <div className="grid gap-x-10 md:grid-cols-2">
-      <StatRow label="Win rate" value={wr} note="in conditions like today" />
+      <StatRow label="Win rate" value={wr} note={baseline?.wr != null ? `vs ${(baseline.wr * 100).toFixed(0)}% across all ${baseline.n} trades` : 'in conditions like today'} />
       {showEv && (
         <StatRow label="EV / trade" value={ev} valueTone={evTone} note="avg $ in conditions like today">
           {/* EV vs the trader's OWN baseline EV — flags whether THIS environment
@@ -625,7 +761,7 @@ function ConditionsHighlight({ match, showEv = false, baselineEv }: { match: Mat
           })()}
         </StatRow>
       )}
-      <StatRow label="Profit factor" value={pf} valueTone={pfTone} note="in conditions like today" />
+      <StatRow label="Profit factor" value={pf} valueTone={pfTone} note={baseline?.pf != null ? `vs ${baseline.pf.toFixed(2)} across all ${baseline.n} trades` : 'in conditions like today'} />
       </div>
     </div>
   )
@@ -676,32 +812,34 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
     <div onClick={onClose} className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
       <div onClick={e => e.stopPropagation()} className="bg-gray-900 border border-gray-700 rounded-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto p-5 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-white">How the condition filter works</h3>
+          <h3 className="font-semibold text-white">How Morning conditions works</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white">✕</button>
         </div>
         <div className="text-sm text-gray-300 space-y-3">
-          <p>Today&apos;s market-state metrics (RVOL, DR vs ADR, IB, ATR-10), computed at the end of the Initial Balance. The lookup table tells you whether your historical edge in similar market conditions is positive, negative, or noise.</p>
+          <p>Five readings taken at the close of the Initial Balance (07:30 PT) describe the morning: relative volume, how much of a normal day&apos;s range the opening hour used, the size of the IB against its 10-day average, bar size against its own typical, and how choppy the IB was. Your past trades on mornings with similar readings are compared with your average across all trades.</p>
 
           <div>
-            <div className="font-semibold text-white text-sm mb-1">Grades</div>
+            <div className="font-semibold text-white text-sm mb-1">What the read says</div>
             <ul className="space-y-1 text-xs">
-              <li><span className="text-green-400">🟢 Grade A</span> — Trade normally (n≥100, EV CI excludes zero)</li>
-              <li><span className="text-green-400">🟢 Grade B</span> — Likely edge (n≥50, EV CI excludes zero)</li>
-              <li><span className="text-yellow-400">🟡 Grade C</span> — n≥50, slight positive lean but CI includes zero → no statistical signal</li>
-              <li><span className="text-yellow-400">🟡 Grade D</span> — n≥50, slight negative lean but CI includes zero → no statistical signal</li>
-              <li><span className="text-red-400">🔴 Grade F</span> — Likely losing (n≥50, EV&lt;0, lower CI &lt; -$10) → reduce size or sit out</li>
-              <li><span className="text-gray-400">⚪ Ungraded</span> — n&lt;50 historical matches</li>
+              <li><span className="text-gray-200">No different from your average</span> — the usual answer. Days like today have not run clearly better or worse for you.</li>
+              <li><span className="text-green-400">Above</span> / <span className="text-red-400">Below your average so far</span> — the whole 95% range of those trades sits on one side of your average. It is a description of your history, not a prediction.</li>
+              <li><span className="text-gray-400">Too few trades to say</span> — fewer than {MIN_SAMPLE} trades on days like today.</li>
             </ul>
+          </div>
+
+          <div>
+            <div className="font-semibold text-white text-sm mb-1">Being tracked this quarter</div>
+            <p className="text-xs text-gray-400">A condition that cleared your average before the quarter began is tracked through it, and scored only on trades taken since. That second number is the one to trust: a pattern found by searching your history is right about new trades less than half the time, so nothing here is treated as an edge until it has held up going forward. A new quarter picks again from everything before it.</p>
           </div>
 
           <div>
             <div className="font-semibold text-white text-sm mb-1">Caveats</div>
             <ul className="space-y-1.5 text-xs list-disc list-inside text-gray-400">
-              <li>All claims are from MNQ trading (2025-06 through 2026-03, n=828 trades with market data overlay). A different instrument or regime may behave differently.</li>
-              <li>Grade C and Grade D mean &quot;the sample says nothing definitive.&quot; Don&apos;t read Grade C as bullish or Grade D as bearish — both mean the CI includes zero, just with a slight positive or negative lean respectively.</li>
-              <li>The lookup uses only market-state metrics. It does NOT consider your setup tags, orderflow tags, or psychological state — those sit on top, not in place of.</li>
-              <li>The 5 metrics are NOT independent. High RVOL days usually have high IB and high ATR_730 too. The 3-way cells have smaller samples and noisier estimates.</li>
-              <li>IB vs ATR is the one metric whose L/M/H cuts are fixed rather than derived from your own thirds: L is exactly the study&apos;s choppy band (&lt; 7.7) and H exactly its expanded band (≥ 13), so the bucket matches the word on the prep panel. H is a thin slice — roughly one day in seven.</li>
+              <li>There is no grade and no instruction. Earlier versions showed a letter grade on every morning; it was the same grade your whole book earned, so it described you rather than the day.</li>
+              <li>Every reading is knowable at 07:30 PT. Nothing here uses how the day finished.</li>
+              <li>Each trade is compared on its own instrument&apos;s readings, and all five are ratios, so NQ and ES mornings are measured on the same scale.</li>
+              <li>The readings are not independent — busy mornings tend to have large opening ranges and big bars too — and the more specific a match, the smaller its sample.</li>
+              <li>This looks only at market conditions. It does not consider your setup, order flow, or state of mind.</li>
             </ul>
           </div>
 
