@@ -555,10 +555,14 @@ export default function SessionTradeTable({
                   <span className="text-sm text-gray-300 tabular-nums">{time}</span>
                   {setup && <span className="text-xs text-gray-500 truncate">{setup}</span>}
                   <span className="flex-1" />
+                  {!isCapture && t.review_json?.score && (
+                    <ScoreChip score={t.review_json.score} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                  )}
                   <span className={`text-sm font-semibold ${(pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
                   </span>
                 </div>
+                {!isCapture && t.review_json?.score && openScoreId === t.id && <ScoreDetail score={t.review_json.score} />}
                 {overviewText && (
                   <p
                     className={`text-xs text-gray-500 mt-1.5 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
@@ -722,11 +726,15 @@ export default function SessionTradeTable({
                   {isLong ? '▲ LONG' : isShort ? '▼ SHORT' : '—'}
                 </span>
                 <span className="flex-1" />
+                {!isCapture && t.review_json?.score && (
+                  <ScoreChip score={t.review_json.score} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                )}
                 <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                   {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
                 </span>
               </div>
               <div className="px-3 py-2.5">
+                {!isCapture && t.review_json?.score && openScoreId === t.id && <ScoreDetail score={t.review_json.score} />}
                 {setup && (
                   <span className="inline-block text-[11px] text-gray-300 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded mb-2">{setup}</span>
                 )}
