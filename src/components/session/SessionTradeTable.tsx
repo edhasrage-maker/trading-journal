@@ -26,6 +26,7 @@ import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
+import { ScoreChip, ScoreDetail } from './ScoreChip'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
@@ -337,6 +338,7 @@ export default function SessionTradeTable({
   // Click-to-toggle popups for the MFE % / MAE % column definitions. Same
   // dashboard-style popup pattern as the EOD header — click outside / Esc to
   // dismiss. Pinned top-right of the viewport so they don't push the table.
+  const [openScoreId, setOpenScoreId] = useState<string | null>(null)
   const [mfeOpen, setMfeOpen] = useState(false)
   const [maeOpen, setMaeOpen] = useState(false)
   const mfeRef = useRef<HTMLDivElement>(null)
@@ -937,6 +939,8 @@ export default function SessionTradeTable({
                 : isHovered ? 'bg-blue-950/30'
                 : isNearDup ? 'bg-yellow-950/20'
                 : ''
+              // The trade's Score (order flow at the fill). Review table only; absent until scored.
+              const flowScore = !isCapture ? (t.review_json?.score ?? null) : null
               return (
                 <Fragment key={t.id}>
                 <tr
@@ -1056,6 +1060,9 @@ export default function SessionTradeTable({
                       pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-500'
                     }`}
                   >
+                    {flowScore && (
+                      <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                    )}
                     {pnl >= 0 ? '+' : ''}
                     {pnl.toFixed(2)}
                   </td>
@@ -1212,6 +1219,14 @@ export default function SessionTradeTable({
                     </button>
                   </td>
                 </tr>
+                {flowScore && openScoreId === t.id && (
+                  <tr className={`${hasOverviewRow ? '' : 'border-b border-gray-800'} ${rowBg}`}>
+                    <td className="pr-2" />
+                    <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
+                      <ScoreDetail score={flowScore} />
+                    </td>
+                  </tr>
+                )}
                 {/* Full-width AI-overview sub-row. Mirrors the data row's hover/
                     click behavior so it reads as one unit; carries the bottom
                     border the data row gave up. */}

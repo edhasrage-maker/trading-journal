@@ -388,6 +388,30 @@ export interface TradeVerdict {
 export interface TradeReview {
   verdict?: TradeVerdict
   tape_read?: Record<string, unknown>
+  /** The trade's Score — order flow at the fill, computed off the tick tape by
+   *  the local scorer and written read-merge. Absent until a trade is scored. */
+  score?: TradeFlowScore
+}
+
+/** One of the five order-flow facts behind a Score. */
+export interface TradeFlowFact {
+  k: 'who' | 'their' | 'answered' | 'reference' | 'pressing'
+  label: string
+  pts: number
+  max: number
+  state: 'with' | 'neutral' | 'against'
+  text: string
+}
+
+/** trades.review_json.score. `read_at` is the PT time of the fill the tape was
+ *  read at; nothing after it is used. */
+export interface TradeFlowScore {
+  v: string
+  total: number
+  max: number
+  facts: TradeFlowFact[]
+  read_at: string
+  at: string
 }
 
 /** AI-generated OBS recording commentary saved per-trade so it survives
