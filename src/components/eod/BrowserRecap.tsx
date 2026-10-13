@@ -1,9 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Video, Loader2, AlertCircle, Film, Anchor, Upload, Info, MessageSquare, SlidersHorizontal, Check, Copy, ChevronDown, RotateCcw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Video, Loader2, AlertCircle, Film, Folder, Anchor, Upload, Info, MessageSquare, SlidersHorizontal, Check, Copy, ChevronDown } from 'lucide-react'
 import { VideoFrameGrabber, parseObsFilenameStartMs } from '@/lib/browser-frames'
-import { supportsFsAccess, pickAndRememberFile, savedRecordingName, reopenSavedFile } from '@/lib/recording-store'
+import {
+  useRecordingFolder, chooseFolder, allowFolder, listFolderClips, pickRecordingFile, supportsFsAccess,
+  type FolderClip,
+} from '@/lib/recording-folder'
+import { clipsForSession, type SessionCandidate } from '@/lib/recording-match'
 import { createClient } from '@/lib/supabase/client'
 import type { Trade, DetectedLevels } from '@/lib/supabase/types'
 
@@ -139,11 +143,16 @@ const fmtClock = (sec: number): string => {
 
 export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
   const [file, setFile] = useState<File | null>(null)
-  // A clip picked previously on THIS device — on Review or on the Trade tab,
-  // they share one handle. Offering it by name turns "find that file again"
-  // into one click. Null when nothing has ever been picked, or when the
-  // browser has no File System Access API to remember handles with.
-  const [rememberedName, setRememberedName] = useState<string | null>(null)
+  // The recap's OWN locked recordings folder. The Trade tab's "Adjust frame"
+  // keeps a separate one: they may point at the same place, but picking here
+  // never changes what that reads, or the reverse.
+  const folder = useRecordingFolder('recap')
+  // What that folder holds for THIS session, once it has been read.
+  const [folderMatch, setFolderMatch] = useState<{
+    key: string
+    candidates: SessionCandidate<FolderClip>[]
+    untimed: number
+  } | null>(null)
   const [grabber, setGrabber] = useState<VideoFrameGrabber | null>(null)
   const [duration, setDuration] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -295,31 +304,56 @@ export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
     setScrubSec(0)
   }, [date])
 
-  // Surface a clip picked earlier — here or on the Trade tab.
+  const mounted = useRef(true)
   useEffect(() => {
-    if (!supportsFsAccess()) return
-    let dead = false
-    void savedRecordingName().then(n => { if (!dead) setRememberedName(n) })
-    return () => { dead = true }
+    mounted.current = true
+    return () => { mounted.current = false }
   }, [])
 
-  /** Pick through the store where the browser allows it, so the handle is
-   *  REMEMBERED for every other surface. This component keeps running its own
-   *  decode + per-day anchor afterwards; only the remembering is shared.
-   *  Browsers without File System Access fall back to the <input> below, which
-   *  works exactly as before but can't be remembered — a File from an <input>
-   *  carries no handle, so there is nothing to store. */
-  const pickRemembered = useCallback(async () => {
-    const f = await pickAndRememberFile()
-    if (!f) return
-    setRememberedName(f.name)
-    await onPick(f)
+  const loadFromFolder = useCallback(async (clip: FolderClip) => {
+    let f: File
+    try {
+      f = await clip.handle.getFile()
+    } catch {
+      setLoadError(`Could not open ${clip.name} from the recordings folder.`)
+      return
+    }
+    if (mounted.current) await onPick(f)
   }, [onPick])
 
-  const reopenRemembered = useCallback(async () => {
-    const f = await reopenSavedFile()
-    if (!f) return
-    await onPick(f)
+  // Find this session's recording in the locked folder: the clip that was
+  // running at the day's entries (by the time in its filename), loaded with no
+  // dialog. When the folder has none we SAY so and load nothing — never the
+  // last clip that happened to be open, which is how the wrong day's video
+  // gets analysed.
+  const entryMs = useMemo(() => timedTrades.map(t => Date.parse(t.entry_time!)), [timedTrades])
+  const matchKey = folder.access === 'granted' && entryMs.length > 0 ? `${date}|${folder.rev}` : null
+  const matchRanFor = useRef<string | null>(null)
+  useEffect(() => {
+    // Once per session + folder. The trades prop refreshes after every write,
+    // and re-loading the clip then would throw away frames already extracted.
+    if (matchKey == null || matchRanFor.current === matchKey) return
+    matchRanFor.current = matchKey
+    void (async () => {
+      const listing = await listFolderClips('recap')
+      if (!mounted.current || matchRanFor.current !== matchKey) return
+      // Unreadable: the folder's own `access` now says why; retry once it's fixed.
+      if (!listing) { matchRanFor.current = null; return }
+      const candidates = clipsForSession(listing.clips, entryMs)
+      setFolderMatch({ key: matchKey, candidates, untimed: listing.untimed })
+      if (candidates[0]) await loadFromFolder(candidates[0].clip)
+    })()
+  }, [matchKey, entryMs, loadFromFolder])
+  const match = folderMatch && folderMatch.key === matchKey ? folderMatch : null
+  const matching = matchKey != null && !match
+
+  /** One recording, by hand — the way out when the folder has nothing for this
+   *  session, and the only way where there is no folder. Nothing is remembered:
+   *  a hand-picked clip is for this visit and never comes back on its own.
+   *  Browsers without File System Access use the <input> below instead. */
+  const pickByHand = useCallback(async () => {
+    const f = await pickRecordingFile('recap')
+    if (f) await onPick(f)
   }, [onPick])
 
   // Persist the anchor whenever it changes.
@@ -492,6 +526,8 @@ export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
     }, 0)
   }, [timedTrades, offsetForTime, duration, anchor])
 
+  const pickLabel = file ? 'Choose a different recording' : folder.name != null ? 'Pick a file by hand…' : 'Select recording…'
+
   const anchorLabel = anchor
     ? anchor.source === 'pinned' ? 'Pinned to a trade'
       : anchor.source === 'filename' ? 'From filename timestamp'
@@ -506,28 +542,130 @@ export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
         <span className="text-[10px] uppercase tracking-wider text-blue-300/70 border border-blue-900/60 rounded px-1.5 py-0.5">Beta</span>
       </div>
       <p className="text-xs text-gray-500">
-        Pick your screen recording of this session. Your browser reads a frame at each trade&apos;s entry so you can see
-        what was on your chart when you pulled the trigger.{' '}
+        Point this at your recordings folder once, or pick this session&apos;s recording by hand. Your browser reads a
+        frame at each trade&apos;s entry so you can see what was on your chart when you pulled the trigger.{' '}
         <span className="text-gray-400">Your video never leaves your device — only the individual frames you analyze are sent to our AI provider for commentary.</span> Frames are extracted right here in your browser.
         MP4 / H.264 recordings work best.
       </p>
 
-      {/* File picker */}
+      {/* Locked recordings folder — only where the browser can hold one
+          (Chromium). Elsewhere this whole block is absent and the picker
+          below works exactly as it always has. */}
+      {folder.checked && folder.supported && (
+        <div className="space-y-1.5">
+          {folder.name == null ? (
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+              <button
+                type="button"
+                onClick={() => void chooseFolder('recap')}
+                className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-sm rounded-lg px-4 py-2 cursor-pointer transition-colors w-fit"
+              >
+                <Folder className="w-4 h-4" /> Lock your recordings folder…
+              </button>
+              <span className="text-xs text-gray-500">
+                Choose it once on this device — each session&apos;s recording is then found by the time in its filename.
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap text-xs">
+              <span className="inline-flex items-center gap-1.5 text-gray-400">
+                <Folder className="w-3.5 h-3.5 text-blue-400" /> Recordings folder:{' '}
+                <span className="font-mono text-gray-300">{folder.name}</span>
+              </span>
+              {/* The browser holds the permission, not the app: on a return
+                  visit it is one click to re-allow — never the file dialog. */}
+              {(folder.access === 'prompt' || folder.access === 'denied') && (
+                <button
+                  type="button"
+                  onClick={() => void allowFolder('recap')}
+                  className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-md px-2.5 py-1 transition-colors"
+                >
+                  {folder.access === 'denied' ? 'Try again' : 'Allow access'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void chooseFolder('recap')}
+                className="text-gray-500 hover:text-gray-300 underline underline-offset-2"
+              >
+                Change folder
+              </button>
+            </div>
+          )}
+          {folder.access === 'prompt' && (
+            <p className="text-xs text-gray-500">
+              Your browser asks before the app can read the folder again. If it offers &ldquo;Allow on every visit&rdquo;, take it and this step goes away.
+            </p>
+          )}
+          {folder.access === 'denied' && (
+            <p className="text-xs text-amber-300/90">
+              Access to <span className="font-mono">{folder.name}</span> was declined, so there is nothing to read from.
+            </p>
+          )}
+          {folder.access === 'missing' && (
+            <p className="text-xs text-amber-300/90">
+              <span className="font-mono">{folder.name}</span> can&apos;t be read — it may have been moved or renamed.
+            </p>
+          )}
+          {matching && (
+            <p className="inline-flex items-center gap-2 text-xs text-gray-400">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Finding this session&apos;s recording…
+            </p>
+          )}
+          {match && match.candidates.length === 0 && (
+            <p className="text-xs text-amber-300/90">
+              No recording in <span className="font-mono">{folder.name}</span> covers this session ({date}).
+              {match.untimed > 0 && (
+                <>
+                  {' '}{match.untimed} video{match.untimed === 1 ? '' : 's'} there {match.untimed === 1 ? 'has' : 'have'} no
+                  date and time in the filename, so {match.untimed === 1 ? 'it' : 'they'} can&apos;t be matched.
+                </>
+              )}
+              {' '}Pick the file by hand below if it lives somewhere else.
+            </p>
+          )}
+          {/* The recorder was restarted mid-session: one clip per stretch. The
+              recap reads one at a time, so offer the switch by name. */}
+          {match && match.candidates.length > 1 && (
+            <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500">
+              <span>{match.candidates.length} recordings cover this session:</span>
+              {match.candidates.map(c => (
+                <button
+                  key={c.clip.name}
+                  type="button"
+                  onClick={() => void loadFromFolder(c.clip)}
+                  disabled={loadingVideo}
+                  aria-pressed={file?.name === c.clip.name}
+                  className={`font-mono rounded border px-1.5 py-0.5 transition-colors disabled:opacity-50 ${
+                    file?.name === c.clip.name
+                      ? 'border-blue-700 text-blue-200 bg-blue-950/40'
+                      : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500'
+                  }`}
+                >
+                  {c.clip.name} · {c.trades} trade{c.trades === 1 ? '' : 's'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* File picker — one recording, by hand */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
         {supportsFsAccess() ? (
-          // Chromium: pick through the store so the choice is remembered app-wide.
+          // Chromium: the native picker, which opens in the locked folder.
           <button
             type="button"
-            onClick={() => void pickRemembered()}
+            onClick={() => void pickByHand()}
             className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-sm rounded-lg px-4 py-2 cursor-pointer transition-colors w-fit"
           >
             <Upload className="w-4 h-4" />
-            {file ? 'Choose a different recording' : 'Select recording…'}
+            {pickLabel}
           </button>
         ) : (
           <label className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-sm rounded-lg px-4 py-2 cursor-pointer transition-colors w-fit">
             <Upload className="w-4 h-4" />
-            {file ? 'Choose a different recording' : 'Select recording…'}
+            {pickLabel}
             <input
               type="file"
               accept="video/mp4,video/*"
@@ -535,21 +673,6 @@ export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
               onChange={e => { const f = e.target.files?.[0]; if (f) void onPick(f) }}
             />
           </label>
-        )}
-        {/* One click back to the clip already chosen on this device. The browser
-            drops read permission to a local file at every page load — that is a
-            fixed rule of the web, not something the app can hold onto — so a
-            single re-grant is the floor. What it should never do is make you go
-            find the file again. */}
-        {!file && rememberedName && (
-          <button
-            type="button"
-            onClick={() => void reopenRemembered()}
-            className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 w-fit"
-            title="Use the recording you already picked on this device"
-          >
-            <RotateCcw className="w-3 h-3" /> Re-open <span className="font-mono">{rememberedName}</span>
-          </button>
         )}
         {loadingVideo && (
           <span className="inline-flex items-center gap-2 text-xs text-gray-400">

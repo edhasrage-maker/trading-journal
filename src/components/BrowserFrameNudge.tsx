@@ -1,10 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Check, X, Film, RotateCcw } from 'lucide-react'
+import { Loader2, Check, X, Film, Folder, RotateCcw } from 'lucide-react'
 import {
-  useRecording, supportsFsAccess, pickRecordingViaHandle, ingestFile, reopenSavedRecording,
+  useRecording, loadFolderClipFor, pickRecordingManually, ingestFile, type FolderLookup,
 } from '@/lib/recording-store'
+import { useRecordingFolder, chooseFolder, allowFolder, supportsFsAccess } from '@/lib/recording-folder'
+import { clipCovers } from '@/lib/recording-match'
 import type { Trade } from '@/lib/supabase/types'
 
 /**
@@ -15,14 +17,26 @@ import type { Trade } from '@/lib/supabase/types'
  * Here the trader picks the clip once and it's decoded client-side — the video
  * never uploads, only the single chosen JPEG does.
  *
- * The picked recording lives in a page-level store (`useRecording`), so it's
- * picked ONCE and reused for every trade you adjust; on Chromium the file
- * handle persists across visits (one-click re-open, no dialog). This component
- * owns only the per-trade bits: which second to grab and saving that frame.
+ * On Chromium the trader locks a recordings FOLDER once (`useRecordingFolder`)
+ * and each trade finds its own clip in it by the time in the filename — no
+ * daily re-pick. When the folder has nothing for a trade the panel says so and
+ * offers a pick by hand; it never falls back to whatever was open last.
+ * Browsers without the File System Access API keep the plain file picker.
+ *
+ * The loaded clip lives in a page-level store (`useRecording`), so one decode
+ * serves every trade you adjust. This component owns only the per-trade bits:
+ * which second to grab and saving that frame.
  */
 
 /** Seconds either side of the computed entry moment. */
 const RANGE = 120
+
+const LINK = 'text-[10px] text-gray-500 hover:text-gray-300 underline underline-offset-2'
+
+const PT_WHEN = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Los_Angeles', hourCycle: 'h23',
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+})
 
 /** `data:image/jpeg;base64,…` → Blob for upload. */
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -54,6 +68,7 @@ export default function BrowserFrameNudge({
   tradeId, entryTimeIso, exitTimeIso, recordingCommentary, suggestedFileName, initialDelta = 0, onSaved, onClose,
 }: Props) {
   const rec = useRecording()
+  const folder = useRecordingFolder('trade')
   const [delta, setDelta] = useState(initialDelta)
   const [preview, setPreview] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -79,6 +94,35 @@ export default function BrowserFrameNudge({
     ? (baseMs - rec.anchorMs!) / 1000 + delta
     : null
   const inRange = offsetSec != null && offsetSec >= 0 && offsetSec <= rec.duration
+
+  // Set once the trader picks a clip by hand IN THIS PANEL. From then on the
+  // folder stays out of it — their choice is not second-guessed.
+  const [manualHere, setManualHere] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  const [found, setFound] = useState<{ key: string; result: FolderLookup } | null>(null)
+
+  // With a folder locked, a clip is only shown for this trade when it really
+  // runs through the moment — the store holds ONE clip for the whole page, and
+  // the one left over from another day's trade must not pass as this one's.
+  // Without a folder (Safari/Firefox, or none locked yet) any picked clip shows.
+  const covers = ready && clipCovers(rec.anchorMs!, rec.duration, baseMs)
+  const lookupKey = folder.access === 'granted' && !manualHere && Number.isFinite(baseMs)
+    ? `${folder.rev}:${baseMs}:${attempt}`
+    : null
+  const searching = lookupKey != null && found?.key !== lookupKey
+  const lookup = lookupKey != null && found?.key === lookupKey ? found.result : null
+  // While the folder is being asked, hold the answer back: the clip on hand may
+  // be about to be replaced (the folder was just re-pointed).
+  const showClip = ready && !searching && (folder.name == null || covers || manualHere)
+
+  // Ask the locked folder for the recording that was running at this moment.
+  useEffect(() => {
+    if (lookupKey == null) return
+    let stale = false
+    const settle = (result: FolderLookup) => { if (!stale) setFound({ key: lookupKey, result }) }
+    void loadFolderClipFor(baseMs).then(settle, () => settle({ kind: 'unreadable' }))
+    return () => { stale = true }
+  }, [lookupKey, baseMs])
 
   const grabAt = useCallback(async (sec: number) => {
     if (!rec.grabber) return
@@ -153,11 +197,13 @@ export default function BrowserFrameNudge({
     }
   }
 
-  // FS Access picker on Chromium; the hidden <input> everywhere else.
+  // One clip, by hand: the native picker on Chromium (it opens in the locked
+  // folder), the hidden <input> everywhere else. Never remembered.
   const openPicker = () => {
-    if (supportsFsAccess()) void pickRecordingViaHandle()
+    if (supportsFsAccess()) void pickRecordingManually().then(ok => { if (ok) setManualHere(true) })
     else inputRef.current?.click()
   }
+  const lookAgain = () => { setManualHere(false); setAttempt(a => a + 1) }
 
   const fmtClock = (s: number) => {
     if (!Number.isFinite(s)) return '--:--'
@@ -196,7 +242,7 @@ export default function BrowserFrameNudge({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {ready && (
+          {showClip && (
             <button
               type="button"
               onClick={openPicker}
@@ -220,16 +266,24 @@ export default function BrowserFrameNudge({
         type="file"
         accept="video/*"
         className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; if (f) void ingestFile(f); e.currentTarget.value = '' }}
+        onChange={e => {
+          const f = e.target.files?.[0]
+          if (f) { setManualHere(true); void ingestFile(f) }
+          e.currentTarget.value = ''
+        }}
       />
 
-      {!ready ? (
+      {!showClip ? (
         <div className="space-y-1.5">
           {rec.status === 'loading' ? (
             <p className="text-[11px] text-gray-400 inline-flex items-center gap-1.5 py-3 px-1">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading <span className="font-mono text-gray-500">{rec.name}</span>…
             </p>
-          ) : (
+          ) : searching ? (
+            <p className="text-[11px] text-gray-400 inline-flex items-center gap-1.5 py-3 px-1">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Finding this trade&apos;s recording in <span className="font-mono text-gray-500">{folder.name}</span>…
+            </p>
+          ) : !folder.checked ? null : !folder.supported ? (
             <>
               <button
                 type="button"
@@ -242,19 +296,86 @@ export default function BrowserFrameNudge({
                   Stays on your machine — only the frame you choose is uploaded. Picked once, reused for every trade.
                 </span>
               </button>
-              {/* One-click re-open of a previously-used clip (Chromium). */}
-              {rec.savedHandleName && (
-                <button
-                  type="button"
-                  onClick={() => void reopenSavedRecording()}
-                  className="w-full inline-flex items-center justify-center gap-1.5 text-[11px] text-blue-300 hover:text-blue-200 border border-blue-900/60 hover:border-blue-700 rounded-md py-1.5 transition-colors"
-                >
-                  <RotateCcw className="w-3 h-3" /> Re-open <span className="font-mono">{rec.savedHandleName}</span>
-                </button>
-              )}
-              {!rec.savedHandleName && suggestedFileName && (
+              {suggestedFileName && (
                 <p className="text-[10px] text-gray-600">Last used: <span className="font-mono text-gray-500">{suggestedFileName}</span></p>
               )}
+            </>
+          ) : folder.name == null ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void chooseFolder('trade')}
+                className="w-full flex flex-col items-center gap-1.5 border-2 border-dashed border-gray-700 hover:border-gray-500 rounded-lg px-3 py-4 cursor-pointer transition-colors text-center"
+              >
+                <Folder className="w-4 h-4 text-gray-500" />
+                <span className="text-[11px] text-gray-300 font-medium">Choose your recordings folder</span>
+                <span className="text-[10px] text-gray-600">
+                  Locked once on this device — each trade finds its own recording by the time in the filename.
+                  Stays on your machine; only the frame you choose is uploaded.
+                </span>
+              </button>
+              <div className="flex items-center gap-3 flex-wrap px-1">
+                <button type="button" onClick={openPicker} className={LINK}>or pick a single file</button>
+                {suggestedFileName && (
+                  <span className="text-[10px] text-gray-600">Last used: <span className="font-mono text-gray-500">{suggestedFileName}</span></span>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {folder.access === 'prompt' ? (
+                // The browser holds the permission, not the app: on a return
+                // visit it is one click to re-allow — never the file dialog.
+                <button
+                  type="button"
+                  onClick={() => void allowFolder('trade')}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-[11px] text-blue-300 hover:text-blue-200 border border-blue-900/60 hover:border-blue-700 rounded-md py-1.5 transition-colors"
+                >
+                  <Folder className="w-3 h-3" /> Allow access to <span className="font-mono">{folder.name}</span>
+                </button>
+              ) : (
+                <p className="text-[11px] text-amber-300/90 px-1 py-1">
+                  {folder.access === 'denied' ? (
+                    <>Access to <span className="font-mono">{folder.name}</span> was declined, so there is nothing to read from.</>
+                  ) : folder.access === 'missing' ? (
+                    <><span className="font-mono">{folder.name}</span> can&apos;t be read — it may have been moved or renamed.</>
+                  ) : lookup?.kind === 'none' ? (
+                    <>
+                      No recording in <span className="font-mono">{folder.name}</span> covers this trade&apos;s{' '}
+                      {anchorAt === 'exit' && hasExit ? 'exit' : 'entry'} ({PT_WHEN.format(new Date(baseMs))} PT).
+                      {lookup.nearest ? (
+                        <> The closest one, <span className="font-mono">{lookup.nearest}</span>, had already ended by then.</>
+                      ) : lookup.untimed > 0 ? (
+                        <>
+                          {' '}{lookup.untimed} video{lookup.untimed === 1 ? '' : 's'} there {lookup.untimed === 1 ? 'has' : 'have'} no
+                          date and time in the filename, so {lookup.untimed === 1 ? 'it' : 'they'} can&apos;t be matched.
+                        </>
+                      ) : null}
+                    </>
+                  ) : lookup?.kind === 'undecodable' ? (
+                    <>
+                      <span className="font-mono">{lookup.name}</span> is this trade&apos;s recording, but the browser can&apos;t decode it.{' '}
+                      {/\.mkv$/i.test(lookup.name)
+                        ? 'OBS .mkv needs remuxing to .mp4 — then look again.'
+                        : 'It may be damaged, or use a codec the browser doesn’t ship with.'}
+                    </>
+                  ) : lookup?.kind === 'unreadable' ? (
+                    <>Couldn&apos;t open the recording in <span className="font-mono">{folder.name}</span>.</>
+                  ) : (
+                    <span className="text-gray-400">No recording is loaded for this trade.</span>
+                  )}
+                </p>
+              )}
+              <div className="flex items-center gap-3 flex-wrap px-1">
+                {folder.access === 'denied' && (
+                  <button type="button" onClick={() => void allowFolder('trade')} className={LINK}>Try again</button>
+                )}
+                {(folder.access === 'granted' || folder.access === 'missing') && (
+                  <button type="button" onClick={lookAgain} className={LINK}>Look again</button>
+                )}
+                <button type="button" onClick={openPicker} className={LINK}>Pick a file</button>
+                <button type="button" onClick={() => void chooseFolder('trade')} className={LINK}>Change folder</button>
+              </div>
             </>
           )}
           {rec.error && <p className="text-[10px] text-red-400">{rec.error}</p>}
@@ -308,7 +429,14 @@ export default function BrowserFrameNudge({
           </div>
 
           <p className="text-[10px] text-gray-600">
-            <span className="font-mono text-gray-500">{rec.name}</span> · start{' '}
+            <span className="font-mono text-gray-500">{rec.name}</span>
+            {rec.origin === 'folder' && rec.folderName && (
+              <>
+                {' '}· from <span className="font-mono text-gray-500">{rec.folderName}</span>{' '}
+                (<button type="button" onClick={() => void chooseFolder('trade')} className="underline underline-offset-2 hover:text-gray-400">change</button>)
+              </>
+            )}
+            {' '}· start{' '}
             {rec.anchorSource === 'filename'
               ? 'read from the filename'
               : 'estimated from the file date — nudge further if the frame looks off'}
