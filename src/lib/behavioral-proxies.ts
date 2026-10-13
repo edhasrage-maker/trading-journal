@@ -206,12 +206,17 @@ export function computeBehavioralProxies(
   }
 
   // 4. Pressing into drawdown — sizing up while red on the day or after a loss.
+  //    "Sizing up" means bigger than ANY size already taken today, not merely
+  //    bigger than the previous trade: going 5 → 3 → 5 is a return to normal
+  //    size after a reduced trade, and flagging it was a false alarm.
   {
     const hits: Row[] = []
+    let maxSoFar = rows[0]?.quantity ?? 0
     for (let i = 1; i < rows.length; i++) {
-      const r = rows[i], p = rows[i - 1]
-      const q = r.quantity ?? 0, pq = p.quantity ?? 0
-      if (q > pq && (r.runningPnlBefore < 0 || r.prevOutcome === 'loss')) hits.push(r)
+      const r = rows[i]
+      const q = r.quantity ?? 0
+      if (q > maxSoFar && (r.runningPnlBefore < 0 || r.prevOutcome === 'loss')) hits.push(r)
+      maxSoFar = Math.max(maxSoFar, q)
     }
     const count = hits.length
     const severity: ProxySeverity = count >= 2 ? 'flag' : count === 1 ? 'mild' : 'none'
