@@ -10,10 +10,9 @@ const DOT: Record<string, string> = {
 }
 
 /**
- * The trade's Score, out of 100, read from the tape at the fill, with one dot per
- * fact (with you / neutral / against you). It describes what the tape showed
- * when the trade was entered — it is not derived from the result. Click to
- * open the five reasons (ScoreDetail) under the row.
+ * The trade's Score, out of 100, read from the tape at the fill. Just the
+ * number; click to open the five reasons (ScoreDetail) under the row. It is
+ * not derived from the result.
  */
 export function ScoreChip({ score, open, onToggle }: { score: TradeFlowScore; open: boolean; onToggle: () => void }) {
   return (
@@ -25,9 +24,6 @@ export function ScoreChip({ score, open, onToggle }: { score: TradeFlowScore; op
       className="inline-flex items-center gap-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-700 bg-gray-900 text-gray-200 hover:border-gray-500 shrink-0 leading-none align-middle"
     >
       <span className="tabular-nums">{score.total}</span>
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        {score.facts.map(f => <span key={f.k} className={`w-1.5 h-1.5 rounded-full ${DOT[f.state] ?? DOT.neutral}`} />)}
-      </span>
       {open ? <ChevronUp className="w-3 h-3 opacity-60" /> : <ChevronDown className="w-3 h-3 opacity-60" />}
     </button>
   )
