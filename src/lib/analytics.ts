@@ -1,6 +1,11 @@
 import type { Trade, TradeTags, TradingDay, MarketContext } from '@/lib/supabase/types'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { anchorExcursionToFills, EXCURSION_TOLERANCE_POINTS } from '@/lib/excursion-guard'
+// NB: a deliberate import cycle (trade-management reads mfeMaePoints from here).
+// Safe because neither module touches the other while it is being evaluated —
+// every cross-call happens inside a function. Keep it that way: no top-level
+// use of these imports (that is why ZERO_STATS carries no `mgmt`).
+import { mgmtTotals, type MgmtTotals, type MgmtTradeInput } from '@/lib/trade-management'
 
 /**
  * Pure aggregation helpers for the Journal + Analytics views.
@@ -91,6 +96,12 @@ export interface PerformanceStats {
   capture_count: number       // how many trades had a computable capture
   avg_heat: number | null     // mean MAE Loss ×R (peak adverse / planned stop, in points)
   heat_count: number          // how many trades had a computable loss
+  /** Trade management for the group — app-logged trades sorted into "went your
+   *  way" / "never got going" (src/lib/trade-management.ts). The "Kept" column
+   *  and tile read this; `avg_capture` above is the retired dollar-pooled
+   *  figure, kept only for callers that have not moved yet. Absent on an empty
+   *  group. */
+  mgmt?: MgmtTotals
 }
 
 const ZERO_STATS: PerformanceStats = {
@@ -939,6 +950,8 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
   // captureComponents for the per-trade numerator/denominator extraction.
   let capPnlSum = 0, capMfeSum = 0, capCount = 0
   let lossSum = 0, lossCount = 0
+  // App-logged trades only, for the same reason as capture/heat below.
+  const natives: MgmtTradeInput[] = []
   for (const t of trades) {
     const pnl = t.pnl ?? 0
     total += pnl
@@ -961,6 +974,7 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     // Realized %. The helpers accept TradeWithExcursion but the excursion fields
     // are optional on Trade and null-handled internally, so cast through unknown.
     if (t.trading_day_id) {
+      natives.push(t as unknown as MgmtTradeInput)
       const cap = captureComponents(t as unknown as TradeWithExcursion)
       if (cap != null) { capPnlSum += Math.max(0, cap.pnl); capMfeSum += cap.mfeDollars; capCount++ }
       const lossR = maeHeatRatio(t as unknown as TradeWithExcursion)
@@ -995,6 +1009,7 @@ export function computeStats(trades: TradeLike[]): PerformanceStats {
     capture_count: capCount,
     avg_heat: lossCount > 0 ? lossSum / lossCount : null,
     heat_count: lossCount,
+    mgmt: mgmtTotals(natives),
   }
 }
 

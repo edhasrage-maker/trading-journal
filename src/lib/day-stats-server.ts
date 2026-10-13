@@ -26,7 +26,7 @@ type AnyClient = any
 
 // The exact trade columns computeDayStats reads (superset-safe).
 const TRADE_COLS =
-  'id, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg'
+  'id, tags_json, pnl, direction, entry_price, exit_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg'
 
 const DAY_COLS =
   'id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json'

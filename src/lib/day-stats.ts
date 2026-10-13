@@ -1,6 +1,7 @@
 import { symbolToMultiplier, symbolRoot } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
 import { tapeScoreFromAnalyses, type TapeScoreResult } from '@/lib/tapescore'
+import { mgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import type { TradingDay } from '@/lib/supabase/types'
 
 /**
@@ -19,6 +20,8 @@ export interface TradeForStats {
   pnl: number | null
   direction: 'long' | 'short' | null
   entry_price: number | null
+  /** Optional: anchors the traded range to the exit fill (see excursion-guard). */
+  exit_price?: number | null
   stop_price: number | null
   high_during_position: number | null
   low_during_position: number | null
@@ -101,6 +104,13 @@ export interface DayStatsRollup {
    *  carries a P&L the trades do not account for; the gap is what makes a
    *  period comparison unreconcilable, so it is surfaced rather than hidden. */
   logged_trade_pnl: number | null
+  /** Trade management — the day's trades sorted into "went your way" / "never
+   *  got going", as SUMS + COUNTS in every unit (src/lib/trade-management.ts).
+   *  A period pools these by plain addition, so the dashboard card, the recent
+   *  days table and the recap card are the same arithmetic over different
+   *  trades. Optional only so a pre-v9 cached row still types while it
+   *  recomputes. */
+  mgmt?: MgmtTotals
 }
 
 /**
@@ -130,7 +140,11 @@ export interface DayStatsRollup {
 // outside its own traded range (excursionContradictsFills) instead of a
 // fabricated excursion. One such row (an NQ entry on an MES trade) put a day's
 // avg MAE at −1,843×ATR; cached rows must recompute to drop it.
-export const STATS_VERSION = 8
+// v9 (2026-10-13): the rollup gained `mgmt` — the trade-management sums behind
+// the one "went your way / never got going / kept" definition that replaces the
+// eight capture formulas. Every cached row must recompute to carry it, or the
+// dashboard card would count only the days that happened to be dirty.
+export const STATS_VERSION = 9
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
@@ -312,6 +326,7 @@ export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepA
     quantity_sample: qtyN,
     symbol_counts: symbolCounts,
     logged_trade_pnl: tradesWithPnl.length > 0 ? summedPnl : null,
+    mgmt: mgmtTotals(trades),
     setups: setupsAll,
     process_score: day.ai_analysis_json?.score ?? null,
     overall_grade: (() => {

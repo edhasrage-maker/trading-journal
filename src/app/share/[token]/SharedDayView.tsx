@@ -1,6 +1,7 @@
 'use client'
 
 import ChartAttribution from '@/components/ChartAttribution'
+import { tradeMgmt, formatKept, type MgmtTradeInput } from '@/lib/trade-management'
 import { Fragment, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import LiveChart, { type ChartPrefs, type SharedAnnotation } from '@/components/charts/LiveChart'
@@ -36,13 +37,6 @@ function excursion(t: Trade): { fav: number | null; adv: number | null } {
   const fav = t.direction === 'short' ? (l != null ? e - l : null) : (h != null ? h - e : null)
   const adv = t.direction === 'short' ? (h != null ? Math.max(0, h - e) : null) : (l != null ? Math.max(0, e - l) : null)
   return { fav, adv }
-}
-// Share of the favorable move banked (winners only) — same basis as the coach.
-function capturePct(t: Trade): number | null {
-  const { fav } = excursion(t)
-  if (fav == null || fav <= 0 || t.pnl == null || t.pnl <= 0 || t.quantity == null) return null
-  const mfeUsd = fav * t.quantity * symbolToMultiplier(t.symbol ?? '')
-  return mfeUsd > 0 ? Math.min(1, t.pnl / mfeUsd) : null
 }
 function rMultiple(t: Trade): number | null {
   if (t.entry_price == null || t.stop_price == null || t.quantity == null || t.pnl == null) return null
@@ -180,7 +174,9 @@ export default function SharedDayView({ day, trades, chartPrefs, annotations }: 
               <tbody>
                 {trades.map(t => {
                   const isOpen = expanded === t.id
-                  const cap = capturePct(t)
+                  // Same read as the owner's own recap row: only a trade that went
+                  // your way has a Kept figure.
+                  const mg = tradeMgmt(t as unknown as MgmtTradeInput)
                   const { fav, adv } = excursion(t)
                   const r = rMultiple(t)
                   const tj: Record<string, unknown> = (t.tags_json && typeof t.tags_json === 'object')
@@ -189,7 +185,7 @@ export default function SharedDayView({ day, trades, chartPrefs, annotations }: 
                     .map(c => ({ ...c, items: Array.isArray(tj[c.key]) ? (tj[c.key] as string[]) : [] }))
                     .filter(g => g.items.length > 0)
                   const note = t.notes && t.notes.trim() ? t.notes : ''
-                  const hasStats = cap != null || adv != null || r != null || fav != null
+                  const hasStats = mg != null || adv != null || r != null || fav != null
                   const shot = t.screenshot_url
                   const hasDetail = tagGroups.length > 0 || !!note || hasStats || !!shot
                   return (
@@ -221,7 +217,8 @@ export default function SharedDayView({ day, trades, chartPrefs, annotations }: 
                             )}
                             {hasStats && (
                               <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-400 mb-2">
-                                {cap != null && <span>MFE captured <span className="text-gray-200 font-medium">{Math.round(cap * 100)}%</span></span>}
+                                {mg?.went && <span>Kept <span className="text-gray-200 font-medium">{formatKept(mg.kept)}</span></span>}
+                                {mg != null && !mg.went && <span className="text-gray-500">Never got going</span>}
                                 {fav != null && <span>Peak MFE <span className="text-gray-200 font-medium">{fav.toFixed(1)} pts</span></span>}
                                 {adv != null && <span>Heat (MAE) <span className="text-gray-200 font-medium">{adv.toFixed(1)} pts</span></span>}
                                 {r != null && <span>R <span className={`font-medium ${r >= 0 ? 'text-green-400' : 'text-red-400'}`}>{r >= 0 ? '+' : ''}{r.toFixed(2)}</span></span>}

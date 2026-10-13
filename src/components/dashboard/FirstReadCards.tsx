@@ -74,7 +74,7 @@ export default function FirstReadCards({ variant }: { variant: 'dashboard' | 'im
   // as broken rather than as missing input. So say what this read is actually
   // built from, and what unlocks the rest.
   const hasExcursion = [best, worst].some(
-    t => t != null && (t.capturePct != null || t.mfeMaeRatio != null),
+    t => t != null && t.classified > 0,
   )
 
   return (
@@ -160,11 +160,11 @@ function TeaserCard({ teaser, kind }: { teaser: FirstReadTeaser; kind: 'best' | 
         {teaser.winRate != null && (
           <span>Win <span className="text-gray-200 font-mono">{teaser.winRate.toFixed(0)}%</span></span>
         )}
-        {teaser.capturePct != null && (
-          <span>Profit Captured <span className="text-gray-200 font-mono">{teaser.capturePct}%</span></span>
+        {teaser.classified > 0 && (
+          <span title="Trades that were up at least 1×ATR at some point.">Went your way <span className="text-gray-200 font-mono">{teaser.went} of {teaser.classified}</span></span>
         )}
-        {teaser.mfeMaeRatio != null && (
-          <span>MFE:MAE <span className="text-gray-200 font-mono">{teaser.mfeMaeRatio.toFixed(1)}×</span></span>
+        {teaser.keptPct != null && (
+          <span title="On the trades that went your way: what you banked out of how far they ran.">Kept <span className="text-gray-200 font-mono">{teaser.keptPct}%</span></span>
         )}
       </div>
 

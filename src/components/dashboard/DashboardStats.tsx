@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { aggregateTapeScore, tapeScorePeriodSentence, type TapeScoreResult } from '@/lib/tapescore'
 import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroParts'
+import TradeManagementCard from '@/components/TradeManagementCard'
+import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 
 /**
  * Period-selectable dashboard header: the TapeScore hero (one 0-100 score,
@@ -19,7 +21,8 @@ import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroPa
  *   2. Day Win Rate       — % of days with eod_pnl > 0 (only counts days that
  *                            traded; zero-trade days are excluded)
  *   3. Trade Win Rate     — sum(trade_wins) / sum(trades_with_pnl_count)
- *   4. Avg MFE/MAE        — averaged across days that have those stats
+ *   4. Trade management   — the period's trades sorted into went-your-way /
+ *                            never-got-going, pooled from per-day SUMS
  */
 
 /** Minimal day-stat shape needed for the cards. Avoids depending on the full
@@ -44,6 +47,9 @@ export interface DayStat {
   /** Mean MFE capture (0..1) — realized PnL / peak favorable. Positions the
    *  exit marker on the excursion bar; null hides it. */
   avg_capture: number | null
+  /** Trade-management sums for the day (src/lib/trade-management.ts). Optional
+   *  so a row cached before STATS_VERSION 9 still types while it recomputes. */
+  mgmt?: MgmtTotals | null
   /** Prep-time ATR (market_context.atr_1m) — fallback ATR ref when live bars
    *  are missing for the day. */
   atr_1m: number | null
@@ -66,9 +72,6 @@ export interface DayStat {
    *  the day has no EOD analysis (any rubric). */
   tapescore: TapeScoreResult | null
 }
-
-type MfeUnit = 'pts' | 'dollars' | 'atr'
-const UNIT_KEY = 'dashboard-stat-mfe-unit-v1'
 
 type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year'
 // The trader's saved period sticks across visits — a preference, respected on
@@ -160,9 +163,6 @@ interface Props {
 export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d', rangeLabel }: Props) {
   const [period, setPeriod] = useState<Period>(defaultPeriod)
   const effectivePeriod: Period = rangeLabel ? 'all' : period
-  // Default unit is ATR — it's the user's preferred ATR-normalized reading
-  // for the MFE/MAE roll-up. localStorage hydration may overwrite below.
-  const [mfeUnit, setMfeUnit] = useState<MfeUnit>('atr')
   // Hydrate from localStorage after mount so SSR matches initial render.
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => {
@@ -170,8 +170,6 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       const rawPeriod = localStorage.getItem(PERIOD_KEY) as Period | null
       // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
       if (rawPeriod && rawPeriod in PERIOD_LABELS) setPeriod(rawPeriod)
-      const rawUnit = localStorage.getItem(UNIT_KEY) as MfeUnit | null
-      if (rawUnit === 'pts' || rawUnit === 'dollars' || rawUnit === 'atr') setMfeUnit(rawUnit)
     } catch { /* ignore */ }
     setHydrated(true)
   }, [])
@@ -179,10 +177,6 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     if (!hydrated) return
     try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
   }, [period, hydrated])
-  useEffect(() => {
-    if (!hydrated) return
-    try { localStorage.setItem(UNIT_KEY, mfeUnit) } catch { /* ignore */ }
-  }, [mfeUnit, hydrated])
 
   const stats = useMemo(() => {
     const { start, end } = periodBounds(effectivePeriod)
@@ -229,51 +223,10 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
         ? (1 - tradeWinRate) / tradeWinRate
         : null
 
-    // Avg MFE/MAE: averaged across days that have stats. Each day's value is
-    // already a per-day average across that day's trades — averaging across
-    // days gives equal weight per day (matches "what's a typical day look
-    // like for me" framing).
-    //
-    // Per-unit computation:
-    //   - pts: average of avg_mfe_pts / avg_mae_pts directly
-    //   - dollars: average of avg_mfe_dollars / avg_mae_dollars (computed
-    //     server-side with the contract multiplier × qty applied per trade)
-    //   - atr: divide each day's pts MFE/MAE by that day's ATR ref
-    //     (avg_live_atr_1m ?? atr_1m) then average — matches the Recent Days
-    //     table's MfeMaeCell behavior so the dashboard rollup is consistent.
-    let avgMfe: number | null = null
-    let avgMae: number | null = null
-    if (mfeUnit === 'pts') {
-      const mfeVals = inPeriod.map(d => d.avg_mfe_pts).filter((v): v is number => v != null)
-      const maeVals = inPeriod.map(d => d.avg_mae_pts).filter((v): v is number => v != null)
-      avgMfe = mfeVals.length > 0 ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length : null
-      avgMae = maeVals.length > 0 ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length : null
-    } else if (mfeUnit === 'dollars') {
-      const mfeVals = inPeriod.map(d => d.avg_mfe_dollars).filter((v): v is number => v != null)
-      const maeVals = inPeriod.map(d => d.avg_mae_dollars).filter((v): v is number => v != null)
-      avgMfe = mfeVals.length > 0 ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length : null
-      avgMae = maeVals.length > 0 ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length : null
-    } else {
-      // atr
-      const mfeAtr: number[] = []
-      const maeAtr: number[] = []
-      for (const d of inPeriod) {
-        const atrRef = d.avg_live_atr_1m ?? d.atr_1m
-        if (!atrRef || atrRef <= 0) continue
-        if (d.avg_mfe_pts != null) mfeAtr.push(d.avg_mfe_pts / atrRef)
-        if (d.avg_mae_pts != null) maeAtr.push(d.avg_mae_pts / atrRef)
-      }
-      avgMfe = mfeAtr.length > 0 ? mfeAtr.reduce((a, b) => a + b, 0) / mfeAtr.length : null
-      avgMae = maeAtr.length > 0 ? maeAtr.reduce((a, b) => a + b, 0) / maeAtr.length : null
-    }
-
-    // Mean MFE capture across days that have it — positions the exit marker on
-    // the excursion bar. Same [0,1] guard formatCapturePct uses, so a day with
-    // a unit-mismatched ratio can't drag the marker off the scale.
-    const capVals = inPeriod
-      .map(d => d.avg_capture)
-      .filter((v): v is number => v != null && Number.isFinite(v) && v >= 0 && v <= 1.0001)
-    const avgCapture = capVals.length > 0 ? capVals.reduce((a, b) => a + b, 0) / capVals.length : null
+    // Trade management: pooled over the period's TRADES by adding each day's
+    // sums — never an average of daily averages, which weighted a one-trade
+    // day the same as a seven-trade one.
+    const mgmt = mergeMgmtTotals(inPeriod.map(d => d.mgmt))
 
     // Median Prep (prep AI 1-10) and Median Process (v1.4 verdict-derived
     // 0-10). Two separate medians on the same stat card — see render block.
@@ -295,9 +248,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       payoffR,
       breakEvenPayoff,
       rSample,
-      avgMfe,
-      avgMae,
-      avgCapture,
+      mgmt,
       medianProcess: medianPrep,    // legacy field name preserved for callers
       medianProcessV13,
       tapePeriod,
@@ -306,7 +257,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       procCount: prepScores.length,
       v13Count: v13Scores.length,
     }
-  }, [days, effectivePeriod, mfeUnit])
+  }, [days, effectivePeriod])
 
   return (
     <div className="mb-6">
@@ -337,9 +288,10 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
           ring already owns the score. */}
       {!hideScoreHero && <TapeScoreHero period={stats.tapePeriod} periodLabel={PERIOD_LABELS[period]} />}
 
-      {/* Stat cards. Order: P&L → Day Win % → Trade Win % → Avg MFE/MAE.
+      {/* Stat cards. Order: P&L → Day Win % → Trade Win % → Trade management
+          (double width: it carries two rows of bars).
           The old Execution / Compliance card folded into the hero chips. */}
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
         <StatCard
           label={`${PERIOD_LABELS[period]} P&L`}
           value={(() => {
@@ -370,6 +322,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
             that resolves it is the payoff, and it belongs in the same card
             rather than in a fifth one. */}
         <StatCard
+          className="col-span-2 lg:col-span-1"
           label={stats.payoffR == null ? 'Trade Win %' : 'Trade Win % · Payoff'}
           title="Win rate, and how much bigger the average winner is than the average loser (in R, so position sizing doesn't distort it). At a 31% win rate you lose roughly two trades for every one you win, so each winner has to be worth about 2.2 losers just to come out flat — that break-even figure is computed from the win rate beside it and moves as the win rate does."
           value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
@@ -404,44 +357,9 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
             </div>
           ) : undefined}
         />
-        <StatCard
-          label="Avg MFE / MAE"
-          title="Average trade: the +MFE (green) is how far it reached in your favor at its peak — what the move OFFERED, not what you kept. The −MAE (red) is the heat against you. 'Kept' is the share of that favorable move you actually banked, across all trades (favorable moves given back on losers count as 0)."
-          // Value line is intentionally blank when there's data: the −MAE / +MFE
-          // numbers sit at the ENDS of the excursion bar below (worst point ↔
-          // best point), so +MFE reads as the range it describes, not a gain.
-          // Falls back to "—" only when there's nothing to draw.
-          value={stats.avgMfe == null || stats.avgMae == null ? '—' : ''}
-          tone="neutral"
-          chartNode={
-            stats.avgMfe != null && stats.avgMae != null
-              ? <ExcursionBar
-                  mfe={stats.avgMfe} mae={stats.avgMae} capture={stats.avgCapture}
-                  maeLabel={fmtEx(stats.avgMae, '-', mfeUnit)}
-                  mfeLabel={fmtEx(stats.avgMfe, '+', mfeUnit)}
-                  // kept amount in the ACTIVE unit = avg MFE × capture (the $/pt/×ATR
-                  // the "kept %" actually represents), matching the end-cap units.
-                  keptLabel={stats.avgCapture != null
-                    ? fmtEx(stats.avgMfe * Math.max(0, Math.min(1, stats.avgCapture)), '', mfeUnit)
-                    : null}
-                />
-              : null
-          }
-          // Sub becomes the unit selector itself. Compact inline dropdown
-          // replaces the static "pts per trade" string so the card surfaces
-          // the choice in the same visual slot.
-          subNode={
-            <select
-              value={mfeUnit}
-              onChange={e => setMfeUnit(e.target.value as MfeUnit)}
-              className="bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight"
-              title="Display unit for Avg MFE / MAE"
-            >
-              <option value="pts">pts per trade</option>
-              <option value="dollars">$ per trade</option>
-              <option value="atr">× ATR per trade</option>
-            </select>
-          }
+        <TradeManagementCard
+          totals={stats.mgmt}
+          className="col-span-2 border border-gray-800 rounded-[3px] p-[18px]"
         />
       </div>
     </div>
@@ -508,80 +426,11 @@ function TapeScoreHero({ period, periodLabel }: {
   )
 }
 
-/**
- * The average trade's excursion on one axis — heat, run, and where you left.
- *
- * MFE and MAE are a RANGE around the entry, so they're drawn as one: the tick
- * is the entry, left of it is the heat you sat through (MAE), right of it is
- * how far the trade ran your way (MFE). The solid fill is what you actually
- * kept (mean capture); the faint remainder to its right is what you gave back.
- * Shared scale, so the tick sits at MAE/(MAE+MFE) — the shape itself reads as
- * "took a lot of heat" or "left most of it on the table" without a legend.
- *
- * Unit-agnostic: pts, dollars and ATR all produce the same proportions, so it
- * tracks whatever unit the card is showing.
- */
-/** Format one excursion magnitude in the active unit, with an optional explicit
- *  sign — '+'/'-' for the bar's worst-point / best-point end-caps, '' for the
- *  unsigned "kept" amount. */
-function fmtEx(v: number, sign: '+' | '-' | '', unit: MfeUnit): string {
-  if (unit === 'dollars') return `${sign}$${Math.round(v).toLocaleString()}`
-  if (unit === 'atr') return `${sign}${v.toFixed(2)}×`
-  return `${sign}${v.toFixed(1)}`
-}
-
-function ExcursionBar({ mfe, mae, capture, keptLabel, maeLabel, mfeLabel }: {
-  mfe: number
-  mae: number
-  /** Mean MFE capture, 0..1. Null hides the kept fill + label (bar still shows). */
-  capture: number | null
-  /** The kept amount in the active unit (avg MFE × capture), pre-formatted.
-   *  Null omits the "≈ …" — e.g. no capture, so no amount to show. */
-  keptLabel: string | null
-  /** Signed worst-point / best-point numbers rendered at the bar's ends. */
-  maeLabel: string
-  mfeLabel: string
-}) {
-  const span = mfe + mae
-  if (!(span > 0)) return null
-  const entry = (mae / span) * 100
-  const cap = capture != null ? Math.max(0, Math.min(1, capture)) : null
-  const keptWidth = cap != null ? (100 - entry) * cap : null
-  return (
-    <div className="mt-2">
-      {/* worst point ←— bar —→ best point: the numbers sit at the ends they
-          describe, so +MFE reads as the far edge of the run (offered), not a gain. */}
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] font-medium text-red-400 tabular-nums whitespace-nowrap">{maeLabel}</span>
-        <div className="relative flex-1 h-[7px] rounded-[2px]" style={{ background: 'var(--color-surface-2)' }}>
-          {/* heat (left of entry) */}
-          <span className="absolute top-0 h-[7px] rounded-l-[2px]" style={{ left: 0, width: `${entry}%`, background: 'rgba(224,104,95,0.45)' }} />
-          {/* full favourable run (faint) */}
-          <span className="absolute top-0 h-[7px] rounded-r-[2px]" style={{ left: `${entry}%`, right: 0, background: 'rgba(79,197,142,0.18)' }} />
-          {/* the part you kept (solid) */}
-          {keptWidth != null && (
-            <span className="absolute top-0 h-[7px]" style={{ left: `${entry}%`, width: `${keptWidth}%`, background: 'var(--color-pos)' }} />
-          )}
-          {/* entry tick */}
-          <span className="absolute -top-[3px] h-[13px] w-px bg-gray-300" style={{ left: `${entry}%` }} />
-        </div>
-        <span className="text-[11px] font-medium text-green-400 tabular-nums whitespace-nowrap">{mfeLabel}</span>
-      </div>
-      {cap != null && (
-        <div className="mt-2 text-center text-[11px] text-gray-400 leading-tight">
-          kept <span className="text-gray-100 font-semibold">{Math.round(cap * 100)}%</span> of the move
-          {keptLabel != null && (
-            <> ≈ <span className="text-gray-100 font-semibold">{keptLabel}</span></>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function StatCard({
-  label, value, valueNode, tone, sub, subNode, valueClass, chartNode, title,
+  label, value, valueNode, tone, sub, subNode, valueClass, chartNode, title, className,
 }: {
+  /** Extra grid classes for the tile (e.g. a mobile column span). */
+  className?: string
   label: string
   value: string
   /** Rich value line, for a tile whose headline is more than one figure (the
@@ -608,7 +457,7 @@ function StatCard({
   // tile sit ON the page instead of floating above it, and the near-square
   // corner reads instrument rather than app-card.
   return (
-    <div className="border border-gray-800 rounded-[3px] p-[18px]" title={title}>
+    <div className={`border border-gray-800 rounded-[3px] p-[18px] ${className ?? ''}`} title={title}>
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       {/* Blank value is intentional (e.g. the MFE tile, whose numbers live at the
           bar ends) — skip the line entirely so it doesn't leave an empty gap. */}

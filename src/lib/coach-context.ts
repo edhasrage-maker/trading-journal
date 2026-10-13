@@ -11,6 +11,7 @@
  * Returns a compact, structured text block suitable for prompt injection.
  */
 
+import { mgmtTotals, mgmtView, type MgmtTradeInput } from '@/lib/trade-management'
 import { interpretExcursion } from './trade-excursion'
 import { computeBehavioralProxies } from './behavioral-proxies'
 import { fetchJournalEntries, journalLanguageHeatmapPromptBlock } from './journal-language-heatmap'
@@ -332,7 +333,7 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
     const { rows } = await fetchByDayIds(
       supabase,
       'trades',
-      'id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes, review_json',
+      'id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, exit_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, exits_json, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes, review_json',
       dayIds,
       { paginate: true, refine: q => q.order('entry_time', { ascending: false }).order('id', { ascending: false }) },
     )
@@ -886,11 +887,29 @@ THIS WEEK vs PRIOR WEEK:
   const pct = (num: number, den: number) => den > 0 ? Math.round((num / den) * 100) : 0
   const usd = (n: number) => '$' + Math.round(n).toLocaleString()
   const avgAtr = (a: { n: number; sum: number }) => a.n > 0 ? (a.sum / a.n).toFixed(2) : '—'
+  // Trade management — the SAME sort and the SAME sums the app's card, tables
+  // and recaps show (src/lib/trade-management.ts), so the coach and the screen
+  // can never quote two different "how much did I keep" numbers. ×ATR when the
+  // trades carry one, points otherwise.
+  const mgmtTot = mgmtTotals(
+    trades.filter(t => t._source === 'native') as unknown as MgmtTradeInput[],
+    { thresholdAtr: giveBackAtr },
+  )
+  const mgmtAtr = mgmtView(mgmtTot, 'atr')
+  const mgmtV = mgmtAtr.net != null ? mgmtAtr : mgmtView(mgmtTot, 'pts')
+  const mgmtUnit = mgmtAtr.net != null ? '×ATR' : ' pts'
+  const mg2 = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}${mgmtUnit}`
+  const mgmtBlock = mgmtV.classified === 0
+    ? '  (no trades with price data in this window)'
+    : `  ${mgmtV.went.count} of ${mgmtV.classified} trades WENT YOUR WAY (up at least ${giveBackAtr}×ATR at some point): avg MFE ${mg2(mgmtV.went.mfe)}, avg heat ${mg2(mgmtV.went.mae == null ? null : -mgmtV.went.mae)}, avg result ${mg2(mgmtV.went.result)} → KEPT ${mgmtV.went.keptPct == null ? '—' : Math.round(mgmtV.went.keptPct * 100) + '%'} of how far they ran (losses subtracted); ${mgmtV.went.red} of them still finished red.
+  ${mgmtV.never.count} NEVER GOT GOING (never that far in favor): avg MFE ${mg2(mgmtV.never.mfe)}, avg heat ${mg2(mgmtV.never.mae == null ? null : -mgmtV.never.mae)}, avg result ${mg2(mgmtV.never.result)}. These are an ENTRY question — never describe them as failed exits or missed captures.
+  Net per sorted trade: ${mg2(mgmtV.net)}.
+  HOW TO READ IT: these are the figures the trader sees in the app; when you say how much they "kept", use KEPT above and nothing else. A KEPT around half is the normal shape of a book that holds for a target — it is NOT a leak on its own. Do not prescribe tighter targets, partial exits or a breakeven stop from this number alone.`
   const exitEffBlock = (dl.n === 0 && rb.withStop === 0)
     ? '  (no MFE data on trades in this window)'
     : `  WINNERS scored ($ basis, no stop needed): ${dl.n} of ${winners} winners
-  Captured ${pct(dl.sumCapPct, dl.n)}% of the available favorable move on avg · left ${dl.n > 0 ? usd(dl.sumLeft / dl.n) : '—'}/win on the table (avg realized ${dl.n > 0 ? usd(dl.sumRealized / dl.n) : '—'} vs avg peak ${dl.n > 0 ? usd(dl.sumMfe / dl.n) : '—'})
-  TYPICAL MOVE (median MFE, ${mfeSamples.length} trades): ${medMfeAtr != null ? medMfeAtr.toFixed(2) + '×ATR' : '—'}${medMfeUsd != null ? ` ≈ ${usd(medMfeUsd)} best-case` : ''} — what a typical trade OFFERS at its peak; the capture% above is what you KEEP of it. The gap between them is the opportunity — anchor "leaving money on the table" to THIS, not a fixed target.
+  WINNERS ONLY banked ${pct(dl.sumCapPct, dl.n)}% of their own best point on avg — a winners-only figure, NOT the app's KEPT (see TRADE MANAGEMENT) · ${dl.n > 0 ? usd(dl.sumLeft / dl.n) : '—'}/win between exit and peak (avg realized ${dl.n > 0 ? usd(dl.sumRealized / dl.n) : '—'} vs avg peak ${dl.n > 0 ? usd(dl.sumMfe / dl.n) : '—'})
+  TYPICAL MOVE (median MFE, ${mfeSamples.length} trades): ${medMfeAtr != null ? medMfeAtr.toFixed(2) + '×ATR' : '—'}${medMfeUsd != null ? ` ≈ ${usd(medMfeUsd)} best-case` : ''} — what a typical trade OFFERS at its peak; the winners figure above is what a WINNER banks of it. The gap between them is the opportunity — anchor "leaving money on the table" to THIS, not a fixed target.
   MFE size (×ATR, ${atrAgg.mfeAll.n} trades w/ ATR): all ${avgAtr(atrAgg.mfeAll)}×ATR (mean) · winners ${avgAtr(atrAgg.mfeWin)}×ATR — ×ATR is SIZE-AGNOSTIC; read it next to the $ above, not instead of it (a big ×ATR move on small size is small $; $ is the goal)
   TP2 reachability (R basis, ${rb.withStop} trades w/ a logged stop): any ran ≥2R ${pct(rb.ge2R, rb.withStop)}% · ≥3R ${pct(rb.ge3R, rb.withStop)}% · winners ≥2R ${pct(rb.winGe2R, rb.winners)}% · ≥3R ${pct(rb.winGe3R, rb.winners)}%`
 
@@ -1042,7 +1061,10 @@ ${Array.from(monthBuckets.entries()).sort((a, b) => a[0].localeCompare(b[0])).ma
     return `  ${ym}: ${b.count} trades${partial ? ` (PARTIAL — window opens ${startDate}; full month total is in FULL-HISTORY MONTHLY above)` : ''} · ${fmt(b.pnl)} · WR ${wr}%`
   }).join('\n') || '  (no trades in window)'}
 
-EXIT EFFICIENCY — MFE CAPTURE (how much of the favorable move you keep; informs whether to hold for a TP2 / runner vs take TP1):
+TRADE MANAGEMENT (every trade sorted first: did it go your way, or never get going?):
+${mgmtBlock}
+
+EXIT DETAIL — WINNERS AND REACH (supporting detail for the block above; informs whether to hold for a TP2 / runner vs take TP1):
 ${exitEffBlock}
 
 MAE — HEAT TAKEN (adverse excursion before the trade resolved; "planned" heat = your stop distance, "taken" = the actual move against you. Speaks to entry timing, stop sizing, and risk management — low heat on winners = clean entries; high heat that still won = nearly stopped out):

@@ -26,7 +26,6 @@
 import {
   rMultiple,
   aggregateByTag,
-  avgCaptureRatio,
   avgMaeHeatRatio,
   type TradeLike,
   type TradeWithExcursion,
@@ -99,8 +98,6 @@ function dimensionWeight(key: string): number {
   return 1
 }
 
-/** Capture below this (fraction of the offered move kept) is a real leak. */
-const CAPTURE_FLOOR = 0.5
 /** Average MAE above this share of planned risk is a real leak. */
 const HEAT_CEILING = 0.85
 /** Below this many scored trades in the window, we don't read anything at all. */
@@ -474,22 +471,13 @@ function taggedCostCandidates(trades: SequencedTrade[], source: string): Candida
 function executionCandidates(trades: TradeWithExcursion[], source: string): Candidate[] {
   const out: Candidate[] = []
 
-  const capture = avgCaptureRatio(trades)
-  if (capture.avg != null && capture.count >= MIN_RATIO_N && capture.avg < CAPTURE_FLOOR) {
-    out.push({
-      tier: 2,
-      effect: CAPTURE_FLOOR - capture.avg,
-      weight: weigh(CAPTURE_FLOOR - capture.avg, capture.count),
-      mode: 'correct',
-      source,
-      key: 'exec:capture',
-      n: capture.count,
-      finding: 'You kept less than half of the move you were offered',
-      metric: `${fmtPct(capture.avg)} captured across ${capture.count} trades`,
-      today: 'Hold to your planned target before taking anything off.',
-      evidence: [],
-    })
-  }
+  // The two capture findings ("You kept less than half of the move you were
+  // offered" / "Your exits banked most of what the market offered") are RETIRED
+  // (2026-10-13). They judged a dollar-pooled capture figure against fixed 50% /
+  // 70% lines and told the trader to hold to target. Replayed over 1,361 real
+  // trades, keeping about half is the normal shape of a target-based book, and
+  // the figure carries no week-to-week signal — so it is stated on the Trade
+  // management card and no longer turned into an instruction.
 
   const heat = avgMaeHeatRatio(trades)
   if (heat.avg != null && heat.count >= MIN_RATIO_N && heat.avg > HEAT_CEILING) {
@@ -504,24 +492,6 @@ function executionCandidates(trades: TradeWithExcursion[], source: string): Cand
       finding: 'Your average trade sat through most of its planned risk',
       metric: `${fmtPct(heat.avg)} of planned risk across ${heat.count} trades`,
       today: 'Wait for your trigger — do not take the entry early.',
-      evidence: [],
-    })
-  }
-
-  // The mirror of the capture leak: exits that consistently banked the move.
-  // Worth protecting, and it keeps the bridge from only ever importing faults.
-  if (capture.avg != null && capture.count >= MIN_RATIO_N && capture.avg >= 0.7) {
-    out.push({
-      tier: 2,
-      effect: capture.avg - 0.7,
-      weight: weigh(capture.avg - 0.7, capture.count),
-      mode: 'protect',
-      source,
-      key: 'exec:capture-strong',
-      n: capture.count,
-      finding: 'Your exits banked most of what the market offered',
-      metric: `${fmtPct(capture.avg)} captured across ${capture.count} trades`,
-      today: 'Keep exiting the way you have been — do not start improvising.',
       evidence: [],
     })
   }

@@ -10,7 +10,7 @@ import DashboardModeSwitch from '@/components/dashboard/DashboardModeSwitch'
 import BeginnerDashboard from '@/components/dashboard/BeginnerDashboard'
 import AchievementCollection from '@/components/dashboard/AchievementCollection'
 import { achievementCounts } from '@/lib/achievements'
-import { formatCapturePct } from '@/lib/analytics'
+import { mergeMgmtTotals } from '@/lib/trade-management'
 // Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
 // ATR from `ohlcv_bars` on every request. That path was retired in favor of
 // reading the pre-backfilled `trades.entry_atr_1m` column. Imports kept off
@@ -209,7 +209,7 @@ export default async function DashboardPage() {
       for (let p = 0; p < 50; p++) {
         const { data, error } = await supabase
           .from('trades')
-          .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
+          .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, exit_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
           .in('trading_day_id', slice)
           .order('id', { ascending: true })
           .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
@@ -392,6 +392,8 @@ export default async function DashboardPage() {
     avg_mfe_dollars: d.avg_mfe_dollars,
     avg_mae_dollars: d.avg_mae_dollars,
     avg_capture: d.avg_capture,
+    // Trade-management sums — the dashboard card pools these over the period.
+    mgmt: d.mgmt,
     atr_1m: d.atr_1m,
     avg_live_atr_1m: d.avg_live_atr_1m,
     process_score: d.process_score,
@@ -415,21 +417,16 @@ export default async function DashboardPage() {
   const beginnerGreenDays = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).length
   const beginnerTradedDays = beginner30.length
   const beginnerBestDay = beginner30.length ? Math.max(...beginner30.map(d => d.eod_pnl ?? 0)) : null
-  const capVals = recentDays
-    .filter(d => d.date >= past30Start && d.avg_capture != null)
-    .map(d => d.avg_capture as number)
-  // Invariant guard: a capture fraction outside [0, 1+ε] is a data mismatch
-  // (realized PnL above the peak-favorable-$ ceiling) — never surface it as a
-  // number or in coaching prose. Fall through to win-rate-based coaching.
-  const avgCapRaw = capVals.length ? capVals.reduce((a, b) => a + b, 0) / capVals.length : null
-  const avgCap = avgCapRaw != null && formatCapturePct(avgCapRaw) != null ? avgCapRaw : null
+  // Trade management over the same 30 days, pooled over the TRADES (each day's
+  // sums added) — the Highlights "Kept" chip reads the same definition the
+  // Detailed card does.
+  const beginnerMgmt = mergeMgmtTotals(recentDays.filter(d => d.date >= past30Start).map(d => d.mgmt))
   // Trade win rate + capture % over the 30-day window — plain "how am I doing"
   // signals for the Beginner summary (same numbers Pro shows, plainly labeled).
   const beginnerWinWindow = recentDays.filter(d => d.date >= past30Start)
   const beginnerWins = beginnerWinWindow.reduce((a, d) => a + d.trade_wins, 0)
   const beginnerTradesWithPnl = beginnerWinWindow.reduce((a, d) => a + d.trades_with_pnl_count, 0)
   const beginnerWinRate = beginnerTradesWithPnl > 0 ? (beginnerWins / beginnerTradesWithPnl) * 100 : null
-  const beginnerCapturePct = avgCap != null ? Math.round(avgCap * 100) : null
   // Highlights hero (score + leak) now comes from heroPeriods.month — the SAME
   // this-month TapeScore + finding-engine leak the Detailed view renders — so
   // the two modes never disagree. The old 30-day aggregate + hand-written
@@ -508,7 +505,7 @@ export default async function DashboardPage() {
           <BeginnerDashboard
             pnl={beginnerPnl}
             winRate={beginnerWinRate}
-            capturePct={beginnerCapturePct}
+            mgmt={beginnerMgmt}
             greenDays={beginnerGreenDays}
             tradedDays={beginnerTradedDays}
             bestDay={beginnerBestDay}

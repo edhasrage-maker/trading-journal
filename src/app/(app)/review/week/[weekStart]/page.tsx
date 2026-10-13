@@ -5,7 +5,8 @@ import { weekTradingDays, weekEnd, weekLabel, weekStartFor, previousWeekStart, n
 import { todayPT } from '@/lib/pt-time'
 import { displayDayTypes } from '@/lib/day-type-display'
 import { computeCarryover, type Carryover } from '@/lib/prep-carryover'
-import { rMultiple, captureRatio, type TradeWithExcursion } from '@/lib/analytics'
+import { rMultiple, type TradeWithExcursion } from '@/lib/analytics'
+import { tradeMgmt } from '@/lib/trade-management'
 import { resolveScreenshotUrls } from '@/lib/storage-url'
 import type { FilmFrame } from '@/components/review/GameFilm'
 import type { TradeReview } from '@/lib/supabase/types'
@@ -105,7 +106,7 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
       sub: format(parseISO(date), 'MMM d'),
       read: r && r.day_types.length > 0 ? displayDayTypes(r.day_types) : null,
       trades: r?.trade_count ?? 0,
-      capture: r?.avg_capture != null && traded ? Math.round(r.avg_capture * 100) : null,
+      mgmt: traded ? (r?.mgmt ?? null) : null,
       rails: r?.process_verdict === 'Compliant' ? 'Kept' : r?.process_verdict === 'Breach' ? 'Breach' : null,
       railsTone: r?.process_verdict === 'Compliant' ? 'pos' : r?.process_verdict === 'Breach' ? 'neg' : null,
       score: r?.tapescore?.score ?? null,
@@ -144,8 +145,7 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
         trades: summary.trades,
         dayWins: summary.dayWins,
         tradedDays: summary.tradedDays,
-        capture: summary.capture,
-        mfeMae: summary.mfeMae,
+        mgmt: summary.mgmt,
         railsKept: summary.railsKept,
         railsDays: summary.railsDays,
         winRate: summary.winRate,
@@ -215,7 +215,10 @@ async function buildFilm(
     screenshot_url: string | null
     review_json?: TradeReview | null
   }
-  const SELECT_BASE = 'id, trading_day_id, entry_time, entry_price, stop_price, quantity, direction, pnl, symbol, high_during_position, low_during_position, tags_json, screenshot_url'
+  // exit_price / entry_atr_1m / exits_json are what sort a trade into went-your-way
+  // and measure what it kept — the same inputs the recap row uses, so a frame
+  // here can't read differently from its own trade row.
+  const SELECT_BASE = 'id, trading_day_id, entry_time, entry_price, exit_price, stop_price, quantity, direction, pnl, symbol, high_during_position, low_during_position, entry_atr_1m, exits_json, tags_json, screenshot_url'
 
   // review_json may not exist yet (pre-migration) — that query errors with
   // 42703; fall back to the same select without it and flag the gap.
@@ -254,7 +257,9 @@ async function buildFilm(
     const day = dayById.get(r.trading_day_id)
     const date = day?.date ?? null
     const entry = r.entry_time ? new Date(r.entry_time) : null
-    const cap = captureRatio(r as unknown as TradeWithExcursion)
+    // Kept only exists for a trade that went your way; one that never did
+    // shows no figure rather than a 0% that blames the exit.
+    const kept = tradeMgmt(r)?.kept ?? null
     frames.push({
       tradeId: r.id,
       src,
@@ -267,7 +272,7 @@ async function buildFilm(
       direction: r.direction,
       pnl: r.pnl,
       r: rMultiple(r as unknown as TradeWithExcursion),
-      capture: cap != null ? Math.round(cap * 100) : null,
+      capture: kept != null ? Math.round(kept * 100) : null,
       setups: Array.isArray(r.tags_json?.setups) ? r.tags_json!.setups!.filter(Boolean) : [],
       tags: filmTags(r.tags_json),
       read: day && day.day_types.length > 0 ? displayDayTypes(day.day_types) : null,
@@ -307,7 +312,6 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
       evidence: [],
     }
   }
-  const capturePart = s.capture != null ? ` You kept ${s.capture}% of what your winners offered.` : ''
   // A short week can't be split against itself, but it CAN be read against the
   // trader's own history — where the comparison arm has hundreds of trades.
   // Saying "too few trades" instead reads as a reprimand for being selective.
@@ -316,7 +320,7 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
     return {
       state: 'held',
       headline: `Every rail kept, ${s.railsDays === 1 ? 'the one graded day' : `all ${s.railsDays} graded days`}.`,
-      sub: `${s.trades} trades across ${s.tradedDays} sessions, clean on the rails you track.${capturePart}${vsBaseline}`,
+      sub: `${s.trades} trades across ${s.tradedDays} sessions, clean on the rails you track.${vsBaseline}`,
       next: baseline ? driverAction(baseline) : 'Nothing to fix — protect the process that made this week.',
       evidence: baseline ? baselineBars(baseline) : [],
     }
@@ -326,7 +330,7 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
     return {
       state: baseline.periodR >= baseline.baselineR ? 'edge' : 'leak',
       headline: `${baseline.label} ${baseline.periodR >= baseline.baselineR ? 'ran above' : 'ran below'} your usual.`,
-      sub: `${fmtR(baseline.periodR)} per trade across ${baseline.periodN} this week against ${fmtR(baseline.baselineR)} per trade over your last ${baseline.baselineN}. ${driverSentence(baseline)} ${railsPart}${capturePart}`,
+      sub: `${fmtR(baseline.periodR)} per trade across ${baseline.periodN} this week against ${fmtR(baseline.baselineR)} per trade over your last ${baseline.baselineN}. ${driverSentence(baseline)} ${railsPart}`,
       next: driverAction(baseline),
       evidence: baselineBars(baseline),
     }
@@ -334,7 +338,7 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
   return {
     state: 'none',
     headline: 'Nothing separated itself.',
-    sub: `${s.trades} trades across ${s.tradedDays} sessions — nothing this week diverged from how you normally trade. ${railsPart}${capturePart}`,
+    sub: `${s.trades} trades across ${s.tradedDays} sessions — nothing this week diverged from how you normally trade. ${railsPart}`,
     next: 'No change to force — keep taking your A setups and let the sample build.',
     evidence: [],
   }

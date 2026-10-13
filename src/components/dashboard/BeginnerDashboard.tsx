@@ -1,5 +1,7 @@
 'use client'
 
+import { useMfeUnit } from '@/lib/mfe-unit'
+import { mgmtView, formatKept, type MgmtTotals } from '@/lib/trade-management'
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
@@ -26,7 +28,8 @@ import { ScoreBreakdownInfo, type HeroPeriodData } from '@/components/review/Rev
 type Props = {
   pnl: number
   winRate: number | null
-  capturePct: number | null
+  /** Trade-management sums pooled over the last 30 days. */
+  mgmt: MgmtTotals
   greenDays: number
   tradedDays: number
   bestDay: number | null
@@ -70,8 +73,11 @@ const TONE = {
   ungraded: { dot: 'bg-amber-400', text: 'text-amber-400', label: 'Not graded yet' },
 } as const
 
-export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays, tradedDays, bestDay, hero, processPayoff, days, gradedDaysAllTime, charts }: Props) {
+export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, tradedDays, bestDay, hero, processPayoff, days, gradedDaysAllTime, charts }: Props) {
   const { setMode } = useUiMode()
+  // Same unit as the Detailed Trade management card, so Kept matches it.
+  const [mfeUnit] = useMfeUnit()
+  const kept = mgmtView(mgmt, mfeUnit)
   const { scorePeriod, carryover } = hero
   const { score, band, risk, entry, capture, scoredDays } = scorePeriod
 
@@ -99,13 +105,13 @@ export default function BeginnerDashboard({ pnl, winRate, capturePct, greenDays,
   const focus = carryover?.today
     ?? 'No change to force — keep taking your A setups and let the sample build.'
 
-  // Calm reference row. Conversion only appears when there's capture data (a
-  // bare "—" reads as broken). Best day is signed-colored.
+  // Calm reference row. Kept only appears when a trade actually went your way
+  // (a bare "—" reads as broken). Best day is signed-colored.
   const chips: { label: string; value: string; valueClass?: string; title?: string }[] = [
     { label: 'Day win rate', value: tradedDays > 0 ? `${Math.round((greenDays / tradedDays) * 100)}%` : '—' },
     { label: 'Win rate', value: winRate == null ? '—' : `${Math.round(winRate)}%` },
-    ...(capturePct != null
-      ? [{ label: 'Profit Captured', value: `${capturePct}%`, title: 'Of the best point your trade reached in your favor, how much you kept at exit, on average.' }]
+    ...(kept.went.count > 0
+      ? [{ label: 'Kept', value: formatKept(kept.went.keptPct), title: `Of your trades that went your way (${kept.went.count} of ${kept.classified} were up at least 1×ATR at some point): what you banked out of how far they ran, losses included.` }]
       : []),
     {
       label: 'Best day',

@@ -111,7 +111,7 @@ export const TOUR_STEPS: TourStep[] = [
     anchor: 'eod-header',
     title: 'EOD Recap',
     description:
-      'Every trade you took, with the stats that matter — how much of the move you captured, the heat you took, and your MFE:MAE. This is your game film.',
+      'Every trade you took, with the stats that matter — whether it went your way, how much of that you kept, and the heat you took (MFE and MAE). This is your game film.',
     side: 'bottom',
     align: 'start',
   },

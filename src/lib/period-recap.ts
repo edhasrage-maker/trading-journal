@@ -1,4 +1,5 @@
 import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type DayStatsRollup, type DayStatsStored } from '@/lib/day-stats'
+import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { aggregateTapeScore, type TapeScorePeriod } from '@/lib/tapescore'
 import { rMultiple, type TradeLike } from '@/lib/analytics'
 import type { PrepCommitment } from '@/lib/supabase/types'
@@ -82,7 +83,7 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
     for (let p = 0; p < 10; p++) {
       const { data } = await sb
         .from('trades')
-        .select('id, trading_day_id, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
+        .select('id, trading_day_id, tags_json, pnl, direction, entry_price, exit_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
         .in('trading_day_id', dirtyIds)
         .order('id', { ascending: true })
         .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
@@ -165,10 +166,11 @@ export interface PeriodSummary {
   tradedDays: number
   /** Traded days whose P&L was positive. */
   dayWins: number
-  /** Trade-weighted mean MFE capture, 0–100, null when no day carries one. */
-  capture: number | null
-  /** Trade-weighted avg MFE$ over avg MAE$; null when MAE is 0/absent. */
-  mfeMae: number | null
+  /** Trade management for the period: the days' sums added together, so the
+   *  figures are counted over the period's TRADES (src/lib/trade-management.ts).
+   *  Replaces a trade-weighted mean of daily capture values and a third
+   *  definition of MFE:MAE. */
+  mgmt: MgmtTotals
   /** Days with a rails verdict, and how many of those were Compliant. */
   railsDays: number
   railsKept: number
@@ -207,8 +209,6 @@ export interface PeriodSummary {
 
 export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
   let pnl = 0, trades = 0, tradedDays = 0, dayWins = 0
-  let capSum = 0, capN = 0
-  let mfeSum = 0, maeSum = 0, excN = 0
   let railsDays = 0, railsKept = 0
   let wins = 0, winsDenom = 0
   let sumWinR = 0, sumLossR = 0, rSample = 0
@@ -222,12 +222,6 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
     if (r.trade_count > 0) {
       tradedDays++
       if ((dayPnl ?? 0) > 0) dayWins++
-    }
-    if (r.avg_capture != null && r.trade_count > 0) { capSum += r.avg_capture * r.trade_count; capN += r.trade_count }
-    if (r.avg_mfe_dollars != null && r.avg_mae_dollars != null && r.trade_count > 0) {
-      mfeSum += r.avg_mfe_dollars * r.trade_count
-      maeSum += Math.abs(r.avg_mae_dollars) * r.trade_count
-      excN += r.trade_count
     }
     if (r.process_verdict != null) {
       railsDays++
@@ -257,8 +251,7 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
     trades,
     tradedDays,
     dayWins,
-    capture: capN > 0 ? Math.round((capSum / capN) * 100) : null,
-    mfeMae: excN > 0 && maeSum > 0 ? Math.round((mfeSum / maeSum) * 10) / 10 : null,
+    mgmt: mergeMgmtTotals(days.map(d => d.rollup.mgmt)),
     railsDays,
     railsKept,
     score: aggregateTapeScore(days.map(d => d.rollup.tapescore)),
@@ -495,13 +488,6 @@ export function comparisonRows(prior: PeriodSummary, now: PeriodSummary, scope: 
     delta: `${dPnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(dPnl)).toLocaleString()}`,
     tone: dPnl > 0 ? 'pos' : dPnl < 0 ? 'neg' : 'flat',
   })
-  if (prior.capture != null && now.capture != null) {
-    const d = now.capture - prior.capture
-    rows.push({
-      dim: 'Profit captured', prior: `${prior.capture}%`, now: `${now.capture}%`,
-      delta: d === 0 ? 'level' : `${d > 0 ? '+' : '−'}${Math.abs(d)} pts`, tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'flat',
-    })
-  }
   if (prior.railsDays > 0 && now.railsDays > 0) {
     const pr = prior.railsKept / prior.railsDays
     const nr = now.railsKept / now.railsDays
@@ -672,16 +658,6 @@ export function quarterRead(periods: Array<{ label: string; summary: PeriodSumma
       values: s.map(x => dash(x.avgR != null ? `${x.avgR >= 0 ? '+' : '−'}${Math.abs(x.avgR).toFixed(2)}R` : null)),
       trend: dir === 'up' ? 'Improved every period.' : dir === 'down' ? 'Fell every period.' : 'Dipped and recovered.',
       tone: first.avgR != null && last.avgR != null ? (last.avgR >= first.avgR ? 'pos' : 'neg') : null,
-    })
-  }
-
-  if (s.some(x => x.capture != null)) {
-    const best = Math.max(...s.map(x => x.capture ?? -1))
-    rows.push({
-      driver: 'Profit captured',
-      values: s.map(x => dash(x.capture != null ? `${x.capture}%` : null)),
-      trend: last.capture != null && last.capture === best ? 'Best of the set.' : 'Off its best.',
-      tone: last.capture != null && last.capture === best ? 'pos' : null,
     })
   }
 

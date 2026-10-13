@@ -96,7 +96,7 @@ ${priorMonthContext}
 Respond with ONLY valid JSON in this exact structure (no markdown fences):
 {
   "prior_week_overview": "<2-3 sentences recapping the PRIOR month — PnL, win rate, what defined it — and the single biggest shift INTO this month, with the number. Empty string if the prior month had no trading data.>",
-  "week_comparison": ["<Dimension-by-dimension comparison of THIS month vs the PRIOR month, citing BOTH months' numbers. One bullet each for: (1) setup performance shifts; (2) MFE capture change; (3) execution change; (4) compliance change; (5) any THEME or mistake that recurred in BOTH months. Skip a bullet only if that dimension has no prior-month data. 4-6 bullets.>"],
+  "week_comparison": ["<Dimension-by-dimension comparison of THIS month vs the PRIOR month, citing BOTH months' numbers. One bullet each for: (1) setup performance shifts; (2) trade management — from the TRADE MANAGEMENT block: how many trades went your way and the KEPT %, both periods (a move of a few points in KEPT on a few dozen trades is noise — say so rather than calling it a trend); (3) execution change; (4) compliance change; (5) any THEME or mistake that recurred in BOTH months. Skip a bullet only if that dimension has no prior-month data. 4-6 bullets.>"],
   "headline": "<1 sentence, ≤15 words — the WHY of the month in one line>",
   "themes": ["<cross-week pattern 1 with specifics>", "<pattern 2>", "<3-5 total>"],
   "what_worked": ["<specific decision/setup/behavior that paid off>", "<up to 4 total>"],

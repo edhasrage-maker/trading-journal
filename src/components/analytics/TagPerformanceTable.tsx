@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { ArrowUpDown, ArrowUp, ArrowDown, ChevronDown } from 'lucide-react'
 import type { TagPerf } from '@/lib/analytics'
-import { formatCapturePct, CAPTURE_MISMATCH_TOOLTIP } from '@/lib/analytics'
+import type { PerformanceStats } from '@/lib/analytics'
+import { useMfeUnit } from '@/lib/mfe-unit'
+import { mgmtView, formatKept } from '@/lib/trade-management'
 import { MIN_SAMPLE } from '@/lib/sample-size'
 
 interface Props {
@@ -39,6 +41,13 @@ export default function TagPerformanceTable({
 }: Props) {
   const plain = columns === 'plain'
   const [sortKey, setSortKey] = useState<SortKey>('total_pnl')
+  // Kept follows the unit chosen on the Trade management card.
+  const [mfeUnit] = useMfeUnit()
+  const keptOf = useCallback((st: PerformanceStats) => {
+    if (!st.mgmt) return { kept: null as number | null, went: 0, classified: 0 }
+    const v = mgmtView(st.mgmt, mfeUnit)
+    return { kept: v.went.count > 0 ? v.went.keptPct : null, went: v.went.count, classified: v.classified }
+  }, [mfeUnit])
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [open, setOpen] = useState(false)
 
@@ -61,7 +70,7 @@ export default function TagPerformanceTable({
           break
         }
         case 'avg_r':       av = a.stats.avg_r ?? -Infinity;    bv = b.stats.avg_r ?? -Infinity; break
-        case 'avg_capture': av = a.stats.avg_capture ?? -Infinity; bv = b.stats.avg_capture ?? -Infinity; break
+        case 'avg_capture': av = keptOf(a.stats).kept ?? -Infinity; bv = keptOf(b.stats).kept ?? -Infinity; break
         case 'avg_heat':    av = a.stats.avg_heat ?? Infinity;     bv = b.stats.avg_heat ?? Infinity; break
         case 'total_pnl':   av = a.stats.total_pnl;             bv = b.stats.total_pnl; break
       }
@@ -73,7 +82,7 @@ export default function TagPerformanceTable({
     // sort column — their stats are suppressed, so they shouldn't interleave
     // with rows the trader can actually judge.
     return [...arr.filter(d => d.stats.count >= MIN_SAMPLE), ...arr.filter(d => d.stats.count < MIN_SAMPLE)]
-  }, [filtered, sortKey, sortDir])
+  }, [filtered, sortKey, sortDir, keptOf])
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) {
@@ -91,7 +100,7 @@ export default function TagPerformanceTable({
     { k: 'avg_pnl', label: 'Avg PnL', align: 'right' },
     { k: 'profit_factor', label: 'Profit Factor', align: 'right' },
     { k: 'avg_r', label: 'Avg Win/Loss R', align: 'right' },
-    { k: 'avg_capture', label: 'MFE %', align: 'right' },
+    { k: 'avg_capture', label: 'Kept', align: 'right' },
     { k: 'avg_heat', label: 'MAE %', align: 'right' },
     { k: 'total_pnl', label: 'Total PnL', align: 'right' },
   ]
@@ -231,16 +240,21 @@ export default function TagPerformanceTable({
                       </>
                     )}
                   </td>
-                  <td
-                    className={`py-1.5 pr-3 text-right ${
-                      stats.avg_capture == null ? 'text-gray-700'
-                      : stats.avg_capture < 0.25 ? 'text-red-400 font-bold'
-                      : 'text-gray-400'
-                    }`}
-                    title={stats.avg_capture == null ? 'No native trades with MFE data in this group' : formatCapturePct(stats.avg_capture) == null ? CAPTURE_MISMATCH_TOOLTIP : `Native trades only. Avg of (realized PnL / peak favorable in $), floored at 0 per trade, across ${stats.capture_count} of ${stats.count} trades. Historical (imported) trades are excluded — their capture is on a different unit basis. Red bold means weak capture (<25% of the favorable move banked).`}
-                  >
-                    {stats.avg_capture == null ? '—' : (formatCapturePct(stats.avg_capture) ?? '—')}
-                  </td>
+                  {(() => {
+                    const k = keptOf(stats)
+                    return (
+                      <td
+                        className={`py-1.5 pr-3 text-right ${k.kept == null ? 'text-gray-700' : 'text-gray-400'}`}
+                        title={k.classified === 0
+                          ? 'No app-logged trades with price data in this group.'
+                          : k.went === 0
+                            ? `None of the ${k.classified} app-logged trades here went your way (up at least 1×ATR at some point), so there was no exit to grade.`
+                            : `${k.went} of ${k.classified} app-logged trades went your way (up at least 1×ATR at some point). Kept = what you banked out of how far those ran, losses included. Imported history is left out.`}
+                      >
+                        {k.kept == null ? '—' : formatKept(k.kept)}
+                      </td>
+                    )
+                  })()}
                   <td
                     className={`py-1.5 pr-3 text-right ${
                       stats.avg_heat == null ? 'text-gray-700'

@@ -78,7 +78,7 @@ export async function GET(req: Request) {
       for (let p = 0; p < 50; p++) {
         const { data, error } = await supabase
           .from('trades')
-          .select('id, trading_day_id, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
+          .select('id, trading_day_id, tags_json, pnl, direction, entry_price, exit_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
           .in('trading_day_id', slice)
           .order('id', { ascending: true })
           .range(p * PAGE, p * PAGE + PAGE - 1)

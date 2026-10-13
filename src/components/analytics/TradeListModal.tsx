@@ -4,7 +4,8 @@ import { useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { X, ExternalLink } from 'lucide-react'
 import type { TradeWithContext } from '@/lib/analytics'
-import { mfeMaePoints, captureRatio, maeHeatRatio, rMultiple, formatCapturePct, CAPTURE_MISMATCH_TOOLTIP } from '@/lib/analytics'
+import { mfeMaePoints, maeHeatRatio, rMultiple } from '@/lib/analytics'
+import { tradeMgmt, formatKept, type MgmtTradeInput } from '@/lib/trade-management'
 import { displayDayType, displayDayTypes } from '@/lib/day-type-display'
 
 /**
@@ -17,7 +18,7 @@ import { displayDayType, displayDayTypes } from '@/lib/day-type-display'
  * underlying trade array is already sitting in AnalyticsClient — no
  * extra fetch.
  *
- * Columns: Date · Side · Qty · Entry · R · PnL · MFE % · MAE % · Day Type.
+ * Columns: Date · Side · Qty · Entry · R · PnL · Kept · MAE % · Day Type.
  * Native trades' Date links to /eod/<date>; historical trades have no
  * detail page so the date renders as plain text.
  */
@@ -152,7 +153,7 @@ export default function TradeListModal({ open, trades, onClose }: Props) {
                   <th className="text-right font-normal py-2 pr-3">Entry</th>
                   <th className="text-right font-normal py-2 pr-3">R</th>
                   <th className="text-right font-normal py-2 pr-3">PnL</th>
-                  <th className="text-right font-normal py-2 pr-3">MFE %</th>
+                  <th className="text-right font-normal py-2 pr-3" title="For trades that went your way (up at least 1×ATR at some point): what you banked out of the best point reached.">Kept</th>
                   <th className="text-right font-normal py-2 pr-3">MAE %</th>
                   <th className="text-left font-normal py-2 pr-3">Day Type</th>
                 </tr>
@@ -186,7 +187,10 @@ function TradeRow({ t }: { t: TradeWithContext }) {
   // multiplier (risk in points×qty vs pnl in dollars), inflating R by the
   // multiplier — 8.15R for an MNQ trade that's really 4.1R.
   const r = rMultiple(t)
-  const cap = captureRatio(t)
+  // Kept, the same way the recap row and the Trade management card read it.
+  // App-logged trades only: imported rows carry no instrument, so their dollar
+  // and ATR basis is not comparable.
+  const mg = native ? tradeMgmt(t as unknown as MgmtTradeInput) : null
   const heat = maeHeatRatio(t)
   // Show MFE/MAE points alongside for context — pure-ratio is a bit
   // abstract on a per-trade view; raw points + ratio together is the
@@ -234,13 +238,16 @@ function TradeRow({ t }: { t: TradeWithContext }) {
       </td>
       <td
         className={`py-1.5 pr-3 text-right whitespace-nowrap ${
-          cap == null ? 'text-gray-700'
-          : cap < 0 ? 'text-red-400 font-bold'
+          mg == null ? 'text-gray-700'
+          : !mg.went ? 'text-gray-500 text-[11px]'
+          : mg.kept === 0 ? 'text-red-400 font-bold'
           : 'text-gray-400'
         }`}
-        title={cap != null && formatCapturePct(cap) == null ? CAPTURE_MISMATCH_TOOLTIP : xc ? `MFE = ${xc.mfe.toFixed(2)} pts` : 'No MFE data'}
+        title={mg == null ? 'No price data to sort this trade by.'
+          : !mg.went ? `Never got 1×ATR your way (best point ${xc ? xc.mfe.toFixed(2) : '—'} pts) — no exit to grade.`
+          : xc ? `MFE = ${xc.mfe.toFixed(2)} pts` : undefined}
       >
-        {cap == null ? '—' : (formatCapturePct(cap) ?? '—')}
+        {mg == null ? '—' : !mg.went ? 'never got going' : formatKept(mg.kept)}
       </td>
       <td
         className={`py-1.5 pr-3 text-right whitespace-nowrap ${

@@ -1,3 +1,4 @@
+import { tradeMgmt, type TradeMgmt } from '@/lib/trade-management'
 import type Anthropic from '@anthropic-ai/sdk'
 import { symbolRoot, chartSeriesRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { fetchByDayIds } from '@/lib/coach-context'
@@ -20,7 +21,7 @@ import { fetchByDayIds } from '@/lib/coach-context'
  *
  * Metric availability differs by source and the result says so per group:
  * imported (Tradezella) history carries P&L and tags but no stop and no
- * in-trade extremes, so R, MFE and capture come from natively logged trades
+ * in-trade extremes, so R, MFE and "kept" come from natively logged trades
  * only. A blended average would quietly understate both.
  */
 
@@ -64,8 +65,8 @@ export const COACH_QUERY_TOOL: Anthropic.Tool = {
     'instead of replying that you lack the granularity. Filters combine with AND; a list ' +
     'inside a single filter matches ANY of its values. Returns per group: trade count, win ' +
     'rate, net P&L, average R, mean MFE in ATR units, the share of trades reaching 2x and 3x ' +
-    'ATR, average profit captured, and first/last trade date. Combine outcome:"winners" with '
-    + 'the ATR fields to answer how far the trades that actually worked ran. R, MFE and capture come from ' +
+    'ATR, how many trades went your way and how much of those was kept, and first/last trade date. Combine outcome:"winners" with '
+    + 'the ATR fields to answer how far the trades that actually worked ran. R, MFE and kept come from ' +
     'natively logged trades only (imported history has no stop or in-trade extremes); each ' +
     'group reports how many rows backed them, so cite the n when quoting those. ' +
     'reentry_within_sec / exclude_reentries_within_sec / after_prior and group_by:"reentry_gap" work off ' +
@@ -121,7 +122,9 @@ interface Row {
   /** Native-only metrics; null on imported rows. */
   r: number | null
   mfeAtr: number | null
-  capture: number | null
+  /** The trade sorted the way the app shows it (went your way / never got going,
+   *  with its MFE and result). Null when it cannot be sorted. */
+  mg: TradeMgmt | null
   /** Sequence position inside the session, from the fill order. Null on every
    *  imported row (no times) and on any native row missing entry/exit. */
   gapSec: number | null
@@ -174,7 +177,7 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
   const { rows: native } = await fetchByDayIds(
     sb,
     'trades',
-    'id, trading_day_id, pnl, entry_time, exit_time, entry_price, stop_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, entry_atr_1m',
+    'id, trading_day_id, pnl, entry_time, exit_time, entry_price, exit_price, stop_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, entry_atr_1m, exits_json',
     Array.from(dayById.keys()),
     { paginate: true },
   )
@@ -228,7 +231,6 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
         ? Math.max(0, t.high_during_position - t.entry_price)
         : Math.max(0, t.entry_price - t.low_during_position)
     }
-    const mfeUsd = mfe != null && t.quantity ? mfe * t.quantity * mult : null
 
     rows.push({
       date: day.date,
@@ -242,8 +244,7 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
       dayTypes: day.dayTypes,
       r: riskUsd && riskUsd > 0 ? t.pnl / riskUsd : null,
       mfeAtr: mfe != null && t.entry_atr_1m ? mfe / t.entry_atr_1m : null,
-      // Floor at 0 and cap at 1: a give-back reads as 0% kept, never negative.
-      capture: mfeUsd && mfeUsd > 0 ? Math.max(0, Math.min(1, t.pnl / mfeUsd)) : null,
+      mg: tradeMgmt(t),
       ...(seq.get(String(t.id)) ?? { gapSec: null, prevWasLoss: null, firstOfDay: false }),
     })
   }
@@ -271,7 +272,7 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
         mistakes: tagList(h.tags_json, 'mistakes'),
         emotions: tagList(h.tags_json, 'emotions'),
         dayTypes: [],
-        r: null, mfeAtr: null, capture: null,
+        r: null, mfeAtr: null, mg: null,
         gapSec: null, prevWasLoss: null, firstOfDay: false,
       })
     }
@@ -302,7 +303,18 @@ function groupsFor(r: Row, by: GroupBy): string[] {
 function summarize(label: string, rows: Row[]) {
   const rs = rows.map(r => r.r).filter((x): x is number => x != null)
   const atrs = rows.map(r => r.mfeAtr).filter((x): x is number => x != null)
-  const caps = rows.map(r => r.capture).filter((x): x is number => x != null)
+  // Trade management, exactly as the app shows it: sort each trade, then pool
+  // result ÷ MFE over the ones that went your way (losses subtracted). ×ATR
+  // when the trades carry an ATR, points otherwise.
+  const sorted = rows.map(r => r.mg).filter((m): m is TradeMgmt => m != null)
+  const went = sorted.filter(m => m.went)
+  const unit: 'atr' | 'pts' = went.some(m => m.mfe.atr != null) ? 'atr' : 'pts'
+  let keptNum = 0, keptDen = 0
+  for (const m of went) {
+    const mfe = m.mfe[unit], res = m.result[unit]
+    if (mfe == null || res == null) continue
+    keptNum += res; keptDen += mfe
+  }
   const dates = rows.map(r => r.date).filter(Boolean).sort()
   const avg = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
   return {
@@ -316,7 +328,9 @@ function summarize(label: string, rows: Row[]) {
     reached_2x_atr_pct: atrs.length ? Math.round((atrs.filter(x => x >= 2).length / atrs.length) * 100) : null,
     reached_3x_atr_pct: atrs.length ? Math.round((atrs.filter(x => x >= 3).length / atrs.length) * 100) : null,
     mfe_from_n: atrs.length,
-    avg_captured_pct: caps.length ? Math.round(avg(caps) * 100) : null,
+    went_your_way: sorted.length ? went.length : null,
+    went_your_way_from_n: sorted.length,
+    kept_pct: keptDen > 0 ? Math.round(Math.max(0, Math.min(1, keptNum / keptDen)) * 100) : null,
     first_trade: dates[0] ?? null,
     last_trade: dates[dates.length - 1] ?? null,
   }
@@ -421,9 +435,13 @@ export async function runCoachQuery(sb: AnyClient, input: CoachQueryInput): Prom
     trades_matched: filtered.length,
     ...(coverage ? { timing_coverage: coverage } : {}),
     metric_notes:
-      'avg_r, mean_mfe_atr, reached_2x/3x_atr_pct and avg_captured_pct come from natively logged trades only ' +
+      'avg_r, mean_mfe_atr, reached_2x/3x_atr_pct, went_your_way and kept_pct come from natively logged trades only ' +
       '(imported history has no stop or in-trade extremes). The *_from_n fields say how many rows backed them, ' +
-      'so cite the n when quoting those numbers.',
+      'so cite the n when quoting those numbers. went_your_way = trades that were up at least 1×ATR at some point; ' +
+      'the rest never got going, which is an entry question, not an exit one. kept_pct = what was banked out of ' +
+      'how far the went-your-way trades ran, losses subtracted — the same figure the trader sees in the app. ' +
+      'A kept_pct around half is normal for a trader who holds for a target and is NOT a leak on its own; do not ' +
+      'recommend tighter targets or breakeven stops from it.',
     groups: kept,
   })
 }

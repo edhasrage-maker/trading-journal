@@ -38,7 +38,7 @@
 import { MIN_SAMPLE } from '@/lib/sample-size'
 import { symbolRoot } from '@/lib/futures-symbols'
 import { revengeReentryIds } from '@/lib/behavioral-proxies'
-import { captureComponents, mfeMaeAtr, type TradeWithExcursion } from '@/lib/analytics'
+import { mfeMaeAtr, type TradeWithExcursion } from '@/lib/analytics'
 import { classifyIbDayType } from '@/lib/ib-day-type'
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -54,7 +54,6 @@ const DEFAULT_MIN_N = MIN_SAMPLE
 const RARE_MIN_N = 6
 /** Capture-leakage benchmark: below this fraction of the favorable move booked,
  *  a low-capture read is worth surfacing. */
-const CAPTURE_BENCHMARK = 0.5
 
 // ── Trade shape the engine reads (a superset satisfied by both the analytics
 //    TradeWithContext rows and the first-read TeaserTrade rows). All fields
@@ -437,34 +436,13 @@ const revengeReentry: Builder = trades => {
   }
 }
 
-/** 6. Capture efficiency — how much of the favorable move they keep (MFE side).
- *  DESCRIPTIVE, not prescriptive: it states the capture % and lets the number
- *  speak (a self-contained %, so no "is that good?" reference problem and no
- *  "TP at 0.5×ATR" trap). Fires either way — below half = a leak, well above =
- *  sharp exits. Native only (trading_day_id): imported/historical rows carry a
- *  null symbol → multiplier 1, a different capture unit basis (same native-only
- *  rule computeStats uses). The nuanced "should you hold for a runner vs take
- *  TP1" coaching lives in the coach, which has the trader's context. */
-const captureEfficiency: Builder = trades => {
-  const ratios: number[] = []
-  for (const t of trades) {
-    if (!t.trading_day_id) continue // native only — unit-consistent capture
-    const cc = captureComponents(t as unknown as TradeWithExcursion)
-    if (!cc) continue
-    ratios.push(Math.max(0, cc.pnl / cc.mfeDollars))
-  }
-  const c = contrastVsBenchmark(ratios, CAPTURE_BENCHMARK)
-  if (!c?.passes) return null
-  const low = c.effect < 0
-  return {
-    key: 'capture_efficiency', dimension: 'Exits',
-    headline: low ? 'You keep less than half the move' : 'Sharp exits — you keep most of the move',
-    detail: low
-      ? `You bank only ~${pct(c.meanA)} of the favorable move your trades offer before it turns.`
-      : `You bank ~${pct(c.meanA)} of the favorable move your trades offer — you hold for most of it.`,
-    footnote: `${c.nA} trades with a clean read`, tone: low ? 'bad' : 'good', score: c.score,
-  }
-}
+// 6. Capture efficiency — RETIRED (2026-10-13). It compared a mean of per-trade
+// capture ratios with a fixed 50% benchmark and called anything under it a
+// leak ("You keep less than half the move"). Replayed over 1,361 real trades,
+// keeping about half is what a target-based book looks like when it is working:
+// pulling targets in raised the figure and cut expectancy, and a breakeven stop
+// cost more than it saved. The number itself now lives on the Trade management
+// card (src/lib/trade-management.ts), stated, not judged.
 
 /** 7. Heat vs reward — favorable move vs adverse heat, in ×ATR (MAE side). The
  *  ratio has a built-in 1.0 benchmark (more heat than reward = bad), so it reads
@@ -711,7 +689,7 @@ const dayCharacter: Builder = trades => {
 
 const BUILDERS: Builder[] = [
   timeOfDay, instrument, direction, tradesPerDay, revengeReentry,
-  captureEfficiency, heatVsReward, sizeVsOutcome, prevOutcome, dayOfWeek,
+  heatVsReward, sizeVsOutcome, prevOutcome, dayOfWeek,
   dayCharacter,
 ]
 

@@ -98,7 +98,7 @@ export default async function MonthlyRecapPage({ params }: PageProps) {
         sub: partial && weekDays.length < 4 ? 'partial' : null,
         read: null,
         trades: w.trades,
-        capture: w.capture,
+        mgmt: w.mgmt,
         rails: w.railsDays > 0 ? `${w.railsKept} of ${w.railsDays} days` : null,
         railsTone: w.railsDays > 0 ? (w.railsKept === w.railsDays ? 'pos' : w.railsKept < w.railsDays - 1 ? 'neg' : null) : null,
         score: w.score.score,
@@ -131,8 +131,7 @@ export default async function MonthlyRecapPage({ params }: PageProps) {
         trades: summary.trades,
         dayWins: summary.dayWins,
         tradedDays: summary.tradedDays,
-        capture: summary.capture,
-        mfeMae: summary.mfeMae,
+        mgmt: summary.mgmt,
         railsKept: summary.railsKept,
         railsDays: summary.railsDays,
         winRate: summary.winRate,
@@ -171,11 +170,10 @@ function monthlyFinding(carryover: Carryover | null, s: PeriodSummary, isCurrent
     }
   }
   const railsPart = s.railsDays > 0 ? ` Rails held on ${s.railsKept} of ${s.railsDays} graded days.` : ''
-  const capturePart = s.capture != null ? ` You kept ${s.capture}% of what your winners offered.` : ''
   return {
     state: 'none',
     headline: 'Nothing separated itself.',
-    sub: `${s.trades} trades across ${s.tradedDays} sessions — no setup family or behaviour stood out from the rest of your book.${railsPart}${capturePart} Not every month has a lesson; manufacturing one would be the mistake.`,
+    sub: `${s.trades} trades across ${s.tradedDays} sessions — no setup family or behaviour stood out from the rest of your book.${railsPart} Not every month has a lesson; manufacturing one would be the mistake.`,
     next: 'No change to force — keep taking your A setups and let the sample build.',
     evidence: [],
   }

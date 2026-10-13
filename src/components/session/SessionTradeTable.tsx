@@ -19,7 +19,8 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare, Upload } from 'lucide-react'
-import { captureRatio, captureRatioScaled, maeHeatRatio, isGiveBackTrade, rMultiple, mfeMaePoints, formatCapturePct, exitedAtExtreme, CAPTURE_AT_EXTREME_TOOLTIP, type BarLike } from '@/lib/analytics'
+import { maeHeatRatio, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
+import { tradeFacts, tradeMgmt, mgmtBarGeometry, formatKept, exitKind, type TradeMgmt } from '@/lib/trade-management'
 import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { postExitVerdict, type VerdictTrade, type VerdictTone } from '@/lib/post-exit-verdict'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
@@ -49,13 +50,15 @@ const TOGGLEABLE_COLS = [
   { key: 'atr', label: 'ATR@' },
   { key: 'score', label: 'Score' },
   { key: 'r', label: 'R' },
-  { key: 'mfe', label: 'MFE %' },
-  { key: 'mae', label: 'MAE %' },
-  { key: 'postExit', label: 'Post-Exit' },
+  { key: 'mae', label: 'MAE · MFE' },
+  { key: 'mfe', label: 'Kept' },
+  { key: 'postExit', label: 'After exit' },
 ] as const
 type ColKey = (typeof TOGGLEABLE_COLS)[number]['key']
 const COLS_STORAGE_KEY = 'eod-trade-cols-v1'
-const COL_WIDTHS_KEY = 'eod-trade-col-widths-v1'
+// v2: the MAE column became the wide MAE · MFE bar column and swapped places
+// with Kept; a width dragged for the old narrow MAE would crush the bar.
+const COL_WIDTHS_KEY = 'eod-trade-col-widths-v2'
 /** Narrowest a column may be dragged. Below this the header label is unreadable
  *  and the handle becomes hard to grab back. */
 const MIN_COL_PX = 44
@@ -95,55 +98,22 @@ function loadColPrefs(): Record<ColKey, boolean> {
   } catch { return defaults }
 }
 
-/** Display capture % per trade — uses the same null-handling as the intraday row.
- *  When bars are provided, prefers the per-leg scaling-aware ratio so a scaled-
- *  out trade isn't graded against an impossible-to-hold full-qty peak. */
-function captureDisplay(t: Trade, bars?: BarLike[]): string | null {
-  const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
-  // Invariant guard: bank-more-than-the-peak is impossible. A ratio past 100+ε
-  // is a data mismatch — show "—", never the raw (e.g. 218%) number. An exit AT
-  // the trade's own extreme gets the wider bound: that trade is PINNED at 100%
-  // by definition, so a point of fill-vs-logged-price rounding was blanking the
-  // best exits in the book.
-  if (r != null) return formatCapturePct(r, { exitedAtExtreme: exitedAtExtreme(t) }) ?? '—'
-  // Capture came back null. For a LOSS or scratch that is a real 0% captured —
-  // the trade gave back whatever green it briefly showed — so "0%" beats a bare
-  // "—", and it mirrors captureRatio's floor-at-0.
-  //
-  // A WINNER is a different case and must NOT print 0%. captureRatio also
-  // returns null when MFE sits under the noise floor (< 0.5 × entry ATR), and a
-  // profitable trade there did not capture zero of its move — it banked money.
-  // Printing "0%" on a +$330 trade states the opposite of what happened, so it
-  // falls through to "—": the ratio is unavailable, not zero.
-  const hasInputs = t.pnl != null && t.quantity != null && t.entry_price != null && mfeMaePoints(t) != null
-  if (hasInputs && (t.pnl ?? 0) <= 0) return '0%'
-  return null
+/** The "Kept" cell for one trade. Only a trade that went your way has an exit
+ *  to grade; one that never did says so instead of printing 0%, which blamed
+ *  the exit for an entry that never worked. */
+function keptCell(m: TradeMgmt | null): { text: string; cls: string; title: string } {
+  if (m == null) return { text: '—', cls: 'text-gray-700', title: 'No price data (or no ATR and no stop) to sort this trade by yet.' }
+  if (!m.went) return { text: 'never got going', cls: 'text-gray-500 text-[11px]', title: 'Never got 1×ATR your way, so there was no exit to grade — an entry question, not an exit one.' }
+  if (m.kept === 0) return { text: '0%', cls: 'text-red-400 font-bold', title: 'Went your way, then gave it all back.' }
+  return { text: formatKept(m.kept), cls: 'text-gray-300', title: 'What you banked out of the best point this trade reached.' }
 }
 
-/** Why capture is blank, for the cell tooltip — a bare "—" should never leave
- *  the reader wondering whether the number is missing or the product is broken.
- *  Null when capture rendered a value (no explanation needed). */
-function captureBlankReason(t: Trade, bars?: BarLike[]): string | null {
-  const shown = captureDisplay(t, bars)
-  if (shown != null && shown !== '—') return null
-  // Ratio computed but out of bounds. This is the one blank that points at a
-  // DATA problem rather than a metric that doesn't apply, so name it — banking
-  // more than the move ever offered is impossible, and the usual cause is a
-  // wrong entry price or a mis-stamped entry time.
-  const r = (bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)
-  if (r != null) {
-    return `Capture came out at ${Math.round(r * 100)}%, which can't happen — you can't bank more than the best the move offered. Your P&L and the market data for this trade disagree, usually a wrong entry price or an entry time stamped to the minute.`
-  }
-  if (t.pnl == null || t.quantity == null || t.entry_price == null) {
-    return 'Capture needs entry price, quantity and P&L on this trade.'
-  }
-  const xc = mfeMaePoints(t)
-  if (xc == null) return 'No MFE/MAE data for this trade yet, so capture can\'t be computed.'
-  const atr = (t as Trade & { entry_atr_1m?: number | null }).entry_atr_1m
-  if (atr != null && atr > 0 && xc.mfe < atr * 0.5) {
-    return `The move never cleared half an ATR (${xc.mfe.toFixed(2)} pts vs ${(atr * 0.5).toFixed(2)}), so a capture ratio here would be noise rather than a read on your exit.`
-  }
-  return 'Capture is unavailable for this trade.'
+/** One excursion magnitude in the active unit, unsigned — the bar's end caps. */
+function magLabel(v: number | null | undefined, unit: MfeUnit): string {
+  if (v == null) return '—'
+  if (unit === 'dollars') return '$' + Math.round(v).toLocaleString()
+  if (unit === 'atr') return `${v.toFixed(1)}×`
+  return v.toFixed(1)
 }
 
 interface Props {
@@ -188,12 +158,15 @@ interface Props {
   summariesLoading?: boolean
   /** Per-trade live ATR-10 (Wilder) in points, computed at each trade's entry_time from 1-min bars. Powers an "ATR @ entry" chip. */
   liveAtrByTradeId?: Record<string, number>
+  /** The trader's "was up" multiple (Settings → ATR measurement). Sorts a trade
+   *  into went-your-way / never-got-going; defaults to 1×ATR. */
+  giveBackAtr?: number
   /** Per-trade post-exit continuation @30m — how much further the market went after the trade closed. Powers the "Post-Exit" column. */
   postExitByTradeId?: Record<string, import('@/lib/atr').PostExitData>
-  /** 1-minute bars for the day. When provided, the per-row MFE Realized %
-   *  uses the scaling-aware capture calc (walks exits_json + finds the
-   *  per-leg peak between scale-outs). When omitted, falls back to the
-   *  simple peak × full-qty formula so the column still renders. */
+  /** 1-minute bars for the day. No longer read: Kept is measured against the
+   *  trade's own best point (the stored tick extremes), the same way the Trade
+   *  management card measures it, so the row and the card can't disagree.
+   *  Still accepted so existing callers need no change. */
   bars?: BarLike[] | null
 }
 
@@ -265,8 +238,8 @@ export default function SessionTradeTable({
   summaries = {},
   summariesLoading = false,
   liveAtrByTradeId,
+  giveBackAtr = 1,
   postExitByTradeId,
-  bars,
 }: Props) {
   // Capture (live Intraday) vs review (EOD recap). Every judgment column and the
   // AI sub-rows are gated OFF in capture; the review path evaluates exactly as
@@ -316,8 +289,12 @@ export default function SessionTradeTable({
           return t.review_json?.score?.total ?? Number.NEGATIVE_INFINITY
         case 'r':
           return rMultiple(t, liveAtrByTradeId?.[t.id]) ?? Number.NEGATIVE_INFINITY
-        case 'mfe':
-          return ((bars && bars.length > 0 ? captureRatioScaled(t, bars) : null) ?? captureRatio(t)) ?? Number.NEGATIVE_INFINITY
+        case 'mfe': {
+          // Kept: trades that went your way by how much they kept; the ones
+          // that never got going sort below every graded exit.
+          const m = tradeMgmt(t, { atr: liveAtrByTradeId?.[t.id], thresholdAtr: giveBackAtr })
+          return m == null ? Number.NEGATIVE_INFINITY : m.went ? (m.kept ?? 0) : -1
+        }
         case 'mae':
           return maeHeatRatio(t) ?? Number.NEGATIVE_INFINITY
       }
@@ -336,7 +313,7 @@ export default function SessionTradeTable({
       return sortDir === 'asc' ? av - bv : bv - av
     })
     return copy
-  }, [trades, sortKey, sortDir, liveAtrByTradeId, bars])
+  }, [trades, sortKey, sortDir, liveAtrByTradeId, giveBackAtr])
 
   // Click-to-toggle popups for the MFE % / MAE % column definitions. Same
   // dashboard-style popup pattern as the EOD header — click outside / Esc to
@@ -436,6 +413,18 @@ export default function SessionTradeTable({
   // Column order for the <colgroup> that carries dragged widths. A colgroup is
   // POSITIONAL, so this has to track the header row exactly — hence it is built
   // from the very same flags, immediately below them, rather than restated.
+  // One scale for every row's MAE · MFE bar, so the entry line sits at the
+  // same place down the column and a long bar means a big move.
+  const barScale = (() => {
+    let maxMae = 0, maxMfe = 0
+    for (const t of trades) {
+      const f = tradeFacts(t, { atr: liveAtrByTradeId?.[t.id] })
+      const mae = f?.mae[mfeUnit], mfe = f?.mfe[mfeUnit]
+      if (mae != null && mae > maxMae) maxMae = mae
+      if (mfe != null && mfe > maxMfe) maxMfe = mfe
+    }
+    return { maxMae, maxMfe }
+  })()
   const visibleColIds = [
     'select', 'time', 'setup',
     ...(showEntry ? ['entry'] : []),
@@ -446,8 +435,8 @@ export default function SessionTradeTable({
     'pnl',
     ...(showScore ? ['score'] : []),
     ...(showR ? ['r'] : []),
-    ...(showMfe ? ['mfe'] : []),
     ...(showMae ? ['mae'] : []),
+    ...(showMfe ? ['mfe'] : []),
     ...(showPostExit ? ['postExit'] : []),
     'actions',
   ]
@@ -709,9 +698,14 @@ export default function SessionTradeTable({
             : maePts.toFixed(1)
           const winnerHeat = (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
           const stopHeat = t.stop_price != null ? maeHeatRatio(t) : null
-          const postVerdict = postExitVerdict(t as VerdictTrade, postExitByTradeId?.[t.id])
-          const postLabel = postVerdict ? `${postVerdict.glyph} ${postVerdict.label}` : '—'
-          const postCls = postVerdict ? VERDICT_TONE_CLASS[postVerdict.tone] : 'text-gray-600'
+          const facts = tradeFacts(t, { atr: liveAtr })
+          const kept = keptCell(tradeMgmt(t, { atr: liveAtr, thresholdAtr: giveBackAtr }))
+          // The plan running its course needs no verdict; only an exit made by
+          // hand gets one.
+          const kind = exitKind(t)
+          const postVerdict = kind === 'manual' || kind == null ? postExitVerdict(t as VerdictTrade, postExitByTradeId?.[t.id]) : null
+          const postLabel = kind === 'stopped' ? 'stopped' : kind === 'target' ? 'target hit' : postVerdict ? `${postVerdict.glyph} ${postVerdict.label}` : '—'
+          const postCls = kind === 'stopped' || kind === 'target' ? 'text-gray-400' : postVerdict ? VERDICT_TONE_CLASS[postVerdict.tone] : 'text-gray-600'
           return (
             <div
               key={t.id}
@@ -751,12 +745,13 @@ export default function SessionTradeTable({
                   {!isCapture && <MobileMetric label="ATR@" value={liveAtr != null ? liveAtr.toFixed(2) : '—'} />}
                   <MobileMetric label="TP1" value={t.tp1_price ?? '—'} />
                   {!isCapture && <MobileMetric label="R" value={r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R${rAtrBased ? '*' : ''}`} valueClass={rCls} />}
-                  {!isCapture && <MobileMetric label="MFE" value={captureDisplay(t, bars ?? undefined) ?? '—'} />}
+                  {!isCapture && <MobileMetric label="MFE" value={magLabel(facts?.mfe[mfeUnit], mfeUnit)} />}
                   {!isCapture && <MobileMetric label="MAE" value={maeMag + (stopHeat != null && stopHeat > 1 ? ' · past stop' : '')} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} />}
+                  {!isCapture && <MobileMetric label="Kept" value={kept.text} valueClass={kept.cls} />}
                   {/* Post-exit verdict spans both columns — the plain-language label
                       is too long for a half-width cell. */}
                   {!isCapture && <div className="col-span-2">
-                    <MobileMetric label="Post-Exit" value={postLabel} valueClass={postCls} />
+                    <MobileMetric label="After exit" value={postLabel} valueClass={postCls} />
                   </div>}
                 </div>
                 {!isCapture && (summary || t.notes?.trim()) && (
@@ -813,25 +808,85 @@ export default function SessionTradeTable({
               <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} colId="pnl" onResize={startResize} onResetWidths={resetWidths} />
               {showScore && <SortableHeader label="Score" sortKey="score" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Score out of 100, read from the tape at the fill. Click a score to see why." colId="score" onResize={startResize} onResetWidths={resetWidths} />}
               {showR && <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." colId="r" onResize={startResize} onResetWidths={resetWidths} />}
+              {showMae && <th data-col="mae" className="relative font-normal pb-2 pr-3 whitespace-nowrap">
+                {/* The excursion column: MAE at the left end of each bar, MFE at
+                    the right, and the entry line between them. The unit dropdown
+                    and the help icon sit in the middle so the two labels stay
+                    over the numbers they name. */}
+                <span className="flex items-end justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onSort('mae')}
+                    className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
+                    title="Sort by MAE (heat taken)"
+                  >
+                    MAE <SortIcon col="mae" current={sortKey} dir={sortDir} />
+                  </button>
+                  <span className="inline-flex items-center gap-1">
+                    <select
+                      aria-label="Unit"
+                      value={mfeUnit}
+                      onChange={e => setMfeUnit(e.target.value as MfeUnit)}
+                      onClick={e => e.stopPropagation()}
+                      className="bg-gray-800 border border-gray-700 text-gray-400 text-[9px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight normal-case tracking-normal"
+                      title="Display unit (shared with the Trade management card)"
+                    >
+                      <option value="atr">×ATR</option>
+                      <option value="pts">pts</option>
+                      <option value="dollars">$</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => { setMaeOpen(o => !o); setMfeOpen(false) }}
+                      className={`transition-colors ${maeOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
+                      title="What are MAE and MFE?"
+                    >
+                      <HelpCircle className="w-3 h-3" />
+                    </button>
+                  </span>
+                  <span>MFE</span>
+                </span>
+                {maeOpen && (
+                  <div
+                    ref={maeRef}
+                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal whitespace-normal"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="font-semibold text-white">MAE · MFE — how far against you, how far your way</p>
+                      <button type="button" onClick={() => setMaeOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <p className="mb-2 text-gray-300">
+                      The line is your entry. <strong>MAE</strong> (red, left) is the worst point the trade reached; <strong>MFE</strong> (green, right) is the best. The solid part is what you kept (green) or lost (red). Every row shares one scale.
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
+                      <li><strong>×ATR</strong> (default): the move ÷ 1 ATR at entry — comparable across days and instruments.</li>
+                      <li><strong>pts</strong>: raw price points.</li>
+                      <li><strong>$</strong>: points × size × contract multiplier.</li>
+                    </ul>
+                    <p className="mb-2 text-gray-400">
+                      On a <strong>winner</strong>, heat ≥ 1×ATR turns <strong className="text-amber-300">amber</strong> — you won despite a late/lucky entry, worth reviewing. <span className="text-emerald-400">↑</span> = never traded below entry.
+                    </p>
+                    <p className="text-gray-500">&ldquo;past stop&rdquo; appears when the heat went beyond your planned stop distance.</p>
+                  </div>
+                )}
+              <ResizeHandle id="mae" onStart={startResize} onReset={resetWidths} /></th>}
               {showMfe && <th data-col="mfe" className="relative text-center font-normal pb-2 pr-3 whitespace-nowrap">
-                {/* Centered rather than right-aligned: the header carries a sort
-                    control and an info icon, so right-aligning parked the short
-                    values ("0%", "100%") under the icon instead of under the
-                    label they belong to. */}
                 <span className="inline-flex items-center gap-1 justify-center">
                   <button
                     type="button"
                     onClick={() => onSort('mfe')}
                     className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
-                    title="Sort by MFE %"
+                    title="Sort by Kept"
                   >
-                    MFE % <SortIcon col="mfe" current={sortKey} dir={sortDir} />
+                    Kept <SortIcon col="mfe" current={sortKey} dir={sortDir} />
                   </button>
                   <button
                     type="button"
                     onClick={() => { setMfeOpen(o => !o); setMaeOpen(false) }}
                     className={`transition-colors ${mfeOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                    title="What is MFE %?"
+                    title="What is Kept?"
                   >
                     <HelpCircle className="w-3 h-3" />
                   </button>
@@ -839,93 +894,27 @@ export default function SessionTradeTable({
                 {mfeOpen && (
                   <div
                     ref={mfeRef}
-                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
+                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal whitespace-normal"
                   >
                     <div className="flex items-start justify-between mb-2">
-                      <p className="font-semibold text-white">MFE % (per-trade)</p>
+                      <p className="font-semibold text-white">Kept (per trade)</p>
                       <button type="button" onClick={() => setMfeOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                     <p className="mb-2 text-gray-300">
-                      <em>How much of the favorable move did you actually book on this trade?</em>
-                    </p>
-                    <p className="mb-2 text-gray-400">
-                      = realized PnL ÷ peak favorable excursion (in $) — bounded by entry → exit, so it measures execution <em>while you held</em>.
+                      <em>Of the best point this trade reached, how much did you bank?</em> Shown only for trades that <strong>went your way</strong> — up at least 1×ATR at some point.
                     </p>
                     <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
-                      <li><strong>100%</strong>: exited at the high — perfect timing</li>
-                      <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
-                      <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — went green then closed at a loss</li>
+                      <li><strong>100%</strong>: out at the best price it reached</li>
+                      <li><strong>50%</strong>: it ran twice as far as you took</li>
+                      <li><strong className="text-red-300">0%</strong>: it went your way, then you gave it all back</li>
                     </ul>
-                    <p className="text-gray-500">Bolded when the trade was a give-back (MFE ≥ 1R favorable then closed red).</p>
+                    <p className="text-gray-500"><strong className="text-gray-400">never got going</strong> means the trade never got 1×ATR your way. There was no exit to grade — that is an entry question.</p>
                   </div>
                 )}
               <ResizeHandle id="mfe" onStart={startResize} onReset={resetWidths} /></th>}
-              {showMae && <th data-col="mae" className="relative text-center font-normal pb-2 pr-3 whitespace-nowrap">
-                {/* Unit dropdown stacked ABOVE the MAE label so the column stays
-                    narrow (was a single wide inline row: MAE · ×ATR · ?).
-                    Centered to match MFE % — both are short numeric columns
-                    under headers wide enough that right-aligning parked the
-                    values under the controls instead of under the labels. */}
-                <span className="inline-flex flex-col items-center gap-0.5">
-                  <select
-                    value={mfeUnit}
-                    onChange={e => setMfeUnit(e.target.value as MfeUnit)}
-                    onClick={e => e.stopPropagation()}
-                    className="bg-gray-800 border border-gray-700 text-gray-400 text-[9px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight normal-case tracking-normal"
-                    title="Heat display unit (shared with the dashboard)"
-                  >
-                    <option value="atr">×ATR</option>
-                    <option value="pts">pts</option>
-                    <option value="dollars">$</option>
-                  </select>
-                  <span className="inline-flex items-center gap-1 justify-center">
-                    <button
-                      type="button"
-                      onClick={() => onSort('mae')}
-                      className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
-                      title="Sort by MAE (heat taken)"
-                    >
-                      MAE <SortIcon col="mae" current={sortKey} dir={sortDir} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setMaeOpen(o => !o); setMfeOpen(false) }}
-                      className={`transition-colors ${maeOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                      title="What is MAE?"
-                    >
-                      <HelpCircle className="w-3 h-3" />
-                    </button>
-                  </span>
-                </span>
-                {maeOpen && (
-                  <div
-                    ref={maeRef}
-                    className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <p className="font-semibold text-white">MAE — heat taken</p>
-                      <button type="button" onClick={() => setMaeOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <p className="mb-2 text-gray-300">
-                      <em>How far did the trade go against you before it resolved?</em> Peak adverse excursion from entry, in your chosen unit:
-                    </p>
-                    <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
-                      <li><strong>×ATR</strong> (default): heat ÷ 1 ATR at entry — comparable across days and instruments. 1.7× = you sat through 1.7 ATRs of heat.</li>
-                      <li><strong>pts</strong>: raw price points against you.</li>
-                      <li><strong>$</strong>: points × size × contract multiplier.</li>
-                    </ul>
-                    <p className="mb-2 text-gray-400">
-                      On a <strong>winner</strong>, heat ≥ 1×ATR turns <strong className="text-amber-300">amber</strong> — you won despite a late/lucky entry, worth reviewing. Losers stay neutral (adverse movement is expected when you&apos;re wrong). <span className="text-emerald-400">↑</span> = never traded below entry.
-                    </p>
-                    <p className="text-gray-500">If the trade has a planned stop, a small <span className="text-gray-400">· NN%</span> shows heat as a % of that stop — over 100% means you held past it.</p>
-                  </div>
-                )}
-              <ResizeHandle id="mae" onStart={startResize} onReset={resetWidths} /></th>}
-              {showPostExit && <th data-col="postExit" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap" title="Was your exit well-timed? A plain-language verdict from what the market did in the 15 min after you were out — 'exit right' (it reversed once you left), 'early' (it kept running your way — money left on the table), 'stop right' (a loss that kept going against you), or 'gave it back' (you had a real winner before it turned red).">Post-Exit<ResizeHandle id="postExit" onStart={startResize} onReset={resetWidths} /></th>}
+              {showPostExit && <th data-col="postExit" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap" title="How the trade ended. 'stopped' and 'target hit' are the plan running its course, so they are stated plainly. A verdict appears only when you closed the trade by hand: what the market did in the 15 min after you were out.">After exit<ResizeHandle id="postExit" onStart={startResize} onReset={resetWidths} /></th>}
               <th data-col="actions" className="w-8" />
             </tr>
           </thead>
@@ -1105,25 +1094,23 @@ export default function SessionTradeTable({
                       </td>
                     )
                   })()}
-                  {/* Cap and Loss render first, then Post-Exit Continuation. Post-Exit
-                      asks "after I exited, how much further did the move keep going in my
-                      direction?" — compared to what you captured, expressed as a % "extra
-                      leg" you could have taken. */}
-                  {/* Cap and Loss: same per-trade math as the intraday row chip.
-                      Bold marks high-signal cross-cases that deserve attention
-                      on review (give-back loser, lucky-escape winner). */}
+                  {/* MAE · MFE, then Kept — the same three facts and the same sort
+                      the Trade management card uses, one trade at a time. */}
                   {(() => {
-                    const isGiveBack = isGiveBackTrade(t)
-                    const capCls = isGiveBack ? 'text-red-400 font-bold' : 'text-gray-400'
+                    const liveAtr = liveAtrByTradeId?.[t.id]
+                    const facts = tradeFacts(t, { atr: liveAtr })
+                    const kept = keptCell(tradeMgmt(t, { atr: liveAtr, thresholdAtr: giveBackAtr }))
+                    const geo = facts
+                      ? mgmtBarGeometry({ mfe: facts.mfe[mfeUnit], mae: facts.mae[mfeUnit], result: facts.result[mfeUnit] }, barScale)
+                      : null
                     // MAE magnitude ("heat taken"), shown in the active unit (pts / $ /
                     // ×ATR via useMfeUnit). The amber "took heat to win" flag is computed
                     // in ATR regardless of display unit (>=1 ATR on a WINNER = a late/
                     // lucky entry to review); losers stay neutral (adverse is expected
-                    // when you're wrong). When a planned stop exists we ALSO append heat
-                    // as % of that stop (answers "held past my stop?"; red over 100%).
+                    // when you're wrong).
                     const xc = mfeMaePoints(t)
                     const maePts = xc?.mae ?? null
-                    const atrRef = liveAtrByTradeId?.[t.id] ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m
+                    const atrRef = liveAtr ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m
                     const maeAtr = (maePts != null && atrRef != null && atrRef > 0) ? maePts / atrRef : null
                     const maeMag = maePts == null ? '—'
                       : mfeUnit === 'dollars' ? '$' + Math.round(maePts * (t.quantity ?? 1) * symbolToMultiplier(t.symbol ?? '')).toLocaleString()
@@ -1134,44 +1121,48 @@ export default function SessionTradeTable({
                     const stopHeat = t.stop_price != null ? maeHeatRatio(t) : null
                     return (
                       <>
-                        {showMfe && (
-                          <td className={`py-1.5 pr-3 text-center ${capCls}`}
-                            title={
-                              isGiveBack ? 'Give-back: trade had MFE >= 1R favorable then closed at a loss.'
-                                // A perfect exit reads 100% only because it's clamped there —
-                                // say so, or it looks like a suspiciously round number.
-                                : exitedAtExtreme(t) ? CAPTURE_AT_EXTREME_TOOLTIP
-                                // Say WHY the cell is blank — an unexplained em-dash
-                                // reads as a broken product rather than a metric
-                                // that honestly doesn't apply to this trade.
-                                : captureBlankReason(t, bars ?? undefined) ?? undefined
-                            }>
-                            {captureDisplay(t, bars ?? undefined) ?? '—'}
-                          </td>
-                        )}
                         {showMae && (
-                          <td className="py-1.5 pr-3 text-center whitespace-nowrap"
-                            title={maePts == null ? 'Heat unavailable — no excursion data for this trade.'
+                          <td className="py-1.5 pr-3 whitespace-nowrap"
+                            title={maePts == null ? 'No excursion data for this trade.'
                               : winnerHeat ? `Won but sat through ${maeAtr!.toFixed(1)}×ATR of heat — a late/lucky entry worth reviewing.`
-                              : `Max adverse excursion (heat taken).${(t.pnl ?? 0) <= 0 ? ' Adverse movement is expected on a losing trade.' : ''}`}>
-                            <span className={winnerHeat ? 'text-amber-400 font-bold' : 'text-gray-400'}>{maeMag}</span>
-                            {neverAdverse && (
-                              <span className="ml-1 text-emerald-400" title="Never traded below entry — instantly favorable.">↑</span>
-                            )}
-                            {/* The heat-against-stop percentage used to print on
-                                every row ("· 20%"), and it read as a second,
-                                unexplained number rather than as information —
-                                you have to already know it is measured against
-                                your stop for it to mean anything. The one case
-                                that genuinely needs saying is the breach, so
-                                that is all that survives, in words instead of a
-                                ratio. */}
+                              : 'MAE (left): the worst point reached. MFE (right): the best. Solid = what you kept or lost.'}>
+                            <span className={`flex items-center gap-2 ${colWidths ? '' : 'min-w-[220px]'}`}>
+                              <span className={`flex-none w-[46px] text-right ${winnerHeat ? 'text-amber-400 font-bold' : 'text-gray-400'}`}>
+                                {maeMag}
+                                {neverAdverse && (
+                                  <span className="ml-0.5 text-emerald-400" title="Never traded below entry — instantly favorable.">↑</span>
+                                )}
+                              </span>
+                              <span className="relative block flex-1 min-w-0 h-[8px] rounded-[3px] bg-gray-800" aria-hidden="true">
+                                {geo && (
+                                  <>
+                                    <span className="absolute top-0 h-[8px] bg-red-400/30" style={{ left: `${geo.maeLeft}%`, width: `${geo.maeWidth}%` }} />
+                                    <span className="absolute top-0 h-[8px] bg-green-400/25" style={{ left: `${geo.zero}%`, width: `${geo.mfeWidth}%` }} />
+                                    {geo.solidSide !== 'none' && (
+                                      <span
+                                        className={`absolute top-0 h-[8px] ${geo.solidSide === 'kept' ? 'bg-green-400' : 'bg-red-400'}`}
+                                        style={{ left: `${geo.solidLeft}%`, width: `${geo.solidWidth}%` }}
+                                      />
+                                    )}
+                                    <span className="absolute -top-[3px] h-[14px] w-[2px] bg-gray-200" style={{ left: `${geo.zero}%` }} />
+                                  </>
+                                )}
+                              </span>
+                              <span className="flex-none w-[46px] text-left text-gray-400">{magLabel(facts?.mfe[mfeUnit], mfeUnit)}</span>
+                            </span>
+                            {/* The one heat-vs-stop case that needs saying is the
+                                breach, in words rather than a ratio. */}
                             {stopHeat != null && stopHeat > 1 && (
-                              <span className="ml-1 text-[10px] text-red-400 font-semibold"
+                              <span className="block text-[10px] text-red-400 font-semibold"
                                 title="Peak adverse excursion went beyond your planned stop distance — the trade was held past its stop.">
-                                · past stop
+                                past stop
                               </span>
                             )}
+                          </td>
+                        )}
+                        {showMfe && (
+                          <td className={`py-1.5 pr-3 text-center whitespace-nowrap ${kept.cls}`} title={kept.title}>
+                            {kept.text}
                           </td>
                         )}
                       </>
@@ -1179,6 +1170,22 @@ export default function SessionTradeTable({
                   })()}
                   {showPostExit && (() => {
                     const ext = postExitByTradeId?.[t.id]
+                    // The plan running its course is stated plainly — no verdict.
+                    // A stop-out used to read "early — recovered…" whenever price
+                    // bounced in the next 15 minutes, which it does after most
+                    // exits of every kind.
+                    const kind = exitKind(t)
+                    if (kind === 'stopped' || kind === 'target') {
+                      const after = ext
+                        ? ` In the 15 min after: ${ext.continued_favorable_pts.toFixed(1)} pts further your way, ${ext.continued_against_pts.toFixed(1)} pts against.`
+                        : ''
+                      return (
+                        <td className="py-1.5 pr-3 text-left text-gray-400"
+                          title={(kind === 'stopped' ? 'Closed at your stop.' : 'Closed at your target.') + after}>
+                          {kind === 'stopped' ? 'stopped' : 'target hit'}
+                        </td>
+                      )
+                    }
                     const v = postExitVerdict(t as VerdictTrade, ext)
                     if (!v) return <td className="py-1.5 pr-3 text-left text-gray-700">—</td>
                     // The 15-min post-exit window hasn't fully filled — common

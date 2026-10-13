@@ -18,7 +18,8 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
-import { avgCaptureRatio, avgMfeMaeRatio, formatCapturePct, type TradeWithExcursion } from '@/lib/analytics'
+import { type TradeWithExcursion } from '@/lib/analytics'
+import { mgmtTotals, mgmtView } from '@/lib/trade-management'
 import { computeBehavioralProxies, type ProxyTrade } from '@/lib/behavioral-proxies'
 import { computeInsights, type InsightTrade, type RankedInsight } from '@/lib/data-insights'
 import { mergeDiveInsights, runDives, toDiveRows, type DiveRow } from '@/lib/deep-dive/registry'
@@ -42,9 +43,12 @@ export interface FirstReadTeaser {
   pnl: number
   tradeCount: number
   winRate: number | null      // 0..100, null when no trades carry a pnl
-  capturePct: number | null   // 0..100 (avg MFE captured), null when no excursion data
-  mfeMaeRatio: number | null  // favorable $ / adverse $, null when no adverse data
-  flag: string | null         // one plain-language read: behavioral signal, else a capture verdict
+  /** Trades that went your way (up at least 1×ATR at some point) and how many
+   *  could be sorted at all. Zero/zero when the day has no price data. */
+  went: number
+  classified: number
+  keptPct: number | null      // 0..100 on the trades that went your way; null when none did
+  flag: string | null         // one plain-language read from a behavioral signal, else null
 }
 
 /** Page a Supabase select past the 1000-row cap, ordered by id for stable paging. */
@@ -65,39 +69,37 @@ async function fetchAll<T>(
   return out
 }
 
-/** Top behavioral signal for a day → a short plain-language line, else a capture verdict. */
-function readFlag(dayTrades: TeaserTrade[], capturePct: number | null): string | null {
+/** Top behavioral signal for a day → a short plain-language line, else nothing.
+ *  (This used to fall back to a capture verdict — "you gave back most of the
+ *  move". A low kept figure is not a mistake on its own, so it no longer gets a
+ *  sentence that says it is.) */
+function readFlag(dayTrades: TeaserTrade[]): string | null {
   const { proxies } = computeBehavioralProxies(dayTrades)
   // Highest-severity signal first (flag > mild); label + detail already user-facing.
   const signal = proxies
     .filter(p => p.severity !== 'none')
     .sort((a, b) => (a.severity === 'flag' ? 0 : 1) - (b.severity === 'flag' ? 0 : 1))[0]
-  if (signal) return signal.detail || signal.label
-  // No behavioral drift — fall back to an exit-quality read from capture.
-  if (capturePct == null) return null
-  if (capturePct >= 70) return 'Sharp exits — you kept most of the move you were offered.'
-  if (capturePct >= 40) return 'Middling capture — you left part of the move on the table.'
-  return 'You gave back most of the favorable move before exiting.'
+  return signal ? (signal.detail || signal.label) : null
 }
 
 function teaserFor(date: string, dayTrades: TeaserTrade[], pnl: number): FirstReadTeaser {
   const withPnl = dayTrades.filter(t => t.pnl != null)
   const wins = withPnl.filter(t => (t.pnl ?? 0) > 0).length
   const winRate = withPnl.length > 0 ? (wins / withPnl.length) * 100 : null
-  const cap = avgCaptureRatio(dayTrades)
-  // Invariant guard: drop an out-of-bounds capture (>100+ε) rather than teasing
-  // an impossible number — a mismatch means realized PnL exceeded the peak
-  // favorable $, which can't happen. Null → the teaser chip hides it.
-  const capturePct = cap.avg != null && formatCapturePct(cap.avg) != null ? Math.round(cap.avg * 100) : null
-  const ratio = avgMfeMaeRatio(dayTrades).ratio
+  // One definition with the rest of the app (src/lib/trade-management.ts). ×ATR
+  // is the app's default unit; a day with no ATR behind it reads in points.
+  const totals = mgmtTotals(dayTrades)
+  const atrView = mgmtView(totals, 'atr')
+  const view = atrView.went.keptPct != null || atrView.went.count === 0 ? atrView : mgmtView(totals, 'pts')
   return {
     date,
     pnl,
     tradeCount: dayTrades.length,
     winRate,
-    capturePct,
-    mfeMaeRatio: ratio == null ? null : Math.round(ratio * 10) / 10,
-    flag: readFlag(dayTrades, capturePct),
+    went: view.went.count,
+    classified: view.classified,
+    keptPct: view.went.keptPct != null ? Math.round(view.went.keptPct * 100) : null,
+    flag: readFlag(dayTrades),
   }
 }
 
@@ -138,7 +140,7 @@ export async function GET(req: Request) {
     )
     trades = await fetchAll<TeaserTrade>(
       () => db.from('trades').select(
-        'id, trading_day_id, pnl, direction, entry_time, exit_time, quantity, entry_price, stop_price, symbol, high_during_position, low_during_position, exits_json, mfe_dollars_per_leg, entry_atr_1m',
+        'id, trading_day_id, pnl, direction, entry_time, exit_time, quantity, entry_price, exit_price, stop_price, symbol, high_during_position, low_during_position, exits_json, mfe_dollars_per_leg, entry_atr_1m',
       ),
     )
   } catch (e) {

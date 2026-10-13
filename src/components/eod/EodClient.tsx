@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import Link from 'next/link'
-import { Crosshair, Image as ImageIcon, CandlestickChart, HelpCircle, X, Upload, Share2 } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2 } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
@@ -22,7 +22,7 @@ import EodAnalysisCard from './EodAnalysisCard'
 import TapeScoreHeader from './TapeScoreHeader'
 import RecordingCommentary from './RecordingCommentary'
 import BrowserRecap from './BrowserRecap'
-import AvgMfeMaeCard from '@/components/AvgMfeMaeCard'
+import TradeManagementCard from '@/components/TradeManagementCard'
 import HeatBaseline from './HeatBaseline'
 import { summarizeTodayHeat, type HeatBaseline as HeatBaselineData } from '@/lib/heat-baseline'
 import BehavioralProxiesPanel from './BehavioralProxiesPanel'
@@ -32,7 +32,8 @@ import { dayAchievements, type AchievementId } from '@/lib/achievements'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import { useSessionClock } from '@/lib/use-session-clock'
-import { avgCaptureRatio, avgMfeMaeRatio, formatCaptureCell, mfeMaePoints, type BarLike } from '@/lib/analytics'
+import { type BarLike } from '@/lib/analytics'
+import { mgmtTotals } from '@/lib/trade-management'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import { buildHighlights } from '@/lib/trade-highlights'
 import type {
@@ -238,27 +239,6 @@ export default function EodClient({
   // tags/notes/fills change.
   const [summaries, setSummaries] = useState<Record<string, string>>({})
   const [summariesLoading, setSummariesLoading] = useState(false)
-
-  // Help-popup state for the header MFE/MAE definitions. Same pattern as the
-  // dashboard RecentDaysList — click to toggle, click outside to dismiss.
-  const [mfeInfoOpen, setMfeInfoOpen] = useState(false)
-  const [ratioInfoOpen, setRatioInfoOpen] = useState(false)
-  const mfeInfoRef = useRef<HTMLDivElement>(null)
-  const ratioInfoRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!mfeInfoOpen && !ratioInfoOpen) return
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node
-      if (mfeInfoOpen && mfeInfoRef.current && !mfeInfoRef.current.contains(t)) setMfeInfoOpen(false)
-      if (ratioInfoOpen && ratioInfoRef.current && !ratioInfoRef.current.contains(t)) setRatioInfoOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setMfeInfoOpen(false); setRatioInfoOpen(false) }
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
-  }, [mfeInfoOpen, ratioInfoOpen])
 
   // Most-common trade symbol on this day — feeds LiveChart's bars query.
   // Days with no trades return null; LiveChart shows a "no symbol" message.
@@ -668,24 +648,15 @@ export default function EodClient({
   const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
 
-  // Day-level execution quality: avg MFE capture (% of the favorable move
-  // banked) and the size-weighted MFE:MAE ratio (favorable $ vs adverse $).
-  // Both are bar-derived (entry/direction/high/low) — no planned stop needed,
-  // so they compute on stop-less fills too.
-  const captureStats = useMemo(() => avgCaptureRatio(trades), [trades])
-  const ratioStats = useMemo(() => avgMfeMaeRatio(trades), [trades])
-  // Average favorable move, in points — lets the capture stat tell "nothing was
-  // offered" apart from "no data", and read 0% rather than a bare dash on a day
-  // price never went the trader's way (see formatCaptureCell).
-  const avgMfePts = useMemo(() => {
-    let sum = 0, n = 0
-    for (const t of trades) {
-      const xc = mfeMaePoints(t)
-      if (!xc) continue
-      sum += xc.mfe; n++
-    }
-    return n > 0 ? sum / n : null
-  }, [trades])
+  // Trade management for the day: every trade sorted into "went your way" /
+  // "never got going", with its MFE, MAE and result. One shared definition
+  // (src/lib/trade-management.ts) — the dashboard card pools the same sums — and
+  // the same live ATR + "was up" multiple the round-trip panel below uses, so the
+  // two can't sort a trade differently.
+  const mgmt = useMemo(
+    () => mgmtTotals(trades, { atrByTradeId: liveAtrByTradeId, thresholdAtr: giveBackAtr }),
+    [trades, liveAtrByTradeId, giveBackAtr],
+  )
   // Today's own heat split — how many trades stayed inside halfway to the stop,
   // how many pushed past, how many ran to it. This LEADS the read; the lifetime
   // baseline is context beneath it.
@@ -966,23 +937,15 @@ export default function EodClient({
           </div>
         </div>
         <div className="flex items-center gap-2 text-sm">
-          {/* Stats strip, GROUPED: Result (what the day did) | Execution (how it
-              was traded). Seven equal-weight values in one run read as a list to
-              be worked through rather than an answer — the fix is hierarchy, not
-              size, so the values step 13px -> 17px and the grouping does the rest.
+          {/* Stats strip: what the day did. How it was traded lives in the
+              Trade management card just below, which needs more room than a
+              strip gives it.
 
               W/L was dropped rather than moved: Win Rate sits right beside it and
               the TapeScore card below already prints "N trades - NW / NL", so the
-              same fact was on screen three times inside 100px.
-
-              Labels appear only in pro mode, where there are two groups to tell
-              apart; a lone "RESULT" heading over the plain stats would be noise.
-              Groups wrap on a phone instead of overflowing. */}
+              same fact was on screen three times inside 100px. */}
           <div className="flex flex-wrap items-start gap-y-3">
-          <div className={mode === 'pro' ? 'pr-4' : ''}>
-            {mode === 'pro' && (
-              <div className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-gray-500 mb-1.5">Result</div>
-            )}
+          <div>
             <div className="flex items-start gap-x-4">
               <div>
                 <div className="text-[10px] text-gray-500 whitespace-nowrap">PnL</div>
@@ -1011,112 +974,20 @@ export default function EodClient({
               </div>
             </div>
           </div>
-          {mode === 'pro' && (
-          <div className="pl-4 border-l border-gray-800">
-            <div className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-gray-500 mb-1.5">Execution</div>
-            <div className="flex items-start gap-x-4">
-          {/* Avg MFE/MAE — inline variant, drops between PnL and MFE Realized %.
-              Uses pts/$/×ATR toggle synced with the Dashboard card via localStorage. */}
-          <AvgMfeMaeCard trades={trades} variant="inline" />
-          <div className="relative">
-            <div className="text-[10px] text-gray-500 whitespace-nowrap flex items-center gap-1">
-              Profit Captured
-              <button
-                type="button"
-                onClick={() => { setMfeInfoOpen(o => !o); setRatioInfoOpen(false) }}
-                className={`transition-colors ${mfeInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                title="What is Profit Captured?"
-              >
-                <HelpCircle className="w-3 h-3" />
-              </button>
-            </div>
-            {(() => {
-              const cell = formatCaptureCell(captureStats.avg, avgMfePts)
-              return (
-                <div className={`font-mono text-[17px] ${cell.text === '—' ? 'text-gray-500'
-                  : cell.untested ? 'text-gray-500'
-                  : captureStats.avg != null && captureStats.avg < 0 ? 'text-red-400 font-bold'
-                  : 'text-gray-400'} ${cell.title ? 'cursor-help' : ''}`}
-                  title={cell.title}>
-                  {cell.text}
-                </div>
-              )
-            })()}
-            {mfeInfoOpen && (
-              <div
-                ref={mfeInfoRef}
-                className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <p className="font-semibold text-white">Profit Captured</p>
-                  <button type="button" onClick={() => setMfeInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <p className="mb-2">
-                  Averaged across <strong>{captureStats.count}</strong> trade{captureStats.count === 1 ? '' : 's'} on this day. <em>How much of the favorable move did you actually book?</em>
-                </p>
-                <p className="mb-2 text-gray-400">
-                  = realized PnL ÷ peak favorable excursion (in $) — bounded by entry → exit, so it measures execution <em>while you held</em>.
-                </p>
-                <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
-                  <li><strong>100%</strong>: exited at the high — perfect timing</li>
-                  <li><strong>50%</strong>: trade ran +2R, you took +1R — cut a runner</li>
-                  <li><strong>0% or negative</strong>: <strong className="text-red-300">give-back</strong> — trade went green then closed at a loss</li>
-                </ul>
-                <p className="text-gray-500">Red bold appears only when the day averaged a give-back.</p>
-              </div>
-            )}
-          </div>
-          <div className="relative">
-            <div className="text-[10px] text-gray-500 whitespace-nowrap flex items-center gap-1">
-              MFE : MAE
-              <button
-                type="button"
-                onClick={() => { setRatioInfoOpen(o => !o); setMfeInfoOpen(false) }}
-                className={`transition-colors ${ratioInfoOpen ? 'text-blue-300' : 'text-gray-600 hover:text-gray-300'}`}
-                title="What is the MFE : MAE ratio?"
-              >
-                <HelpCircle className="w-3 h-3" />
-              </button>
-            </div>
-            <div className={`font-mono text-[17px] ${ratioStats.ratio == null ? 'text-gray-500'
-              : ratioStats.ratio >= 1 ? 'text-green-400 font-bold'
-              : 'text-red-400'}`}>
-              {ratioStats.ratio == null ? '—' : `${ratioStats.ratio.toFixed(1)}×`}
-            </div>
-            {ratioInfoOpen && (
-              <div
-                ref={ratioInfoRef}
-                className="fixed z-50 top-24 right-6 w-80 max-h-[calc(100vh-7rem)] overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 text-left shadow-xl normal-case font-normal"
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <p className="font-semibold text-white">MFE : MAE ratio</p>
-                  <button type="button" onClick={() => setRatioInfoOpen(false)} className="text-gray-500 hover:text-white -mt-0.5 -mr-0.5" aria-label="Close">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <p className="mb-2">
-                  Across <strong>{ratioStats.count}</strong> trade{ratioStats.count === 1 ? '' : 's'} with data. <em>Did the market give you more room than it took — weighted by how big you were?</em>
-                </p>
-                <p className="mb-2 text-gray-400">
-                  = total favorable $ ÷ total adverse $ (each trade&apos;s peak MFE and peak MAE × contracts, summed). Bar-derived, so it needs no stop — and sizing up on a trade weights that trade more.
-                </p>
-                <ul className="list-disc pl-4 space-y-1 mb-2 text-gray-400">
-                  <li><strong>&gt; 1×</strong>: <strong className="text-green-300">favorable travel dominated</strong> — more opportunity than heat</li>
-                  <li><strong>~1×</strong>: balanced — room given ≈ room taken</li>
-                  <li><strong>&lt; 1×</strong>: <strong className="text-red-300">heat dominated</strong> — trades ran against you more than for you</li>
-                </ul>
-                <p className="text-gray-500">Opportunity vs. heat only — whether you actually <em>banked</em> the move is Profit Captured.</p>
-              </div>
-            )}
-          </div>
-            </div>
-          </div>
-          )}
           </div>
         </div>
       </div>
+
+      {/* Trade management — the day's trades sorted into went-your-way /
+          never-got-going. Replaces the old Avg MFE/MAE · Profit Captured ·
+          MFE:MAE trio, which were three different averages over three different
+          sets of trades. Detailed Tape only, like the figures it replaces. */}
+      {mode === 'pro' && trades.length > 0 && (
+        <TradeManagementCard
+          totals={mgmt}
+          className="border border-gray-800 rounded-[3px] p-[18px] max-w-[600px]"
+        />
+      )}
 
       {/* Time-aware seam (Pt 13 step 3): before the close the score hero is
           premature, so its slot shows a "session still live" state that points
@@ -1344,6 +1215,7 @@ export default function EodClient({
         summaries={summaries}
         summariesLoading={summariesLoading}
         liveAtrByTradeId={liveAtrByTradeId}
+        giveBackAtr={giveBackAtr}
         postExitByTradeId={postExitByTradeId}
         bars={bars}
       />

@@ -19,6 +19,8 @@ import { useUiMode } from '@/lib/ui-mode'
 import { useTagCategories } from '@/lib/tag-categories-client'
 import { useLongTaskBeacon } from '@/lib/longtask-beacon'
 import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
+import { useMfeUnit } from '@/lib/mfe-unit'
+import { mgmtView, formatKept } from '@/lib/trade-management'
 import {
   aggregateByTag,
   aggregateByDayType,
@@ -26,8 +28,6 @@ import {
   aggregateByIbRegime,
   tagImpact,
   computeStats,
-  formatCapturePct,
-  CAPTURE_MISMATCH_TOOLTIP,
   type TradeWithContext,
 } from '@/lib/analytics'
 
@@ -192,6 +192,14 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
   }, [dayStats, startDate, endDate])
 
   const overall = useMemo(() => computeStats(filtered), [filtered])
+  // Kept for the whole filtered set, in the unit chosen on the Trade management
+  // card — the same sums the dashboard card pools.
+  const [mfeUnit] = useMfeUnit()
+  const overallKept = useMemo(() => {
+    if (!overall.mgmt) return { kept: null as number | null, went: 0, classified: 0 }
+    const v = mgmtView(overall.mgmt, mfeUnit)
+    return { kept: v.went.count > 0 ? v.went.keptPct : null, went: v.went.count, classified: v.classified }
+  }, [overall, mfeUnit])
 
   // Tag-free insights (Pt 15) — patterns derived from the raw fills alone, so a
   // freshly-imported account (whose Setup table below collapses to a single
@@ -356,7 +364,7 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
 
       {/* Overall stats. Beginner: plain subset (Trades, Win Rate, Total PnL,
           Move captured). Pro: the full 8-metric grid. */}
-      <div className={`grid grid-cols-2 gap-3 ${mode === 'beginner' ? (overall.avg_capture == null ? 'md:grid-cols-3' : 'md:grid-cols-4') : 'md:grid-cols-8'}`}>
+      <div className={`grid grid-cols-2 gap-3 ${mode === 'beginner' ? (overallKept.kept == null ? 'md:grid-cols-3' : 'md:grid-cols-4') : 'md:grid-cols-8'}`}>
         <StatCard label="Trades" value={overall.count.toString()} positive={null} />
         <StatCard
           label="Win Rate"
@@ -394,13 +402,13 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
         )}
         {/* Beginner hides this when there's no capture data (a bare "—" reads
             as broken); Pro always shows it. Same plain-English label in both. */}
-        {(mode === 'pro' || overall.avg_capture != null) && (
+        {(mode === 'pro' || overallKept.kept != null) && (
           <StatCard
-            label="Profit Captured"
-            value={overall.avg_capture == null ? '—' : (formatCapturePct(overall.avg_capture) ?? '—')}
-            title={overall.avg_capture != null && formatCapturePct(overall.avg_capture) == null ? CAPTURE_MISMATCH_TOOLTIP : undefined}
-            hint={mode === 'beginner' ? "of your trade's best point" : `${overall.capture_count} of ${overall.count}`}
-            positive={overall.avg_capture != null && formatCapturePct(overall.avg_capture) != null && overall.avg_capture >= 0.5}
+            label="Kept"
+            value={overallKept.kept == null ? '—' : formatKept(overallKept.kept)}
+            title="Of the trades that went your way (up at least 1×ATR at some point): what you banked out of how far they ran, losses included. App-logged trades only."
+            hint={overallKept.classified > 0 ? `${overallKept.went} of ${overallKept.classified} went your way` : undefined}
+            positive={null}
           />
         )}
         {mode === 'pro' && (

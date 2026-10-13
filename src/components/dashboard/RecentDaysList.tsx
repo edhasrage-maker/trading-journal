@@ -8,7 +8,8 @@ import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, Che
 import type { TapeScoreResult } from '@/lib/tapescore'
 import AchievementCoin from '@/components/AchievementCoin'
 import { ACHIEVEMENT_CATALOG, type AchievementId } from '@/lib/achievements'
-import { formatCaptureCell } from '@/lib/analytics'
+import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
+import { mgmtView, formatKept, type MgmtTotals } from '@/lib/trade-management'
 
 export interface DayRowData {
   id: string
@@ -50,7 +51,8 @@ export interface DayRowData {
   avg_mae_pts: number | null
   avg_mfe_dollars: number | null
   avg_mae_dollars: number | null
-  /** Day-level MFE Capture %: realized PnL / peak favorable in $. Null when no trades had MFE data. */
+  /** Retired dollar-pooled capture figure. Still on the rollup for older
+   *  readers; this table reads `mgmt` instead. */
   avg_capture: number | null
   /** Day-level MAE Loss ×R: peak adverse / planned risk in points (NOT realized dollar loss). Null when no stops were set. */
   avg_heat: number | null
@@ -66,6 +68,9 @@ export interface DayRowData {
    *  the cell falls back to the ratio-of-averages on avg_live_atr_1m ?? atr_1m. */
   avg_mfe_atr?: number | null
   avg_mae_atr?: number | null
+  /** Trade-management sums for the day (src/lib/trade-management.ts) — behind
+   *  the "Went your way" and "Kept" columns. Same sums the dashboard card pools. */
+  mgmt?: MgmtTotals | null
 }
 
 interface Props {
@@ -84,18 +89,20 @@ type SortDirection = 'asc' | 'desc'
  *  is pinned right (row action) — those never move.
  *
  *  Pt 13 rework (2026-07-12): Day type leaves the dashboard entirely (analytics
- *  is its home). Win % joins both modes; Detailed additionally shows the MFE
- *  factors at a glance — MFE:MAE ratio and capture % — the read people found
- *  most interesting, so it's no longer a click deep. */
-type ReorderableColumnId = 'tapescore' | 'trades' | 'win_rate' | 'mfe_mae' | 'capture' | 'pnl'
-const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trades', 'win_rate', 'mfe_mae', 'capture']
+ *  is its home). Win % joins both modes; Detailed additionally shows the two
+ *  trade-management reads — how many trades went your way, and how much of
+ *  those you kept — the same two ideas as the Trade management card above. */
+type ReorderableColumnId = 'tapescore' | 'trades' | 'win_rate' | 'went' | 'kept' | 'pnl'
+const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trades', 'win_rate', 'went', 'kept']
 /** Highlights: lean, fixed, non-reorderable. */
 const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trades', 'win_rate']
 // v3: v2 carried the now-removed `day_type` id; bump so stale saved orders reset.
 // v4: the default order changed (P&L moved up beside TapeScore). The key is
 // versioned because the held order is persisted — without a bump, anyone who
 // has ever used this table keeps the old arrangement and never sees the change.
-const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v4'
+// v5: `mfe_mae` and `capture` became `went` and `kept`; a saved order naming the
+// old ids would drop both new columns.
+const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v5'
 
 /** Date earns a wider column than the numbers — it carries a weekday, a month
  *  and a date, plus any achievement coins — but only just: a quarter more. */
@@ -103,14 +110,6 @@ const DATE_COL_RATIO = 1.25
 /** Selection checkbox and delete columns (Detailed only), as a share of the
  *  table. Both hold a single small control. */
 const PINNED_COL_PCT = 3.5
-
-/** MFE:MAE ratio for the cell — "2.4:1", "∞" when a day never went adverse,
- *  "—" when either leg is missing. */
-function mfeMaeRatio(mfe: number | null, mae: number | null): string {
-  if (mfe == null || mae == null) return '—'
-  if (mae <= 0) return mfe > 0 ? '∞' : '—'
-  return `${(mfe / mae).toFixed(1)}:1`
-}
 
 export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
   const isPro = mode === 'pro'
@@ -122,6 +121,9 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   const [sortColumn, setSortColumn] = useState<SortColumn>('date')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  // Shared with the Trade management card, so "Kept" here and on the card are
+  // always in the same unit.
+  const [mfeUnit] = useMfeUnit()
   // Drag-reorder state for the data columns. Restored from localStorage on
   // mount; persisted on every change. Invalid stored values fall back to the
   // canonical default order.
@@ -373,24 +375,24 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         thProps={dragProps('win_rate')}
       />
     ),
-    mfe_mae: (
+    went: (
       <th
-        key="mfe_mae"
-        {...dragProps('mfe_mae')}
-        className={`font-normal py-2 pr-3 text-center ${dragProps('mfe_mae').className ?? ''}`}
-        title="Average favorable excursion vs. average adverse excursion — how much room the trades gave you relative to the heat you took."
+        key="went"
+        {...dragProps('went')}
+        className={`font-normal py-2 pr-3 text-center ${dragProps('went').className ?? ''}`}
+        title="How many of the day's trades got at least 1×ATR in your favor at some point. The rest never got going — an entry problem, not an exit one."
       >
-        <span className="text-gray-500">MFE:MAE</span>
+        <span className="text-gray-500">Went your way</span>
       </th>
     ),
-    capture: (
+    kept: (
       <th
-        key="capture"
-        {...dragProps('capture')}
-        className={`font-normal py-2 pr-3 text-center ${dragProps('capture').className ?? ''}`}
-        title="Of the best point the trades reached in your favor, how much you kept at exit, on average."
+        key="kept"
+        {...dragProps('kept')}
+        className={`font-normal py-2 pr-3 text-center ${dragProps('kept').className ?? ''}`}
+        title="On the trades that went your way: what you banked out of how far they ran, losses included. Uses the unit chosen on the Trade management card."
       >
-        <span className="text-gray-500">Profit Captured</span>
+        <span className="text-gray-500">Kept</span>
       </th>
     ),
     pnl: (
@@ -492,6 +494,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
                 selected={selectedIds.has(day.id)}
                 deleting={deletingDate === day.date || (bulkDeleting && selectedIds.has(day.id))}
                 columnOrder={effectiveOrder}
+                mfeUnit={mfeUnit}
                 onToggleSelect={() => toggleSelect(day.id)}
                 onDelete={() => handleSingleDelete(day.date, day.eod_pnl != null)}
               />
@@ -560,10 +563,13 @@ function DayRowItem({
   selected,
   deleting,
   columnOrder,
+  mfeUnit,
   onToggleSelect,
   onDelete,
 }: {
   day: DayRowData
+  /** Display unit for the Kept column (shared app-wide preference). */
+  mfeUnit: MfeUnit
   /** 'beginner' hides the selection + delete cells (read-only Highlights). */
   mode: 'beginner' | 'pro'
   selected: boolean
@@ -580,6 +586,7 @@ function DayRowItem({
   const Icon = pnl === null ? Minus : pnl > 0 ? TrendingUp : pnl < 0 ? TrendingDown : Minus
 
   const cellBg = selected ? 'bg-blue-950/40' : 'group-hover:bg-gray-800/40'
+  const mgmt = day.mgmt ? mgmtView(day.mgmt, mfeUnit) : null
   // Wrapping each cell in a Link would inflate markup; instead use a single
   // overlay link via the row's last cell with an onClick stopPropagation guard
   // on the checkbox + delete button.
@@ -654,25 +661,22 @@ function DayRowItem({
               {day.win_rate == null ? <span className="text-gray-700">—</span> : `${Math.round(day.win_rate)}%`}
             </td>
           ),
-          mfe_mae: (
-            <td key="mfe_mae" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
-              {(() => {
-                const v = mfeMaeRatio(day.avg_mfe_pts, day.avg_mae_pts)
-                return v === '—' ? <span className="text-gray-700">—</span> : v
-              })()}
+          went: (
+            <td key="went" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
+              {mgmt == null || mgmt.classified === 0
+                ? <span className="text-gray-700">—</span>
+                : `${mgmt.went.count} of ${mgmt.classified}`}
             </td>
           ),
-          capture: (
-            <td key="capture" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
-              {(() => {
-                const { text, title, untested } = formatCaptureCell(day.avg_capture, day.avg_mfe_pts)
-                // An untested 0% is muted: it means the exit was never graded,
-                // not that a winner was given back. Same number, different fact.
-                const tone = text === '—' ? 'text-gray-700' : untested ? 'text-gray-500' : ''
-                return title
-                  ? <span className={`cursor-help ${tone}`} title={title}>{text}</span>
-                  : text
-              })()}
+          kept: (
+            <td key="kept" className={`py-2 pr-3 text-center text-gray-300 font-mono text-xs ${cellBg}`}>
+              {mgmt == null || mgmt.classified === 0
+                ? <span className="text-gray-700">—</span>
+                : mgmt.went.count === 0
+                  // No trade went your way: there was no exit to grade. A dash,
+                  // not 0% — 0% is reserved for "it ran and you kept none of it".
+                  ? <span className="text-gray-600 cursor-help" title="No trade went your way this day, so there was no exit to grade.">—</span>
+                  : formatKept(mgmt.went.keptPct)}
             </td>
           ),
           pnl: (

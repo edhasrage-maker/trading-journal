@@ -1,9 +1,10 @@
 'use client'
 
+import { useMfeUnit } from '@/lib/mfe-unit'
+import { mgmtView, formatKept, type MgmtTotals } from '@/lib/trade-management'
 import { useState } from 'react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
-import { useUiMode } from '@/lib/ui-mode'
 import { GhostButton } from '@/components/ui/Section'
 import { ScoreCluster } from '@/components/review/ReviewMonthHero'
 import GameFilm, { type FilmFrame } from '@/components/review/GameFilm'
@@ -40,8 +41,8 @@ export interface RecapNumbers {
   trades: number
   dayWins: number
   tradedDays: number
-  capture: number | null
-  mfeMae: number | null
+  /** Trade-management sums for the period (pooled over its trades). */
+  mgmt: MgmtTotals | null
   railsKept: number
   railsDays: number
   winRate: number | null
@@ -65,7 +66,8 @@ export interface RecapLedgerRow {
   sub: string | null
   read: string | null
   trades: number
-  capture: number | null
+  /** Trade-management sums for this row's day or week. */
+  mgmt: MgmtTotals | null
   rails: string | null
   railsTone: 'pos' | 'neg' | null
   score: number | null
@@ -128,7 +130,14 @@ const fmtR = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}R`
 const pnlCls = (v: number | null) => (v == null ? 'text-gray-600' : v > 0 ? 'text-green-400' : v < 0 ? 'text-red-400' : 'text-gray-400')
 
 export default function PeriodRecapClient(p: RecapProps) {
-  const { mode } = useUiMode()
+  // Same unit as the Trade management card, so Kept reads the same here.
+  const [mfeUnit] = useMfeUnit()
+  const mgmt = p.numbers.mgmt ? mgmtView(p.numbers.mgmt, mfeUnit) : null
+  const rowKept = (t: MgmtTotals | null): string => {
+    if (!t) return '—'
+    const v = mgmtView(t, mfeUnit)
+    return v.went.count > 0 ? formatKept(v.went.keptPct) : '—'
+  }
   const s = STATE_META[p.finding.state]
 
   return (
@@ -248,10 +257,12 @@ export default function PeriodRecapClient(p: RecapProps) {
       </div>
       <div className="flex flex-wrap mt-5 pt-4 border-t border-gray-800 gap-y-4">
         <NumCell first label="Day wins" value={String(p.numbers.dayWins)} small={`of ${p.numbers.tradedDays}`} />
-        <NumCell label="Profit captured" value={p.numbers.capture != null ? `${p.numbers.capture}%` : '—'} />
-        {mode === 'pro' && (
-          <NumCell label="MFE : MAE" value={p.numbers.mfeMae != null ? p.numbers.mfeMae.toFixed(1) : '—'} />
-        )}
+        <NumCell
+          label="Went your way"
+          value={mgmt && mgmt.classified > 0 ? String(mgmt.went.count) : '—'}
+          small={mgmt && mgmt.classified > 0 ? `of ${mgmt.classified} trades` : undefined}
+        />
+        <NumCell label="Kept" value={mgmt && mgmt.went.count > 0 ? formatKept(mgmt.went.keptPct) : '—'} />
         {p.numbers.railsDays > 0 && (
           <NumCell label="Rules followed" value={String(p.numbers.railsKept)} small={`of ${p.numbers.railsDays} days`} />
         )}
@@ -291,7 +302,7 @@ export default function PeriodRecapClient(p: RecapProps) {
             <span>{p.scope === 'week' ? 'Day' : 'Week'}</span>
             <span className="hidden sm:block">{p.scope === 'week' ? 'Read' : ''}</span>
             <span className="text-right">Trades</span>
-            <span className="text-right hidden sm:block">Captured</span>
+            <span className="text-right hidden sm:block">Kept</span>
             <span className="text-right hidden md:block">Rules</span>
             <span className="text-right">TapeScore</span>
             <span className="text-right">Result</span>
@@ -305,7 +316,7 @@ export default function PeriodRecapClient(p: RecapProps) {
                 </span>
                 <span className="text-[13px] text-gray-400 truncate hidden sm:block">{row.read ?? (row.empty ? 'no trades' : '')}</span>
                 <span className="text-right tabular-nums">{row.empty ? '—' : row.trades}</span>
-                <span className="text-right tabular-nums hidden sm:block">{row.capture != null ? `${row.capture}%` : '—'}</span>
+                <span className="text-right tabular-nums hidden sm:block">{rowKept(row.mgmt)}</span>
                 <span className={cn('text-right text-[12.5px] hidden md:block', row.railsTone === 'pos' ? 'text-green-400' : row.railsTone === 'neg' ? 'text-red-400' : 'text-gray-600')}>
                   {row.rails ?? '—'}
                 </span>
