@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { Loader2, AlertTriangle } from 'lucide-react'
 import { type LookupOutcome, type MatchResult } from '@/lib/condition-lookup'
-import type { Lead, LeadsResult } from '@/lib/condition-leads'
 import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
 import type { ConditionMetric, DailyPrep } from '@/lib/supabase/types'
 
@@ -112,9 +111,6 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
    *  other view. 'auto' = use the picker's choice. */
   const [viewOverride, setViewOverride] = useState<'auto' | 'median' | 'tertile'>('auto')
   const [migrationNeeded, setMigrationNeeded] = useState(false)
-  /** This quarter's forward tests (see condition-leads.ts). Null until loaded;
-   *  a failed load leaves it null and the block simply doesn't render. */
-  const [leads, setLeads] = useState<LeadsResult | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // "Effective" inputs — the user-typed value if present, otherwise the
@@ -215,30 +211,17 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
     }
   }, [])
 
-  const runLeads = useCallback(async (state: InputState) => {
-    const n = (v: string) => { const x = parseFloat(v); return Number.isFinite(x) ? x : null }
-    try {
-      const res = await fetch('/api/condition-leads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rvol: n(state.rvol), dr_adr: n(state.dr_adr), ib: n(state.ib), atr_730: n(state.atr_730), ib_atr: n(state.ib_atr) }),
-      })
-      if (!res.ok) { setLeads(null); return }
-      setLeads(await res.json() as LeadsResult)
-    } catch { setLeads(null) }
-  }, [])
-
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     const snapshot = effectiveInputs
-    debounceRef.current = setTimeout(() => { void runLookup(snapshot); if (!beginner) void runLeads(snapshot) }, 400)
+    debounceRef.current = setTimeout(() => { void runLookup(snapshot) }, 400)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
     // Dep array intentionally tracks the merged values so lookup re-fires when
     // either user input or Market Context changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveInputs.rvol, effectiveInputs.dr_adr, effectiveInputs.ib, effectiveInputs.atr_730, effectiveInputs.ib_atr, runLookup, runLeads, beginner])
+  }, [effectiveInputs.rvol, effectiveInputs.dr_adr, effectiveInputs.ib, effectiveInputs.atr_730, effectiveInputs.ib_atr, runLookup])
 
   // ── Save snapshot ─────────────────────────────────────────────────────────
   const save = async () => {
@@ -446,10 +429,6 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           <ConditionsHighlight match={effectiveMatch} showEv baselineEv={outcome.baseline_ev} baseline={outcome.baseline} />
         )}
 
-        {/* Forward tests — what is being watched this quarter and how it has
-            done since it was picked. Detailed Tape only. */}
-        {!beginner && leads && <TrackedLeads result={leads} />}
-
         {/* Save. The notes textarea that used to live here was removed
             2026-07-27 — the prep page already owns free-text ("what you're
             watching, plan deviations") and asking for it twice on the same
@@ -620,110 +599,6 @@ function ConditionStrip({ inputs }: { inputs: InputState }) {
   )
 }
 
-const money = (v: number | null) => (v == null ? '—' : `${v >= 0 ? '+' : '−'}$${Math.abs(v).toFixed(0)}`)
-const pfText = (v: number | null) => (v == null ? '—' : v.toFixed(2))
-const shortDate = (iso: string) =>
-  new Date(`${iso}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-
-/**
- * This quarter's forward tests. A lead is a condition whose results cleared the
- * trader's average in the sessions BEFORE the quarter began; what matters is
- * the second half of each row — what it has done on trades taken since, which
- * had no part in choosing it.
- */
-function TrackedLeads({ result }: { result: LeadsResult }) {
-  const since = shortDate(result.freezeDate)
-  const inPlay = result.leads.some(l => l.matchesDay === true)
-  return (
-    // Collapsed by default: this is reference material, and on most mornings the
-    // session isn't inside any tracked condition. The summary still says when it
-    // IS, so the one case worth opening it for is never hidden.
-    <details className="pt-3 border-t border-gray-800 group">
-      <summary className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer list-none marker:content-none inline-flex items-baseline gap-2">
-        <span>
-          Being tracked this quarter ({result.leads.length})
-          <span className="group-open:hidden"> ›</span><span className="hidden group-open:inline"> ‹</span>
-        </span>
-        {inPlay && (
-          <span className="font-mono text-[9px] tracking-wider text-yellow-400 border border-yellow-700 rounded-sm px-1">THIS SESSION IS IN ONE</span>
-        )}
-      </summary>
-      <div className="font-mono text-[10.5px] text-gray-500 mt-2.5 mb-2">
-        picked from sessions before {since} · scored on trades since
-      </div>
-
-      {result.status === 'not-enough-history' && (
-        <p className="text-xs text-gray-500 max-w-[64ch] leading-normal">
-          Not enough history before {since} to pick anything worth tracking yet. Leads appear on their own once
-          one has 30 trades across 10 sessions behind it.
-        </p>
-      )}
-      {result.status === 'no-leads' && (
-        <p className="text-xs text-gray-400 max-w-[64ch] leading-normal">
-          Nothing cleared your average before {since}, so nothing is being tracked. That is a real answer — no
-          condition has run clearly better or worse for you.
-        </p>
-      )}
-
-      {result.leads.map(lead => (
-        <LeadRow key={lead.condition_id} lead={lead} since={since} baseline={result.pickedBaseline} />
-      ))}
-
-      {result.status === 'ok' && (
-        <p className="text-[11px] text-gray-500 mt-2 max-w-[70ch] leading-normal">
-          These are hypotheses, not findings. When this was tested, conditions picked this way kept their direction
-          on new trades less than half the time — which is why each one is scored going forward before it is believed.
-        </p>
-      )}
-    </details>
-  )
-}
-
-function LeadRow({ lead, since, baseline }: { lead: Lead; since: string; baseline: LeadsResult['pickedBaseline'] }) {
-  const tone = lead.side === 'above' ? 'text-green-400' : 'text-red-400'
-  const f = lead.forwardIn, o = lead.forwardOut
-  const forwardWord =
-    lead.forwardState === 'holding' ? 'holding so far'
-      : lead.forwardState === 'not-holding' ? 'not holding so far'
-        : 'too few to judge'
-  const forwardTone =
-    lead.forwardState === 'holding' ? 'text-gray-100'
-      : lead.forwardState === 'not-holding' ? 'text-yellow-400'
-        : 'text-gray-500'
-  return (
-    <div className="py-2.5 border-t border-gray-800">
-      <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <span className="text-[13.5px] font-semibold text-gray-100">
-          {lead.name}
-          {lead.matchesDay === true && (
-            <span className="ml-2 font-mono text-[9px] tracking-wider text-yellow-400 border border-yellow-700 rounded-sm px-1 align-[1px]">THIS SESSION</span>
-          )}
-        </span>
-        <span className="font-mono text-[10.5px] text-gray-500">
-          {lead.matchesDay === false ? 'this session is not in it' : lead.matchesDay == null ? 'needs the IB close to check' : ''}
-        </span>
-      </div>
-      <div className="font-mono text-[10px] text-gray-500 mt-0.5">{lead.cuts.map(c => c.text).join(' · ')}</div>
-      <div className="grid gap-x-10 gap-y-1 md:grid-cols-2 mt-2 text-xs">
-        <div className="text-gray-400">
-          <span className="text-gray-500">When picked </span>
-          <b className={`font-bold tabular-nums ${tone}`}>{money(lead.picked.ev)}</b> a trade over {lead.picked.n} trades
-          {' '}({lead.picked.sessions} sessions), PF {pfText(lead.picked.pf)}
-          <span className="text-gray-500"> · your average then {money(baseline.ev)}, PF {pfText(baseline.pf)}</span>
-        </div>
-        <div className="text-gray-400">
-          <span className="text-gray-500">Since {since} </span>
-          {f.n === 0
-            ? <>no trades inside it yet</>
-            : <><b className="font-bold tabular-nums text-gray-100">{money(f.ev)}</b> a trade over {f.n} ({f.sessions} sessions), PF {pfText(f.pf)}</>}
-          <span className="text-gray-500"> · everything else {o.n === 0 ? '—' : `${money(o.ev)} over ${o.n}, PF ${pfText(o.pf)}`}</span>
-          <span className={`font-semibold ${forwardTone}`}> · {forwardWord}</span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 /** Big-stat readout for a matched historical bucket. Win rate + Profit factor
  *  always; EV/trade (expectancy, avg $/trade) is added when `showEv` is set.
  *  Highlights (beginner) uses the 2-stat form; Detailed Tape uses the same card
@@ -853,11 +728,6 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
               <li><span className="text-green-400">Above</span> / <span className="text-red-400">Below your average so far</span> — the whole 95% range of those trades sits on one side of your average. It is a description of your history, not a prediction.</li>
               <li><span className="text-gray-400">Too few trades to say</span> — fewer than {MIN_SAMPLE} trades on days like today.</li>
             </ul>
-          </div>
-
-          <div>
-            <div className="font-semibold text-white text-sm mb-1">Being tracked this quarter</div>
-            <p className="text-xs text-gray-400">A condition that cleared your average before the quarter began is tracked through it, and scored only on trades taken since. That second number is the one to trust: a pattern found by searching your history is right about new trades less than half the time, so nothing here is treated as an edge until it has held up going forward. A new quarter picks again from everything before it.</p>
           </div>
 
           <div>

@@ -598,9 +598,10 @@ export interface ConditionData {
 }
 
 /**
- * Read everything the Morning Conditions maths runs on — one definition, shared
- * by the nightly rebuild and the forward-test read, so the two can never score
- * the same trade against different rows.
+ * Read everything the Morning Conditions maths runs on — one definition of
+ * which trades count and which context row each is scored on, so the nightly
+ * rebuild and any study run against it (scripts/study-morning-conditions-
+ * holdout.mts) cannot disagree about the data.
  */
 export async function loadConditionData(
   supabase: AnyClient,
