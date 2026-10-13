@@ -3,6 +3,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { drAdrPercent } from '@/lib/dr-adr'
 import { atrIbCloseRatio } from '@/lib/condition-lookup'
+import { resolveBarVol } from '@/lib/condition-verdicts'
+import { ibTimingValue, IB_BREAK_DEFAULT, type IbTiming } from '@/lib/ib-break-timing'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 import { todayPT } from '@/lib/pt-time'
@@ -76,6 +78,14 @@ interface Props {
    *  per-day-type consequence line ("on high-action days you average +0.6R"). */
   historyTrades: TradeWithContext[]
 }
+
+/** Market-context fields the bar feed derives. A value in one of these is
+ *  refreshed from bars unless the trader typed it (PrepNotes.context_manual_fields). */
+const BAR_DERIVED_FIELDS = [
+  'pdh', 'pdl', 'onh', 'onl', 'ibh', 'ibl',
+  'rvol', 'ib_size', 'adr', 'atr_1m', 'day_range', 'ib_vs_10d_avg', 'ib_10d_avg',
+  'atr_at_ib_close', 'rvol_at_ib_close', 'atr_10d_avg',
+] as const
 
 export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrPctAuto, dayRangeAuto, chartSymbol, initialTrades, highImpactNews, isAdmin, carryover, historyTrades }: Props) {
   const router = useRouter()
@@ -189,10 +199,18 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // Auto-fill the Market Context form from the Live chart's computed session
   // levels — the chart already draws PDH/PDL/IBH/IBL/ONH/ONL deterministically
   // from the .scid, so on "Live chart" view the form no longer stays empty.
-  // Each field is filled at most once and only when blank, so a value the user
-  // typed (or one loaded from a saved prep) is never clobbered, and a refresh
-  // every 3 min won't re-fill a field the user later cleared.
+  // Levels follow the chart for as long as they are still forming; a level the
+  // trader typed by hand (manualCtxRef) is never touched.
   const levelsAutoFilledRef = useRef<Set<string>>(new Set())
+  // Which market-context fields the trader typed by hand. Both fill paths below
+  // now REFRESH every bar-derived field as the session develops; this set is
+  // the one thing that stops a refresh. It replaces the old rule ("fill a field
+  // once, and only while it is blank"), which could not tell a number the
+  // trader typed from one this page had written five minutes earlier — so
+  // neither was ever updated, and the panel read "Range used 46%" when the bars
+  // said 78%. The set is saved inside prep notes, so the distinction survives a
+  // reload; without that, every value loaded from the database would look typed.
+  const manualCtxRef = useRef<Set<string>>(new Set(initialDay?.prep_notes_json?.context_manual_fields ?? []))
   const handleLevels = useCallback((lvls: SessionLevels | null) => {
     setLiveLevels(lvls)
     if (!lvls) return
@@ -208,11 +226,16 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       const next = { ...prev }
       let changed = false
       for (const [k, v] of Object.entries(map)) {
-        if (levelsAutoFilledRef.current.has(k)) continue
-        levelsAutoFilledRef.current.add(k) // handle each field once, fill or skip
-        if (v == null) { levelsAutoFilledRef.current.delete(k); continue } // no value yet — retry next refresh
+        if (v == null) continue                       // not printed yet — try again next refresh
+        if (manualCtxRef.current.has(k)) continue     // typed by the trader — leave it
+        levelsAutoFilledRef.current.add(k)            // bar-derived: the screenshot read may not overwrite it
         const cur = (prev as Record<string, unknown>)[k]
-        if (cur == null || cur === '') { (next as Record<string, unknown>)[k] = v; changed = true }
+        // Keep following the chart. The overnight high/low and the IB are still
+        // forming when a prep is opened early; filling them once froze the IB at
+        // whatever it was at first glance.
+        if (cur != null && cur !== '' && Number(cur) === v) continue
+        ;(next as Record<string, unknown>)[k] = v
+        changed = true
       }
       if (changed) autoFilledContextRef.current = true // programmatic fill — must not mark the form dirty
       return changed ? next : prev
@@ -221,9 +244,8 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
 
   // Auto-fill the volatility/volume stats (RVOL/ADR/ATR/IB size/day range) from
   // bars — the bar-native equivalent of reading them off a Sierra screenshot.
-  // Same fill-blank-once discipline as levels; re-runs when BarWatcher imports
-  // new bars (barsVersion) so realized stats land as the session prints. A
-  // still-null field is un-marked so it retries on the next refresh.
+  // Re-runs when BarWatcher imports new bars (barsVersion), and each run
+  // refreshes every field it owns — see the note on manualCtxRef.
   const statsAutoFilledRef = useRef<Set<string>>(new Set())
   /** Which instrument the current auto-filled numbers came from, so a switch
    *  can tell "our stale ES value" from "something the trader typed". */
@@ -307,22 +329,22 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           // value and cannot be made scale-free — see atrIbCloseRatio.
           atr_10d_avg: stats.atr_10d_avg,
         }
-        // Numbers this effect filled for a DIFFERENT instrument are stale, not
-        // trader input — a switch must replace them, or the form keeps NQ's ADR
-        // and ATR while the verdicts above read ES. Anything typed by hand is
-        // never overwritten: only fields we filled ourselves are re-derived.
-        const symbolChanged = autoFillSymbolRef.current !== null && autoFillSymbolRef.current !== activeSymbol
+        // Every one of these is a function of the bars, so each refresh replaces
+        // it — range, volume pace and ATR all keep moving until the close, and a
+        // value captured while the session was young describes a session that no
+        // longer exists. The only fields left alone are the ones the trader typed
+        // (manualCtxRef). This also covers an instrument switch: the other
+        // instrument's numbers are simply overwritten by this one's.
         setContext(prev => {
           const next = { ...prev }
           let changed = false
           for (const [k, v] of Object.entries(map)) {
             if (v == null) continue
-            const cur = (prev as Record<string, unknown>)[k]
-            const isEmpty = cur == null || cur === ''
-            const ourStaleValue = symbolChanged && statsAutoFilledRef.current.has(k)
-            if (!isEmpty && !ourStaleValue) continue
-            ;(next as Record<string, unknown>)[k] = v
+            if (manualCtxRef.current.has(k)) continue
             statsAutoFilledRef.current.add(k)
+            const cur = (prev as Record<string, unknown>)[k]
+            if (cur != null && cur !== '' && Math.abs(Number(cur) - v) < 1e-9) continue
+            ;(next as Record<string, unknown>)[k] = v
             changed = true
           }
           if (changed) autoFilledContextRef.current = true // programmatic fill — must not mark the form dirty
@@ -366,10 +388,15 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       // Let both fill paths run again for the newly-selected instrument.
       statsAutoFilledRef.current.clear()
       levelsAutoFilledRef.current.clear()
+      manualCtxRef.current = new Set()   // hand-typed values belonged to the other instrument
       autoFillSymbolRef.current = root
       autoFilledContextRef.current = true // programmatic — must not mark dirty
       return next as typeof prev
     })
+    // ...and drop the saved list with it, or a reload would bring it back.
+    setPrepNotes(p => (p.context_manual_fields?.length && manualCtxRef.current.size === 0
+      ? { ...p, context_manual_fields: undefined }
+      : p))
   }, [activeSymbol, INSTRUMENT_SCOPED_FIELDS])
 
   // Persist the day-CHARACTER read (IB day-type Phase 2). Until now the
@@ -432,6 +459,49 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     })
   }, [barCurrentPrice, context.pdl, context.pdh, context.onl, context.onh])
 
+  // A hand edit in the market-context editor. Any bar-derivable field whose
+  // value the trader changed is recorded as theirs, so the refreshes above stop
+  // touching it; clearing the field hands it back to the bar feed.
+  const handleContextEdit = useCallback((next: typeof context) => {
+    const manual = new Set(manualCtxRef.current)
+    let touched = false
+    const a = context as Record<string, unknown>, b = next as Record<string, unknown>
+    for (const k of BAR_DERIVED_FIELDS) {
+      if (a[k] === b[k]) continue
+      const empty = b[k] == null || b[k] === ''
+      if (empty ? manual.delete(k) : !manual.has(k) && !!manual.add(k)) touched = true
+    }
+    if (touched) {
+      manualCtxRef.current = manual
+      setPrepNotes(p => ({ ...p, context_manual_fields: manual.size > 0 ? Array.from(manual) : undefined }))
+    }
+    setContext(next)
+  }, [context])
+
+  // Today's own bar-volatility reading — never the previous session's closing
+  // ATR passed off as today's (see resolveBarVol). RTH only: on the overnight
+  // sessions the ATR baselines are RTH ones and the read is muted anyway.
+  // A hand-typed ATR is taken as entered (no bar stats passed), like any other
+  // field the trader owns.
+  const atrTyped = prepNotes.context_manual_fields?.includes('atr_1m') ?? false
+  const barVol = useMemo(
+    () => (session === 'rth' ? resolveBarVol(context, atrTyped ? null : contextStats, atrBaseline) : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the three ATR fields of context matter here
+    [session, context.atr_1m, context.atr_at_ib_close, context.atr_10d_avg, contextStats, atrBaseline, atrTyped],
+  )
+
+  // What the bars say about the IB break (RTH only — the timing bands are cut
+  // on the RTH distribution).
+  const ibTiming = useMemo<IbTiming | null>(() => {
+    const st = contextStats
+    if (!st || session !== 'rth') return null
+    if (!st.ib_complete) return { state: 'forming' }
+    if (st.ib_break) return { state: 'broke', minutes: st.ib_break.minutes, side: st.ib_break.side }
+    // Still unbroken: "never" only once the session is over, which is exactly
+    // when its own closing ATR exists.
+    return { state: st.atr_1m_is_prior ? 'unbroken' : 'never' }
+  }, [contextStats, session])
+
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(
     initialDay?.ai_analysis_json && Object.keys(initialDay.ai_analysis_json).length > 0
       ? initialDay.ai_analysis_json as AiAnalysis
@@ -447,6 +517,24 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // on a host whose OS timezone is wrong.
   const todayStr = todayPT()
   const isToday = date === todayStr
+
+  // Record the measured IB break on TODAY's prep, unless the trader has made
+  // their own pick. Past days are left alone: the EOD read compares what the
+  // prep said against what happened, and back-filling a measurement into an old
+  // prep would make it look as though the trader had called it.
+  useEffect(() => {
+    if (!isToday) return
+    const measured = ibTimingValue(ibTiming)
+    if (!measured) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mirror a bar measurement into the note; guarded so it settles after one write
+    setPrepNotes(prev => {
+      if (prev.ib_behaviour_source === 'trader') return prev
+      const cur = prev.ib_behaviour
+      const open = !cur || cur === IB_BREAK_DEFAULT || prev.ib_behaviour_source === 'measured'
+      if (!open || cur === measured) return prev
+      return { ...prev, ib_behaviour: measured, ib_behaviour_source: 'measured' }
+    })
+  }, [isToday, ibTiming])
 
   // Mark dirty on any field change (skip the very first render).
   // Also captures prep_started_at on the FIRST edit of today's prep.
@@ -1171,6 +1259,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
       <PrepHero
         context={context as Partial<MarketContext>}
         atrBaseline={atrBaseline}
+        barVol={barVol}
         adrAtNow={contextStats?.adr_at_now ?? null}
         prepNotes={prepNotes}
         onPrepNotesChange={setPrepNotes}
@@ -1322,6 +1411,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           <PrepLedger
             context={context as Partial<MarketContext>}
             atrBaseline={atrBaseline}
+            barVol={barVol}
             adrAtNow={contextStats?.adr_at_now ?? null}
             drAdrPctAuto={drAdrPctAuto}
             dayRangeAuto={dayRangeAuto}
@@ -1333,7 +1423,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               <span className="hidden group-open:inline">Hide editor</span>
             </summary>
             <div className="mt-4 pt-4 border-t border-gray-800">
-              <MarketContextForm value={context} onChange={setContext} />
+              <MarketContextForm value={context} onChange={handleContextEdit} />
             </div>
           </details>
         </Section>
@@ -1392,6 +1482,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           <Section title="Prep notes — detailed" sub="IB timing · volume profile · HTF MGI">
             <PrepNotesForm
               part="advanced"
+              ibTiming={ibTiming}
               value={prepNotes}
               onChange={setPrepNotes}
               ibh={context.ibh as number | null}

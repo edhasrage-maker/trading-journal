@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { readConditions, conditionActionHint, type VerdictTone } from '@/lib/condition-verdicts'
+import { readConditions, conditionActionHint, type VerdictTone, type BarVolReading } from '@/lib/condition-verdicts'
 import { cn } from '@/lib/utils'
 import type { MarketContext, PrepNotes } from '@/lib/supabase/types'
 
@@ -59,6 +59,7 @@ function ptClock(): string {
 export default function PrepHero({
   context,
   atrBaseline,
+  barVol,
   adrAtNow,
   prepNotes,
   onPrepNotesChange,
@@ -69,6 +70,10 @@ export default function PrepHero({
 }: {
   context: Partial<MarketContext>
   atrBaseline: number | null
+  /** The bar-volatility reading that is actually today's (resolveBarVol). When
+   *  given it replaces context.atr_1m / atrBaseline for the read, so the
+   *  headline is never written from the previous session's closing ATR. */
+  barVol?: BarVolReading
   /** Time-matched ADR — must be the SAME denominator the ledger uses, or the
    *  hero and the ledger print different words for one session. */
   adrAtNow?: number | null
@@ -104,8 +109,9 @@ export default function PrepHero({
 
   const read = readConditions({
     rvol: numOr(context.rvol),
-    atr1m: atr,
-    atrBaseline,
+    atr1m: barVol ? barVol.atr : atr,
+    atrBaseline: barVol ? barVol.baseline : atrBaseline,
+    atrBasis: barVol?.basis,
     adr,
     adrAtNow,
     onh: numOr(context.onh),

@@ -1,6 +1,6 @@
 'use client'
 
-import { readConditions, type VerdictTone } from '@/lib/condition-verdicts'
+import { readConditions, type VerdictTone, type BarVolReading } from '@/lib/condition-verdicts'
 import { cn } from '@/lib/utils'
 import type { MarketContext } from '@/lib/supabase/types'
 import type { IbDayType, RegimeBand } from '@/lib/ib-day-type'
@@ -131,6 +131,7 @@ const price = (v: number | null) => (v == null ? null : v.toLocaleString('en-US'
 export default function PrepLedger({
   context,
   atrBaseline,
+  barVol,
   adrAtNow,
   drAdrPctAuto,
   dayRangeAuto,
@@ -138,6 +139,9 @@ export default function PrepLedger({
 }: {
   context: Partial<MarketContext>
   atrBaseline: number | null
+  /** Today's own bar-volatility reading (resolveBarVol) — the same one the hero
+   *  uses, so the two cannot print different ATRs for one session. */
+  barVol?: BarVolReading
   /** Time-matched ADR for the range-used ratio while a session is running. */
   adrAtNow?: number | null
   /** Server-computed DR/ADR fallback, as a PERCENT, for days whose day_range
@@ -156,12 +160,15 @@ export default function PrepLedger({
   const pdh = numOr(context.pdh), pdl = numOr(context.pdl)
   const onh = numOr(context.onh), onl = numOr(context.onl)
   const ibh = numOr(context.ibh), ibl = numOr(context.ibl)
-  const adr = numOr(context.adr), atr = numOr(context.atr_1m)
+  const adr = numOr(context.adr)
+  const atr = barVol ? barVol.atr : numOr(context.atr_1m)
+  const atrBase = barVol ? barVol.baseline : atrBaseline
+  const atrBasis = barVol?.basis ?? 'eod'
   const rvol = numOr(context.rvol), ibRatio = numOr(context.ib_vs_10d_avg)
   const dayRange = numOr(context.day_range)
 
   // One shared read so every verdict word here matches the hero's.
-  const read = readConditions({ rvol, atr1m: atr, atrBaseline, adr, adrAtNow, onh, onl, dayRange, ibRatio })
+  const read = readConditions({ rvol, atr1m: atr, atrBaseline: atrBase, atrBasis, adr, adrAtNow, onh, onl, dayRange, ibRatio })
   const chipFor = (label: string) => read.chips.find(c => c.label === label)
 
   const onPct = onh != null && onl != null && adr != null && adr > 0
@@ -183,11 +190,11 @@ export default function PrepLedger({
   const overnight = chipFor('Overnight range')
   const rangeUsed = chipFor('Range used')
   const volume = chipFor('Volume pace')
-  const barVol = chipFor('Bar volatility')
+  const barVolChip = chipFor('Bar volatility')
   const openingRange = chipFor('Opening range')
 
   const ibPrinted = ibh != null || ibl != null
-  const atrRatio = atr != null && atrBaseline != null && atrBaseline > 0 ? atr / atrBaseline : null
+  const atrRatio = atr != null && atrBase != null && atrBase > 0 ? atr / atrBase : null
 
   return (
     <div className="grid gap-x-10 md:grid-cols-2">
@@ -256,8 +263,8 @@ export default function PrepLedger({
 
       <Group
         title="Volatility"
-        verdict={barVol?.verdict ?? volume?.verdict ?? 'not set'}
-        verdictTone={barVol?.tone ?? volume?.tone ?? 'dim'}
+        verdict={barVolChip?.verdict ?? volume?.verdict ?? 'not set'}
+        verdictTone={barVolChip?.verdict ? barVolChip.tone : volume?.tone ?? 'dim'}
       >
         <Row
           label="RVOL"
@@ -267,10 +274,16 @@ export default function PrepLedger({
         />
         <Row label="ADR (RTH)" value={pts(adr)} chip="baseline" />
         <Row
-          label="1-min ATR"
+          // The label says WHICH reading this is. It used to say "1-min ATR"
+          // for all three, and before the session's own 12:59 PT value exists
+          // the number shown was the previous day's.
+          label={atrBasis === 'ib-close' ? '1-min ATR (at IB close)' : atrBasis === 'prior-session' ? '1-min ATR (prior session)' : '1-min ATR'}
           value={atr != null ? `${atr.toFixed(1)} pts` : null}
-          chip={atrRatio != null ? `${atrRatio.toFixed(1)}× normal` : undefined}
-          chipTone={barVol?.tone ?? 'dim'}
+          basis={atrRatio != null && atr != null && atrBase != null
+            ? `${atr.toFixed(2)} ÷ ${atrBase.toFixed(2)} pts (10-day typical${atrBasis === 'ib-close' ? ' at the IB close' : ''})`
+            : atrBasis === 'prior-session' ? 'yesterday’s close — today’s prints at the IB close' : null}
+          chip={atrRatio != null ? `${atrRatio.toFixed(1)}× normal` : atrBasis === 'prior-session' ? 'not today’s' : undefined}
+          chipTone={barVolChip?.tone ?? 'dim'}
         />
         <Row
           // Mid-session this divides by the range prior days had covered BY THIS

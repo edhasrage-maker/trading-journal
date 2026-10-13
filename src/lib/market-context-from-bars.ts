@@ -76,6 +76,13 @@ export interface DayContextStats {
    *  is also DISPLAYED, and a shrinking headline ADR would read as a bug. */
   adr_at_now: number | null
   atr_1m: number | null            // Wilder ATR-10 at EOD (12:59 PT)
+  /** True when `atr_1m` is NOT this session's reading but the last completed
+   *  day's, carried forward because today's 12:59 PT bar hasn't printed yet.
+   *  The value is the same shape either way, which is exactly the problem: the
+   *  prep hero printed "bars 0.6x typical — Dead tape" on 2026-10-12 from
+   *  Friday's close while Monday's own IB-close reading was 0.91x. Consumers
+   *  must check this before describing the number as today's. */
+  atr_1m_is_prior: boolean
   rvol_at_ib_close: number | null  // percent vs trailing-10 avg IB volume
   atr_at_ib_close: number | null
   /** Study-native IB-fade ATR: mean(High−Low of the last 10 IB 1-min bars) for
@@ -98,6 +105,18 @@ export interface DayContextStats {
   ib_close_price: number | null
   day_range: number | null         // RTH high-low (matches ADR basis)
   current_price: number | null     // last close on the target PT date
+  /** Has the active session's Initial Balance finished printing? */
+  ib_complete: boolean
+  /** First trade outside the completed IB: minutes after the IB close, and
+   *  which side went first. Null while the IB is forming or still unbroken. */
+  ib_break: IbBreak | null
+}
+
+export interface IbBreak {
+  /** Whole minutes from the IB close to the first bar that traded outside it.
+   *  0 = the very first bar after the close. */
+  minutes: number
+  side: 'above' | 'below' | 'both'
 }
 
 /** Built ONCE. Constructing an Intl.DateTimeFormat is expensive and this runs
@@ -387,7 +406,7 @@ function computeMetrics(days: Map<string, DayAggregate>): DayMetrics[] {
  */
 function sessionIbAndRange(
   bars: OneMinBar[], date: string, session: SessionKind,
-): { ibSize: number | null; range: number | null; meanHL10: number | null; realized: boolean } {
+): { ibSize: number | null; range: number | null; meanHL10: number | null; realized: boolean; ibComplete: boolean; ibBreak: IbBreak | null } {
   const w = sessionWindow(session)
   const ibStart = addDays(date, w.ibStartOffset), ibEnd = addDays(date, w.ibEndOffset)
   const hlStart = addDays(date, w.hlStartOffset), hlEnd = addDays(date, w.hlEndOffset)
@@ -400,16 +419,38 @@ function sessionIbAndRange(
   let rHi = -Infinity, rLo = Infinity, rN = 0
   // Per-IB-bar (ms, high−low) so we can average the LAST 10 by bar time.
   const ibBarHL: Array<{ ms: number; hl: number }> = []
+  // Session bars that printed AFTER the IB window, kept so the first trade
+  // outside the finished IB can be timed once its high and low are known.
+  const postIb: Array<{ min: number; high: number; low: number }> = []
+  const dayNo = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return Date.UTC(y, m - 1, dd) / 86_400_000 }
+  const ibEndDayNo = dayNo(ibEnd)
   for (const bar of bars) {
     const ms = new Date(bar.ts).getTime()
     if (!Number.isFinite(ms)) continue
     const { date: bd, sec } = utcMsToPtParts(ms)
-    if (inWin(bd, sec, ibStart, w.ibStartSec, ibEnd, w.ibEndSec)) {
+    const inIb = inWin(bd, sec, ibStart, w.ibStartSec, ibEnd, w.ibEndSec)
+    if (inIb) {
       if (bar.high > ibHi) ibHi = bar.high; if (bar.low < ibLo) ibLo = bar.low; ibN++
       ibBarHL.push({ ms, hl: bar.high - bar.low })
     }
     if (inWin(bd, sec, hlStart, w.hlStartSec, hlEnd, w.hlEndSec)) {
       if (bar.high > rHi) rHi = bar.high; if (bar.low < rLo) rLo = bar.low; rN++
+      // Minutes since the IB close, on the PT wall clock (the window can span
+      // two calendar dates on the overnight sessions).
+      const min = ((dayNo(bd) - ibEndDayNo) * 86_400 + sec - w.ibEndSec) / 60
+      if (!inIb && min >= 0) postIb.push({ min, high: bar.high, low: bar.low })
+    }
+  }
+  // The IB is complete once anything has printed after its window. Timing a
+  // "break" of a half-formed IB would just report the IB still growing.
+  const ibComplete = ibN > 0 && postIb.length > 0
+  let ibBreak: IbBreak | null = null
+  if (ibComplete) {
+    postIb.sort((a, b) => a.min - b.min)
+    const hit = postIb.find(b => b.high > ibHi || b.low < ibLo)
+    if (hit) {
+      const up = hit.high > ibHi, down = hit.low < ibLo
+      ibBreak = { minutes: Math.floor(hit.min), side: up && down ? 'both' : up ? 'above' : 'below' }
     }
   }
   let meanHL10: number | null = null
@@ -418,7 +459,7 @@ function sessionIbAndRange(
     const last10 = ibBarHL.slice(-10)
     meanHL10 = last10.reduce((s, b) => s + b.hl, 0) / 10
   }
-  return { ibSize: ibN ? ibHi - ibLo : null, range: rN ? rHi - rLo : null, meanHL10, realized: ibN > 0 }
+  return { ibSize: ibN ? ibHi - ibLo : null, range: rN ? rHi - rLo : null, meanHL10, realized: ibN > 0, ibComplete, ibBreak }
 }
 
 /**
@@ -463,9 +504,11 @@ export function contextStatsForDate(
       // does, so the reference is continuous. Same basis either way, so the
       // ratio against atr_eod_10d_avg stays valid.
       atr_1m: target.atr_1m ?? priorAtrEod,
+      atr_1m_is_prior: target.atr_1m == null,
       rvol_at_ib_close: target.rvol_at_ib_close,
       atr_at_ib_close: target.atr_at_ib_close,
       meanHL10: null, // attached below from the active session's IB
+      ib_complete: false, ib_break: null, // attached below
       atr_10d_avg: target.atr_10d_avg,
       atr_eod_10d_avg: target.atr_eod_10d_avg,
       rth_open: target.rth_open,
@@ -485,8 +528,9 @@ export function contextStatsForDate(
       realized: false,
       rvol: null, ib_size: null, ib_vs_10d_avg: null, adr_at_now: null,
       ib_10d_avg: last.ib_10d_avg,
-      adr: last.adr, atr_1m: last.atr_1m,
+      adr: last.adr, atr_1m: last.atr_1m, atr_1m_is_prior: true,
       rvol_at_ib_close: null, atr_at_ib_close: null, meanHL10: null,
+      ib_complete: false, ib_break: null,
       atr_10d_avg: last.atr_10d_avg, atr_eod_10d_avg: last.atr_eod_10d_avg,
       rth_open: null, ib_close_price: null,
       day_range: null, current_price: null,
@@ -498,6 +542,8 @@ export function contextStatsForDate(
   // its exact denominator. Null until the IB has printed ≥10 bars.
   const active = sessionIbAndRange(bars, date, session)
   base.meanHL10 = active.meanHL10
+  base.ib_complete = active.ibComplete
+  base.ib_break = active.ibBreak
 
   if (session === 'rth') return base
 

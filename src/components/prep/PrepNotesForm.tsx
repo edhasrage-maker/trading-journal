@@ -5,6 +5,10 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import AutoGrowTextarea from '@/components/AutoGrowTextarea'
 import MicButton from '@/components/voice/MicButton'
 import type { PrepNotes } from '@/lib/supabase/types'
+import {
+  IB_BREAK_DEFAULT, IB_BREAK_NEVER, IB_BREAK_OPTIONS, describeIbTiming, ibTimingValue, isLegacyIbBreak,
+  type IbTiming,
+} from '@/lib/ib-break-timing'
 
 interface Props {
   value: PrepNotes
@@ -28,13 +32,13 @@ interface Props {
    *  on the page, while the owner's methodology fields drop to "Prep notes —
    *  detailed" much further down. Omit to render both, as before. */
   part?: 'read' | 'advanced'
+  /** What the 1-minute bars say about the IB break, when the feed covers this
+   *  instrument. Shown beside the dropdown so the trader isn't asked to time by
+   *  eye something the app can measure to the minute. */
+  ibTiming?: IbTiming | null
 }
 
-// "Still developing" is the default — it represents the pre-break state before
-// the IB has resolved one way or the other. Listed first so it renders as the
-// initial dropdown value when ib_behaviour has no saved value yet.
-const IB_BREAK_TIMING_DEFAULT = 'Still developing'
-const ibBreakTimingOptions = [IB_BREAK_TIMING_DEFAULT, 'Early (within first 15min)', 'Normal (15-60min)', 'Late (60min+)']
+// IB break timing options and their cut points live in @/lib/ib-break-timing.
 const volumeShapeOptions = ['Balanced (D-shape)', 'Skewed up (P-shape)', 'Skewed down (b-shape)', 'Trending (elongated)', 'Multiple distributions']
 /** Preps saved before the rename carry the old label. Without this they'd hit a
  *  <select> with no matching <option>, render blank, and lose the shape on the
@@ -81,7 +85,7 @@ function calcExts(ibh: number, ibl: number, ibSize: number) {
   return result
 }
 
-export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showAdvanced = false, beginner = false, part }: Props) {
+export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showAdvanced = false, beginner = false, part, ibTiming }: Props) {
   // `part` selects which half renders; omitting it keeps the original
   // both-halves behaviour. The advanced half is additionally gated on
   // showAdvanced, exactly as before.
@@ -103,7 +107,9 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
   // value (Early / Normal / Late), and auto-collapse when it goes back to
   // "Still developing" (or unset). User can manually toggle in between via the
   // header — that override holds until the next Break Timing change.
-  const breakTimingActive = !!value.ib_behaviour && value.ib_behaviour !== IB_BREAK_TIMING_DEFAULT
+  const breakTimingActive = !!value.ib_behaviour
+    && value.ib_behaviour !== IB_BREAK_DEFAULT
+    && value.ib_behaviour !== IB_BREAK_NEVER   // nothing was broken, so there are no extensions to mark
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sync the extensions panel open-state to whether a break timing is set
     setExtsOpen(breakTimingActive)
@@ -144,12 +150,42 @@ export default function PrepNotesForm({ value, onChange, ibh, ibl, ibSize, showA
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">IB Break Timing</h3>
         <div className="space-y-4">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Break Timing</label>
-            <select value={value.ib_behaviour || IB_BREAK_TIMING_DEFAULT} onChange={e => set('ib_behaviour', e.target.value)}
+            <label className="block text-xs text-gray-400 mb-1">
+              Break timing <span className="text-gray-600">— minutes after the IB closes (07:30 PT) to the first trade outside it</span>
+            </label>
+            <select
+              value={value.ib_behaviour || IB_BREAK_DEFAULT}
+              // A hand pick is the trader's and is never overwritten by the measurement.
+              onChange={e => onChange({ ...value, ib_behaviour: e.target.value, ib_behaviour_source: 'trader' })}
               className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
-              {ibBreakTimingOptions.map(o => <option key={o} value={o}>{o}</option>)}
+              {/* A prep saved on the old 15 / 60-minute scale keeps its label: the
+                  old "Early" covers two of today's bands, so it can be shown but
+                  not converted. */}
+              {isLegacyIbBreak(value.ib_behaviour) && (
+                <option value={value.ib_behaviour}>{value.ib_behaviour} · old scale</option>
+              )}
+              {IB_BREAK_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
+            {ibTiming && (() => {
+              const measured = ibTimingValue(ibTiming)
+              const differs = measured != null && value.ib_behaviour !== measured
+              return (
+                <p className="mt-1.5 font-mono text-[11px] text-gray-500">
+                  From your bars: <span className="text-gray-300">{describeIbTiming(ibTiming)}</span>
+                  {measured && <> → <span className="text-gray-300">{measured.split(' (')[0]}</span></>}
+                  {differs && (
+                    <button
+                      type="button"
+                      onClick={() => onChange({ ...value, ib_behaviour: measured!, ib_behaviour_source: 'measured' })}
+                      className="ml-2 text-blue-400 hover:text-blue-300"
+                    >
+                      use this
+                    </button>
+                  )}
+                </p>
+              )
+            })()}
           </div>
 
           {/* IB Extensions Table — collapsible. Auto-expands when Break Timing

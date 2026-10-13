@@ -28,6 +28,52 @@
 
 export type VerdictTone = 'red' | 'amber' | 'dim' | 'plain'
 
+export type BarVolBasis = 'eod' | 'ib-close' | 'prior-session'
+
+export interface BarVolReading {
+  atr: number | null
+  baseline: number | null
+  basis: BarVolBasis
+}
+
+const numish = (v: unknown): number | null => {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''))
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * Which 1-minute ATR can honestly be called TODAY's?
+ *
+ * `atr_1m` is the Wilder ATR-10 at the 12:59 PT bar, so it does not exist for a
+ * session still in progress; the stats engine carries the last completed day's
+ * value forward to keep the field populated. The prep page then judged that
+ * carried value as if it were today's: on 2026-10-12 the hero read "bars 0.6x
+ * typical — Dead tape" from Friday's close while Monday's own 07:29 reading
+ * was 0.91x, i.e. normal.
+ *
+ *   1. today's EOD reading once the session has closed, against the trailing-10
+ *      of the EOD reading;
+ *   2. otherwise today's IB-close reading against the trailing-10 of the
+ *      IB-close reading — a same-basis pair that exists from 07:30 on;
+ *   3. otherwise the carried value, labelled as the prior session's and never
+ *      given a verdict.
+ * With no bar stats at all (an instrument off the feed, a hand-typed ATR) the
+ * value is taken as entered, exactly as before.
+ */
+export function resolveBarVol(
+  context: { atr_1m?: unknown; atr_at_ib_close?: unknown; atr_10d_avg?: unknown },
+  stats: { atr_1m: number | null; atr_1m_is_prior: boolean; atr_at_ib_close: number | null; atr_10d_avg: number | null } | null,
+  eodBaseline: number | null,
+): BarVolReading {
+  const entered = numish(context.atr_1m)
+  if (!stats) return { atr: entered, baseline: eodBaseline, basis: 'eod' }
+  if (!stats.atr_1m_is_prior) return { atr: stats.atr_1m ?? entered, baseline: eodBaseline, basis: 'eod' }
+  const ibAtr = stats.atr_at_ib_close ?? numish(context.atr_at_ib_close)
+  const ibBase = stats.atr_10d_avg ?? numish(context.atr_10d_avg)
+  if (ibAtr != null && ibBase != null && ibBase > 0) return { atr: ibAtr, baseline: ibBase, basis: 'ib-close' }
+  return { atr: stats.atr_1m ?? entered, baseline: null, basis: 'prior-session' }
+}
+
 export interface VerdictChip {
   /** Plain-language metric label, e.g. "Volume pace" */
   label: string
@@ -60,6 +106,12 @@ export interface ConditionInputs {
   atr1m: number | null
   /** 10-day average of the 1-min ATR, in points — the "typical" baseline. */
   atrBaseline: number | null
+  /** WHICH reading `atr1m` / `atrBaseline` are (see resolveBarVol):
+   *   'eod'           this session's 12:59 PT ATR vs the trailing-10 of the same
+   *   'ib-close'      this session's 07:29 PT ATR vs the trailing-10 of the same
+   *   'prior-session' the LAST completed day's ATR, carried forward
+   *  Absent = 'eod', the original meaning. */
+  atrBasis?: BarVolBasis
   /** ADR in points — the whole-day trailing average, also shown as a raw value. */
   adr: number | null
   /** ADR measured at the same point of the session the day has reached. While a
@@ -281,22 +333,30 @@ export function readConditions(i: ConditionInputs): ConditionRead {
     raw.push({ label: 'RVOL', value: `${Math.round(rvol)}%` })
   }
 
-  // Bar volatility — only judged against the trader's own 10-day ATR baseline.
+  // Bar volatility — only judged against the trader's own 10-day ATR baseline,
+  // and only when the reading is actually THIS session's (see resolveBarVol).
   const atr = num(i.atr1m)
-  const atrBase = num(i.atrBaseline)
+  const atrBasis: BarVolBasis = i.atrBasis ?? 'eod'
+  const atrIsPrior = atrBasis === 'prior-session'
+  const atrBase = atrIsPrior ? null : num(i.atrBaseline)
   const atrRatio = atr != null && atrBase != null && atrBase > 0 ? atr / atrBase : null
   const atrBand = atrRatio != null ? band(atrRatio, BAR_VOL_BANDS) : null
+  const atrWhen = atrBasis === 'ib-close' ? ' at IB close' : ''
   if (atr != null) {
     chips.push({
       label: 'Bar volatility',
       verdict: atrBand?.word ?? null,
       tone: atrBand?.tone ?? 'plain',
-      pill: atrRatio != null
-        ? `1-min ATR ${atr.toFixed(1)} pts · ${atrRatio.toFixed(1)}× normal`
-        : `1-min ATR ${atr.toFixed(1)} pts`,
-      title: atrRatio != null
-        ? `Average 1-minute bar range (ATR-10). Today is ${atr.toFixed(1)} pts vs a 10-day typical of ${atrBase!.toFixed(1)} pts — ${atrRatio.toFixed(1)}× normal. Roughly 0.8–1.15× is an ordinary day.`
-        : `Average 1-minute bar range (ATR-10). No 10-day baseline yet, so no verdict — just the raw value.`,
+      pill: atrIsPrior
+        ? `prior session ${atr.toFixed(1)} pts · today’s prints at the IB close`
+        : atrRatio != null
+          ? `1-min ATR ${atr.toFixed(1)} pts${atrWhen} · ${atrRatio.toFixed(1)}× normal`
+          : `1-min ATR ${atr.toFixed(1)} pts${atrWhen}`,
+      title: atrIsPrior
+        ? `This is the previous session’s closing 1-minute ATR (${atr.toFixed(1)} pts), carried forward. Today’s own reading doesn’t exist until the IB closes, so there is no verdict yet.`
+        : atrRatio != null
+          ? `Average 1-minute bar range (ATR-10)${atrBasis === 'ib-close' ? ', read at the 07:29 PT IB close and compared with the same reading on your last 10 sessions' : ''}. Today is ${atr.toFixed(1)} pts vs a 10-day typical of ${atrBase!.toFixed(1)} pts — ${atrRatio.toFixed(1)}× normal. Roughly 0.8–1.15× is an ordinary day.`
+          : `Average 1-minute bar range (ATR-10). No 10-day baseline yet, so no verdict — just the raw value.`,
     })
     raw.push({ label: '1-min ATR', value: `${atr.toFixed(2)} pts` })
     if (atrBase != null) raw.push({ label: 'ATR 10-day avg', value: `${atrBase.toFixed(2)} pts` })

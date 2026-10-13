@@ -270,6 +270,15 @@ export interface PlanAssessment {
 
 export interface PrepNotes {
   ib_behaviour?: string
+  /** Who set `ib_behaviour`: 'measured' = filled from the bars and free to keep
+   *  updating; 'trader' = picked by hand and never overwritten. Absent on older
+   *  preps, where a non-default value is treated as the trader's. */
+  ib_behaviour_source?: 'measured' | 'trader'
+  /** Market-context fields the trader typed by hand. Everything else that the
+   *  bar feed can derive is refreshed from bars as the session develops; a field
+   *  listed here is left exactly as entered. Lives in prep notes because that is
+   *  the only per-day JSON saved with the prep — no schema change needed. */
+  context_manual_fields?: string[]
   ib_extensions_reached?: string[]
   volume_profile_shape?: string
   volume_profile_notes?: string
