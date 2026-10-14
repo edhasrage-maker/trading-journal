@@ -28,6 +28,7 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
 import { ScoreChip, ScoreDetail } from './ScoreChip'
+import { useFlowScores, flowScoreFor } from '@/lib/use-flow-scores'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'score' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
@@ -245,6 +246,10 @@ export default function SessionTradeTable({
   // AI sub-rows are gated OFF in capture; the review path evaluates exactly as
   // before so its render stays byte-identical.
   const isCapture = config === 'capture'
+  // Scores for trades that have none for their present fill are computed by the
+  // site in the background and land here without a reload (review only).
+  const liveScores = useFlowScores(trades, !isCapture)
+  const scoreOf = (t: Trade) => (isCapture ? null : flowScoreFor(t, liveScores))
   // Row-click action: edit in place when an edit handler is provided (Intraday
   // inline form, or the EOD recap drawer), else open the full log (deep-link).
   const rowAction = onEdit ?? onRowOpen
@@ -286,7 +291,7 @@ export default function SessionTradeTable({
         case 'pnl':
           return t.pnl ?? Number.NEGATIVE_INFINITY
         case 'score':
-          return t.review_json?.score?.total ?? Number.NEGATIVE_INFINITY
+          return flowScoreFor(t, liveScores)?.total ?? Number.NEGATIVE_INFINITY
         case 'r':
           return rMultiple(t, liveAtrByTradeId?.[t.id]) ?? Number.NEGATIVE_INFINITY
         case 'mfe': {
@@ -313,7 +318,7 @@ export default function SessionTradeTable({
       return sortDir === 'asc' ? av - bv : bv - av
     })
     return copy
-  }, [trades, sortKey, sortDir, liveAtrByTradeId, giveBackAtr])
+  }, [trades, sortKey, sortDir, liveAtrByTradeId, giveBackAtr, liveScores])
 
   // Click-to-toggle popups for the MFE % / MAE % column definitions. Same
   // dashboard-style popup pattern as the EOD header — click outside / Esc to
@@ -538,6 +543,7 @@ export default function SessionTradeTable({
             const overviewText = summary ?? (t.notes?.trim() || null)
             const overviewIsNotes = !summary && !!t.notes?.trim()
             const isLong = t.direction === 'long'
+            const flowScore = scoreOf(t)
             return (
               <div
                 key={t.id}
@@ -549,14 +555,14 @@ export default function SessionTradeTable({
                   <span className="text-sm text-gray-300 tabular-nums">{time}</span>
                   {setup && <span className="text-xs text-gray-500 truncate">{setup}</span>}
                   <span className="flex-1" />
-                  {!isCapture && t.review_json?.score && (
-                    <ScoreChip score={t.review_json.score} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                  {flowScore && (
+                    <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                   )}
                   <span className={`text-sm font-semibold ${(pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
                   </span>
                 </div>
-                {!isCapture && t.review_json?.score && openScoreId === t.id && <ScoreDetail score={t.review_json.score} />}
+                {flowScore && openScoreId === t.id && <ScoreDetail score={flowScore} />}
                 {overviewText && (
                   <p
                     className={`text-xs text-gray-500 mt-1.5 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
@@ -706,6 +712,7 @@ export default function SessionTradeTable({
           const postVerdict = kind === 'manual' || kind == null ? postExitVerdict(t as VerdictTrade, postExitByTradeId?.[t.id]) : null
           const postLabel = kind === 'stopped' ? 'stopped' : kind === 'target' ? 'target hit' : postVerdict ? `${postVerdict.glyph} ${postVerdict.label}` : '—'
           const postCls = kind === 'stopped' || kind === 'target' ? 'text-gray-400' : postVerdict ? VERDICT_TONE_CLASS[postVerdict.tone] : 'text-gray-600'
+          const flowScore = scoreOf(t)
           return (
             <div
               key={t.id}
@@ -726,15 +733,15 @@ export default function SessionTradeTable({
                   {isLong ? '▲ LONG' : isShort ? '▼ SHORT' : '—'}
                 </span>
                 <span className="flex-1" />
-                {!isCapture && t.review_json?.score && (
-                  <ScoreChip score={t.review_json.score} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                {flowScore && (
+                  <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                 )}
                 <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                   {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
                 </span>
               </div>
               <div className="px-3 py-2.5">
-                {!isCapture && t.review_json?.score && openScoreId === t.id && <ScoreDetail score={t.review_json.score} />}
+                {flowScore && openScoreId === t.id && <ScoreDetail score={flowScore} />}
                 {setup && (
                   <span className="inline-block text-[11px] text-gray-300 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded mb-2">{setup}</span>
                 )}
@@ -944,7 +951,7 @@ export default function SessionTradeTable({
                 : isNearDup ? 'bg-yellow-950/20'
                 : ''
               // The trade's Score (order flow at the fill). Review table only; absent until scored.
-              const flowScore = !isCapture ? (t.review_json?.score ?? null) : null
+              const flowScore = scoreOf(t)
               return (
                 <Fragment key={t.id}>
                 <tr

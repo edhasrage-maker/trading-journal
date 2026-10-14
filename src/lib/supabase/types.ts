@@ -421,6 +421,9 @@ export interface TradeFlowScore {
   facts: TradeFlowFact[]
   read_at: string
   at: string
+  /** The fill this was read for (entry time | price | direction | symbol); a
+   *  trade whose fill no longer matches is re-scored. */
+  src?: string
 }
 
 /** AI-generated OBS recording commentary saved per-trade so it survives
