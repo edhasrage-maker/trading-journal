@@ -1,0 +1,196 @@
+import { exitKind, tradeFacts, type MgmtTradeInput } from '@/lib/trade-management'
+import { symbolToMultiplier } from '@/lib/futures-symbols'
+
+/**
+ * Exit score — the "Exit" axis of TapeScore, from five named factors
+ * (founder-directed, 2026-10-13). Deterministic: every number comes from the
+ * trade's own logged prices and fills; nothing is estimated by the AI.
+ *
+ *   1  Profit kept        25%  WINNERS only. A winner that reached its planned
+ *                              target counts in full; any other winner counts
+ *                              for the share of its best point it kept.
+ *   2  Loss size          25%  LOSERS only. The dollar loss against the
+ *                              trader's own average dollar risk. Full marks up
+ *                              to 1.1× that average, none at 2× or more.
+ *   3  Stop respected     20%  Trades whose logged stop came into play. Passes
+ *                              when price never traded past it by more than
+ *                              slippage while the trade was on.
+ *   4  Stop size          15%  Trades with a stop and an entry ATR. Passes when
+ *                              the stop is no wider than the trader's ATR stop
+ *                              setting (1× the 1-minute ATR-10 by default).
+ *   5  Runner             15%  Only trades where a second target was attempted.
+ *                              The parts that can be measured today: the first
+ *                              target was actually filled, and the 5-minute
+ *                              structure was with the trade.
+ *
+ * A factor with no trades to judge drops out and the others share its weight in
+ * proportion (no runner → 25/25/20/15 becomes 29/29/24/18). A trade that never
+ * went anywhere is not an exit failure and is not counted against factor 1.
+ *
+ * Everything is kept as SUMS + COUNTS per factor so a week or a month is the
+ * same arithmetic over more trades, never an average of daily scores.
+ *
+ * NOT MEASURED YET (factor 5): whether the stop was moved to breakeven after
+ * the first target, the 4-hour alignment, and which trailing method was used.
+ * None of these is recorded on a trade today.
+ */
+
+export type ExitFactorKey = 'kept' | 'lossSize' | 'stopRespected' | 'stopSize' | 'runner'
+export const EXIT_FACTORS: readonly ExitFactorKey[] = ['kept', 'lossSize', 'stopRespected', 'stopSize', 'runner']
+export const EXIT_WEIGHTS: Record<ExitFactorKey, number> = { kept: 0.25, lossSize: 0.25, stopRespected: 0.20, stopSize: 0.15, runner: 0.15 }
+export const EXIT_LABELS: Record<ExitFactorKey, string> = {
+  kept: 'Profit kept on winners',
+  lossSize: 'Loss size on losers',
+  stopRespected: 'Stop respected',
+  stopSize: 'Stop size',
+  runner: 'Runner rules',
+}
+
+/** Loss ÷ average risk: full marks up to here … */
+const LOSS_OK = 1.1
+/** … and none from here. Linear in between. */
+const LOSS_ZERO = 2.0
+/** A stop "came into play" once the trade was this share of the way to it. */
+const STOP_IN_PLAY = 0.9
+/** Slippage past the stop that still counts as respected: this share of the risk, at least two ticks. */
+const STOP_SLIP_SHARE = 0.1
+const STOP_SLIP_MIN_PTS = 0.5
+/** Stop width allowed over the trader's ATR stop setting before it reads as too wide. */
+const STOP_SIZE_TOLERANCE = 1.1
+
+export interface ExitTradeInput extends MgmtTradeInput {
+  tp1_price?: number | null
+  structure_5m_alignment?: 'following' | 'fading' | 'neutral' | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tags_json?: any
+}
+
+export interface ExitContext {
+  /** The trader's average planned dollar risk before this trade. Null = unknown; the trade's own planned risk is used. */
+  avgRiskDollars?: number | null
+  /** Live ATR override for this trade (else the stored entry ATR). */
+  atr?: number | null
+  /** The trader's ATR stop setting, in ATRs (scoring profile; default 1). */
+  atrStopTarget?: number
+}
+
+/** One trade's score on each factor that applies to it, 0..1. */
+export type ExitTradeScores = Partial<Record<ExitFactorKey, number>>
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
+
+/** Did this trade go for a second target? A "TP2 …" management tag, or fills that took the first target and left a piece on. */
+export function runnerAttempted(t: ExitTradeInput): boolean {
+  const tags: unknown = t.tags_json?.trade_management
+  if (Array.isArray(tags) && tags.some(x => typeof x === 'string' && /^tp2\b/i.test(x.trim()))) return true
+  return firstTargetFilled(t) && distinctExitPrices(t) >= 2
+}
+
+function exitPrices(t: ExitTradeInput): number[] {
+  const legs = Array.isArray(t.exits_json) ? t.exits_json : []
+  const out: number[] = []
+  for (const l of legs) { const p = Number(l?.price); if (Number.isFinite(p)) out.push(p) }
+  return out
+}
+const distinctExitPrices = (t: ExitTradeInput) => new Set(exitPrices(t)).size
+
+function firstTargetFilled(t: ExitTradeInput): boolean {
+  if (t.entry_price == null || t.direction == null || t.tp1_price == null) return false
+  const sign = t.direction === 'long' ? 1 : -1
+  const tp = t.tp1_price
+  if ((tp - t.entry_price) * sign <= 0) return false
+  const prices = exitPrices(t)
+  if (prices.length === 0 && t.exit_price != null) prices.push(t.exit_price)
+  return prices.some(p => (p - tp) * sign >= -1e-9)
+}
+
+export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitTradeScores {
+  const out: ExitTradeScores = {}
+  const f = tradeFacts(t, { atr: ctx.atr })
+  if (!f || t.pnl == null) return out
+  const mfe = f.mfe.pts as number, mae = f.mae.pts as number, res = f.result.pts as number
+
+  // 1 · profit kept — winners only
+  if (t.pnl > 0) {
+    if (exitKind(t) === 'target') out.kept = 1
+    else if (mfe > 0) out.kept = clamp01(res / mfe)
+  }
+
+  // 2 · loss size — losers only, in dollars against the trader's average risk
+  if (t.pnl < 0) {
+    const qtyUsd = res !== 0 ? Math.abs(t.pnl / res) : null                     // dollars per point for this trade
+    const ownRisk = f.riskPts != null && qtyUsd != null ? f.riskPts * qtyUsd : null
+    const yardstick = ctx.avgRiskDollars != null && ctx.avgRiskDollars > 0 ? ctx.avgRiskDollars : ownRisk
+    if (yardstick != null && yardstick > 0) {
+      const ratio = Math.abs(t.pnl) / yardstick
+      out.lossSize = ratio <= LOSS_OK ? 1 : ratio >= LOSS_ZERO ? 0 : (LOSS_ZERO - ratio) / (LOSS_ZERO - LOSS_OK)
+    }
+  }
+
+  // 3 · stop respected — only when the logged stop came into play
+  if (f.riskPts != null && mae >= STOP_IN_PLAY * f.riskPts) {
+    const slip = Math.max(STOP_SLIP_MIN_PTS, STOP_SLIP_SHARE * f.riskPts)
+    out.stopRespected = mae - f.riskPts <= slip + 1e-9 ? 1 : 0
+  }
+
+  // 4 · stop size — against the trader's ATR stop setting
+  if (f.riskPts != null && f.atr != null) {
+    const target = ctx.atrStopTarget != null && ctx.atrStopTarget > 0 ? ctx.atrStopTarget : 1
+    out.stopSize = f.riskPts / f.atr <= STOP_SIZE_TOLERANCE * target + 1e-9 ? 1 : 0
+  }
+
+  // 5 · runner — only when a second target was attempted; the measurable parts
+  if (runnerAttempted(t)) {
+    const parts: number[] = [firstTargetFilled(t) ? 1 : 0]
+    if (t.structure_5m_alignment === 'following') parts.push(1)
+    else if (t.structure_5m_alignment === 'fading') parts.push(0)
+    out.runner = parts.reduce((a, b) => a + b, 0) / parts.length
+  }
+  return out
+}
+
+/** Planned dollar risk of a trade (stop distance × size), or null without a stop. */
+export function plannedRiskDollars(t: ExitTradeInput): number | null {
+  if (t.entry_price == null || t.stop_price == null || t.quantity == null) return null
+  const mult = symbolToMultiplier(t.symbol ?? '')
+  const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * mult
+  return risk > 0 ? risk : null
+}
+
+export interface ExitFactorSum { n: number; sum: number }
+export type ExitSums = Record<ExitFactorKey, ExitFactorSum>
+export const emptyExitSums = (): ExitSums => ({
+  kept: { n: 0, sum: 0 }, lossSize: { n: 0, sum: 0 }, stopRespected: { n: 0, sum: 0 }, stopSize: { n: 0, sum: 0 }, runner: { n: 0, sum: 0 },
+})
+
+export function addExitScores(sums: ExitSums, s: ExitTradeScores): void {
+  for (const k of EXIT_FACTORS) { const v = s[k]; if (v != null) { sums[k].n += 1; sums[k].sum += v } }
+}
+
+export function mergeExitSums(list: (ExitSums | null | undefined)[]): ExitSums {
+  const tot = emptyExitSums()
+  for (const s of list) { if (!s) continue; for (const k of EXIT_FACTORS) { tot[k].n += s[k]?.n || 0; tot[k].sum += s[k]?.sum || 0 } }
+  return tot
+}
+
+export interface ExitScoreView {
+  /** 0..100, or null when no factor had a trade to judge. */
+  score: number | null
+  factors: Record<ExitFactorKey, { score: number | null; n: number; /** share of the Exit score this factor carried, 0..1 */ weight: number }>
+}
+
+/** Read a set of sums: each factor's score, and the blend with absent factors' weight shared out. */
+export function exitScoreView(sums: ExitSums): ExitScoreView {
+  let wsum = 0
+  for (const k of EXIT_FACTORS) if (sums[k].n > 0) wsum += EXIT_WEIGHTS[k]
+  const factors = {} as ExitScoreView['factors']
+  let score = 0
+  for (const k of EXIT_FACTORS) {
+    const n = sums[k].n
+    const s = n > 0 ? (sums[k].sum / n) * 100 : null
+    const w = n > 0 && wsum > 0 ? EXIT_WEIGHTS[k] / wsum : 0
+    factors[k] = { score: s, n, weight: w }
+    if (s != null) score += s * w
+  }
+  return { score: wsum > 0 ? score : null, factors }
+}
