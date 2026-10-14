@@ -147,7 +147,7 @@ export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
 /** The TapeScore ring + the three axis scores (Risk / Entry / Exit) beside it.
  *  Scores only — the weighting and the session count live behind the ⓘ so the
  *  numbers read clean. Renders a quiet note when no day in the window was scored. */
-export function ScoreCluster({ period }: { period: TapeScorePeriod }) {
+export function ScoreCluster({ period, size = 148 }: { period: TapeScorePeriod; size?: number }) {
   if (period.score == null) {
     return <p className="text-[13px] text-gray-500 max-w-[36ch] leading-normal">No graded sessions in this window yet — run Analyze Session on a day to score it.</p>
   }
@@ -159,7 +159,7 @@ export function ScoreCluster({ period }: { period: TapeScorePeriod }) {
   ]
   return (
     <div className="flex items-center gap-6 flex-wrap">
-      <CompositionRing score={period.score} subs={subs} size={148} />
+      <CompositionRing score={period.score} subs={subs} size={size} />
       <div className="min-w-[150px]">
         {comps.map((c, i) => (
           <div key={c.name} className={cn('flex items-baseline justify-between gap-4 py-2', i > 0 && 'border-t border-gray-800')}>

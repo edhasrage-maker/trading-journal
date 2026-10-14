@@ -48,6 +48,9 @@ interface Props {
   /** Rendered between the charts and the session list, unfiltered (it's a
    *  lifetime collection). A slot so the page keeps its section order. */
   achievements: ReactNode
+  /** The score lives in the stat row (no band above this one), so the filter
+   *  bar opens the page: no rule or gap above it. */
+  scoreInRow?: boolean
 }
 
 /**
@@ -72,6 +75,7 @@ interface Props {
  */
 export default function DashboardFilterScope({
   statsDays, tableDays, allSetups, today, windowStart, windowEnd, defaultFilterStart, achievements,
+  scoreInRow = false,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [draftSetups, setDraftSetups] = useState<string[]>([])
@@ -161,7 +165,7 @@ export default function DashboardFilterScope({
 
   return (
     <>
-      <div className="mt-8 pt-5 border-t border-gray-700">
+      <div className={scoreInRow ? undefined : 'mt-8 pt-5 border-t border-gray-700'}>
         {/* Filter bar */}
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <div className="relative" ref={panelRef}>
@@ -303,6 +307,7 @@ export default function DashboardFilterScope({
             days={active ? scoped.stats : statsDays}
             hideScoreHero
             rangeLabel={active ? label : undefined}
+            scoreInRow={scoreInRow}
           />
         )}
       </div>

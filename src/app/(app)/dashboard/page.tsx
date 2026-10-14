@@ -21,6 +21,7 @@ import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type Da
 import { computeCarryover } from '@/lib/prep-carryover'
 import type { TradeWithExcursion } from '@/lib/analytics'
 import { DashboardHero, type HeroPeriods } from '@/components/review/ReviewMonthHero'
+import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
 import { resolveReviewScope } from '@/lib/review-scope'
 import Link from 'next/link'
 
@@ -519,8 +520,11 @@ export default async function DashboardPage() {
       >
         {/* Hero: the TapeScore + the finding, together, each adjustable across
             this month / this year / all time. The ring owns the score, so the
-            period stats below drop their own ring. */}
-        <DashboardHero periods={heroPeriods} />
+            period stats below drop their own ring.
+            While the finding is hidden (SHOW_FINDING_CALLOUT) the band goes
+            with it and the score moves into the stat row as its first card,
+            on the same Period as the rest — alone, the band was mostly empty. */}
+        {SHOW_FINDING_CALLOUT && <DashboardHero periods={heroPeriods} />}
 
         {/* The all-trades overview — period stats, equity/P&L charts, the
             trophy case and every session — under one Filter (setups × time).
@@ -537,6 +541,7 @@ export default async function DashboardPage() {
           windowEnd={windowEnd}
           defaultFilterStart={defaultFilterStart}
           achievements={<AchievementCollection counts={collectionCounts} />}
+          scoreInRow={!SHOW_FINDING_CALLOUT}
         />
       </DashboardModeSwitch>
     </div>

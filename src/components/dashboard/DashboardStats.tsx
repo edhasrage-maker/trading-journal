@@ -6,6 +6,7 @@ import { aggregateTapeScore, tapeScorePeriodSentence, type TapeScoreResult } fro
 import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroParts'
 import TradeManagementCard from '@/components/TradeManagementCard'
 import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
+import { ScoreCluster, ScoreBreakdownInfo } from '@/components/review/ReviewMonthHero'
 
 /**
  * Period-selectable dashboard header: the TapeScore hero (one 0-100 score,
@@ -158,9 +159,13 @@ interface Props {
    *  silently clip a 3-month filter to 30 days — wrong numbers under a banner
    *  that promised three months. The saved preference itself is left alone. */
   rangeLabel?: string
+  /** Put the TapeScore in the stat row as the first of three cards, on the
+   *  same Period as everything else. Set while the dashboard's top band (the
+   *  score + the finding) is hidden — see SHOW_FINDING_CALLOUT. */
+  scoreInRow?: boolean
 }
 
-export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d', rangeLabel }: Props) {
+export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d', rangeLabel, scoreInRow = false }: Props) {
   const [period, setPeriod] = useState<Period>(defaultPeriod)
   const effectivePeriod: Period = rangeLabel ? 'all' : period
   // Hydrate from localStorage after mount so SSR matches initial render.
@@ -259,6 +264,94 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     }
   }, [days, effectivePeriod])
 
+  // The three stat tiles, built once and placed by whichever layout renders
+  // below. `bare` drops a tile's own border when it sits inside a shared card.
+  const pnlCard = ({ className, bare }: { className?: string; bare?: boolean } = {}) => (
+    <StatCard
+      className={className}
+      bare={bare}
+      label={`${PERIOD_LABELS[period]} P&L`}
+      value={(() => {
+        // Sign before the dollar: "+$1,395" / "-$1,395" / "$0".
+        // Previously was "$+1,395" — the sign-after-currency reads as
+        // a typo on first scan.
+        const abs = Math.abs(stats.pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })
+        if (stats.pnl > 0) return `+$${abs}`
+        if (stats.pnl < 0) return `-$${abs}`
+        return '$0'
+      })()}
+      tone={stats.pnl > 0 ? 'positive' : stats.pnl < 0 ? 'negative' : 'neutral'}
+      sub={`${stats.tradedDaysCount} trading day${stats.tradedDaysCount === 1 ? '' : 's'}`}
+    />
+  )
+  const dayWinCard = ({ className, bare }: { className?: string; bare?: boolean } = {}) => (
+    <StatCard
+      className={className}
+      bare={bare}
+      label="Day Win %"
+      value={stats.dayWinRate == null ? '—' : `${(stats.dayWinRate * 100).toFixed(0)}%`}
+      // Win rate is colored by meaning, not <50%: gentle green only when
+      // genuinely strong, otherwise neutral. Never red — P&L carries the
+      // honest good/bad signal, so a low win rate on a green stretch (a
+      // valid high-R style) shouldn't read as alarm. (docs/DESIGN_SYSTEM.md)
+      tone={stats.dayWinRate == null ? 'neutral' : stats.dayWinRate >= 0.6 ? 'positive' : 'neutral'}
+      sub="% of days green"
+    />
+  )
+  // Win rate is half a metric on its own. At a 31% win rate you need better
+  // than 2.2:1 just to break even, so a bare "31%" next to a green P&L is a
+  // contradiction the reader has to resolve unaided — the number that resolves
+  // it is the payoff, and it belongs in the same tile rather than in another.
+  const tradeWinCard = ({ className, bare }: { className?: string; bare?: boolean } = {}) => (
+    <StatCard
+      className={className}
+      bare={bare}
+      label={stats.payoffR == null ? 'Trade Win %' : 'Trade Win % · Payoff'}
+      title={`Win rate, and how much bigger the average winner is than the average loser (in R, so position sizing doesn't distort it). At a 31% win rate you lose roughly two trades for every one you win, so each winner has to be worth about 2.2 losers just to come out flat — that break-even figure is computed from the win rate beside it and moves as the win rate does. Win rate counts ${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}; payoff counts the ${stats.rSample} with a stop logged.`}
+      value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
+      // Never red (see Day Win %): 38% trade win on a profitable stretch is
+      // fine for a high-R approach. Neutral by default, green only when strong.
+      tone={stats.tradeWinRate == null ? 'neutral' : stats.tradeWinRate >= 0.6 ? 'positive' : 'neutral'}
+      valueNode={stats.payoffR == null ? undefined : (
+        <span className="flex items-baseline justify-center gap-2 flex-wrap">
+          <span>{stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}</span>
+          <span className="text-gray-600 text-lg font-normal">·</span>
+          <span className={stats.breakEvenPayoff != null && stats.payoffR > stats.breakEvenPayoff ? 'text-green-400' : 'text-gray-200'}>
+            {stats.payoffR.toFixed(1)}<span className="text-sm font-semibold text-gray-400">R : 1R</span>
+          </span>
+        </span>
+      )}
+      sub={`${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
+      subNode={stats.payoffR != null && stats.breakEvenPayoff != null ? (
+        <div className="text-[11px] text-gray-500">
+          {/* The trade counts moved to the tooltip — the tile reads as one
+              sentence without them. They stay visible only when the payoff
+              rests on a minority of the trades (few stops logged), where a
+              bare ratio would pass a thin sample off as the whole book. */}
+          {stats.rSample * 2 < stats.totalTradesWithPnl && (
+            <div className="mb-1">payoff from {stats.rSample} of {stats.totalTradesWithPnl} trades</div>
+          )}
+          {/* Say what the number IS, not where it sits. "break-even: 2.24"
+              asks the reader to work out whose break-even, measured in what.
+              This states the requirement in the same unit as the payoff
+              directly above it, so the pair reads as one sentence: you win
+              31% of the time, that demands 2.24R, you are making 3.2R.
+
+              Kept short enough to sit on ONE line in a five-across tile on
+              a 1280px laptop (179px of the 195 available) — the longer
+              "needs 2.24R to break even — you're above" wrapped there, and
+              two lines under the number read as clutter. */}
+          <div className="xl:whitespace-nowrap">
+            break even at <span className="text-gray-300">{stats.breakEvenPayoff.toFixed(2)}R</span>
+            {stats.payoffR > stats.breakEvenPayoff
+              ? <span className="text-green-500"> — you&rsquo;re above</span>
+              : <span className="text-amber-400"> — you&rsquo;re below</span>}
+          </div>
+        </div>
+      ) : undefined}
+    />
+  )
+
   return (
     <div className="mb-6">
       {/* Period selector */}
@@ -288,90 +381,52 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
           ring already owns the score. */}
       {!hideScoreHero && <TapeScoreHero period={stats.tapePeriod} periodLabel={PERIOD_LABELS[period]} />}
 
-      {/* Stat cards. Order: P&L → Day Win % → Trade Win % → Trade management
-          (double width: it carries two rows of bars).
-          The old Execution / Compliance card folded into the hero chips. */}
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
-        <StatCard
-          label={`${PERIOD_LABELS[period]} P&L`}
-          value={(() => {
-            // Sign before the dollar: "+$1,395" / "-$1,395" / "$0".
-            // Previously was "$+1,395" — the sign-after-currency reads as
-            // a typo on first scan.
-            const abs = Math.abs(stats.pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })
-            if (stats.pnl > 0) return `+$${abs}`
-            if (stats.pnl < 0) return `-$${abs}`
-            return '$0'
-          })()}
-          tone={stats.pnl > 0 ? 'positive' : stats.pnl < 0 ? 'negative' : 'neutral'}
-          sub={`${stats.tradedDaysCount} trading day${stats.tradedDaysCount === 1 ? '' : 's'}`}
-        />
-        <StatCard
-          label="Day Win %"
-          value={stats.dayWinRate == null ? '—' : `${(stats.dayWinRate * 100).toFixed(0)}%`}
-          // Win rate is colored by meaning, not <50%: gentle green only when
-          // genuinely strong, otherwise neutral. Never red — P&L carries the
-          // honest good/bad signal, so a low win rate on a green stretch (a
-          // valid high-R style) shouldn't read as alarm. (docs/DESIGN_SYSTEM.md)
-          tone={stats.dayWinRate == null ? 'neutral' : stats.dayWinRate >= 0.6 ? 'positive' : 'neutral'}
-          sub="% of days green"
-        />
-        {/* Win rate is half a metric on its own. At a 31% win rate you need
-            better than 2.2:1 just to break even, so a bare "31%" next to a green
-            P&L is a contradiction the reader has to resolve unaided — the number
-            that resolves it is the payoff, and it belongs in the same card
-            rather than in a fifth one. */}
-        <StatCard
-          className="col-span-2 lg:col-span-1"
-          label={stats.payoffR == null ? 'Trade Win %' : 'Trade Win % · Payoff'}
-          title={`Win rate, and how much bigger the average winner is than the average loser (in R, so position sizing doesn't distort it). At a 31% win rate you lose roughly two trades for every one you win, so each winner has to be worth about 2.2 losers just to come out flat — that break-even figure is computed from the win rate beside it and moves as the win rate does. Win rate counts ${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}; payoff counts the ${stats.rSample} with a stop logged.`}
-          value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
-          // Never red (see Day Win %): 38% trade win on a profitable stretch is
-          // fine for a high-R approach. Neutral by default, green only when strong.
-          tone={stats.tradeWinRate == null ? 'neutral' : stats.tradeWinRate >= 0.6 ? 'positive' : 'neutral'}
-          valueNode={stats.payoffR == null ? undefined : (
-            <span className="flex items-baseline justify-center gap-2 flex-wrap">
-              <span>{stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}</span>
-              <span className="text-gray-600 text-lg font-normal">·</span>
-              <span className={stats.breakEvenPayoff != null && stats.payoffR > stats.breakEvenPayoff ? 'text-green-400' : 'text-gray-200'}>
-                {stats.payoffR.toFixed(1)}<span className="text-sm font-semibold text-gray-400">R : 1R</span>
-              </span>
-            </span>
-          )}
-          sub={`${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
-          subNode={stats.payoffR != null && stats.breakEvenPayoff != null ? (
-            <div className="text-[11px] text-gray-500">
-              {/* The trade counts moved to the tooltip — the tile reads as one
-                  sentence without them. They stay visible only when the payoff
-                  rests on a minority of the trades (few stops logged), where a
-                  bare ratio would pass a thin sample off as the whole book. */}
-              {stats.rSample * 2 < stats.totalTradesWithPnl && (
-                <div className="mb-1">payoff from {stats.rSample} of {stats.totalTradesWithPnl} trades</div>
-              )}
-              {/* Say what the number IS, not where it sits. "break-even: 2.24"
-                  asks the reader to work out whose break-even, measured in what.
-                  This states the requirement in the same unit as the payoff
-                  directly above it, so the pair reads as one sentence: you win
-                  31% of the time, that demands 2.24R, you are making 3.2R.
-
-                  Kept short enough to sit on ONE line in a five-across tile on
-                  a 1280px laptop (179px of the 195 available) — the longer
-                  "needs 2.24R to break even — you're above" wrapped there, and
-                  two lines under the number read as clutter. */}
-              <div className="xl:whitespace-nowrap">
-                break even at <span className="text-gray-300">{stats.breakEvenPayoff.toFixed(2)}R</span>
-                {stats.payoffR > stats.breakEvenPayoff
-                  ? <span className="text-green-500"> — you&rsquo;re above</span>
-                  : <span className="text-amber-400"> — you&rsquo;re below</span>}
+      {scoreInRow ? (
+        /* Three cards (founder's pick, 2026-10-13), everything on the Period
+           menu above: decision quality (the TapeScore, with the trade win rate
+           and payoff under it), results (P&L, with the day win rate under it),
+           and trade management. Replaces the separate score band, which left
+           most of its width empty once the finding beside it was hidden. The
+           bottom halves share a height so their dividers line up. */
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_minmax(0,2fr)]">
+          <div className="min-w-0 border border-gray-800 rounded-[3px] flex flex-col">
+            <div className="flex-1 p-[18px] flex flex-col justify-center gap-2.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[15px] font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+                  TapeScore
+                </span>
+                <span className="text-[11px] text-gray-500">· {(rangeLabel ?? PERIOD_LABELS[period]).toLowerCase()}</span>
+                <ScoreBreakdownInfo period={stats.tapePeriod} />
+              </div>
+              <div className="flex justify-center">
+                <ScoreCluster period={stats.tapePeriod} size={128} />
               </div>
             </div>
-          ) : undefined}
-        />
+            {tradeWinCard({ bare: true, className: 'border-t border-gray-800 min-h-[104px]' })}
+          </div>
+          <div className="min-w-0 border border-gray-800 rounded-[3px] flex flex-col">
+            {pnlCard({ bare: true, className: 'flex-1' })}
+            {dayWinCard({ bare: true, className: 'border-t border-gray-800 min-h-[104px]' })}
+          </div>
+          <TradeManagementCard
+            totals={stats.mgmt}
+            className="min-w-0 sm:col-span-2 xl:col-span-1 border border-gray-800 rounded-[3px] p-[18px]"
+          />
+        </div>
+      ) : (
+      /* Stat cards. Order: P&L → Day Win % → Trade Win % → Trade management
+         (double width: it carries two rows of bars).
+         The old Execution / Compliance card folded into the hero chips. */
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
+        {pnlCard()}
+        {dayWinCard()}
+        {tradeWinCard({ className: 'col-span-2 lg:col-span-1' })}
         <TradeManagementCard
           totals={stats.mgmt}
           className="col-span-2 border border-gray-800 rounded-[3px] p-[18px]"
         />
       </div>
+      )}
     </div>
   )
 }
@@ -437,10 +492,12 @@ function TapeScoreHero({ period, periodLabel }: {
 }
 
 function StatCard({
-  label, value, valueNode, tone, sub, subNode, valueClass, chartNode, title, className,
+  label, value, valueNode, tone, sub, subNode, valueClass, chartNode, title, className, bare = false,
 }: {
   /** Extra grid classes for the tile (e.g. a mobile column span). */
   className?: string
+  /** No border of its own — the tile is one half of a shared card. */
+  bare?: boolean
   label: string
   value: string
   /** Rich value line, for a tile whose headline is more than one figure (the
@@ -473,7 +530,7 @@ function StatCard({
   // out-shouts the score above it.
   const valueSize = valueClass ?? 'text-[length:clamp(1.25rem,2vw,1.625rem)] leading-tight'
   return (
-    <div className={`border border-gray-800 rounded-[3px] p-[18px] flex flex-col justify-center items-center text-center ${className ?? ''}`} title={title}>
+    <div className={`${bare ? '' : 'border border-gray-800 rounded-[3px] '}p-[18px] flex flex-col justify-center items-center text-center ${className ?? ''}`} title={title}>
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       {/* Blank value is intentional (e.g. the MFE tile, whose numbers live at the
           bar ends) — skip the line entirely so it doesn't leave an empty gap. */}
