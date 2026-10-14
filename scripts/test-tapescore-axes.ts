@@ -23,6 +23,7 @@ import {
 import { includeFlowScoreInEntry } from '../src/lib/scoring-profile'
 import {
   dailyLossLimitBroken, effectiveAnalysis, effectiveProcess, hasFreshTrigger, noMistakesShare, toProxyTrades,
+  sizeUpFails, sizeUpInputs,
 } from '../src/lib/tapescore-day-rules'
 import { dayTradeInputs, dayTradeSums } from '../src/lib/exit-rollup'
 import { computeBehavioralProxies, pressingDrawdownIds } from '../src/lib/behavioral-proxies'
@@ -246,7 +247,8 @@ console.log('rollup')
   check('rollup stores trade inputs + the analysis base, not a finished score', 'trade_parts' in today && 'tape' in today && !('tapescore' in today))
   const on = scoreDayRollups([...prior, today]).at(-1)!
   const off = scoreDayRollups([...prior, today], [], { includeFlow: false }).at(-1)!
-  near('loss size measured against the prior 30 trades ($20 avg) → 1.5× ≈ 0.56', on.trade_sums?.lossSize.sum, 0.5556, 0.001)
+  // The prior 30 trades all risked $20 → yardstick mean $20, SD $0: a $30 loss is past mean + 2 SD.
+  near('loss size measured against the prior 30 trades (mean $20, SD 0) → $30 loss = 0', on.trade_sums?.lossSize.sum, 0, 1e-9)
   check('loss size lands in Risk', on.tapescore?.parts?.risk.lossSize.n === 1)
   check('the order-flow Score is read from the trade (default on)', on.tapescore?.parts?.entry.flow.n === 1 && Math.round(on.tapescore.parts.entry.flow.score!) === 30)
   check('switching the Score off changes Entry from the SAME rollup (no recompute)', off.tapescore?.components.entry !== on.tapescore?.components.entry && off.tapescore?.parts?.flowOn === false)
@@ -254,10 +256,10 @@ console.log('rollup')
   check('the read-time fields are never cached', !('tapescore' in stored) && !('trade_sums' in stored))
   const back = fromStoredStats(JSON.parse(JSON.stringify(stored)), { id: on.id, date: on.date, day_type: null, day_types: null })
   check('a cached row scores identically', JSON.stringify(scoreDayRollups([...prior, back]).at(-1)!.tapescore) === JSON.stringify(on.tapescore))
-  check('STATS_VERSION is 11', STATS_VERSION === 11)
+  check('STATS_VERSION is 12', STATS_VERSION === 12)
   check('fresh at this version + same ATR setting', isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 1))
   check('stale when the ATR setting changed', !isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 2))
-  check('stale at the old version', !isFreshStats({ stats_json: stored, stats_version: 10 }, 1))
+  check('stale at the old version', !isFreshStats({ stats_json: stored, stats_version: 11 }, 1))
 }
 
 // ── Read-time rules from the trades ────────────────────────────────────────────
@@ -265,12 +267,13 @@ console.log('read-time rules')
 {
   // A day's trades: `at` = PT minutes after 08:00, held `hold` minutes.
   let n = 0
-  const tr = (at: number, qty: number, pnl: number, tags: object | null = {}, hold = 1) => {
+  // `stopPts` gives the trade a stop that many MNQ points away ($2 a point per lot).
+  const tr = (at: number, qty: number, pnl: number, tags: object | null = {}, hold = 1, stopPts: number | null = null) => {
     const t0 = Date.UTC(2026, 8, 29, 15, 0) + at * 60000
     const t: TradeForStats = {
       id: `r${++n}`, direction: 'long', quantity: qty, pnl, tags_json: tags,
       entry_time: new Date(t0).toISOString(), exit_time: new Date(t0 + hold * 60000).toISOString(),
-      entry_price: 100, exit_price: 100, stop_price: null, tp1_price: null, high_during_position: 100, low_during_position: 100,
+      entry_price: 100, exit_price: 100, stop_price: stopPts != null ? 100 - stopPts : null, tp1_price: null, high_during_position: 100, low_during_position: 100,
       symbol: 'MNQZ6.CME', entry_atr_1m: null, exits_json: [], mfe_dollars_per_leg: null, structure_5m_alignment: null,
     }
     return t
@@ -291,19 +294,35 @@ console.log('read-time rules')
   ;(owner.per_rule as Record<string, { status: string }>).P1 = { status: 'fail' }
   check('no active_rails (all five tracked): P1 fail is a breach', computeTapeScore({ process: owner, execution: exec() })?.components.verdict === 'Breach')
 
-  // 2 · P3 recomputed with the pressing-into-drawdown definition
+  // 2 · P3 against the trader's usual risk spread (mean + 2 SD of planned $ risk)
+  const usual = { mean: 100, sd: 20, n: 30 }                     // size-up = planned risk above $140
+  const p3Of = (trades: TradeForStats[], y: typeof usual | null, statuses: Record<string, 'pass' | 'fail'> = {}) =>
+    effectiveProcess(active(['P1', 'P2', 'P3', 'P5'], statuses), trades, y)!
+  const p3Status = (p: ProcessVerdict) => (p.per_rule as Record<string, { status: string }>).P3.status
+  // $100 normal risk = 50 MNQ points x 1 lot.
+  const normalWhileRed = [tr(0, 1, -100, {}, 1, 50), tr(5, 1, 20, {}, 1, 50), tr(10, 2, -40, {}, 1, 25)]
+  check('a return to normal size while red passes (risk $100 <= $140, even at more lots)', p3Status(p3Of(normalWhileRed, usual)) === 'pass')
+  const bigAfterLoss = [tr(0, 1, -100, {}, 1, 50), tr(5, 1, -150, {}, 1, 75)]   // $150 planned risk
+  check('1.5x normal after a loss ($150 > mean + 2 SD = $140) fails', p3Status(p3Of(bigAfterLoss, usual)) === 'fail')
+  check('the same $150 trade after a WIN on a green day is not judged', p3Status(p3Of([tr(0, 1, 100, {}, 1, 50), tr(5, 1, -150, {}, 1, 75)], usual)) === 'pass')
+  const founder = { mean: 130, sd: 76, n: 30 }                    // +2 SD = $282
+  check('founder yardstick: $200 after a loss is fine', p3Status(p3Of([tr(0, 1, -50, {}, 1, 25), tr(5, 1, -50, {}, 1, 100)], founder)) === 'pass')
+  check('founder yardstick: $300 after a loss is oversized', p3Status(p3Of([tr(0, 1, -50, {}, 1, 25), tr(5, 1, -50, {}, 1, 150)], founder)) === 'fail')
+  const noStop = [tr(0, 1, -100, {}, 1, 50), tr(5, 10, -500, {}, 1, null)]
+  check('a trade without a stop is not judged (10 lots, no stop -> pass)', p3Status(p3Of(noStop, usual, { P3: 'fail' })) === 'pass')
+  check('sizeUpInputs keeps it as an unjudged entry', JSON.stringify(sizeUpInputs(noStop).pressed) === '[null]')
+  // No yardstick yet -> the old quantity rule (bigger than every size so far).
   const sizeUp = [tr(0, 5, -30), tr(5, 10, -200), tr(10, 10, -100)]
-  check('same definition as the recap proxy', JSON.stringify(pressingDrawdownIds(toProxyTrades(sizeUp))) === JSON.stringify(['r2'])
+  check('no yardstick: 5 -> 10 lots after a loss fails (quantity rule)', p3Status(p3Of(sizeUp, null)) === 'fail')
+  check('no yardstick: 5 -> 3 -> 5 is a return to normal size -> pass', p3Status(p3Of([tr(0, 5, 50), tr(5, 3, -20), tr(10, 5, -20)], null, { P3: 'fail' })) === 'pass')
+  check('the fallback is the recap proxy, unchanged', JSON.stringify(pressingDrawdownIds(toProxyTrades(sizeUp))) === JSON.stringify([sizeUp[1].id])
     && computeBehavioralProxies(toProxyTrades(sizeUp)).proxies.find(p => p.key === 'pressing_drawdown')?.evidence.join() === '2')
-  const p3 = effectiveProcess(active(['P1', 'P2', 'P3', 'P5'], {}), sizeUp)!
-  check('5 → 10 after a loss → P3 fails', (p3.per_rule as Record<string, { status: string }>).P3.status === 'fail')
-  check('one lapse with 4 rails tracked stays Compliant', p3.verdict === 'Compliant')
-  const p3b = effectiveProcess(active(['P1', 'P2', 'P3', 'P5'], { P2: 'fail' }), sizeUp)!
-  check('a second failed rail makes it a Breach', p3b.verdict === 'Breach')
-  const backToNormal = [tr(0, 5, 50), tr(5, 3, -20), tr(10, 5, -20)]
-  check('5 → 3 → 5 after a loss is a return to normal size → pass', (effectiveProcess(active(['P3'], { P3: 'fail' }), backToNormal)!.per_rule as Record<string, { status: string }>).P3.status === 'pass')
-  check('P3 untracked → left as stored', effectiveProcess(active(['P1', 'P2'], {}), sizeUp) !== null
-    && (effectiveProcess(active(['P1', 'P2'], {}), sizeUp)!.per_rule as Record<string, { status: string }>).P3.status === 'pass')
+  check('sizeUpFails: yardstick vs fallback', sizeUpFails(sizeUpInputs(bigAfterLoss), usual) === 1 && sizeUpFails({ pressed: [500], qty_hits: 0 }, null) === 0)
+  const lapse = p3Of(bigAfterLoss, usual)
+  check('one lapse with 4 rails tracked stays Compliant', lapse.verdict === 'Compliant')
+  check('a second failed rail makes it a Breach', p3Of(bigAfterLoss, usual, { P2: 'fail' }).verdict === 'Breach')
+  check('P3 untracked -> left as stored', p3Status(effectiveProcess(active(['P1', 'P2'], {}), bigAfterLoss, usual)!) === 'pass')
+  check('no yardstick passed (undefined) -> P3 left as stored', p3Status(effectiveProcess(active(['P3'], {}), bigAfterLoss)!) === 'pass')
 
   // 3 · no mistakes tagged, from the tags
   near('share of trades with no mistakes', noMistakesShare([tr(0, 1, 1, { mistakes: ['Chased'] }), tr(5, 1, 1, { mistakes: [] }), tr(9, 1, 1, {})]), 2 / 3, 1e-12)
@@ -363,11 +382,23 @@ console.log('2026-09-29')
     }),
   }
   const day: DayForStats = { id: 'sep29', date: '2026-09-29', eod_pnl: null, day_type: null, day_types: null, ai_analysis_json: null, eod_ai_analysis_json: eod as never }
-  const r = scoreDayRollups([computeDayStats(day, trades, null)]).at(-1)!
+  // History before the day: 30 stop trades with the founder's spread (mean $130, SD $76).
+  const hist = [{ date: '2026-09-28', sum_risk_dollars: 30 * 130, sum_risk_sq: 30 * (130 ** 2 + 76 ** 2), risk_sample: 30 }]
+  const r = scoreDayRollups([computeDayStats(day, trades, null)], hist).at(-1)!
   const ts = r.tapescore!
-  check('P3 recomputed: trade 2 went 5 → 10 after a loss → fail', r.process_breach_rules?.includes('P3') === true, JSON.stringify(r.process_breach_rules))
+  check('trades 2 and 3 ($187.50, $200) sit within mean + 2 SD ($282); trade 4 risked $300 (10 MNQ x 15 pts) -> P3 fails',
+    r.process_breach_rules?.includes('P3') === true, JSON.stringify(r.process_breach_rules))
+  check('... only trade 4 is over', sizeUpFails(sizeUpInputs(trades), { mean: 130, sd: 76, n: 30 }) === 1
+    && JSON.stringify(sizeUpInputs(trades).pressed) === JSON.stringify([187.5, 200, 300]))
   check('the day reads as a Breach (P1 broken)', r.process_verdict === 'Breach' && ts.components.verdict === 'Breach')
   check('rules kept 2 of 4', ts.parts?.rulesKept === 2 && ts.parts?.rulesOf === 4)
+  const noHist = scoreDayRollups([computeDayStats(day, trades, null)]).at(-1)!
+  check('with no yardstick yet: the quantity rule (5 -> 10 after a loss) -> P3 fails', noHist.process_breach_rules?.includes('P3') === true && noHist.tapescore?.parts?.rulesKept === 2)
+  check('... and it still caps at 49', noHist.tapescore?.score === 49)
+  // The Recap page path: the analysis corrected with the same yardstick agrees.
+  const recap = effectiveAnalysis(eod as never, trades, { mean: 130, sd: 76, n: 30 })
+  check('Recap rules card = rollup (same yardstick)', recap?.process?.verdict === r.process_verdict
+    && (recap?.process?.per_rule as Record<string, { status: string }>).P3.status === 'fail')
   check('no mistakes tagged = 0 (every trade carries mistakes)', ts.parts?.entry.checklist.score != null)
   near('checklist = mean(setup 1, TP1 1, area 0.5, no mistakes 0) = 62.5', ts.parts?.entry.checklist.score, 62.5, 1e-9)
   check('re-entries: trades 2, 3, 4 judged, none with a fresh trigger', ts.parts?.risk.reentry.n === 3 && ts.parts?.risk.reentry.score === 0)

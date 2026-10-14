@@ -198,7 +198,7 @@ export default async function DashboardPage() {
   tick('per-day rollup', rolledUp.length)
 
   // Finish each day's TapeScore: Risk's loss size is measured against the
-  // trader's average dollar risk over the days BEFORE it, so the days are read in
+  // trader's usual risk (yardstick) over the days BEFORE it, so the days are read in
   // sequence here (src/lib/exit-rollup.ts) — the same rule the recaps and the
   // Recap day page use. The window is the whole journal, so the days are each
   // other's history; only an account that fills the PAGE_SIZE window needs the

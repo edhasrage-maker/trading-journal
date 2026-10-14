@@ -1,11 +1,11 @@
 import { symbolToMultiplier, symbolRoot } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
-import { tapeScoreBaseFromAnalyses, finishTapeScore, type TapeScoreBase, type TapeScoreOptions, type TapeScoreResult } from '@/lib/tapescore'
+import { tapeScoreBaseFromAnalyses, finishTapeScore, resolvedAudit, type TapeScoreBase, type TapeScoreOptions, type TapeScoreResult } from '@/lib/tapescore'
 import { mgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { dayTradeInputs, tradeSumsInSequence, normalizeAtrStopTarget, type DayTradeInputs, type RiskDay } from '@/lib/exit-rollup'
 import type { TradeSums } from '@/lib/tapescore-axes'
 import { effectiveAnalysis } from '@/lib/tapescore-day-rules'
-import type { TradingDay } from '@/lib/supabase/types'
+import type { ProcessVerdict, TradingDay } from '@/lib/supabase/types'
 
 /**
  * The per-day dashboard rollup, extracted verbatim from the inline computation
@@ -130,6 +130,9 @@ export interface DayStatsRollup {
    *  one-trade day like a ten-trade one. The counts differ from each other
    *  because risk needs a stop and lot size does not. */
   sum_risk_dollars: number
+  /** Sum of the same trades' planned dollar risk squared — with the sum and
+   *  the count, the risk yardstick's SD (src/lib/exit-rollup.ts). */
+  sum_risk_sq: number
   risk_sample: number
   sum_quantity: number
   quantity_sample: number
@@ -157,7 +160,7 @@ export interface ScoredDayRollup extends DayStatsRollup {
   /** One TapeScore: the analysis parts plus the per-trade parts. */
   tapescore: TapeScoreResult | null
   /** The day's per-trade sums + counts, with "Loss size" scored against the
-   *  trader's average dollar risk going into the day. A period pools these. */
+   *  trader's risk yardstick going into the day. A period pools these. */
   trade_sums: TradeSums | null
 }
 
@@ -177,33 +180,65 @@ export function scoreDayRollups(
   const reads = tradeSumsInSequence(rollups, history)
   return rollups.map((r, i) => {
     const sums = reads[i]?.sums ?? null
+    // "No size-up after a loss" against the same yardstick Loss size just used;
+    // the day's verdict fields follow it, so the verdict shown and the score's
+    // cap agree.
+    const sizeUpFails = reads[i]?.sizeUpFails ?? undefined
+    const audit = sizeUpFails !== undefined ? resolvedAudit(r.tape, sizeUpFails) : null
     return {
       ...r,
-      tapescore: finishTapeScore(r.tape, sums, opts),
+      ...(audit ? processFields(audit) : {}),
+      tapescore: finishTapeScore(r.tape, sums, { ...opts, sizeUpFails }),
       trade_sums: sums,
     }
   })
 }
 
-/** Summed planned dollar risk + count over a day's trades with a logged stop —
- *  the two numbers the average-risk rule reads. The same loop the rollup runs,
- *  shared so a day whose cache is missing yields the identical figures. */
+/** The rollup's three rules-audit fields from an audit. */
+function processFields(p: ProcessVerdict | null | undefined): Pick<DayStatsRollup, 'process_verdict' | 'process_v13_score' | 'process_breach_rules'> {
+  if (!p) return { process_verdict: null, process_v13_score: null, process_breach_rules: null }
+  if (!p.per_rule) return { process_verdict: p.verdict ?? null, process_v13_score: null, process_breach_rules: null }
+  // Tracked rails only (active_rails, when the analysis recorded it) — an
+  // untracked rail auto-passes and must not pad the score, and a trader who
+  // tracks 4 rails scores out of 4, not 5.
+  const ruleIds = (p.active_rails?.length ? p.active_rails : ['P1', 'P2', 'P3', 'P4', 'P5']) as readonly string[]
+  let passCount = 0
+  const failed: string[] = []
+  for (const id of ruleIds) {
+    const r = p.per_rule[id as keyof typeof p.per_rule]
+    if (!r) continue
+    if (r.status === 'pass') passCount += 1
+    if (r.status === 'fail' || r.status === 'incomplete') failed.push(id)
+  }
+  return {
+    process_verdict: p.verdict ?? null,
+    process_v13_score: Math.round((passCount / ruleIds.length) * 10),
+    process_breach_rules: failed,
+  }
+}
+
+/** Summed planned dollar risk, its sum of squares, and the count over a day's
+ *  trades with a logged stop — what the risk yardstick (mean + SD) reads. The
+ *  same loop the rollup runs, shared so a day whose cache is missing yields the
+ *  identical figures. */
 export function dayRiskSums(
   trades: ReadonlyArray<Pick<TradeForStats, 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'symbol'>>,
-): { sum_risk_dollars: number; risk_sample: number } {
-  let sum = 0, n = 0
+): { sum_risk_dollars: number; sum_risk_sq: number; risk_sample: number } {
+  let sum = 0, sq = 0, n = 0
   for (const t of trades) {
     if (t.pnl == null || t.entry_price == null || t.stop_price == null || t.quantity == null) continue
     const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * symbolToMultiplier(t.symbol ?? '')
-    if (risk > 0) { sum += risk; n++ }
+    if (risk > 0) { sum += risk; sq += risk * risk; n++ }
   }
-  return { sum_risk_dollars: sum, risk_sample: n }
+  return { sum_risk_dollars: sum, sum_risk_sq: sq, risk_sample: n }
 }
 
 /** Rollups have carried `sum_risk_dollars` / `risk_sample` since this version,
- *  computed the same way ever since — a cached row at or above it has usable
- *  risk sums even when the rest of it is due a recompute. */
+ *  and `sum_risk_sq` since RISK_SQ_SINCE_VERSION, computed the same way ever
+ *  since — a cached row at or above both has usable risk sums even when the
+ *  rest of it is due a recompute. */
 export const RISK_SUMS_SINCE_VERSION = 7
+export const RISK_SQ_SINCE_VERSION = 12
 
 /**
  * Is a cached `stats_json` row usable as-is? It must be at the current version
@@ -264,7 +299,11 @@ export function isFreshStats(
 // (`tape`: rules, checklist, plan) and `trade_parts` (per-trade sums, now with
 // the order-flow Score, which the trade select reads) instead of `exit`. Every
 // cached row must recompute: an old row has neither field.
-export const STATS_VERSION = 11
+// v12 (2026-10-14): Loss size and "no size-up after a loss" are judged against
+// the trader's usual risk spread (mean + SD of recent planned dollar risk), so
+// the rollup carries `sum_risk_sq`, `trade_parts` carries the size-up inputs
+// (`size_up`), and the verdict fields are resolved when days are read.
+export const STATS_VERSION = 12
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
@@ -368,7 +407,7 @@ export function computeDayStats(
     const root = symbolRoot(t.symbol ?? '')
     if (root) symbolCounts[root] = (symbolCounts[root] ?? 0) + 1
   }
-  const { sum_risk_dollars: riskSum, risk_sample: riskN } = dayRiskSums(tradesWithPnl)
+  const { sum_risk_dollars: riskSum, sum_risk_sq: riskSq, risk_sample: riskN } = dayRiskSums(tradesWithPnl)
 
   // Avg MFE / MAE per trade (points + $), floored at 0 per trade.
   const mfeMaeTrades = trades.filter(t =>
@@ -454,6 +493,7 @@ export function computeDayStats(
     loss_r_count: lossRCount,
     r_sample: winRCount + lossRCount,
     sum_risk_dollars: riskSum,
+    sum_risk_sq: riskSq,
     risk_sample: riskN,
     sum_quantity: qtySum,
     quantity_sample: qtyN,
@@ -470,41 +510,11 @@ export function computeDayStats(
       return j?.score ?? null
     })(),
     // The rules audit as TapeScore reads it (a broken daily loss limit is a
-    // Breach; the size-up rule re-read from the trades) — so the verdict shown
-    // beside a day agrees with the score's cap.
-    process_verdict: (() => {
-      const p = eod?.process
-      return p?.verdict ?? null
-    })(),
-    process_v13_score: (() => {
-      const p = eod?.process
-      if (!p?.per_rule) return null
-      // Tracked rails only (active_rails, when the analysis recorded it) — an
-      // untracked rail auto-passes and must not pad the score, and a trader
-      // who tracks 4 rails scores out of 4, not 5.
-      const ruleIds = (p.active_rails?.length ? p.active_rails : ['P1', 'P2', 'P3', 'P4', 'P5']) as readonly string[]
-      let passCount = 0
-      for (const id of ruleIds) {
-        const r = p.per_rule[id as keyof typeof p.per_rule]
-        if (!r) continue
-        if (r.status === 'pass') passCount += 1
-      }
-      return Math.round((passCount / ruleIds.length) * 10)
-    })(),
+    // Breach). "No size-up after a loss" needs the trader's risk yardstick, so
+    // scoreDayRollups re-derives these three once it is known.
+    ...processFields(eod?.process),
     tape: tapeScoreBaseFromAnalyses(eod, day.ai_analysis_json?.score ?? null),
     trade_parts: dayTradeInputs(trades, opts.atrStopTarget),
-    process_breach_rules: (() => {
-      const p = eod?.process
-      if (!p?.per_rule) return null
-      const ruleIds = (p.active_rails?.length ? p.active_rails : ['P1', 'P2', 'P3', 'P4', 'P5']) as readonly string[]
-      const failed: string[] = []
-      for (const id of ruleIds) {
-        const r = p.per_rule[id as keyof typeof p.per_rule]
-        if (!r) continue
-        if (r.status === 'fail' || r.status === 'incomplete') failed.push(id)
-      }
-      return failed
-    })(),
     win_rate: winRate,
     avg_mfe_pts: avgMfePts,
     avg_mae_pts: avgMaePts,

@@ -39,7 +39,7 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
   // Two more reads ride along for the per-trade parts: the trader's TapeScore
   // settings (Risk's "Stop size" is graded against the ATR stop setting; the
   // order-flow Score joins Entry unless switched off), and the days BEFORE the
-  // window that the average-dollar-risk rule reaches back to ("Loss size" on
+  // window that the risk-yardstick rule reaches back to ("Loss size" on
   // the window's first days is measured against them) — one tiny query each.
   const [dayResult, statsResult, { atrStopTarget, includeFlow }, riskHistory] = await Promise.all([
     sb.from('trading_days')

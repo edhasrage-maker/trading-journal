@@ -4,6 +4,7 @@ import { useMemo, type ReactNode } from 'react'
 import type { EodAiAnalysis } from '@/lib/supabase/types'
 import { tapeScoreFromAnalyses, tapeScoreDaySentence, type TapeScoreResult } from '@/lib/tapescore'
 import { dayTradeInputs, dayTradeSums, type PartsTrade } from '@/lib/exit-rollup'
+import type { RiskYardstick } from '@/lib/exit-score'
 import { AXIS_DESC, axisTooltip } from '@/lib/tapescore-axes'
 import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
 
@@ -28,7 +29,7 @@ export default function TapeScoreHeader({
   analysis,
   prepScore,
   trades,
-  avgRiskDollars,
+  riskYardstick,
   atrStopTarget,
   includeFlow = true,
   tradeCount,
@@ -44,9 +45,9 @@ export default function TapeScoreHeader({
    *  Entry's order-flow Score, the Exit parts) are scored from them, live, so
    *  an edit in the drawer moves them. */
   trades: PartsTrade[]
-  /** The trader's average dollar risk going into this day (server-computed by
-   *  the shared rule in src/lib/exit-rollup.ts); null = none yet. */
-  avgRiskDollars: number | null
+  /** The trader's risk yardstick going into this day (server-computed by the
+   *  shared rule in src/lib/exit-rollup.ts); null = none yet. */
+  riskYardstick: RiskYardstick | null
   /** The trader's ATR stop setting (default 1). */
   atrStopTarget: number
   /** The trader's setting: include the order-flow Score in Entry (default on). */
@@ -61,11 +62,11 @@ export default function TapeScoreHeader({
   aside?: ReactNode
 }) {
   // The day's per-trade parts, through the same two steps the per-day rollup
-  // takes (store the day's inputs, then score them against the average risk),
+  // takes (store the day's inputs, then score them against the risk yardstick),
   // so this header and the dashboard can't disagree about the same day.
   const tradeSums = useMemo(
-    () => dayTradeSums(dayTradeInputs(trades, atrStopTarget), avgRiskDollars),
-    [trades, atrStopTarget, avgRiskDollars],
+    () => dayTradeSums(dayTradeInputs(trades, atrStopTarget), riskYardstick),
+    [trades, atrStopTarget, riskYardstick],
   )
   const result = useMemo(
     () => tapeScoreFromAnalyses(analysis, prepScore, tradeSums, { includeFlow }),

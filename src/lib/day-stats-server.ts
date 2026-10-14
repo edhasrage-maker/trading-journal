@@ -16,7 +16,7 @@
 // the same update as an ai_analysis_json / eod_pnl / day_types mutation.
 
 import {
-  computeDayStats, dayRiskSums, toStoredStats, STATS_VERSION, ROLLUP_TRADE_COLS, RISK_SUMS_SINCE_VERSION,
+  computeDayStats, dayRiskSums, toStoredStats, STATS_VERSION, ROLLUP_TRADE_COLS, RISK_SUMS_SINCE_VERSION, RISK_SQ_SINCE_VERSION,
   type DayForStats, type TradeForStats,
 } from './day-stats'
 import { AVG_RISK_WINDOW_TRADES, normalizeAtrStopTarget, type RiskDay } from './exit-rollup'
@@ -73,19 +73,20 @@ const RISK_HISTORY_PAGE = 60
 const RISK_HISTORY_MAX_PAGES = 6
 
 /**
- * The days BEFORE `beforeDate` that the average-risk rule can reach (see
+ * The days BEFORE `beforeDate` that the risk-yardstick rule can reach (see
  * src/lib/exit-rollup.ts): newest first, as many as it takes to cover 30 trades
- * with a logged stop. Each is just { date, summed planned $ risk, count }.
+ * with a logged stop. Each is just { date, summed planned $ risk, its sum of
+ * squares, count } — what the mean and SD need.
  *
  * Cost: ONE query in steady state — the newest 60 prior day rows, reading only
- * the two risk numbers out of each cached `stats_json` (a JSON-path select, so
+ * the three risk numbers out of each cached `stats_json` (a JSON-path select, so
  * the blobs never leave the database). A second query (lean trade columns)
  * runs only for prior days whose cache is missing; a further page only for a
  * trader with fewer than 30 stop trades in their last 60 sessions.
  *
  * Never throws; on any failure it returns what it has (worst case nothing,
- * which reads as "no average yet" — each loss is then measured against its own
- * planned risk).
+ * which reads as "no yardstick yet" — each loss is then measured against its
+ * own planned risk).
  */
 export async function loadRiskHistory(supabase: AnyClient, beforeDate: string): Promise<RiskDay[]> {
   const out: RiskDay[] = []
@@ -93,11 +94,11 @@ export async function loadRiskHistory(supabase: AnyClient, beforeDate: string): 
     let covered = 0
     for (let page = 0; page < RISK_HISTORY_MAX_PAGES && covered < AVG_RISK_WINDOW_TRADES; page++) {
       const from = page * RISK_HISTORY_PAGE
-      type Row = { id: string; date: string; stats_version?: number | null; risk?: number | null; n?: number | null }
+      type Row = { id: string; date: string; stats_version?: number | null; risk?: number | null; sq?: number | null; n?: number | null }
       let rows: Row[] = []
       const cached = await supabase
         .from('trading_days')
-        .select('id, date, stats_version, risk:stats_json->sum_risk_dollars, n:stats_json->risk_sample')
+        .select('id, date, stats_version, risk:stats_json->sum_risk_dollars, sq:stats_json->sum_risk_sq, n:stats_json->risk_sample')
         .lt('date', beforeDate)
         .order('date', { ascending: false })
         .range(from, from + RISK_HISTORY_PAGE - 1)
@@ -118,9 +119,10 @@ export async function loadRiskHistory(supabase: AnyClient, beforeDate: string): 
       if (rows.length === 0) break
 
       const usable = (r: Row) =>
-        (r.stats_version ?? 0) >= RISK_SUMS_SINCE_VERSION && typeof r.risk === 'number' && typeof r.n === 'number'
+        (r.stats_version ?? 0) >= Math.max(RISK_SUMS_SINCE_VERSION, RISK_SQ_SINCE_VERSION)
+        && typeof r.risk === 'number' && typeof r.sq === 'number' && typeof r.n === 'number'
       const missing = rows.filter(r => !usable(r)).map(r => r.id)
-      const fromTrades = new Map<string, { sum_risk_dollars: number; risk_sample: number }>()
+      const fromTrades = new Map<string, { sum_risk_dollars: number; sum_risk_sq: number; risk_sample: number }>()
       if (missing.length > 0) {
         type Lean = Pick<TradeForStats, 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'symbol'> & { trading_day_id: string }
         const byDay = new Map<string, Lean[]>()
@@ -145,8 +147,8 @@ export async function loadRiskHistory(supabase: AnyClient, beforeDate: string): 
 
       for (const r of rows) {
         const sums = usable(r)
-          ? { sum_risk_dollars: r.risk as number, risk_sample: r.n as number }
-          : fromTrades.get(r.id) ?? { sum_risk_dollars: 0, risk_sample: 0 }
+          ? { sum_risk_dollars: r.risk as number, sum_risk_sq: r.sq as number, risk_sample: r.n as number }
+          : fromTrades.get(r.id) ?? { sum_risk_dollars: 0, sum_risk_sq: 0, risk_sample: 0 }
         out.push({ date: r.date, ...sums })
         covered += sums.risk_sample
       }

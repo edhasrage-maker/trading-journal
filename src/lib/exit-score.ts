@@ -18,15 +18,19 @@ import { symbolToMultiplier } from '@/lib/futures-symbols'
  *                         was actually filled, and the 5-minute structure was
  *                         with the trade.
  *
- *   Risk axis (moved from Exit 2026-10-14; rules kept 50 / loss size 30 / stop size 20):
- *   2  Loss size          LOSERS only. The dollar loss against the trader's own
- *                         average dollar risk. Full marks up to 1.1× that
- *                         average, none at 2× or more.
+ *   Risk axis (moved from Exit 2026-10-14; see src/lib/tapescore-axes.ts):
+ *   2  Loss size          LOSERS only. The dollar loss against the spread of the
+ *                         trader's own planned dollar risk (their RiskYardstick:
+ *                         mean and SD over recent stop trades). Full marks up to
+ *                         mean + 1 SD, none at mean + 2 SD or more, linear in
+ *                         between. Without a yardstick: against the trade's own
+ *                         planned risk, full marks to 1.1×, none at 2×.
  *   4  Stop size          Trades with a stop and an entry ATR. Passes when the
  *                         stop is no wider than the trader's ATR stop setting
  *                         (1× the 1-minute ATR-10 by default).
  *
- * Definitions and thresholds are unchanged by the move. A trade that never went
+ * Apart from loss size's yardstick (founder, 2026-10-14), definitions and
+ * thresholds are unchanged by the move. A trade that never went
  * anywhere is not an exit failure and is not counted against factor 1. How the
  * factors are weighted and pooled lives in src/lib/tapescore-axes.ts.
  *
@@ -38,7 +42,15 @@ import { symbolToMultiplier } from '@/lib/futures-symbols'
 export type TradeFactorKey = 'kept' | 'lossSize' | 'stopRespected' | 'stopSize' | 'runner'
 export const TRADE_FACTORS: readonly TradeFactorKey[] = ['kept', 'lossSize', 'stopRespected', 'stopSize', 'runner']
 
-/** Loss ÷ average risk: full marks up to here … */
+/** The trader's usual risk: mean and population SD of the planned dollar risk
+ *  of their recent stop trades (src/lib/exit-rollup.ts builds it). */
+export interface RiskYardstick { mean: number; sd: number; n: number }
+
+/** Loss against the yardstick: full marks up to mean + this many SDs … */
+const LOSS_OK_SDS = 1
+/** … and none from mean + this many. Linear in between. */
+const LOSS_ZERO_SDS = 2
+/** Without a yardstick — loss ÷ the trade's own planned risk: full marks up to here … */
 const LOSS_OK = 1.1
 /** … and none from here. Linear in between. */
 const LOSS_ZERO = 2.0
@@ -58,8 +70,8 @@ export interface ExitTradeInput extends MgmtTradeInput {
 }
 
 export interface ExitContext {
-  /** The trader's average planned dollar risk before this trade. Null = unknown; the trade's own planned risk is used. */
-  avgRiskDollars?: number | null
+  /** The trader's usual risk going into this trade. Null = unknown; the trade's own planned risk is used. */
+  riskYardstick?: RiskYardstick | null
   /** Live ATR override for this trade (else the stored entry ATR). */
   atr?: number | null
   /** The trader's ATR stop setting, in ATRs (scoring profile; default 1). */
@@ -104,23 +116,30 @@ function ownRiskDollars(f: TradeFacts, pnl: number): number | null {
 }
 
 /**
- * Factor 2 for one losing trade: its dollar loss against a yardstick — the
- * trader's average dollar risk when that is known, else the trade's own planned
- * risk. Null when there is neither. Split out of `exitTradeScores` (which calls
- * it) so a stored loss can be scored later, once the average is known, by the
- * same arithmetic.
+ * Factor 2 for one losing trade: its dollar loss against the trader's usual
+ * risk spread when that is known (full marks to mean + 1 SD, none from mean +
+ * 2 SD), else against the trade's own planned risk (1.1× / 2×). Null when there
+ * is neither. Split out of `exitTradeScores` (which calls it) so a stored loss
+ * can be scored later, once the yardstick is known, by the same arithmetic.
  */
-export function lossSizeScore(lossDollars: number, ownRisk: number | null, avgRiskDollars?: number | null): number | null {
-  const yardstick = avgRiskDollars != null && avgRiskDollars > 0 ? avgRiskDollars : ownRisk
-  if (yardstick == null || !(yardstick > 0)) return null
-  const ratio = Math.abs(lossDollars) / yardstick
+export function lossSizeScore(lossDollars: number, ownRisk: number | null, yardstick?: RiskYardstick | null): number | null {
+  const loss = Math.abs(lossDollars)
+  if (yardstick && yardstick.mean > 0) {
+    const ok = yardstick.mean + LOSS_OK_SDS * yardstick.sd
+    const zero = yardstick.mean + LOSS_ZERO_SDS * yardstick.sd
+    if (loss <= ok + 1e-9) return 1
+    if (loss >= zero || zero <= ok) return 0
+    return (zero - loss) / (zero - ok)
+  }
+  if (ownRisk == null || !(ownRisk > 0)) return null
+  const ratio = loss / ownRisk
   return ratio <= LOSS_OK ? 1 : ratio >= LOSS_ZERO ? 0 : (LOSS_ZERO - ratio) / (LOSS_ZERO - LOSS_OK)
 }
 
 /**
  * The two numbers factor 2 needs from a losing trade — [dollars lost, its own
  * planned dollar risk or null] — for scoring with `lossSizeScore` once the
- * trader's average risk is known. Null for a trade factor 2 does not judge.
+ * trader's yardstick is known. Null for a trade factor 2 does not judge.
  */
 export function lossSizeInputs(t: ExitTradeInput, ctx: ExitContext = {}): [number, number | null] | null {
   const f = tradeFacts(t, { atr: ctx.atr })
@@ -140,9 +159,9 @@ export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitT
     else if (mfe > 0) out.kept = clamp01(res / mfe)
   }
 
-  // 2 · loss size — losers only, in dollars against the trader's average risk
+  // 2 · loss size — losers only, in dollars against the trader's usual risk
   if (t.pnl < 0) {
-    const s = lossSizeScore(Math.abs(t.pnl), ownRiskDollars(f, t.pnl), ctx.avgRiskDollars)
+    const s = lossSizeScore(Math.abs(t.pnl), ownRiskDollars(f, t.pnl), ctx.riskYardstick)
     if (s != null) out.lossSize = s
   }
 
@@ -169,7 +188,9 @@ export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitT
 }
 
 /** Planned dollar risk of a trade (stop distance × size), or null without a stop. */
-export function plannedRiskDollars(t: ExitTradeInput): number | null {
+export function plannedRiskDollars(t: {
+  entry_price?: number | null; stop_price?: number | null; quantity?: number | null; symbol?: string | null
+}): number | null {
   if (t.entry_price == null || t.stop_price == null || t.quantity == null) return null
   const mult = symbolToMultiplier(t.symbol ?? '')
   const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * mult

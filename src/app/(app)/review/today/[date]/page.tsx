@@ -13,7 +13,7 @@ import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
 import { achievementCounts } from '@/lib/achievements'
 import { pickMarketContext } from '@/lib/market-context-select'
 import { loadTapeScoreSettings, loadRiskHistory } from '@/lib/day-stats-server'
-import { avgRiskBefore } from '@/lib/exit-rollup'
+import { riskYardstickBefore } from '@/lib/exit-rollup'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
 import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
@@ -47,13 +47,13 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       .limit(HEAT_BASELINE_WINDOW),
     // The TapeScore header's per-trade parts: the trader's settings (ATR stop
     // setting for "Stop size", order-flow Score on/off for Entry), and the days
-    // before this one that the average-dollar-risk rule reaches back to ("Loss
+    // before this one that the risk-yardstick rule reaches back to ("Loss
     // size"). The same inputs, by the same rule, the dashboard and the recaps
     // use — so this day shows one TapeScore everywhere.
     loadTapeScoreSettings(supabase),
     loadRiskHistory(supabase, date),
   ])
-  const exitAvgRiskDollars = avgRiskBefore(date, riskHistory)
+  const riskYardstick = riskYardstickBefore(date, riskHistory)
   const day = dayRes.data as TradingDay | null
   const tags = tagsRes.data as TradeTag[] | null
   const pnlHistory = ((dayPnlRes.data ?? []) as { date: string; eod_pnl: number }[]).map(d => ({ date: d.date, pnl: d.eod_pnl }))
@@ -158,7 +158,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         heatBaseline={heatBaseline}
         achievementCounts={counts}
         giveBackAtr={giveBackAtr}
-        exitAvgRiskDollars={exitAvgRiskDollars}
+        riskYardstick={riskYardstick}
         atrStopTarget={scoreSettings.atrStopTarget}
         includeFlowScore={scoreSettings.includeFlow}
       />

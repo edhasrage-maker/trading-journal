@@ -37,6 +37,7 @@ import { mgmtTotals } from '@/lib/trade-management'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import { buildHighlights } from '@/lib/trade-highlights'
 import { effectiveAnalysis } from '@/lib/tapescore-day-rules'
+import type { RiskYardstick } from '@/lib/exit-score'
 import type {
   TradingDay,
   Trade,
@@ -71,11 +72,12 @@ interface Props {
   /** The trader's round-trip "was up" multiple (×ATR) from Settings → ATR
    *  measurement. Defaults to 1× when unset / pre-migration. */
   giveBackAtr?: number
-  /** The trader's average planned dollar risk going INTO this day — the
-   *  yardstick for Risk's "Loss size" (src/lib/exit-rollup.ts).
-   *  Server-computed from the prior days by the same rule every surface uses.
-   *  Null = fewer than 5 stop trades before this day. */
-  exitAvgRiskDollars?: number | null
+  /** The trader's risk yardstick going INTO this day (mean + SD of recent
+   *  planned dollar risk) — what Risk's "Loss size" and the size-up rule are
+   *  judged against (src/lib/exit-rollup.ts). Server-computed from the prior
+   *  days by the same rule every surface uses. Null = fewer than 5 stop trades
+   *  before this day. */
+  riskYardstick?: RiskYardstick | null
   /** The trader's ATR stop setting (scoring profile; default 1) — the
    *  yardstick for Risk's "Stop size". */
   atrStopTarget?: number
@@ -108,7 +110,7 @@ export default function EodClient({
   achievementCounts,
   heatBaseline = null,
   giveBackAtr = 1,
-  exitAvgRiskDollars = null,
+  riskYardstick = null,
   atrStopTarget = 1,
   includeFlowScore = true,
 }: Props) {
@@ -190,10 +192,14 @@ export default function EodClient({
   })
   // The analysis as TapeScore reads it — the stored audit and checklist with the
   // read-time corrections from the day's trades (a broken daily loss limit is a
-  // Breach, the size-up rule re-read from the fills, "no mistakes tagged" from
-  // the tags). The score card and the rules card both show this one, so they
-  // can't disagree; the stored analysis itself is never rewritten.
-  const scoredAnalysis = useMemo(() => effectiveAnalysis(aiAnalysis, trades), [aiAnalysis, trades])
+  // Breach, the size-up rule re-read from the fills against the same average
+  // risk yardstick Loss size uses, "no mistakes tagged" from the tags). The score
+  // card and the rules card both show this one, so they can't disagree; the
+  // stored analysis itself is never rewritten.
+  const scoredAnalysis = useMemo(
+    () => effectiveAnalysis(aiAnalysis, trades, riskYardstick),
+    [aiAnalysis, trades, riskYardstick],
+  )
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
@@ -1000,7 +1006,7 @@ export default function EodClient({
         analysis={scoredAnalysis}
         prepScore={day?.ai_analysis_json?.score ?? null}
         trades={trades}
-        avgRiskDollars={exitAvgRiskDollars}
+        riskYardstick={riskYardstick}
         atrStopTarget={atrStopTarget}
         includeFlow={includeFlowScore}
         tradeCount={trades.length}

@@ -1,13 +1,15 @@
-import { exitTradeScores, lossSizeInputs, lossSizeScore, type ExitTradeInput } from '@/lib/exit-score'
+import { exitTradeScores, lossSizeInputs, lossSizeScore, type ExitTradeInput, type RiskYardstick } from '@/lib/exit-score'
 import { emptyTradeSums, type FactorSum, type TradeSums } from '@/lib/tapescore-axes'
 import { reentryAfterLossIds } from '@/lib/behavioral-proxies'
-import { REENTRY_WINDOW_MIN, hasFreshTrigger, toProxyTrades } from '@/lib/tapescore-day-rules'
+import {
+  REENTRY_WINDOW_MIN, hasFreshTrigger, sizeUpFails, sizeUpInputs, toProxyTrades, type SizeUpInputs,
+} from '@/lib/tapescore-day-rules'
 
 /**
  * Plumbing between the per-trade parts of TapeScore and the places that show
  * them. Nothing here decides how a trade is scored (src/lib/exit-score.ts) or
  * how parts are weighted (src/lib/tapescore-axes.ts) — it stores a day's
- * per-trade inputs, works out the trader's average dollar risk, and reads the
+ * per-trade inputs, works out the trader's risk yardstick, and reads the
  * result for a day.
  *
  * The per-trade parts: Risk's loss size, stop size and re-entries after a loss,
@@ -15,23 +17,26 @@ import { REENTRY_WINDOW_MIN, hasFreshTrigger, toProxyTrades } from '@/lib/tapesc
  * rules.
  *
  * Why a day cannot simply store its scores: "Loss size" measures a loss against
- * the trader's AVERAGE dollar risk, which comes from EARLIER days. So a day
- * stores the other parts as sums + counts and its losing trades as raw pairs,
- * and loss size is worked out when the days are read in sequence.
+ * the trader's USUAL RISK — the yardstick — which comes from EARLIER days. So a
+ * day stores the other parts as sums + counts and its losing trades as raw
+ * pairs, and loss size is worked out when the days are read in sequence. The
+ * "no size-up after a loss" rule reads the same yardstick, so its inputs ride
+ * along (`size_up`) and it is resolved in the same step.
  *
- * One rule for the average, used by every surface (dashboard, recaps, the
+ * One rule for the yardstick, used by every surface (dashboard, recaps, the
  * Recap day page), so a day never shows two different Risk numbers:
  *
  *   take the most recent PRIOR days — whole days, strictly before the date —
  *   going back until they cover at least 30 trades with a logged stop; the
- *   average is their summed planned dollar risk ÷ their count. With fewer than
- *   5 such trades there is no average, and each loss is measured against its
- *   own planned risk instead.
+ *   yardstick is the mean and the population standard deviation of those
+ *   trades' planned dollar risk. With fewer than 5 such trades there is none:
+ *   each loss is measured against its own planned risk instead, and the size-up
+ *   rule falls back to comparing contract counts.
  */
 
 /** Prior days are added until they cover this many trades with a logged stop. */
 export const AVG_RISK_WINDOW_TRADES = 30
-/** Below this many, there is no average. */
+/** Below this many, there is no yardstick. */
 export const AVG_RISK_MIN_TRADES = 5
 
 /** What a day keeps for its per-trade parts — JSON-safe, cached in `stats_json`. */
@@ -52,6 +57,10 @@ export interface DayTradeInputs {
   /** One entry per losing trade "Loss size" judges:
    *  [dollars lost, the trade's own planned dollar risk or null]. */
   losses: Array<[number, number | null]>
+  /** What the "no size-up after a loss" rule needs (src/lib/tapescore-day-rules.ts):
+   *  the planned $ risk of each trade taken while red or after a loss, judged
+   *  against the same yardstick as "Loss size" when the days are read. */
+  size_up: SizeUpInputs
 }
 
 /** The trader's ATR stop setting as "Stop size" uses it (default 1). */
@@ -97,7 +106,7 @@ export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: nu
     if (reentries.has(proxies[i].id)) { sums.reentry.n += 1; sums.reentry.sum += hasFreshTrigger(t) ? 1 : 0 }
   })
   for (const t of trades) {
-    // avgRiskDollars is deliberately absent: the average belongs to the read.
+    // The yardstick is deliberately absent: it belongs to the read.
     const s = exitTradeScores(t, { atrStopTarget: target })
     for (const k of STORED) { const v = s[k]; if (v != null) { sums[k].n += 1; sums[k].sum += v } }
     const pair = lossSizeInputs(t)
@@ -110,12 +119,13 @@ export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: nu
     stopSize: sums.stopSize, reentry: sums.reentry, flow: sums.flow,
     kept: sums.kept, stopRespected: sums.stopRespected, runner: sums.runner,
     losses,
+    size_up: sizeUpInputs(trades),
   }
 }
 
-/** A day's full per-trade sums, with "Loss size" scored against `avgRiskDollars`
- *  (null = no average; each loss falls back to its own planned risk). */
-export function dayTradeSums(stored: DayTradeInputs | null | undefined, avgRiskDollars: number | null): TradeSums | null {
+/** A day's full per-trade sums, with "Loss size" scored against the trader's
+ *  `yardstick` (null = none yet; each loss falls back to its own planned risk). */
+export function dayTradeSums(stored: DayTradeInputs | null | undefined, yardstick: RiskYardstick | null): TradeSums | null {
   if (!stored) return null
   const sums = emptyTradeSums()
   for (const k of [...STORED, 'reentry', 'flow'] as const) {
@@ -123,50 +133,65 @@ export function dayTradeSums(stored: DayTradeInputs | null | undefined, avgRiskD
     sums[k].sum = stored[k]?.sum || 0
   }
   for (const pair of stored.losses ?? []) {
-    const s = lossSizeScore(pair[0], pair[1] ?? null, avgRiskDollars)
+    const s = lossSizeScore(pair[0], pair[1] ?? null, yardstick)
     if (s != null) { sums.lossSize.n += 1; sums.lossSize.sum += s }
   }
   return sums
 }
 
-/** The part of a day the average-risk rule reads. */
+/** The part of a day the yardstick rule reads. */
 export interface RiskDay {
   date: string
   /** Summed planned dollar risk of the day's trades with a logged stop. */
   sum_risk_dollars?: number | null
-  /** How many trades that sum covers. */
+  /** The same trades' planned dollar risk, squared and summed (for the SD). */
+  sum_risk_sq?: number | null
+  /** How many trades those sums cover. */
   risk_sample?: number | null
 }
 
+/** Mean and population SD from a window's sums; null under the minimum. */
+function yardstickOf(sum: number, sq: number, n: number): RiskYardstick | null {
+  if (n < AVG_RISK_MIN_TRADES || !(sum > 0)) return null
+  const mean = sum / n
+  return { mean, sd: Math.sqrt(Math.max(0, sq / n - mean * mean)), n }
+}
+
 /**
- * The trader's average planned dollar risk going INTO `date`: the most recent
- * whole days strictly before it, added newest-first until they cover at least
- * AVG_RISK_WINDOW_TRADES stop trades. Null with fewer than AVG_RISK_MIN_TRADES.
+ * The trader's risk yardstick going INTO `date`: the most recent whole days
+ * strictly before it, added newest-first until they cover at least
+ * AVG_RISK_WINDOW_TRADES stop trades — the mean and population SD of those
+ * trades' planned dollar risk. Null with fewer than AVG_RISK_MIN_TRADES.
  * `days` may be in any order and may include `date` itself or later days.
  */
-export function avgRiskBefore(date: string, days: readonly RiskDay[]): number | null {
+export function riskYardstickBefore(date: string, days: readonly RiskDay[]): RiskYardstick | null {
   const prior = days
     .filter(d => d.date < date && (d.risk_sample ?? 0) > 0)
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
-  let sum = 0, n = 0
+  let sum = 0, sq = 0, n = 0
   for (const d of prior) {
     sum += d.sum_risk_dollars ?? 0
+    sq += d.sum_risk_sq ?? 0
     n += d.risk_sample ?? 0
     if (n >= AVG_RISK_WINDOW_TRADES) break
   }
-  return n >= AVG_RISK_MIN_TRADES && sum > 0 ? sum / n : null
+  return yardstickOf(sum, sq, n)
 }
 
 /** One day's per-trade parts, read in sequence. */
 export interface DayTradeRead {
-  /** The average dollar risk "Loss size" was measured against (null = none yet). */
-  avgRiskDollars: number | null
+  /** The yardstick "Loss size" and the size-up rule were measured against (null = none yet). */
+  yardstick: RiskYardstick | null
   /** Sums + counts per part — what a period pools. Null when the day carries no inputs. */
   sums: TradeSums | null
+  /** "No size-up after a loss": how many trades risked more than the trader's
+   *  usual spread (the quantity rule with no yardstick). Null when the day
+   *  carries no inputs. */
+  sizeUpFails: number | null
 }
 
 /**
- * Read a set of days in sequence: each day's average risk comes from the days
+ * Read a set of days in sequence: each day's yardstick comes from the days
  * before it — the other days passed here plus `history` (earlier days the
  * caller loaded only for this purpose). A date present in both counts once,
  * from `days`. Returns one entry per input day, in input order.
@@ -182,14 +207,19 @@ export function tradeSumsInSequence<T extends RiskDay & { trade_parts?: DayTrade
   return days.map(d => {
     // `all` is ascending, so the days strictly before this one are a prefix.
     let hi = lowerBound(all, d.date)
-    let sum = 0, n = 0
+    let sum = 0, sq = 0, n = 0
     while (hi > 0 && n < AVG_RISK_WINDOW_TRADES) {
       hi -= 1
       sum += all[hi].sum_risk_dollars ?? 0
+      sq += all[hi].sum_risk_sq ?? 0
       n += all[hi].risk_sample ?? 0
     }
-    const avgRiskDollars = n >= AVG_RISK_MIN_TRADES && sum > 0 ? sum / n : null
-    return { avgRiskDollars, sums: dayTradeSums(d.trade_parts, avgRiskDollars) }
+    const yardstick = yardstickOf(sum, sq, n)
+    return {
+      yardstick,
+      sums: dayTradeSums(d.trade_parts, yardstick),
+      sizeUpFails: d.trade_parts?.size_up ? sizeUpFails(d.trade_parts.size_up, yardstick) : null,
+    }
   })
 }
 

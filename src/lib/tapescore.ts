@@ -3,7 +3,7 @@ import {
   blendAxis, emptyTradeSums, entryChecklist, mergeTradeSums, sumScore,
   type PartView, type TapeScoreParts, type TradePartKey, type TradeSums,
 } from '@/lib/tapescore-axes'
-import { dailyLossLimitBroken } from '@/lib/tapescore-day-rules'
+import { applySizeUp, dailyLossLimitBroken } from '@/lib/tapescore-day-rules'
 
 /**
  * One TapeScore (Ruleset amendment 6, 2026-07-23).
@@ -34,8 +34,9 @@ import { dailyLossLimitBroken } from '@/lib/tapescore-day-rules'
  *
  * AMENDMENT 9 (2026-10-14, founder-directed) — the axes measure what their
  * names say. Risk is actual risk management, not just rule following: loss size
- * and stop size moved into it from Exit (same definitions, thresholds and
- * average-dollar-risk rule). Exit keeps how you got out (three factors). Entry
+ * and stop size moved into it from Exit (stop size unchanged; loss size now
+ * measured against the trader's usual risk spread — mean + 1 SD full marks,
+ * mean + 2 SD none). Exit keeps how you got out (three factors). Entry
  * is the trade idea: the checklist now reads six of the nine items the analysis
  * grades (stop-in-ATR-band is Risk's stop size; the two emotion items left),
  * profit factor is gone, and the per-trade order-flow Score can join it (a
@@ -44,12 +45,13 @@ import { dailyLossLimitBroken } from '@/lib/tapescore-day-rules'
  * re-analysis. The stored rules audit and checklist are also corrected from the
  * day's trades at read time (src/lib/tapescore-day-rules.ts): a broken daily
  * loss limit is a Breach on its own, "no size-up after a loss" is recomputed
- * with the recap's pressing-into-drawdown definition, and "no mistakes tagged"
- * is read off the trades' tags. Risk also gained a light fourth part:
+ * against normal size in dollar risk (the same average Loss size reads — so it
+ * too is resolved when the days are read in sequence), and "no mistakes
+ * tagged" is read off the trades' tags. Risk also gained a light fourth part:
  * re-entries within 5 minutes of a losing exit must carry a fresh trigger.
  * A day's score is built in two steps: `tapeScoreBase` (the parts
  * that come from the analysis — cacheable) and `finishTapeScore` (blend in the
- * per-trade parts, which need the trader's average risk from EARLIER days).
+ * per-trade parts, which need the trader's risk yardstick from EARLIER days).
  *
  * A PERIOD pools: its per-trade parts are summed over the period's trades
  * (never a mean of daily values), its session parts (rules, checklist, plan)
@@ -138,6 +140,11 @@ export interface TapeScoreOptions {
   /** The trader's setting: include the order-flow Score in Entry. On unless
    *  switched off (see includeFlowScoreInEntry in scoring-profile.ts). */
   includeFlow?: boolean
+  /** "No size-up after a loss", resolved against the trader's risk yardstick
+   *  going into the day: how many trades sized up. Undefined = the audit is
+   *  taken as given (the caller already applied it, or there is nothing to
+   *  apply). */
+  sizeUpFails?: number | null
 }
 
 export interface TapeScoreInput extends TapeScoreOptions {
@@ -152,6 +159,13 @@ export interface TapeScoreInput extends TapeScoreOptions {
    *  stop size, Entry's order-flow Score, the three Exit parts. Null/absent =
    *  no trade to judge. */
   trades?: TradeSums | null
+}
+
+/** A cached rules audit: each rail's status, the rails tracked, the verdict. */
+export interface RulesAudit {
+  per_rule: Record<string, { status: RuleStatus['status'] }>
+  active_rails: string[] | null
+  verdict: 'Compliant' | 'Breach'
 }
 
 /**
@@ -169,6 +183,10 @@ export interface TapeScoreBase {
   passCount: number | null
   railCount: number | null
   verdict: 'Compliant' | 'Breach' | null
+  /** The audit the four fields above came from (statuses only), kept so the
+   *  read can resolve "no size-up after a loss" once the trader's risk yardstick
+   *  is known. Null without a rules audit. */
+  audit: RulesAudit | null
   /** The analysis ran an execution read — the day has an Entry axis. */
   hasEntry: boolean
   /** Entry's checklist, 0-100 (six items), or null. */
@@ -191,7 +209,36 @@ export interface TapeScoreBase {
  */
 export function tapeScoreBase(input: TapeScoreInput): TapeScoreBase | null {
   const { process, execution, legacyScore } = input
+  const { rules, passCount, railCount, verdict } = rulesFromAudit(process)
 
+  // Rails alone never make a TapeScore without an execution read either — the
+  // day reads as unanalyzed until an EOD analysis (or a legacy score) exists.
+  if (rules == null && execution == null) {
+    if (legacyScore == null) return null
+    return {
+      basis: 'legacy', rules: null, passCount: null, railCount: null, verdict: null, audit: null,
+      hasEntry: false, checklist: null, checklistLegacy: false, plan: null, entryFallback: null,
+      legacy: Math.round(clamp(legacyScore, 0, 10) * 10),
+    }
+  }
+
+  // Entry's session parts. `mfe_capture` and `profit_factor` are deliberately
+  // not read (amendments 8 and 9).
+  const cl = entryChecklist(execution)
+  return {
+    basis: 'v15', rules, passCount, railCount, verdict,
+    audit: process?.per_rule ? compactAudit(process) : null,
+    hasEntry: execution != null,
+    checklist: cl.value != null ? clamp01(cl.value) * 100 : null,
+    checklistLegacy: cl.legacy,
+    plan: execution?.prep_adherence != null ? clamp01(execution.prep_adherence) * 100 : null,
+    entryFallback: execution?.composite != null ? clamp01(execution.composite) * 100 : null,
+    legacy: null,
+  }
+}
+
+/** The rules part, pass count, rail count and verdict of an audit. */
+function rulesFromAudit(process: ProcessVerdict | null | undefined) {
   // The rules part is scored over the rails the trader TRACKS. `active_rails`
   // is absent on rows analyzed before it existed and on the founder's build —
   // both grade all five, so they keep the historical /5 denominator exactly. An
@@ -204,46 +251,41 @@ export function tapeScoreBase(input: TapeScoreInput): TapeScoreBase | null {
     ? railPassCount(process, process.active_rails)
     : null
   const rules = passCount != null ? (passCount / railDenom) * 100 : null
-
-  // Rails alone never make a TapeScore without an execution read either — the
-  // day reads as unanalyzed until an EOD analysis (or a legacy score) exists.
-  if (rules == null && execution == null) {
-    if (legacyScore == null) return null
-    return {
-      basis: 'legacy', rules: null, passCount: null, railCount: null, verdict: null,
-      hasEntry: false, checklist: null, checklistLegacy: false, plan: null, entryFallback: null,
-      legacy: Math.round(clamp(legacyScore, 0, 10) * 10),
-    }
-  }
-
   // With a known rail set, trust the verdict the analysis already derived
   // proportionally (see applyDeterministicOverrides) — re-deriving it as
   // "passCount >= 4" would call every trader who tracks three rails a Breach
   // and cap them at 49. Legacy rows keep the historical arithmetic.
   // A broken daily loss limit (when tracked) is a Breach on its own, however
-  // many other rules held (amendment 9). The other read-time corrections to the
-  // audit (the size-up rule from the trades) arrive already applied — see
-  // effectiveAnalysis in src/lib/tapescore-day-rules.ts.
+  // many other rules held (amendment 9). The size-up rule is applied to the
+  // audit before it gets here (src/lib/tapescore-day-rules.ts).
   const verdict: 'Compliant' | 'Breach' | null =
     passCount == null ? null
       : dailyLossLimitBroken(process) ? 'Breach'
         : tracked != null ? (process?.verdict ?? null)
           : passCount >= 4 ? 'Compliant' : 'Breach'
+  return { rules, passCount, railCount: passCount != null ? railDenom : null, verdict }
+}
 
-  // Entry's session parts. `mfe_capture` and `profit_factor` are deliberately
-  // not read (amendments 8 and 9).
-  const cl = entryChecklist(execution)
-  return {
-    basis: 'v15', rules, passCount,
-    railCount: passCount != null ? railDenom : null,
-    verdict,
-    hasEntry: execution != null,
-    checklist: cl.value != null ? clamp01(cl.value) * 100 : null,
-    checklistLegacy: cl.legacy,
-    plan: execution?.prep_adherence != null ? clamp01(execution.prep_adherence) * 100 : null,
-    entryFallback: execution?.composite != null ? clamp01(execution.composite) * 100 : null,
-    legacy: null,
+/** The part of an audit the score reads — statuses, tracked rails, verdict —
+ *  small enough to cache with the day. */
+function compactAudit(p: ProcessVerdict): RulesAudit {
+  const per_rule: RulesAudit['per_rule'] = {}
+  for (const [id, r] of Object.entries(p.per_rule as Record<string, RuleStatus | undefined>)) {
+    if (r?.status) per_rule[id] = { status: r.status }
   }
+  return { per_rule, active_rails: p.active_rails ?? null, verdict: p.verdict }
+}
+
+/**
+ * The day's audit with "no size-up after a loss" resolved: `sizeUpFails` is how
+ * many trades risked more than the trader's usual spread going into the day
+ * (src/lib/tapescore-day-rules.ts); undefined leaves the audit as cached. The
+ * verdict re-derives, and a broken daily loss limit stays a Breach.
+ */
+export function resolvedAudit(base: TapeScoreBase | null | undefined, sizeUpFails?: number | null): ProcessVerdict | null {
+  if (!base?.audit) return null
+  const p = { ...base.audit, active_rails: base.audit.active_rails ?? undefined } as unknown as ProcessVerdict
+  return sizeUpFails === undefined ? p : applySizeUp(p, sizeUpFails)
 }
 
 type SessionPart = { score: number | null; n: number | null }
@@ -288,6 +330,10 @@ export function finishTapeScore(
     }
   }
 
+  // "No size-up after a loss" resolved against the risk yardstick, when given.
+  if (opts.sizeUpFails !== undefined && base.audit) {
+    base = { ...base, ...rulesFromAudit(resolvedAudit(base, opts.sizeUpFails)) }
+  }
   const includeFlow = opts.includeFlow ?? true
   const axes = readAxes(
     { rules: { score: base.rules, n: null }, checklist: { score: base.checklist, n: null }, plan: { score: base.plan, n: null } },

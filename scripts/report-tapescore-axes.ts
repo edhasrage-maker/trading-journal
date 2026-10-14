@@ -9,8 +9,11 @@
  * — and the recap path is printed beside it so any disagreement shows up here
  * first. OLD is rebuilt from the same rollups with the amendment-8 arithmetic
  * (Risk = rails kept from the stored audit; Entry = exec params 41 / plan 24 /
- * profit factor 11; Exit = five factors 25/25/20/15/15 pooled over trades; the
- * stored verdict for the cap) so the two are compared on identical data.
+ * profit factor 11; Exit = five factors 25/25/20/15/15 pooled over trades, loss
+ * size against the plain average risk at 1.1× / 2×; the stored verdict for the
+ * cap) so the two are compared on identical data. Each October day also shows
+ * P3 as stored, as the previous build read it (quantity rule) and now (usual
+ * risk spread), with the yardstick and the trades it judged.
  *
  * Never writes: the client is wrapped so every write throws or no-ops (the
  * recap loader's best-effort cache write-back is swallowed), and every read is
@@ -26,6 +29,8 @@ import { loadTapeScoreSettings } from '../src/lib/day-stats-server'
 import { loadPeriodDays, summarizePeriod, monthRange, nextMonth } from '../src/lib/period-recap'
 import { aggregateTapeScore, railPassCount, type TapeScoreResult } from '../src/lib/tapescore'
 import { axisPartLines, mergeTradeSums, sumScore, type TradeSums } from '../src/lib/tapescore-axes'
+import { tradeSumsInSequence, type DayTradeInputs } from '../src/lib/exit-rollup'
+import type { RiskYardstick } from '../src/lib/exit-score'
 import type { EodAiAnalysis } from '../src/lib/supabase/types'
 
 const arg = (name: string, dflt: string) => process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1] ?? dflt
@@ -75,6 +80,19 @@ async function all<T>(table: string, cols: string, order: string): Promise<T[]> 
 // ── OLD (amendment 8) arithmetic, rebuilt for comparison ──────────────────────
 interface Axes { score: number | null; risk: number | null; entry: number | null; exit: number | null }
 const OLD_EXIT_W = { kept: 0.25, lossSize: 0.25, stopRespected: 0.20, stopSize: 0.15, runner: 0.15 } as const
+/** Amendment-8 loss size: the loss against the plain AVERAGE risk (the
+ *  yardstick's mean), full marks to 1.1x, none at 2x; own planned risk with no
+ *  average. */
+function oldLossSums(parts: DayTradeInputs | null | undefined, y: RiskYardstick | null) {
+  let n = 0, sum = 0
+  for (const [loss, own] of parts?.losses ?? []) {
+    const yard = y && y.mean > 0 ? y.mean : own
+    if (yard == null || !(yard > 0)) continue
+    const ratio = Math.abs(loss) / yard
+    n += 1; sum += ratio <= 1.1 ? 1 : ratio >= 2 ? 0 : (2 - ratio) / 0.9
+  }
+  return { n, sum }
+}
 function oldExit(s: TradeSums | null | undefined): number | null {
   if (!s) return null
   let w = 0, v = 0
@@ -148,7 +166,17 @@ async function main() {
   const on = scoreDayRollups(rollups, [], { includeFlow: true })
   const off = scoreDayRollups(rollups, [], { includeFlow: false })
   const eodById = new Map(days.map(d => [d.id, d.eod_ai_analysis_json]))
-  const oldOf = (r: ScoredDayRollup) => oldDay(eodById.get(r.id), r.trade_sums)
+  // The yardstick each day was read with (the same sequence the app runs), and
+  // the trade sums with loss size scored the amendment-8 way, for OLD.
+  const reads = tradeSumsInSequence(rollups)
+  const yardById = new Map(rollups.map((r, i) => [r.id, reads[i].yardstick]))
+  const oldSumsById = new Map(rollups.map((r, i) => {
+    const s = reads[i].sums
+    return [r.id, s ? { ...s, lossSize: oldLossSums(r.trade_parts, reads[i].yardstick) } : null]
+  }))
+  const oldOf = (r: ScoredDayRollup) => oldDay(eodById.get(r.id), oldSumsById.get(r.id) ?? null)
+  // P3 under the previous build (quantity rule, always), for "what changed".
+  const p3Prev = (r: ScoredDayRollup) => ((r.trade_parts?.size_up?.qty_hits ?? 0) > 0 ? 'fail' : 'pass')
 
   const head = (l: string) => `${l} R   E   X  TS  `
   console.log('\nMONTHLY   (Risk Entry Exit TapeScore)')
@@ -158,7 +186,7 @@ async function main() {
     const inOn = on.filter(d => d.date >= start && d.date <= end)
     const inOff = off.filter(d => d.date >= start && d.date <= end)
     const pOn = aggregateTapeScore(inOn), pOff = aggregateTapeScore(inOff)
-    const pOld = oldPeriod(inOn.map(d => ({ old: oldOf(d), sums: d.trade_sums })))
+    const pOld = oldPeriod(inOn.map(d => ({ old: oldOf(d), sums: oldSumsById.get(d.id) ?? null })))
     const recap = summarizePeriod(await loadPeriodDays(ro, start, end)).score
     const mine = settings.includeFlow ? pOn : pOff
     const same = recap.score === mine.score && recap.risk === mine.risk && recap.entry === mine.entry && recap.exit === mine.exit
@@ -182,8 +210,14 @@ async function main() {
       const stored = eodById.get(d.id)?.process
       if (stored?.verdict && stored.verdict !== ts.components.verdict) notes.push(`verdict ${stored.verdict} → ${ts.components.verdict}`)
       const storedP3 = (stored?.per_rule as Record<string, { status?: string }> | undefined)?.P3?.status
-      if (storedP3 === 'pass' && d.process_breach_rules?.includes('P3')) notes.push('P3 now fails')
-      if (storedP3 === 'fail' && d.process_breach_rules && !d.process_breach_rules.includes('P3')) notes.push('P3 now passes')
+      const nowP3 = d.process_breach_rules?.includes('P3') ? 'fail' : 'pass'
+      const y = yardById.get(d.id)
+      const pressed = (d.trade_parts?.size_up?.pressed ?? []).map(x => (x == null ? 'no stop' : `$${Math.round(x)}`)).join(',')
+      notes.push(`P3 stored ${storedP3} / prev build ${p3Prev(d)} / now ${nowP3}`
+        + ` (usual risk ${y ? `$${Math.round(y.mean)} ± $${Math.round(y.sd)}, limit $${Math.round(y.mean + 2 * y.sd)}` : 'none: quantity rule'}`
+        + `${pressed ? `; red/after-loss trades ${pressed}` : ''})`)
+      const loss = ts.parts.risk.lossSize
+      if (loss.n) notes.push(`loss size ${r0(loss.score)} on ${loss.n}`)
       const storedNm = eodById.get(d.id)?.execution?.execution_parameter_breakdown?.no_mistakes_tagged
       notes.push(`no-mistakes ${storedNm == null ? '—' : r0(storedNm * 100)} → from tags`)
     }

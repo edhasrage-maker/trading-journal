@@ -59,7 +59,7 @@ export async function GET(req: Request) {
     const supabase: AnyClient = await createClient()
     // Both feed the per-trade parts: the trader's TapeScore settings (ATR stop
     // setting, order-flow Score on/off), and the days before the range that the
-    // average-dollar-risk rule reaches back to.
+    // risk-yardstick rule reaches back to.
     const [{ atrStopTarget, includeFlow }, riskHistory] = await Promise.all([
       loadTapeScoreSettings(supabase),
       loadRiskHistory(supabase, from),

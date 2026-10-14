@@ -7,7 +7,7 @@ import type { ExecutionScore } from '@/lib/supabase/types'
  *   Risk  — actual risk management, not just rule following
  *             Rules kept        45%  rails passed ÷ rails tracked (the day's rules audit,
  *                                    with the read-time corrections in tapescore-day-rules.ts)
- *             Loss size         27%  losing trades: the loss against your average dollar risk
+ *             Loss size         27%  losing trades: the loss against your usual risk spread (mean + 1 SD full marks, mean + 2 SD none)
  *             Stop size         18%  trades with a stop: no wider than your ATR stop setting
  *             Re-entries        10%  trades entered within 5 minutes of a losing exit that
  *                                    day: pass with a fresh trigger (an entry model other
@@ -28,7 +28,7 @@ import type { ExecutionScore } from '@/lib/supabase/types'
  * over more trades — never an average of daily values.
  *
  * Loss size and stop size are scored per trade exactly as before they moved
- * here from Exit (src/lib/exit-score.ts); the average-dollar-risk rule is in
+ * here from Exit (src/lib/exit-score.ts); the risk yardstick is in
  * src/lib/exit-rollup.ts.
  */
 
