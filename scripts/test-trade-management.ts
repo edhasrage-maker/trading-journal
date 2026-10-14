@@ -62,6 +62,10 @@ console.log('the day, in each unit')
   near('never MAE ($)', usd.never.mae, 100)
   near('net per trade ($) ties to the day P&L ÷ trades', usd.net, 100)
   near('net per trade (pts)', pts.net, 10)
+  // The card's last line names what it averages: both trades, +$200 in all —
+  // not the two rows subtracted (+$300 − $100 would read +$200 "per trade").
+  check('net averages over both trades', usd.netCount === 2 && atr.netCount === 2)
+  near('net total ($) is the day P&L', usd.netTotal, 200)
 }
 
 console.log('pooling is addition, not an average of averages')

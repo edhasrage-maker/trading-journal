@@ -241,6 +241,11 @@ export interface MgmtView {
   never: MgmtGroupView
   /** Average result per sorted trade, in the chosen unit. */
   net: number | null
+  /** What `net` is made of: how many trades it averages over, and their summed
+   *  result. The card names the count on the line itself — "Net per trade"
+   *  alone was read as the two rows above subtracted. */
+  netCount: number
+  netTotal: number | null
   classified: number
   unclassified: number
 }
@@ -267,6 +272,8 @@ export function mgmtView(tot: MgmtTotals, unit: MgmtUnit): MgmtView {
       result: avg(n.res, n.n),
     },
     net: netN > 0 ? (w.res + n.res) / netN : null,
+    netCount: netN,
+    netTotal: netN > 0 ? w.res + n.res : null,
     classified: tot.went.count + tot.never.count,
     unclassified: tot.unclassified,
   }

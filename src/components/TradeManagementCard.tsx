@@ -93,8 +93,20 @@ export default function TradeManagementCard({ totals, className }: Props) {
             fmt={fmt}
             trailing={null}
           />
-          <div className="mt-2.5 pt-2 border-t border-gray-800 flex items-baseline justify-between gap-2 text-[13px]">
-            <span className="text-gray-500">Net per trade</span>
+          {/* Names the trades it averages over. As a bare "Net per trade" it was
+              read as the two rows above subtracted (+$117 − $103 ≠ +$5): each
+              row is the average of its own group, this is the average of both. */}
+          <div
+            className="mt-2.5 pt-2 border-t border-gray-800 flex items-baseline justify-between gap-2 text-[13px]"
+            title={v.netCount > 1
+              ? `${fmt(v.netTotal)} across ${v.netCount} trades, divided by ${v.netCount}. Not the two lines above subtracted: each of those is the average for its own group.`
+              : undefined}
+          >
+            <span className="text-gray-500">
+              {v.netCount > 1
+                ? `Average of ${v.unclassified > 0 ? 'these' : 'all'} ${v.netCount} trades`
+                : v.netCount === 1 ? 'This trade' : 'Average per trade'}
+            </span>
             <span className="font-bold text-gray-200 whitespace-nowrap">{fmt(v.net)}</span>
           </div>
           {v.unclassified > 0 && (
