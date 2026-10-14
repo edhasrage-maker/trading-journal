@@ -91,35 +91,6 @@ function hashTrade(t: Trade): string {
   for (let i = 0; i < basis.length; i++) h = ((h << 5) + h + basis.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
 }
-/** Below this many trades, Win Rate renders muted rather than as a headline
- *  figure. A rate over one or two trades is the individual results restated —
- *  100% on a single winner reads like a record instead of a coin landing once.
- *  Five is a judgement, not a derivation: it is roughly where one more trade
- *  stops being able to swing the rate by 20 points or more. The value is always
- *  shown; only its weight changes, so nothing the trader looks for disappears. */
-const MIN_RATE_SAMPLE = 5
-
-/** One of the day's plain facts (P&L, trades, win rate) as a box beside the
- *  Trade management card. Wide screens only — see the row it is used in. */
-function DayFact({ label, value, valueClass, title }: {
-  label: string
-  value: string
-  valueClass?: string
-  title?: string
-}) {
-  return (
-    <div
-      className="hidden lg:flex flex-col justify-center items-center text-center min-w-0 border border-gray-800 rounded-[3px] p-[18px]"
-      title={title}
-    >
-      <p className="text-xs text-gray-500 whitespace-nowrap">{label}</p>
-      <p className={`font-bold leading-tight whitespace-nowrap text-[length:clamp(1.25rem,2.6vw,1.875rem)] ${valueClass ?? 'text-gray-200'}`}>
-        {value}
-      </p>
-    </div>
-  )
-}
-
 const summaryCacheKey = (id: string) => `trade-summary-${id}`
 
 export default function EodClient({
@@ -676,11 +647,7 @@ export default function EodClient({
   }, [trades])
 
   const winCount = trades.filter(t => (t.pnl ?? 0) > 0).length
-  const lossCount = trades.filter(t => (t.pnl ?? 0) < 0).length
   const winRate = trades.length > 0 ? (winCount / trades.length) * 100 : 0
-  // Detailed Tape with trades: the Trade management card shows, and on a wide
-  // screen the day's three facts sit in boxes beside it.
-  const showMgmtRow = mode === 'pro' && trades.length > 0
 
   // Trade management for the day: every trade sorted into "went your way" /
   // "never got going", with its MFE, MAE and result. One shared definition
@@ -970,53 +937,16 @@ export default function EodClient({
             )}
           </div>
         </div>
-        <div className={`flex items-center gap-2 text-sm ${showMgmtRow ? 'lg:hidden' : ''}`}>
-          {/* Stats strip: what the day did. On a wide screen in Detailed Tape
-              these three move down into boxes beside the Trade management card
-              (see the row below the score), so the strip steps aside there.
-
-              W/L was dropped rather than moved: Win Rate sits right beside it and
-              the TapeScore card below already prints "N trades - NW / NL", so the
-              same fact was on screen three times inside 100px. */}
-          <div className="flex flex-wrap items-start gap-y-3">
-          <div>
-            <div className="flex items-start gap-x-4">
-              <div>
-                <div className="text-[10px] text-gray-500 whitespace-nowrap">PnL</div>
-                <div className={`font-mono text-[17px] whitespace-nowrap ${computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-                  {`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(computedPnl).toFixed(2)}`}
-                </div>
-              </div>
-              <div>
-                <div className="text-[10px] text-gray-500 whitespace-nowrap">Trades</div>
-                <div className="font-mono text-white text-[17px]">{trades.length}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-gray-500 whitespace-nowrap">Win Rate</div>
-                {/* Muted below MIN_RATE_SAMPLE. At one or two trades a "rate" is
-                    just the individual results restated, and 100% reads like a
-                    record rather than a coin landing once. Shown, never hidden:
-                    the number is true, it simply isn't evidence yet. */}
-                <div
-                  className={`font-mono text-[17px] ${trades.length < MIN_RATE_SAMPLE ? 'text-gray-500' : 'text-white'}`}
-                  title={trades.length < MIN_RATE_SAMPLE
-                    ? `${trades.length} trade${trades.length === 1 ? '' : 's'} — too few to read as a rate`
-                    : undefined}
-                >
-                  {winRate.toFixed(0)}%
-                </div>
-              </div>
-            </div>
-          </div>
-          </div>
-        </div>
+        {/* The P&L / Trades / Win Rate strip that sat here moved into the one
+            Recap card below (TapeScoreHeader) — it was the same three numbers
+            the card and its boxes already printed. */}
       </div>
 
       {/* Time-aware seam (Pt 13 step 3): before the close the score hero is
           premature, so its slot shows a "session still live" state that points
           back to Intraday. Judgment (scores, verdicts, AI) stays out of sight
           until the market closes or the trader ends by choice. */}
-      {sessionStillLive ? (
+      {sessionStillLive && (
         <div className="rounded-xl border border-amber-800/50 bg-amber-950/20 px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
           <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-amber-300 shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" /> LIVE
@@ -1049,55 +979,27 @@ export default function EodClient({
             </Link>
           </div>
         </div>
-      ) : (
-        /* One TapeScore hero (Ruleset amendment 5): 0-100 ring + day verdict
-           sentence + component chips. Hidden until the day has an analysis. */
-        <TapeScoreHeader
-          analysis={aiAnalysis}
-          prepScore={day?.ai_analysis_json?.score ?? null}
-          trades={trades}
-          avgRiskDollars={exitAvgRiskDollars}
-          atrStopTarget={atrStopTarget}
-          tradeCount={trades.length}
-          winCount={winCount}
-          lossCount={lossCount}
-          pnl={computedPnl}
-        />
       )}
 
-      {/* Trade management — the day's trades sorted into went-your-way /
-          never-got-going. Replaces the old Avg MFE/MAE · Profit Captured ·
-          MFE:MAE trio, which were three different averages over three different
-          sets of trades. Detailed Tape only, like the figures it replaces.
-
-          It sits UNDER the score (the day's callout leads) and shares its row
-          with the day's three plain facts, so the card never has half a page of
-          nothing beside it. Below lg three boxes do not fit, so the facts stay
-          in the header strip and the card runs full width. */}
-      {showMgmtRow && (
-        <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,2.4fr)]">
-          <DayFact
-            label="Day P&L"
-            value={`${computedPnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(computedPnl)).toLocaleString()}`}
-            valueClass={computedPnl > 0 ? 'text-green-400' : computedPnl < 0 ? 'text-red-400' : 'text-gray-400'}
-          />
-          <DayFact label="Trades" value={String(trades.length)} />
-          {/* Muted below MIN_RATE_SAMPLE, same as the strip: the number is true,
-              it simply isn't evidence yet. */}
-          <DayFact
-            label="Win rate"
-            value={`${winRate.toFixed(0)}%`}
-            valueClass={trades.length < MIN_RATE_SAMPLE ? 'text-gray-500' : undefined}
-            title={trades.length < MIN_RATE_SAMPLE
-              ? `${trades.length} trade${trades.length === 1 ? '' : 's'} — too few to read as a rate`
-              : undefined}
-          />
-          <TradeManagementCard
-            totals={mgmt}
-            className="min-w-0 border border-gray-800 rounded-[3px] p-[18px]"
-          />
-        </div>
-      )}
+      {/* The one Recap card: the day's TapeScore (ring, verdict, Risk / Entry /
+          Exit), the day's numbers in one line (P&L · trades · win rate) and —
+          in Detailed Tape — the Trade management read on its right half.
+          While the session is live the score stays hidden and the card carries
+          just the numbers and Trade management. */}
+      <TapeScoreHeader
+        analysis={aiAnalysis}
+        prepScore={day?.ai_analysis_json?.score ?? null}
+        trades={trades}
+        avgRiskDollars={exitAvgRiskDollars}
+        atrStopTarget={atrStopTarget}
+        tradeCount={trades.length}
+        winRate={winRate}
+        pnl={computedPnl}
+        showScore={!sessionStillLive}
+        aside={mode === 'pro' && trades.length > 0
+          ? <TradeManagementCard totals={mgmt} className="min-w-0" />
+          : undefined}
+      />
 
       {/* The behavioral flags stay promoted above the fold (alpha-readiness
           item 23) — self-suppressing, so an empty day shows nothing. The heat
