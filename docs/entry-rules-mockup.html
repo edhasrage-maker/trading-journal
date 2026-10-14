@@ -1,0 +1,393 @@
+<title>Entry Rules Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the app's own Settings column and Recap table, stacked as three screens, in TapeScore's carbon palette. */
+:root {
+  color-scheme: dark;
+  --ground: #0C0D10; --panel: #131519; --panel2: #1B1E23; --line: #282C32; --hair: #1C2026;
+  --ink: #E8EAED; --mut: #969BA3; --faint: #5E636B; --field: #0C0D10; --fieldline: #3D434B;
+  --accent: #4F97CE; --accent-ink: #79B4E6; --pos: #4FC58E; --neg: #E0685F; --warn: #D6B24E;
+  --pos-bg: rgba(79,197,142,.12); --neg-bg: rgba(224,104,95,.12); --warn-bg: rgba(214,178,78,.12);
+  --display: 'Archivo', 'Hanken Grotesk', system-ui, sans-serif;
+  --body: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490; --field: #FFFFFF; --fieldline: #BFC5D8;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+  --pos-bg: rgba(31,122,110,.10); --neg-bg: rgba(154,51,64,.10); --warn-bg: rgba(160,122,30,.12);
+} }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490; --field: #FFFFFF; --fieldline: #BFC5D8;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+  --pos-bg: rgba(31,122,110,.10); --neg-bg: rgba(154,51,64,.10); --warn-bg: rgba(160,122,30,.12);
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.page { max-width: 980px; padding-inline: 16px; padding-block: 28px 64px; margin: 0 auto; display: grid; gap: 40px; }
+.note { font-size: 12px; color: var(--mut); border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; }
+.note b { color: var(--ink); font-weight: 600; }
+.eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); margin: 0 0 10px; }
+h1 { font-family: var(--display); font-size: 24px; font-weight: 700; margin: 0 0 6px; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: 18px; font-weight: 600; margin: 0; }
+p { margin: 0; }
+.mut { color: var(--mut); } .faint { color: var(--faint); }
+.small { font-size: 12px; } .xs { font-size: 11px; }
+.screen { display: grid; gap: 14px; }
+.ghost { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; color: var(--faint); font-size: 13px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+/* ── Settings: entry rules ── */
+.section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.section-head > div { min-width: 0; flex: 1 1 360px; }
+.rules { display: grid; gap: 10px; }
+.rule { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; background: var(--ground); }
+.rule.off { opacity: .55; }
+.rule-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.switch { width: 36px; height: 20px; border-radius: 999px; background: var(--line); border: 0; padding: 2px; cursor: pointer; flex-shrink: 0; display: flex; }
+.switch span { width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"] span { transform: translateX(16px); }
+.switch:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+.name { width: 52px; font-weight: 700; font-family: var(--display); text-align: center; }
+.type { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+.from { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mut); }
+.x { background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
+.x:hover { color: var(--neg); }
+.sentence { color: var(--ink); font-size: 13.5px; line-height: 2; padding-left: 46px; }
+input.num, input.txt, select, input.date { background: var(--field); border: 1px solid var(--fieldline); color: var(--ink); border-radius: 6px; padding: 2px 6px; font: inherit; font-size: 13px; }
+input.num { width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+input.date { width: 128px; font-size: 12px; }
+select { padding: 2px 4px; }
+.tally { padding-left: 46px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tally b { color: var(--mut); font-weight: 600; }
+.add { justify-self: start; position: relative; }
+.btn { background: none; border: 1px solid var(--line); color: var(--accent-ink); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 5; width: min(440px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px; display: grid; gap: 2px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.menu button { text-align: left; background: none; border: 0; color: var(--ink); padding: 8px 10px; border-radius: 6px; font: inherit; cursor: pointer; display: grid; gap: 1px; }
+.menu button:hover { background: var(--panel2); }
+.menu button span { font-size: 12px; color: var(--mut); }
+.defs { font-size: 12px; color: var(--mut); border-top: 1px solid var(--hair); padding-top: 10px; display: grid; gap: 4px; }
+
+/* ── Recap table ── */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 720px; }
+th { text-align: left; font-weight: 400; color: var(--faint); font-size: 12px; padding: 0 12px 8px 0; white-space: nowrap; }
+td { padding: 9px 12px 9px 0; border-top: 1px solid var(--hair); white-space: nowrap; vertical-align: middle; }
+td.r, th.r { text-align: right; }
+.long { color: var(--pos); } .short { color: var(--neg); }
+.pos { color: var(--pos); } .neg { color: var(--neg); }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font-family: var(--body); line-height: 1; }
+.chip:hover { border-color: var(--mut); }
+.chip .car { font-size: 9px; opacity: .6; }
+.chip.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, var(--line)); }
+.chip.bad { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 45%, var(--line)); }
+.chip.unk { color: var(--faint); cursor: default; }
+.chip.sel { box-shadow: 0 0 0 1px var(--accent-ink); }
+.detail-row td { border-top: 0; padding-top: 0; white-space: normal; }
+.detail { max-width: 720px; padding: 4px 0 10px; display: grid; gap: 6px; }
+.detail h3 { font-size: 12px; font-weight: 600; margin: 0; color: var(--mut); }
+.lines { display: grid; grid-template-columns: 10px 34px 70px minmax(0, 1fr); gap: 5px 10px; align-items: baseline; font-size: 12.5px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; align-self: center; }
+.dot.pass { background: var(--pos); } .dot.fail { background: var(--neg); } .dot.unk { background: var(--faint); }
+.lines .nm { font-weight: 700; font-family: var(--display); }
+.lines .st { color: var(--mut); }
+.lines .st.fail { color: var(--neg); } .lines .st.pass { color: var(--pos); }
+.lines .why { color: var(--ink); min-width: 0; }
+.lines .greyed { opacity: .5; }
+.detail .foot { font-size: 11px; color: var(--faint); }
+
+/* mobile card */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+@media (max-width: 760px) { .split { grid-template-columns: 1fr; } .sentence, .tally { padding-left: 0; } }
+.phone { border: 1px solid var(--line); border-radius: 18px; padding: 12px; background: var(--ground); display: grid; gap: 8px; }
+.mcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; font-size: 13px; }
+.mrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* entry tooltip */
+.tip { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 12.5px; display: grid; gap: 4px; max-width: 460px; }
+.tip .row { display: flex; justify-content: space-between; gap: 16px; }
+.tip .row span:last-child { color: var(--mut); font-variant-numeric: tabular-nums; text-align: right; }
+.tip .new span:first-child { color: var(--accent-ink); font-weight: 600; }
+.axischips { display: flex; gap: 8px; flex-wrap: wrap; }
+.axischip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--mut); }
+.axischip.on { border-color: var(--accent); color: var(--ink); }
+.tbd { color: var(--warn); font-weight: 600; }
+</style>
+
+<div class="page">
+
+  <div class="note">
+    <b>Mockup.</b> Layout and labels are what gets built. Every number on the Recap rows (trade times, candle sizes, Tape Reader values, the tallies) is a <b>placeholder</b> until the build reads them from the tape. Weights and definitions follow your Oct 14 decisions.
+  </div>
+
+  <!-- ═══════════ SCREEN 1: SETTINGS → TRADING RULES ═══════════ -->
+  <section class="screen" aria-labelledby="s1">
+    <p class="eyebrow">Settings → Trading Rules</p>
+    <h1 id="s1">Trading Rules</h1>
+    <div class="ghost"><span>Risk &amp; rules · Safety rails (daily loss limit, size caps, trade cap, cooldown)</span><span>unchanged</span></div>
+    <div class="ghost"><span>TapeScore · Include the order-flow Score in my Entry grade</span><span>unchanged</span></div>
+
+    <div class="section-head" style="margin-top:14px">
+      <div>
+        <p class="eyebrow" style="margin-bottom:6px">Entry rules</p>
+        <p class="small mut">Checked on every trade from the tick tape, using only what had printed before your fill. Each check comes out pass, fail or unknown, with the reason. Your Entry grade counts them from each rule's start date.</p>
+      </div>
+    </div>
+
+    <div class="rules" id="rules">
+
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="L1 on"><span></span></button>
+          <input class="txt name" id="n-l1" value="L1" aria-label="Rule name">
+          <span class="type">Candles against</span>
+          <label class="from">Counts from <input class="date" id="f-l1" type="date" value="2026-10-14"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove L1">×</button>
+        </div>
+        <p class="sentence">Fail when the last <input class="num" id="p-l1n" value="3"> closed 1-minute candles all closed against me.</p>
+        <p class="tally">Since Oct 14 · <b>pass</b> 2 trades · 50% · PF 1.4 &nbsp;|&nbsp; <b>fail</b> 1 · 0% · PF 0 &nbsp;|&nbsp; unknown 0</p>
+      </div>
+
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="L2 on"><span></span></button>
+          <input class="txt name" id="n-l2" value="L2" aria-label="Rule name">
+          <span class="type">Tape Reader at the fill</span>
+          <label class="from">Counts from <input class="date" id="f-l2" type="date" value="2026-10-14"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove L2">×</button>
+        </div>
+        <p class="sentence">Pass when the Tape Reader is
+          <select id="p-l2m" aria-label="Tape mode"><option selected>inside the band ±</option><option>not against me at −</option><option>not against me past the pressure line</option></select>
+          <input class="num" id="p-l2x" value="2.0"> on NQ, <input class="num" id="p-l2e" value="2.0"> on ES.
+          <span class="faint xs">Pressure line for the reason text: <input class="num" id="p-l2p" value="6.0"> NQ, <input class="num" id="p-l2pe" value="6.4"> ES.</span></p>
+        <p class="tally">Since Oct 14 · <b>pass</b> 1 trade · 100% · — &nbsp;|&nbsp; <b>fail</b> 2 · 0% · PF 0 &nbsp;|&nbsp; unknown 0</p>
+      </div>
+
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="L3 on"><span></span></button>
+          <input class="txt name" id="n-l3" value="L3" aria-label="Rule name">
+          <span class="type">Last candle my way</span>
+          <label class="from">Counts from <input class="date" id="f-l3" type="date" value="2026-10-14"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove L3">×</button>
+        </div>
+        <p class="sentence">Pass when the last closed 1-minute candle closed my way or flat.</p>
+        <p class="tally">Since Oct 14 · <b>pass</b> 1 trade · 100% · — &nbsp;|&nbsp; <b>fail</b> 2 · 0% · PF 0 &nbsp;|&nbsp; unknown 0</p>
+      </div>
+
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="L4 on"><span></span></button>
+          <input class="txt name" id="n-l4" value="L4" aria-label="Rule name">
+          <span class="type">Large candle against</span>
+          <label class="from">Counts from <input class="date" id="f-l4" type="date" value="2026-10-14"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove L4">×</button>
+        </div>
+        <p class="sentence">Fail when one of the last <input class="num" id="p-l4n" value="3"> closed candles went against me with a range of at least <input class="num" id="p-l4a" value="2.0">× ATR and a body of at least <input class="num" id="p-l4b" value="70">% of its range.</p>
+        <p class="tally">Since Oct 14 · <b>pass</b> 3 trades · 33% · PF 0.9 &nbsp;|&nbsp; <b>fail</b> 0 &nbsp;|&nbsp; unknown 0</p>
+      </div>
+
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="F3 on"><span></span></button>
+          <input class="txt name" id="n-f3" value="F3" aria-label="Rule name">
+          <span class="type">No fade after a large candle or delta spike</span>
+          <label class="from">Counts from <input class="date" id="f-f3" type="date" value="2026-09-26"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove F3">×</button>
+        </div>
+        <p class="sentence">Fail when I enter against a large candle (range <input class="num" id="p-f3a" value="2.0">× ATR, body <input class="num" id="p-f3b" value="70">%) or a delta spike (volume <input class="num" id="p-f3v" value="2.0">× and delta <input class="num" id="p-f3d" value="2.0">× the median of the 10 minutes before it) from the last <input class="num" id="p-f3n" value="3"> minutes.</p>
+        <p class="tally">Since Sep 26 · <b>pass</b> 24 trades · 38% · PF 1.2 &nbsp;|&nbsp; <b>fail</b> 6 · 17% · PF 0.4 &nbsp;|&nbsp; unknown 1</p>
+      </div>
+
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="F5 on"><span></span></button>
+          <input class="txt name" id="n-f5" value="F5" aria-label="Rule name">
+          <span class="type">Tape Reader at the fill</span>
+          <label class="from">Counts from <input class="date" id="f-f5" type="date" value="2026-09-26"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove F5">×</button>
+        </div>
+        <p class="sentence">Pass when the Tape Reader is
+          <select id="p-f5m" aria-label="Tape mode"><option>inside the band ±</option><option selected>not against me at −</option><option>not against me past the pressure line</option></select>
+          <input class="num" id="p-f5x" value="2.0"> on NQ, <input class="num" id="p-f5e" value="2.0"> on ES.</p>
+        <p class="tally">Since Sep 26 · <b>pass</b> 21 trades · 38% · PF 1.1 &nbsp;|&nbsp; <b>fail</b> 9 · 22% · PF 0.6 &nbsp;|&nbsp; unknown 1</p>
+      </div>
+
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="F6 on"><span></span></button>
+          <input class="txt name" id="n-f6" value="F6" aria-label="Rule name">
+          <span class="type">Heiken Ashi already my colour</span>
+          <label class="from">Counts from <input class="date" id="f-f6" type="date" value="2026-09-26"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove F6">×</button>
+        </div>
+        <p class="sentence">Fail when the last <input class="num" id="p-f6n" value="2"> completed 1-minute Heiken Ashi candles were already my colour.</p>
+        <p class="tally">Since Sep 26 · <b>pass</b> 25 trades · 36% · PF 1.1 &nbsp;|&nbsp; <b>fail</b> 5 · 20% · PF 0.7 &nbsp;|&nbsp; unknown 1</p>
+      </div>
+
+      <div class="add">
+        <button class="btn" id="addbtn" aria-expanded="false" aria-haspopup="true">+ Add an entry rule</button>
+        <div class="menu" id="addmenu" hidden>
+          <button type="button">Candles against<span>Fail after N closed 1-minute candles in a row against you</span></button>
+          <button type="button">Last candle my way<span>The last closed 1-minute candle closed your way</span></button>
+          <button type="button">Large candle against<span>A big regular candle against you in the last N (range × ATR, body %)</span></button>
+          <button type="button">Tape Reader at the fill<span>Inside a band, not against you, or not past the pressure line</span></button>
+          <button type="button">No fade after a large candle or delta spike<span>Within the last N minutes</span></button>
+          <button type="button">Heiken Ashi already my colour<span>Skip after N completed Heiken Ashi candles your colour</span></button>
+        </div>
+      </div>
+
+      <div class="defs">
+        <p>Candles are regular 1-minute candles unless the rule says Heiken Ashi. “Closed” means the candle finished before your fill; the minute you got in is never counted as a candle. A flat candle (close = open) is not against you.</p>
+        <p>ATR = the simple average true range of the 10 one-minute candles before the one being judged. Tape Reader = ask share of everything traded in the 480 seconds before your fill, minus 50, as your research measured it. Your chart's study counts clock minutes instead; the two differ on about 1 trade in 11.</p>
+        <p>Unknown = the tape can't show it (no tick data for that time or instrument). Unknown never counts for or against you.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ SCREEN 2: RECAP TRADE TABLE ═══════════ -->
+  <section class="screen" aria-labelledby="s2">
+    <p class="eyebrow">Recap → trade table (Rules sits next to Score)</p>
+    <div class="split">
+      <div class="card">
+        <div class="tablewrap">
+          <table>
+            <thead><tr>
+              <th>Time</th><th>Side</th><th>Setup</th><th class="r">Entry</th><th class="r">Stop</th><th class="r">Qty</th>
+              <th class="r">Score</th><th class="r" title="Your entry rules, passed out of checked. Click for the reasons.">Rules</th><th class="r">R</th><th class="r">P&amp;L</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td>07:12</td><td class="short">Short</td><td>S/D zone</td><td class="r">25,412.25</td><td class="r">25,431.50</td><td class="r">5</td>
+                <td class="r"><button class="chip">58 <span class="car">▾</span></button></td>
+                <td class="r"><button class="chip ok" data-open="d1">7/7 <span class="car">▾</span></button></td>
+                <td class="r pos">+2.0</td><td class="r pos">$385</td>
+              </tr>
+              <tr id="d1" class="detail-row" hidden><td colspan="10">
+                <div class="detail">
+                  <h3>Entry rules · 7 of 7 passed</h3>
+                  <div class="lines">
+                    <span class="dot pass"></span><span class="nm">L1</span><span class="st pass">pass</span><span class="why">07:11 closed red, your way; no run of green candles before your short.</span>
+                    <span class="dot pass"></span><span class="nm">L2</span><span class="st pass">pass</span><span class="why">Tape Reader +0.6 at the fill, inside ±2.</span>
+                    <span class="dot pass"></span><span class="nm">L3</span><span class="st pass">pass</span><span class="why">07:11 closed red, your way.</span>
+                    <span class="dot pass"></span><span class="nm">L4</span><span class="st pass">pass</span><span class="why">No large green candle in 07:09–07:11 (largest 1.2× ATR).</span>
+                    <span class="dot pass"></span><span class="nm">F3</span><span class="st pass">pass</span><span class="why">No large candle or delta spike against you in the 3 minutes before the fill.</span>
+                    <span class="dot pass"></span><span class="nm">F5</span><span class="st pass">pass</span><span class="why">Tape Reader +0.6, not against you.</span>
+                    <span class="dot pass"></span><span class="nm">F6</span><span class="st pass">pass</span><span class="why">Heiken Ashi turned red on 07:11 (1 candle), not yet 2.</span>
+                  </div>
+                </div>
+              </td></tr>
+
+              <tr>
+                <td>08:42</td><td class="long">Long</td><td>Delta fade</td><td class="r">25,388.00</td><td class="r">25,370.75</td><td class="r">5</td>
+                <td class="r"><button class="chip">41 <span class="car">▾</span></button></td>
+                <td class="r"><button class="chip bad sel" data-open="d2" aria-expanded="true">1/7 <span class="car">▴</span></button></td>
+                <td class="r neg">−1.0</td><td class="r neg">−$173</td>
+              </tr>
+              <tr id="d2" class="detail-row"><td colspan="10">
+                <div class="detail">
+                  <h3>Entry rules · 1 of 7 passed</h3>
+                  <div class="lines">
+                    <span class="dot fail"></span><span class="nm">L1</span><span class="st fail">fail</span><span class="why">08:39, 08:40 and 08:41 all closed red before your long.</span>
+                    <span class="dot fail"></span><span class="nm">L2</span><span class="st fail">fail</span><span class="why">Tape Reader −3.4 at the fill, outside ±2.</span>
+                    <span class="dot fail"></span><span class="nm">L3</span><span class="st fail">fail</span><span class="why">08:41 closed red before your long.</span>
+                    <span class="dot fail"></span><span class="nm">L4</span><span class="st fail">fail</span><span class="why">08:40 was a large red candle: range 2.4× ATR, body 81%.</span>
+                    <span class="dot fail"></span><span class="nm">F3</span><span class="st fail">fail</span><span class="why">You went long against 08:40, a large red candle, 2 minutes before the fill.</span>
+                    <span class="dot fail"></span><span class="nm">F5</span><span class="st fail">fail</span><span class="why">Tape Reader −3.4, against you (−2 or lower).</span>
+                    <span class="dot pass"></span><span class="nm">F6</span><span class="st pass">pass</span><span class="why">Heiken Ashi was red on 08:40 and 08:41, not already your colour.</span>
+                  </div>
+                  <p class="foot">Read from the candles that closed before your fill at 08:42:13 PT and the tape up to that second. Nothing after the fill is used.</p>
+                </div>
+              </td></tr>
+
+              <tr>
+                <td>09:05</td><td class="long">Long</td><td>Cluster</td><td class="r">25,401.50</td><td class="r">25,386.00</td><td class="r">5</td>
+                <td class="r"><button class="chip">66 <span class="car">▾</span></button></td>
+                <td class="r"><button class="chip" data-open="d3">5/6 <span class="car">▾</span></button></td>
+                <td class="r neg">−1.0</td><td class="r neg">−$155</td>
+              </tr>
+              <tr id="d3" class="detail-row" hidden><td colspan="10">
+                <div class="detail">
+                  <h3>Entry rules · 5 of 6 checked passed · 1 unknown</h3>
+                  <div class="lines">
+                    <span class="dot pass"></span><span class="nm">L1</span><span class="st pass">pass</span><span class="why">09:04 closed green.</span>
+                    <span class="dot fail"></span><span class="nm">L2</span><span class="st fail">fail</span><span class="why">Tape Reader +2.7 at the fill, outside ±2 (on your side).</span>
+                    <span class="dot pass"></span><span class="nm">L3</span><span class="st pass">pass</span><span class="why">09:04 closed green, your way.</span>
+                    <span class="dot pass"></span><span class="nm">L4</span><span class="st pass">pass</span><span class="why">No large red candle in 09:02–09:04 (largest 1.6× ATR).</span>
+                    <span class="dot unk"></span><span class="nm">F3</span><span class="st">unknown</span><span class="why">The tape for 09:01–09:02 is missing, so a spike can't be ruled out.</span>
+                    <span class="dot pass"></span><span class="nm">F5</span><span class="st pass">pass</span><span class="why">Tape Reader +2.7, not against you.</span>
+                    <span class="dot pass"></span><span class="nm">F6</span><span class="st pass">pass</span><span class="why">Heiken Ashi turned green on 09:04 (1 candle).</span>
+                  </div>
+                </div>
+              </td></tr>
+
+              <tr>
+                <td>11:20</td><td class="short">Short</td><td>S/D zone</td><td class="r">25,450.75</td><td class="r">25,466.00</td><td class="r">3</td>
+                <td class="r"><span class="chip unk">—</span></td>
+                <td class="r"><span class="chip unk" title="No tick data for this trade.">—</span></td>
+                <td class="r pos">+0.6</td><td class="r pos">$92</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="phone" aria-label="Phone layout">
+        <p class="eyebrow" style="margin:0">On a phone</p>
+        <div class="mcard">
+          <div class="mrow"><span><span class="long">Long</span> · 08:42 · Delta fade</span><span class="neg">−$173</span></div>
+          <div class="mrow"><span class="mut small">Entry 25,388.00 · 5</span>
+            <span style="display:flex;gap:6px"><span class="chip">41 <span class="car">▾</span></span><span class="chip bad">1/7 <span class="car">▾</span></span></span></div>
+        </div>
+        <div class="mcard">
+          <div class="mrow"><span><span class="short">Short</span> · 07:12 · S/D zone</span><span class="pos">$385</span></div>
+          <div class="mrow"><span class="mut small">Entry 25,412.25 · 5</span>
+            <span style="display:flex;gap:6px"><span class="chip">58 <span class="car">▾</span></span><span class="chip ok">7/7 <span class="car">▾</span></span></span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ SCREEN 3: ENTRY GRADE ═══════════ -->
+  <section class="screen" aria-labelledby="s3">
+    <p class="eyebrow">Recap header → hover the Entry chip</p>
+    <div class="axischips"><span class="axischip">Risk 81</span><span class="axischip on">Entry 59</span><span class="axischip">Exit 85</span></div>
+    <div class="tip" role="note">
+      <strong>Entry (0-100): checklist, entry rules, order-flow Score (if you include it), plan adherence.</strong>
+      <div class="row"><span>Checklist</span><span>62 · 32%</span></div>
+      <div class="row new"><span>Entry rules</span><span>48 · 7 trades · 30%</span></div>
+      <div class="row"><span>Order-flow Score</span><span>55 · 7 trades · 24%</span></div>
+      <div class="row"><span>Plan adherence</span><span>80 · 14%</span></div>
+      <p class="xs faint" style="margin-top:4px">Entry rules: each trade scores the share of its counted rules it passed; unknowns are left out. A rule only counts on trades from its start date.</p>
+    </div>
+    <p class="small mut">The coach gets the same facts: each trade's Score with its five reasons, each rule's pass / fail / unknown with its reason, and the day's Risk / Entry / Exit parts.</p>
+  </section>
+
+</div>
+
+<script>
+document.querySelectorAll('.switch').forEach(s => s.addEventListener('click', () => {
+  const on = s.getAttribute('aria-checked') !== 'true';
+  s.setAttribute('aria-checked', String(on));
+  s.closest('.rule').classList.toggle('off', !on);
+}));
+document.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+  const row = document.getElementById(b.dataset.open);
+  const open = row.hidden;
+  row.hidden = !open;
+  b.classList.toggle('sel', open);
+  b.setAttribute('aria-expanded', String(open));
+  const c = b.querySelector('.car'); if (c) c.textContent = open ? '▴' : '▾';
+}));
+const addbtn = document.getElementById('addbtn'), menu = document.getElementById('addmenu');
+addbtn.addEventListener('click', e => { e.stopPropagation(); menu.hidden = !menu.hidden; addbtn.setAttribute('aria-expanded', String(!menu.hidden)); });
+document.addEventListener('click', e => { if (!menu.hidden && !menu.contains(e.target)) { menu.hidden = true; addbtn.setAttribute('aria-expanded', 'false'); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { menu.hidden = true; addbtn.setAttribute('aria-expanded', 'false'); } });
+</script>

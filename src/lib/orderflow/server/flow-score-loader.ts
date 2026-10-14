@@ -45,6 +45,7 @@ import {
   flowTicksFromFrame, gradeFlow, inDaySession, sessionStats, snapEntry,
   type FlowDayContext, type FlowSessionStats, type FlowTicks, type FlowWeekStats,
 } from '../flow-score'
+import { readEntryContext, type EntryContextRead } from '../entry-context'
 
 const HOUR = PT_HOUR_MS, DAY = PT_DAY_MS
 const usOfPt = (ptMs: number) => utcMsToSierraUs(ptToUtcMs(ptMs))
@@ -424,4 +425,44 @@ export class FlowScoreLoader {
       throw err
     }
   }
+
+  /**
+   * What the trader's entry rules read about this fill (../entry-context.ts):
+   * the closed 1-minute candles and the Tape Reader before it. Unlike the
+   * Score this is read in any session, not just 06:30–13:00 PT — the rules'
+   * research had no session filter. Reuses the same session ticks as score(),
+   * so a fill read for both costs one tick read.
+   */
+  async entryContext(row: FlowTradeRow): Promise<EntryContextOutcome> {
+    const root = row.symbol ? chartSeriesRoot(row.symbol) : ''
+    if (root !== 'NQ' && root !== 'ES') return { status: 'not_scorable', reason: `the entry rules read NQ/MNQ and ES/MES; this trade is ${row.symbol ?? 'unknown'}` }
+    const eUtcUs = row.entry_time ? isoToUtcUs(row.entry_time) : NaN
+    const px = row.entry_price == null || row.entry_price === '' ? NaN : Number(row.entry_price)
+    if (!Number.isFinite(eUtcUs) || !Number.isFinite(px) || (row.direction !== 'long' && row.direction !== 'short')) {
+      return { status: 'not_scorable', reason: 'the trade is missing its entry time, price or direction' }
+    }
+    const ePtUs = eUtcUs + ptOffsetMs(Math.floor(eUtcUs / 1000)) * 1000
+    const date = ptDate(Math.floor(ePtUs / 1000))
+    const hour = Math.floor((((ePtUs % (24 * US_HOUR)) + 24 * US_HOUR) % (24 * US_HOUR)) / US_HOUR)
+    const cov = await this.src.coverage(root)
+    if (cov.latestUs == null) return { status: 'not_scorable', reason: `no ${root} tick data is available` }
+    if (cov.latestUs < eUtcUs + SIERRA_EPOCH_OFFSET_US + US_MIN) return { status: 'pending', reason: 'the tick tape has not reached this fill yet' }
+    // the candles start at 15:00 PT the day before
+    if (cov.firstDate && cov.firstDate > addDays(date, -1)) {
+      return { status: 'not_scorable', reason: `older than the tick history kept on the site (${TAPE_KEEP_DAYS} days)` }
+    }
+    const ticks = await this.sessionTicks(root, date, hour)
+    if (!ticks.n) return { status: 'not_scorable', reason: `no ${root} tick data for ${date}` }
+    const { e } = snapEntry(ePtUs, px, ticks)
+    const read = readEntryContext(ticks, e)
+    if (!read.bars.length) return { status: 'not_scorable', reason: 'no candles before the fill' }
+    return { status: 'read', ...read }
+  }
 }
+
+export type EntryContextOutcome =
+  | ({ status: 'read' } & EntryContextRead)
+  /** The tape cannot read this trade (now or ever): nothing is written. */
+  | { status: 'not_scorable'; reason: string }
+  /** The feed has not published the minutes around the fill yet. */
+  | { status: 'pending'; reason: string }

@@ -5,7 +5,8 @@ import { mgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { dayTradeInputs, tradeSumsInSequence, normalizeAtrStopTarget, type DayTradeInputs, type RiskDay } from '@/lib/exit-rollup'
 import type { TradeSums } from '@/lib/tapescore-axes'
 import { effectiveAnalysis } from '@/lib/tapescore-day-rules'
-import type { ProcessVerdict, TradingDay } from '@/lib/supabase/types'
+import type { ProcessVerdict, TradeEntryCtx, TradingDay } from '@/lib/supabase/types'
+import type { EntryRuleConfig } from '@/lib/entry-rules'
 
 /**
  * The per-day dashboard rollup, extracted verbatim from the inline computation
@@ -48,6 +49,9 @@ export interface TradeForStats {
    *  a loss, quick re-entries after a loss) need the order and the gaps. */
   entry_time?: string | null
   exit_time?: string | null
+  /** The entry rules' snapshot of the fill (review_json.entry_ctx), selected by
+   *  JSON path. Null = not read yet. Entry's "Entry rules" part grades it. */
+  entry_ctx?: TradeEntryCtx | null
 }
 
 /**
@@ -57,7 +61,7 @@ export interface TradeForStats {
  * columns.
  */
 export const ROLLUP_TRADE_COLS =
-  'id, entry_time, exit_time, tags_json, pnl, direction, entry_price, exit_price, stop_price, tp1_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, structure_5m_alignment, exits_json, mfe_dollars_per_leg, flow_total:review_json->score->total'
+  'id, entry_time, exit_time, tags_json, pnl, direction, entry_price, exit_price, stop_price, tp1_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, structure_5m_alignment, exits_json, mfe_dollars_per_leg, flow_total:review_json->score->total, entry_ctx:review_json->entry_ctx'
 
 /** The day-level inputs (columns) the rollup reads. */
 export interface DayForStats {
@@ -244,17 +248,21 @@ export const RISK_SQ_SINCE_VERSION = 12
  * Is a cached `stats_json` row usable as-is? It must be at the current version
  * AND have been computed with the trader's current ATR stop setting — the
  * "Stop size" sums are baked in with it, so changing the setting makes every
- * cached row stale exactly like a version bump does. (The order-flow Score
- * setting is not baked in: the sums are always stored and the setting is
- * applied when the days are read.)
+ * cached row stale exactly like a version bump does. The same goes for the
+ * trader's entry rules (`rulesSig` = entryRulesSig of them; '' = none): change
+ * a number and every day re-grades. (The order-flow Score setting is not baked
+ * in: the sums are always stored and the setting is applied when the days are
+ * read.)
  */
 export function isFreshStats(
   row: { stats_json: DayStatsStored | null; stats_version: number | null },
   atrStopTarget: number | null | undefined,
+  rulesSig: string,
 ): row is { stats_json: DayStatsStored; stats_version: number } {
   return row.stats_json != null
     && row.stats_version === STATS_VERSION
-    && row.stats_json.trade_parts?.atr_stop ===normalizeAtrStopTarget(atrStopTarget)
+    && row.stats_json.trade_parts?.atr_stop === normalizeAtrStopTarget(atrStopTarget)
+    && (row.stats_json.trade_parts?.rules_sig ?? '') === rulesSig
 }
 
 /**
@@ -355,12 +363,14 @@ export function fromStoredStats(
  * @param prepAtr  the day's market_context.atr_1m (fallback ATR display value).
  * @param opts.atrStopTarget  the trader's ATR stop setting (scoring profile;
  *                 default 1) — the yardstick for Risk's "Stop size".
+ * @param opts.entryRules  the trader's entry rules (scoring profile) — what
+ *                 Entry's "Entry rules" part grades each trade against.
  */
 export function computeDayStats(
   day: DayForStats,
   trades: TradeForStats[],
   prepAtr: number | null,
-  opts: { atrStopTarget?: number | null } = {},
+  opts: { atrStopTarget?: number | null; entryRules?: readonly EntryRuleConfig[] | null } = {},
 ): DayStatsRollup {
   // The stored analysis with the read-time corrections TapeScore makes from
   // the trades (src/lib/tapescore-day-rules.ts).
@@ -518,7 +528,7 @@ export function computeDayStats(
     // scoreDayRollups re-derives these three once it is known.
     ...processFields(eod?.process),
     tape: tapeScoreBaseFromAnalyses(eod, day.ai_analysis_json?.score ?? null),
-    trade_parts: dayTradeInputs(trades, opts.atrStopTarget),
+    trade_parts: dayTradeInputs(trades, opts.atrStopTarget, opts.entryRules),
     win_rate: winRate,
     avg_mfe_pts: avgMfePts,
     avg_mae_pts: avgMaePts,

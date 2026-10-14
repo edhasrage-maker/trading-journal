@@ -14,12 +14,16 @@
  * off). It saves on its own, the moment it is flipped — the score is worked out
  * when a page loads, so nothing needs re-analysing.
  *
+ * Below that, the trader's entry rules (EntryRulesSetting) — graded on every
+ * trade from the tick tape and counted in Entry.
+ *
  * NB the Player Profile (Settings → Player Profile) free text is the coach's
  * NARRATIVE context — editing it does not change grading. This page is the one
  * that does. Keep the two consistent by hand for now.
  */
 import { useEffect, useState } from 'react'
 import RulesStep from '@/components/onboarding/RulesStep'
+import EntryRulesSetting from '@/components/settings/EntryRulesSetting'
 import { includeFlowScoreInEntry, type ScoringProfile } from '@/lib/scoring-profile'
 
 export default function RulesSettingsPage() {
@@ -44,6 +48,7 @@ export default function RulesSettingsPage() {
         </p>
       )}
       <FlowScoreSetting />
+      <EntryRulesSetting />
     </div>
   )
 }

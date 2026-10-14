@@ -28,7 +28,9 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
 import { ScoreChip, ScoreDetail } from './ScoreChip'
-import { useFlowScores, flowScoreFor } from '@/lib/use-flow-scores'
+import { RulesChip, RulesDetail } from './RulesChip'
+import { evaluateRules, type EntryRuleConfig, type RuleResult } from '@/lib/entry-rules'
+import { useFlowScores, flowScoreFor, entryCtxFor } from '@/lib/use-flow-scores'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'score' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
@@ -50,6 +52,7 @@ const TOGGLEABLE_COLS = [
   { key: 'qty', label: 'Qty' },
   { key: 'atr', label: 'ATR@' },
   { key: 'score', label: 'Score' },
+  { key: 'rules', label: 'Rules' },
   { key: 'r', label: 'R' },
   { key: 'mae', label: 'MAE · MFE' },
   { key: 'mfe', label: 'Kept' },
@@ -169,6 +172,9 @@ interface Props {
    *  management card measures it, so the row and the card can't disagree.
    *  Still accepted so existing callers need no change. */
   bars?: BarLike[] | null
+  /** The trader's entry rules (Settings → Trading Rules). With any switched on,
+   *  the review table shows a Rules column next to Score. */
+  entryRules?: EntryRuleConfig[]
 }
 
 /**
@@ -241,6 +247,7 @@ export default function SessionTradeTable({
   liveAtrByTradeId,
   giveBackAtr = 1,
   postExitByTradeId,
+  entryRules,
 }: Props) {
   // Capture (live Intraday) vs review (EOD recap). Every judgment column and the
   // AI sub-rows are gated OFF in capture; the review path evaluates exactly as
@@ -248,8 +255,17 @@ export default function SessionTradeTable({
   const isCapture = config === 'capture'
   // Scores for trades that have none for their present fill are computed by the
   // site in the background and land here without a reload (review only).
-  const liveScores = useFlowScores(trades, !isCapture)
+  const { scores: liveScores, entry: liveEntry } = useFlowScores(trades, !isCapture)
   const scoreOf = (t: Trade) => (isCapture ? null : flowScoreFor(t, liveScores))
+  // The trader's entry rules, judged on each trade from the snapshot of what
+  // printed before its fill (review only; src/lib/entry-rules.ts).
+  const activeRules = useMemo(() => (entryRules ?? []).filter(r => r.on), [entryRules])
+  const hasRules = !isCapture && activeRules.length > 0
+  const rulesOf = (t: Trade): { results: RuleResult[]; readAt: string | null } | null => {
+    if (!hasRules) return null
+    const ctx = entryCtxFor(t, liveEntry)
+    return { results: evaluateRules(activeRules, ctx, t), readAt: ctx?.read_at ?? null }
+  }
   // Row-click action: edit in place when an edit handler is provided (Intraday
   // inline form, or the EOD recap drawer), else open the full log (deep-link).
   const rowAction = onEdit ?? onRowOpen
@@ -324,6 +340,7 @@ export default function SessionTradeTable({
   // dashboard-style popup pattern as the EOD header — click outside / Esc to
   // dismiss. Pinned top-right of the viewport so they don't push the table.
   const [openScoreId, setOpenScoreId] = useState<string | null>(null)
+  const [openRulesId, setOpenRulesId] = useState<string | null>(null)
   const [mfeOpen, setMfeOpen] = useState(false)
   const [maeOpen, setMaeOpen] = useState(false)
   const mfeRef = useRef<HTMLDivElement>(null)
@@ -411,6 +428,7 @@ export default function SessionTradeTable({
   const showQty = isCapture ? true : cols.qty
   const showAtr = isCapture ? false : cols.atr
   const showScore = isCapture ? false : cols.score
+  const showRules = hasRules && cols.rules
   const showR = isCapture ? false : cols.r
   const showMfe = isCapture ? false : cols.mfe
   const showMae = isCapture ? false : cols.mae
@@ -439,6 +457,7 @@ export default function SessionTradeTable({
     ...(showAtr ? ['atr'] : []),
     'pnl',
     ...(showScore ? ['score'] : []),
+    ...(showRules ? ['rules'] : []),
     ...(showR ? ['r'] : []),
     ...(showMae ? ['mae'] : []),
     ...(showMfe ? ['mfe'] : []),
@@ -544,6 +563,7 @@ export default function SessionTradeTable({
             const overviewIsNotes = !summary && !!t.notes?.trim()
             const isLong = t.direction === 'long'
             const flowScore = scoreOf(t)
+            const rules = rulesOf(t)
             return (
               <div
                 key={t.id}
@@ -558,11 +578,15 @@ export default function SessionTradeTable({
                   {flowScore && (
                     <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                   )}
+                  {rules && (
+                    <RulesChip results={rules.results} open={openRulesId === t.id} onToggle={() => setOpenRulesId(openRulesId === t.id ? null : t.id)} />
+                  )}
                   <span className={`text-sm font-semibold ${(pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
                   </span>
                 </div>
                 {flowScore && openScoreId === t.id && <ScoreDetail score={flowScore} />}
+                {rules && openRulesId === t.id && <RulesDetail results={rules.results} readAt={rules.readAt} />}
                 {overviewText && (
                   <p
                     className={`text-xs text-gray-500 mt-1.5 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
@@ -599,7 +623,7 @@ export default function SessionTradeTable({
           {colsOpen && (
             <div className="absolute right-0 top-full mt-1 z-30 w-44 bg-gray-900 border border-gray-700 rounded-lg p-1.5 shadow-xl">
               <p className="px-2 py-1 text-[10px] uppercase tracking-wider text-gray-600">Show columns</p>
-              {TOGGLEABLE_COLS.map(c => (
+              {TOGGLEABLE_COLS.filter(c => c.key !== 'rules' || hasRules).map(c => (
                 <label
                   key={c.key}
                   className="flex items-center gap-2 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800 rounded cursor-pointer select-none"
@@ -715,13 +739,14 @@ export default function SessionTradeTable({
             : postVerdict ? `${postVerdict.glyph} ${postVerdict.label}` : '—'
           const postCls = kind === 'stopped' || kind === 'target' ? 'text-gray-400' : postVerdict ? VERDICT_TONE_CLASS[postVerdict.tone] : 'text-gray-600'
           const flowScore = scoreOf(t)
+          const rules = rulesOf(t)
           return (
             <div
               key={t.id}
               onClick={() => rowAction?.(t.id)}
               className={`rounded-xl border overflow-hidden ${isSelected ? 'border-blue-600 bg-blue-950/20' : 'border-gray-800 bg-gray-950/40'}`}
             >
-              <div className="flex items-center gap-2.5 px-3 py-2.5 border-b border-gray-800/70">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 px-3 py-2.5 border-b border-gray-800/70">
                 <button
                   type="button"
                   onClick={e => { e.stopPropagation(); onToggleSelect(t.id) }}
@@ -735,15 +760,24 @@ export default function SessionTradeTable({
                   {isLong ? '▲ LONG' : isShort ? '▼ SHORT' : '—'}
                 </span>
                 <span className="flex-1" />
-                {flowScore && (
-                  <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
-                )}
-                <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
+                {/* Score, Rules and P&L travel together: on a narrow phone with
+                    both chips they drop to a second line as one group rather
+                    than squeezing the side badge or pushing P&L off the card. */}
+                <span className="flex items-center gap-2.5 ml-auto">
+                  {flowScore && (
+                    <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                  )}
+                  {rules && (
+                    <RulesChip results={rules.results} open={openRulesId === t.id} onToggle={() => setOpenRulesId(openRulesId === t.id ? null : t.id)} />
+                  )}
+                  <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
+                  </span>
                 </span>
               </div>
               <div className="px-3 py-2.5">
                 {flowScore && openScoreId === t.id && <ScoreDetail score={flowScore} />}
+                {rules && openRulesId === t.id && <RulesDetail results={rules.results} readAt={rules.readAt} />}
                 {setup && (
                   <span className="inline-block text-[11px] text-gray-300 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded mb-2">{setup}</span>
                 )}
@@ -816,6 +850,7 @@ export default function SessionTradeTable({
               {showAtr && <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." colId="atr" onResize={startResize} onResetWidths={resetWidths} />}
               <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} colId="pnl" onResize={startResize} onResetWidths={resetWidths} />
               {showScore && <SortableHeader label="Score" sortKey="score" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Score out of 100, read from the tape at the fill. Click a score to see why." colId="score" onResize={startResize} onResetWidths={resetWidths} />}
+              {showRules && <th data-col="rules" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden" title="Your entry rules, passed out of checked. Click for the reasons.">Rules<ResizeHandle id="rules" onStart={startResize} onReset={resetWidths} /></th>}
               {showR && <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." colId="r" onResize={startResize} onResetWidths={resetWidths} />}
               {showMae && <th data-col="mae" className="relative font-normal pb-2 pr-3 whitespace-nowrap">
                 {/* The excursion column: MAE at the left end of each bar, MFE at
@@ -954,6 +989,7 @@ export default function SessionTradeTable({
                 : ''
               // The trade's Score (order flow at the fill). Review table only; absent until scored.
               const flowScore = scoreOf(t)
+              const rules = rulesOf(t)
               return (
                 <Fragment key={t.id}>
                 <tr
@@ -1081,6 +1117,11 @@ export default function SessionTradeTable({
                       {flowScore
                         ? <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                         : <span className="text-gray-700">—</span>}
+                    </td>
+                  )}
+                  {showRules && (
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <RulesChip results={rules?.results ?? []} open={openRulesId === t.id} onToggle={() => setOpenRulesId(openRulesId === t.id ? null : t.id)} />
                     </td>
                   )}
                   {showR && (() => {
@@ -1269,6 +1310,14 @@ export default function SessionTradeTable({
                     <td className="pr-2" />
                     <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
                       <ScoreDetail score={flowScore} />
+                    </td>
+                  </tr>
+                )}
+                {rules && showRules && openRulesId === t.id && (
+                  <tr className={`${hasOverviewRow ? '' : 'border-b border-gray-800'} ${rowBg}`}>
+                    <td className="pr-2" />
+                    <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
+                      <RulesDetail results={rules.results} readAt={rules.readAt} />
                     </td>
                   </tr>
                 )}

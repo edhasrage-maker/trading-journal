@@ -9,7 +9,7 @@
  * same `trades.review_json.score` — otherwise the two would keep re-scoring
  * each other's rows.
  */
-import type { TradeFlowScore } from '@/lib/supabase/types'
+import type { TradeEntryCtx, TradeFlowScore } from '@/lib/supabase/types'
 
 export const FLOW_VERSION = 'flow-4'
 
@@ -34,6 +34,19 @@ export function flowFingerprint(r: FlowFingerprintRow): string {
 export function flowScoreIsCurrent(score: TradeFlowScore | null | undefined, r: FlowFingerprintRow): boolean {
   return !!score && score.v === FLOW_VERSION && score.src === flowFingerprint(r)
 }
+
+/** Version of the entry rules' snapshot (trades.review_json.entry_ctx, ./entry-context.ts). Bump when what it reads or how changes. */
+export const ENTRY_CTX_VERSION = 'ectx-1'
+
+/** True when `ctx` is this version's snapshot of exactly this fill. */
+export function entryCtxIsCurrent(ctx: TradeEntryCtx | null | undefined, r: FlowFingerprintRow): boolean {
+  return !!ctx && ctx.v === ENTRY_CTX_VERSION && ctx.src === flowFingerprint(r)
+}
+
+/** One trade's snapshot answer from POST /api/trades/score (`entry` in the response). */
+export type EntryCtxResult =
+  | { status: 'read' | 'current'; ctx: TradeEntryCtx }
+  | { status: 'not_scorable' | 'pending' | 'error'; reason: string }
 
 /** Trades per POST /api/trades/score request. */
 export const FLOW_SCORE_MAX_IDS = 25

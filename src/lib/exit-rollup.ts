@@ -1,5 +1,7 @@
 import { exitTradeScores, lossSizeInputs, lossSizeScore, type ExitTradeInput, type RiskYardstick } from '@/lib/exit-score'
 import { emptyTradeSums, type FactorSum, type TradeSums } from '@/lib/tapescore-axes'
+import { entryRulesSig, evaluateRules, tradeRulesScore, type EntryRuleConfig } from '@/lib/entry-rules'
+import type { TradeEntryCtx } from '@/lib/supabase/types'
 import { reentryAfterLossIds } from '@/lib/behavioral-proxies'
 import {
   REENTRY_WINDOW_MIN, hasFreshTrigger, sizeUpFails, sizeUpInputs, toProxyTrades, type SizeUpInputs,
@@ -13,8 +15,8 @@ import {
  * result for a day.
  *
  * The per-trade parts: Risk's loss size, stop size and re-entries after a loss,
- * Entry's order-flow Score, and Exit's profit kept, stop respected and runner
- * rules.
+ * Entry's entry rules and order-flow Score, and Exit's profit kept, stop
+ * respected and runner rules.
  *
  * Why a day cannot simply store its scores: "Loss size" measures a loss against
  * the trader's USUAL RISK — the yardstick — which comes from EARLIER days. So a
@@ -48,6 +50,12 @@ export interface DayTradeInputs {
   /** Risk's "Re-entries": trades entered within 5 minutes of a losing exit
    *  that day, 1 = fresh trigger, 0 = none. */
   reentry: FactorSum
+  /** Entry rules: each trade with a counted rule, the share of its counted
+   *  rules it passed (src/lib/entry-rules.ts). Baked in with the trader's
+   *  rules — `rules_sig` says which; a cached row whose sig differs is stale. */
+  entryRules: FactorSum
+  /** entryRulesSig() of the rules `entryRules` was computed with ('' = none). */
+  rules_sig: string
   /** Order-flow Score: each scored trade's total ÷ 100. Always stored; whether
    *  it counts toward Entry is the trader's setting, applied when read. */
   flow: FactorSum
@@ -92,10 +100,21 @@ export type PartsTrade = ExitTradeInput & FlowScoredTrade & {
   id?: string | null
   entry_time?: string | null
   exit_time?: string | null
+  /** The entry rules' snapshot: from the full `review_json` (the Recap page) or
+   *  the rollup's lean JSON-path select. */
+  review_json?: { score?: { total?: unknown } | null; entry_ctx?: TradeEntryCtx | null } | null
+  entry_ctx?: TradeEntryCtx | null
 }
 
-/** A day's per-trade inputs from its trades. */
-export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: number | null): DayTradeInputs {
+/** A trade's Entry-rules score, 0..1, under the trader's rules; null when none of them counts on it. */
+export function tradeEntryRulesScore(t: PartsTrade, rules: readonly EntryRuleConfig[] | null | undefined): number | null {
+  if (!rules?.length) return null
+  const ctx = t.review_json?.entry_ctx ?? t.entry_ctx ?? null
+  return tradeRulesScore(evaluateRules(rules, ctx, { direction: t.direction, symbol: t.symbol, entry_time: t.entry_time ?? null }))
+}
+
+/** A day's per-trade inputs from its trades. `entryRules` = the trader's entry rules (none → the part is absent). */
+export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: number | null, entryRules?: readonly EntryRuleConfig[] | null): DayTradeInputs {
   const target = normalizeAtrStopTarget(atrStopTarget)
   const sums = emptyTradeSums()
   const losses: DayTradeInputs['losses'] = []
@@ -113,10 +132,12 @@ export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: nu
     if (pair) losses.push(pair)
     const flow = tradeFlowTotal(t)
     if (flow != null) { sums.flow.n += 1; sums.flow.sum += flow / 100 }
+    const rule = tradeEntryRulesScore(t, entryRules)
+    if (rule != null) { sums.entryRules.n += 1; sums.entryRules.sum += rule }
   }
   return {
     atr_stop: target,
-    stopSize: sums.stopSize, reentry: sums.reentry, flow: sums.flow,
+    stopSize: sums.stopSize, reentry: sums.reentry, entryRules: sums.entryRules, rules_sig: entryRulesSig(entryRules as EntryRuleConfig[] | null | undefined), flow: sums.flow,
     kept: sums.kept, stopRespected: sums.stopRespected, runner: sums.runner,
     losses,
     size_up: sizeUpInputs(trades),
@@ -128,7 +149,7 @@ export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: nu
 export function dayTradeSums(stored: DayTradeInputs | null | undefined, yardstick: RiskYardstick | null): TradeSums | null {
   if (!stored) return null
   const sums = emptyTradeSums()
-  for (const k of [...STORED, 'reentry', 'flow'] as const) {
+  for (const k of [...STORED, 'reentry', 'entryRules', 'flow'] as const) {
     sums[k].n = stored[k]?.n || 0
     sums[k].sum = stored[k]?.sum || 0
   }

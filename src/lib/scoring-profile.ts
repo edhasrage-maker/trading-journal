@@ -68,6 +68,10 @@ export interface ScoringProfile {
   tapescore?: {
     entry_flow_score?: boolean | null
   } | null
+  /** The trader's entry rules (Settings → Trading Rules → Entry rules), graded
+   *  on every trade from the tape. Read through `readEntryRules`
+   *  (src/lib/entry-rules.ts), never off this field directly. */
+  entry_rules?: unknown
 }
 
 /** Does this trader include the order-flow Score in their Entry grade? On

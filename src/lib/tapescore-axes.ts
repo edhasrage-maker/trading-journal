@@ -13,9 +13,15 @@ import type { ExecutionScore } from '@/lib/supabase/types'
  *                                    day: pass with a fresh trigger (an entry model other
  *                                    than "Based on Price"), fail without one
  *   Entry — the trade idea
- *             Checklist         45%  six of the end-of-day checklist items (below)
- *             Order-flow Score  35%  each trade's order-flow Score — only when you include it
- *             Plan adherence    20%  did the trades match the morning plan
+ *             Checklist         31.5%  six of the end-of-day checklist items (below)
+ *             Entry rules       30%    the trader's own entry rules, judged on each trade from
+ *                                      the tape (src/lib/entry-rules.ts) — only rules they set,
+ *                                      on trades from each rule's start date
+ *             Order-flow Score  24.5%  each trade's order-flow Score — only when you include it
+ *             Plan adherence    14%    did the trades match the morning plan
+ *           (founder, 2026-10-14: rules 30%, the other three scaled ×0.7 so their
+ *           agreed 45 / 35 / 20 ratios are exact — a day with no counted rule
+ *           scores Entry exactly as before)
  *   Exit  — how you got out
  *             Profit kept       42%  winners
  *             Stop respected    33%  trades whose stop came into play
@@ -34,20 +40,20 @@ import type { ExecutionScore } from '@/lib/supabase/types'
 
 export type Axis = 'risk' | 'entry' | 'exit'
 export type RiskPart = 'rules' | 'lossSize' | 'stopSize' | 'reentry'
-export type EntryPart = 'checklist' | 'flow' | 'plan'
+export type EntryPart = 'checklist' | 'entryRules' | 'flow' | 'plan'
 export type ExitPart = 'kept' | 'stopRespected' | 'runner'
 export type PartKey = RiskPart | EntryPart | ExitPart
 
 export const AXIS_PARTS = {
   risk: ['rules', 'lossSize', 'stopSize', 'reentry'],
-  entry: ['checklist', 'flow', 'plan'],
+  entry: ['checklist', 'entryRules', 'flow', 'plan'],
   exit: ['kept', 'stopRespected', 'runner'],
 } as const satisfies Record<Axis, readonly PartKey[]>
 
 /** Each part's share of its axis when every part has something to judge. */
 export const PART_WEIGHTS: Record<PartKey, number> = {
   rules: 0.45, lossSize: 0.27, stopSize: 0.18, reentry: 0.10,
-  checklist: 0.45, flow: 0.35, plan: 0.20,
+  checklist: 0.315, entryRules: 0.30, flow: 0.245, plan: 0.14,
   kept: 0.42, stopRespected: 0.33, runner: 0.25,
 }
 
@@ -57,6 +63,7 @@ export const PART_LABELS: Record<PartKey, string> = {
   stopSize: 'Stop size',
   reentry: 'Re-entries after a loss had a fresh trigger',
   checklist: 'Checklist',
+  entryRules: 'Entry rules',
   flow: 'Order-flow Score',
   plan: 'Plan adherence',
   kept: 'Profit kept on winners',
@@ -69,7 +76,7 @@ export const AXIS_NAMES: Record<Axis, string> = { risk: 'Risk', entry: 'Entry', 
 /** What each axis is made of, in one phrase — for the places that describe the axes. */
 export const AXIS_DESC: Record<Axis, string> = {
   risk: 'rules kept, loss size, stop size, re-entries after a loss',
-  entry: 'checklist, order-flow Score (if you include it), plan adherence',
+  entry: 'checklist, entry rules, order-flow Score (if you include it), plan adherence',
   exit: 'profit kept on winners, stop respected, runner rules',
 }
 
@@ -98,6 +105,9 @@ export const ENTRY_CHECKLIST_LABELS: Record<(typeof ENTRY_CHECKLIST_KEYS)[number
   no_mistakes_tagged: 'no mistakes tagged',
 }
 
+/** How the Entry rules part counts, for the places that explain Entry. */
+export const ENTRY_RULES_NOTE = 'Entry rules: each trade scores the share of its counted rules it passed; unknowns are left out. A rule only counts on trades from its start date.'
+
 /** The checklist items as one phrase. */
 export const ENTRY_CHECKLIST_DESC = ENTRY_CHECKLIST_KEYS.map(k => ENTRY_CHECKLIST_LABELS[k]).join(', ')
 
@@ -124,14 +134,14 @@ export function entryChecklist(e: ExecutionScore | null | undefined): { value: n
 // ── Per-trade parts as sums + counts ───────────────────────────────────────
 
 /** The parts scored trade by trade. Each trade scores 0..1 on the ones that apply to it. */
-export type TradePartKey = 'lossSize' | 'stopSize' | 'reentry' | 'flow' | 'kept' | 'stopRespected' | 'runner'
-export const TRADE_PARTS: readonly TradePartKey[] = ['lossSize', 'stopSize', 'reentry', 'flow', 'kept', 'stopRespected', 'runner']
+export type TradePartKey = 'lossSize' | 'stopSize' | 'reentry' | 'entryRules' | 'flow' | 'kept' | 'stopRespected' | 'runner'
+export const TRADE_PARTS: readonly TradePartKey[] = ['lossSize', 'stopSize', 'reentry', 'entryRules', 'flow', 'kept', 'stopRespected', 'runner']
 
 export interface FactorSum { n: number; sum: number }
 export type TradeSums = Record<TradePartKey, FactorSum>
 
 export const emptyTradeSums = (): TradeSums => ({
-  lossSize: { n: 0, sum: 0 }, stopSize: { n: 0, sum: 0 }, reentry: { n: 0, sum: 0 }, flow: { n: 0, sum: 0 },
+  lossSize: { n: 0, sum: 0 }, stopSize: { n: 0, sum: 0 }, reentry: { n: 0, sum: 0 }, entryRules: { n: 0, sum: 0 }, flow: { n: 0, sum: 0 },
   kept: { n: 0, sum: 0 }, stopRespected: { n: 0, sum: 0 }, runner: { n: 0, sum: 0 },
 })
 
@@ -206,6 +216,8 @@ export interface PartLine {
   score: number | null
   /** "81 · 12 trades" / "100 · 5 of 5 kept" / "not applicable" / "off". */
   detail: string
+  /** The share of the axis this part carried, 0..1 (0 when absent). */
+  weight: number
 }
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
@@ -220,24 +232,28 @@ export function axisPartLines(parts: TapeScoreParts | null | undefined, axis: Ax
     let detail: string
     if (key === 'flow' && parts && !parts.flowOn) detail = 'off'
     else if (key === 'flow' && score == null) detail = 'no scored trades'
+    else if (key === 'entryRules' && score == null) detail = 'no counted trades'
     else if (score == null) detail = 'not applicable'
     else if (key === 'rules' && parts?.rulesKept != null && parts.rulesOf != null) detail = `${score} · ${parts.rulesKept} of ${parts.rulesOf} kept`
     else if (key === 'checklist' && parts?.checklistLegacy && p?.n == null) detail = `${score} · older analysis, all items`
     else if (p?.n != null) detail = `${score} · ${plural(p.n, TRADE_KEYS.has(key) ? 'trade' : 'session')}`
     else detail = String(score)
-    return { key, label: PART_LABELS[key], score, detail }
+    return { key, label: PART_LABELS[key], score, detail, weight: p?.weight ?? 0 }
   })
 }
 
 /** The same lines as hover text, one per line, under a heading. Entry also
- *  names the checklist items unless `checklistItems` is false. */
+ *  shows each part's share, names the checklist items unless `checklistItems`
+ *  is false, and says how the entry rules count. */
 export function axisTooltip(
   heading: string,
   parts: TapeScoreParts | null | undefined,
   axis: Axis,
   opts: { checklistItems?: boolean } = {},
 ): string {
-  const lines = axisPartLines(parts, axis).map(l => `${l.label}: ${l.detail}`)
+  const lines = axisPartLines(parts, axis).map(l =>
+    `${l.label}: ${l.detail}${axis === 'entry' && l.score != null && l.weight > 0 ? ` · ${Math.round(l.weight * 100)}%` : ''}`)
   if (axis === 'entry' && opts.checklistItems !== false) lines.push(`(Checklist: ${ENTRY_CHECKLIST_DESC}.)`)
+  if (axis === 'entry') lines.push(ENTRY_RULES_NOTE)
   return [heading, ...lines].join('\n')
 }

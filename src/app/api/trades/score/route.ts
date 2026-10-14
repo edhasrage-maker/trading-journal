@@ -15,7 +15,11 @@ const BUDGET_MS = 40_000
 
 /**
  * POST /api/trades/score   body: { ids: string[] }   (at most 25 trade ids)
- *   → { v, results: { [tradeId]: FlowScoreResult } }   (flow-score-meta.ts)
+ *   → { v, results: { [tradeId]: FlowScoreResult }, entry: { [tradeId]: EntryCtxResult } }   (flow-score-meta.ts)
+ *
+ * `entry` is the entry rules' snapshot of each fill (trades.review_json.entry_ctx,
+ * src/lib/orderflow/entry-context.ts), read from the same ticks under the same
+ * write rules (entry-context-run.ts) — in any session, not just 06:30–13:00.
  *
  * The trade Score (five order-flow facts at the fill, version flow-4) computed
  * on the site from the tick tape — the same read the local Python scorer makes
@@ -74,6 +78,7 @@ export async function POST(req: Request) {
 
   const { scoreTrades, FLOW_TRADE_COLUMNS } = await import('@/lib/orderflow/server/flow-score-run')
   const { FlowScoreLoader } = await import('@/lib/orderflow/server/flow-score-loader')
+  const { readEntryContexts } = await import('@/lib/orderflow/server/entry-context-run')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- review_json is newer than the generated types
   const db = supabase as any
   const store: FlowTradeStore = {
@@ -93,8 +98,14 @@ export async function POST(req: Request) {
     },
   }
   try {
-    const results = await scoreTrades(store, ids, async () => new FlowScoreLoader(await flowSource()), { budgetMs: BUDGET_MS })
-    return NextResponse.json({ v: FLOW_VERSION, results }, { headers: { 'Cache-Control': 'no-store' } })
+    // One loader for both reads, so a fill's session ticks are fetched once. The entry rules'
+    // snapshot goes first: it needs only the day's ticks, which the Score then reuses.
+    let shared: Promise<InstanceType<typeof FlowScoreLoader>> | null = null
+    const loader = () => (shared ??= (async () => new FlowScoreLoader(await flowSource()))())
+    const started = Date.now()
+    const entry = await readEntryContexts(store, ids, loader, { deadline: started + BUDGET_MS })
+    const results = await scoreTrades(store, ids, loader, { budgetMs: Math.max(0, BUDGET_MS - (Date.now() - started)) })
+    return NextResponse.json({ v: FLOW_VERSION, results, entry }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) {
     console.error('[trades/score]', e)
     return NextResponse.json({ error: 'could not score those trades' }, { status: 500 })

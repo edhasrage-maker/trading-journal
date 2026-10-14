@@ -400,6 +400,43 @@ export interface TradeReview {
   /** The trade's Score — order flow at the fill, computed off the tick tape by
    *  the local scorer and written read-merge. Absent until a trade is scored. */
   score?: TradeFlowScore
+  /** What had printed before the fill, for the trader's entry rules
+   *  (src/lib/entry-rules.ts). Written read-merge by POST /api/trades/score. */
+  entry_ctx?: TradeEntryCtx
+}
+
+/** One closed 1-minute candle before the fill (regular candle; PT clock). */
+export interface EntryCtxBar {
+  /** HH:MM PT the candle started. */
+  t: string
+  o: number; h: number; l: number; c: number
+  v: number
+  /** Ask volume − bid volume. */
+  d: number
+  /** Simple average true range of the 10 candles before this one (null when there were fewer). */
+  atr: number | null
+  /** Median volume / median |delta| of the 10 candles before this one. */
+  mv: number | null
+  md: number | null
+  /** Heiken Ashi colour: 1 green, -1 red, 0 flat. */
+  ha: -1 | 0 | 1
+}
+
+/** trades.review_json.entry_ctx — nothing in it is from after the fill. */
+export interface TradeEntryCtx {
+  v: string
+  /** The fill this was read for (same fingerprint as the Score). */
+  src: string
+  /** HH:MM:SS PT of the fill. */
+  read_at: string
+  /** The closed 1-minute candles before the fill's minute, oldest first (at most 12). */
+  bars: EntryCtxBar[]
+  /** Tape Reader as the entry rules read it: ask share of the 480 s before the fill − 50 (+ = buyers). */
+  tape: number | null
+  /** Tape Reader as the trader's study draws it: 8 clock minutes including the one forming at the fill. */
+  tape_clock: number | null
+  /** When it was read (UTC ISO). */
+  at: string
 }
 
 /** One of the five order-flow facts behind a Score. */

@@ -21,7 +21,8 @@ import {
   computeDayStats, isFreshStats, toStoredStats, STATS_VERSION, ROLLUP_TRADE_COLS,
   type DayForStats, type DayStatsRollup, type DayStatsStored, type TradeForStats,
 } from './day-stats'
-import { loadAtrStopTarget } from './day-stats-server'
+import { loadStatsBake } from './day-stats-server'
+import type { EntryRuleConfig } from './entry-rules'
 import { pickMarketContext } from './market-context-select'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,7 +65,7 @@ type ContextRow = { trading_day_id: string; symbol: string | null; atr_1m: numbe
  * be read: a day computed from missing trades would be quietly wrong.
  */
 export async function computeDayRollups(
-  supabase: AnyClient, days: DayRowForStats[], atrStopTarget: number,
+  supabase: AnyClient, days: DayRowForStats[], atrStopTarget: number, entryRules: readonly EntryRuleConfig[] = [],
 ): Promise<DayStatsRollup[]> {
   if (days.length === 0) return []
   const slices = chunks(days.map(d => d.id))
@@ -130,7 +131,7 @@ export async function computeDayRollups(
       },
       dayTrades,
       ctx?.atr_1m ?? null,
-      { atrStopTarget },
+      { atrStopTarget, entryRules },
     )
   })
 }
@@ -182,25 +183,25 @@ export function warmDayStats(supabase: AnyClient, traderKey: string): Promise<nu
   // Started a tick later, so it is registered before anything inside can settle.
   const run = Promise.resolve().then(async () => {
     try {
-      const [cacheRes, atrStopTarget] = await Promise.all([
+      const [cacheRes, bake] = await Promise.all([
         // Only what freshness needs, via JSON paths — not the rollups themselves.
         supabase
           .from('trading_days')
-          .select('id, stats_version, atr_stop:stats_json->trade_parts->atr_stop')
+          .select('id, stats_version, atr_stop:stats_json->trade_parts->atr_stop, rules_sig:stats_json->trade_parts->rules_sig')
           .order('date', { ascending: false })
           .limit(DAY_WINDOW),
-        loadAtrStopTarget(supabase),
+        loadStatsBake(supabase),
       ])
       // No stats columns (a DB before the materialization migration): nothing to warm.
       if (cacheRes.error) return 0
-      type CacheRow = { id: string; stats_version: number | null; atr_stop: unknown }
-      // The dashboard's own freshness rule (isFreshStats), fed the one field of
+      type CacheRow = { id: string; stats_version: number | null; atr_stop: unknown; rules_sig: unknown }
+      // The dashboard's own freshness rule (isFreshStats), fed the two fields of
       // stats_json it reads. A null stats_json reads back as a null atr_stop,
       // which is never the current setting, so it counts as stale too.
       const stale = ((cacheRes.data ?? []) as CacheRow[]).filter(r => !isFreshStats({
         stats_version: r.stats_version,
-        stats_json: r.atr_stop == null ? null : ({ trade_parts: { atr_stop: r.atr_stop } } as unknown as DayStatsStored),
-      }, atrStopTarget))
+        stats_json: r.atr_stop == null ? null : ({ trade_parts: { atr_stop: r.atr_stop, rules_sig: r.rules_sig ?? undefined } } as unknown as DayStatsStored),
+      }, bake.atrStopTarget, bake.rulesSig))
       if (stale.length === 0) return 0
 
       const days: DayRowForStats[] = []
@@ -210,7 +211,7 @@ export function warmDayStats(supabase: AnyClient, traderKey: string): Promise<nu
         if (error) throw new Error(`trading_days: ${error.message}`)
         days.push(...((data ?? []) as DayRowForStats[]))
       })
-      const rollups = await computeDayRollups(supabase, days, atrStopTarget)
+      const rollups = await computeDayRollups(supabase, days, bake.atrStopTarget, bake.entryRules)
       const written = await writeDayRollups(supabase, rollups)
       console.log(`[day-stats] warmed ${written}/${stale.length} stale days`)
       return written

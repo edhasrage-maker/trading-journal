@@ -72,7 +72,7 @@ for (const axis of ['risk', 'entry', 'exit'] as const) {
   near(`${axis} weights sum to 1`, AXIS_PARTS[axis].reduce((a, k) => a + PART_WEIGHTS[k], 0), 1, 1e-12)
 }
 check('Risk 45/27/18/10', PART_WEIGHTS.rules === 0.45 && PART_WEIGHTS.lossSize === 0.27 && PART_WEIGHTS.stopSize === 0.18 && PART_WEIGHTS.reentry === 0.10)
-check('Entry 45/35/20', PART_WEIGHTS.checklist === 0.45 && PART_WEIGHTS.flow === 0.35 && PART_WEIGHTS.plan === 0.2)
+check('Entry 31.5/30/24.5/14 (founder 2026-10-14: entry rules 30, the rest ×0.7)', PART_WEIGHTS.checklist === 0.315 && PART_WEIGHTS.entryRules === 0.3 && PART_WEIGHTS.flow === 0.245 && PART_WEIGHTS.plan === 0.14)
 check('Exit 42/33/25', PART_WEIGHTS.kept === 0.42 && PART_WEIGHTS.stopRespected === 0.33 && PART_WEIGHTS.runner === 0.25)
 
 // ── Risk ─────────────────────────────────────────────────────────────────────
@@ -190,9 +190,10 @@ console.log('explanations')
   check('loss size with no losers reads "not applicable"', risk[1].detail === 'not applicable')
   check('stop size reads "score · trades"', risk[2].detail === '100 · 3 trades', risk[2].detail)
   const entry = axisPartLines(day.parts, 'entry')
-  check('Score switched off reads "off"', entry[1].detail === 'off')
+  check('Score switched off reads "off"', entry[2].detail === 'off')
+  check('no entry rules reads "no counted trades"', entry[1].key === 'entryRules' && entry[1].detail === 'no counted trades')
   const onNone = computeTapeScore({ process: rails(4), execution: e, trades: null })!
-  check('Score on with nothing scored reads "no scored trades"', axisPartLines(onNone.parts, 'entry')[1].detail === 'no scored trades')
+  check('Score on with nothing scored reads "no scored trades"', axisPartLines(onNone.parts, 'entry')[2].detail === 'no scored trades')
   check('Entry hover text names the checklist items', /setup in your playbook/.test(axisTooltip('Entry', day.parts, 'entry')))
   check('… unless asked not to', !/setup in your playbook/.test(axisTooltip('Entry', day.parts, 'entry', { checklistItems: false })))
 }
@@ -257,9 +258,10 @@ console.log('rollup')
   const back = fromStoredStats(JSON.parse(JSON.stringify(stored)), { id: on.id, date: on.date, day_type: null, day_types: null })
   check('a cached row scores identically', JSON.stringify(scoreDayRollups([...prior, back]).at(-1)!.tapescore) === JSON.stringify(on.tapescore))
   check('STATS_VERSION is 13', STATS_VERSION === 13)
-  check('fresh at this version + same ATR setting', isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 1))
-  check('stale when the ATR setting changed', !isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 2))
-  check('stale at the old version', !isFreshStats({ stats_json: stored, stats_version: 11 }, 1))
+  check('fresh at this version + same ATR setting', isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 1, ''))
+  check('stale when the ATR setting changed', !isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 2, ''))
+  check('stale at the old version', !isFreshStats({ stats_json: stored, stats_version: 11 }, 1, ''))
+  check('stale when the trader has entry rules the row was not computed with', !isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 1, 'er1-1-abc'))
 }
 
 // ── Read-time rules from the trades ────────────────────────────────────────────

@@ -20,6 +20,8 @@ import { getGiveBackAtr } from './atr-config-server'
 import { followFade, type Regime } from './market-structure'
 import { tagKey } from './tradezella-import'
 import { symbolRoot } from './futures-symbols'
+import { loadTapeScoreSettings } from './day-stats-server'
+import { describeRule, evaluateRules, ruleLabel, shortDate, type EntryRuleConfig, type RuleResult } from './entry-rules'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -289,6 +291,10 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
   // (the fixed 1m Wilder-10 baseline the coach reads — the EOD panel uses the
   // configured ATR, but the multiple is shared). Best-effort, defaults to 1×.
   const giveBackAtr = await getGiveBackAtr(supabase)
+  // The trader's own entry rules (Settings → Trading Rules), judged on each
+  // native trade from the snapshot of what printed before its fill.
+  const { entryRules } = await loadTapeScoreSettings(supabase)
+  const activeRules: EntryRuleConfig[] = entryRules.filter(r => r.on)
 
   // Pull trading_days first so we have the day-type map for cross-tabulation.
   const { data: days } = await supabase
@@ -809,6 +815,39 @@ NO TRADE DATA — the trader logged no trades in this window.
         : []),
     ].join('\n')
 
+  // The trader's entry rules: pass vs fail over the window's counted trades,
+  // and each recent trade's results (below).
+  const rulesByTrade = new Map<string, RuleResult[]>()
+  if (activeRules.length) {
+    for (const t of trades) {
+      if (t._source !== 'native') continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ctx = (t as any).review_json?.entry_ctx ?? null
+      rulesByTrade.set(t.id, evaluateRules(activeRules, ctx, { direction: t.direction ?? null, symbol: t.symbol ?? null, entry_time: t.entry_time ?? null }))
+    }
+  }
+  const entryRulesLines = !activeRules.length ? '' : [
+    '',
+    "THE TRADER'S ENTRY RULES (their own, set in Settings → Trading Rules; judged by the app on every trade from the",
+    'tick tape at the fill — only what printed BEFORE the fill. "unknown" = the tape could not show it: say unknown,',
+    'never guess. A rule counts toward the Entry grade only from its start date. Name each rule by the name below.',
+    'These are the trader\'s in-sample rules, not proven on new trades: report pass vs fail as the comparison and',
+    'never present a rule as settled. Group = pass / fail over this window\'s counted trades, as trades / win rate / PF):',
+    ...activeRules.map(r => {
+      let pw = 0, pl = 0, pn = 0, pwin = 0, fw = 0, fl = 0, fn = 0, fwin = 0, unk = 0
+      for (const t of trades) {
+        const res = rulesByTrade.get(t.id)?.find(x => x.id === r.id)
+        if (!res || !res.counted) continue
+        const pnl = t.pnl ?? 0
+        if (res.status === 'unknown') { unk++; continue }
+        if (res.status === 'pass') { pn++; if (pnl > 0) { pwin++; pw += pnl } else pl -= pnl }
+        else { fn++; if (pnl > 0) { fwin++; fw += pnl } else fl -= pnl }
+      }
+      const grp = (n: number, win: number, w: number, l: number) => n === 0 ? '0' : `${n} / ${Math.round((win / n) * 100)}% / ${l > 0 ? (w / l).toFixed(2) : w > 0 ? '∞' : '0'}`
+      return `  ${ruleLabel(r)} — ${describeRule(r)}. Counts from ${shortDate(r.from)}. In window: pass ${grp(pn, pwin, pw, pl)} · fail ${grp(fn, fwin, fw, fl)} · unknown ${unk}`
+    }),
+  ].join('\n')
+
   // Recent trades (newest first, capped at recentTradesLimit)
   const recent = trades.slice(0, recentTradesLimit).map(t => {
     const date = t._date || '?'
@@ -824,7 +863,7 @@ NO TRADE DATA — the trader logged no trades in this window.
     const mfeAtr = d?.mfeAtr ?? null
     const maeAtr = d?.maeAtr ?? null
     const sym = t.symbol ? symbolRoot(t.symbol) : null
-    return `${date}${src} ${sym ? sym + ' ' : ''}${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''}${mfeAtr != null ? ` mfe×ATR=${mfeAtr.toFixed(2)}` : ''}${maeAtr != null ? ` mae×ATR=${maeAtr.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}`
+    return `${date}${src} ${sym ? sym + ' ' : ''}${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''}${mfeAtr != null ? ` mfe×ATR=${mfeAtr.toFixed(2)}` : ''}${maeAtr != null ? ` mae×ATR=${maeAtr.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}${rulesText(rulesByTrade.get(t.id))}`
   }).join('\n')
 
   // Optional week-over-week comparison — only meaningful for the chatbox's
@@ -1109,6 +1148,7 @@ ${Array.from(followFadeBuckets.entries()).map(([k, b]) => `  ${k === 'follow' ? 
 ${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} trades · ${fmt(b.pnl)} · WR ${Math.round((b.wins / (b.wins + b.losers || 1)) * 100)}%`).join('\n') || '  (no structure_5m_alignment values yet — sparse; use the pivot follow/fade above)'}
 
 ${reviewLines}
+${entryRulesLines}
 
 BY INSTRUMENT (ES and NQ move differently in ATR terms — use this bucket; the instrument split IS available, never say it is not):
 ${instrumentLines}
@@ -1120,4 +1160,12 @@ RECENT TRADES (newest first, terse format, capped at ${recentTradesLimit}):
 ${recent}
 ${coachingThread ? '\n' + coachingThread + '\n' : ''}
 ═══ END TRADER DATA ═══`
+}
+
+/** A recent-trade line's entry rules: " rules[L1 fail: 08:39, 08:40 and 08:41 all closed red… · L2 pass]".
+ *  Fails carry their reason; rules that do not count yet on the trade are marked. */
+function rulesText(results: RuleResult[] | undefined): string {
+  if (!results?.length) return ''
+  const parts = results.map(r => `${r.name} ${r.status}${r.status === 'fail' ? `: ${r.reason}` : ''}${r.counted ? '' : ' (not counted yet)'}`)
+  return ` rules[${parts.join(' · ')}]`
 }

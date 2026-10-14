@@ -20,9 +20,11 @@ import { applySizeUp, dailyLossLimitBroken } from '@/lib/tapescore-day-rules'
  *   Risk  = rules kept 45 (rails passed ÷ rails tracked, from the analysis)
  *         + loss size 27 + stop size 18 + re-entries after a loss 10
  *         (per trade, from the day's trades)
- *   Entry = checklist 45 (six of the analysis's checklist items)
- *         + order-flow Score 35 (per trade — only when the trader includes it)
- *         + plan adherence 20 (from the analysis)
+ *   Entry = checklist 31.5 (six of the analysis's checklist items)
+ *         + entry rules 30 (per trade — the trader's own rules, src/lib/entry-rules.ts)
+ *         + order-flow Score 24.5 (per trade — only when the trader includes it)
+ *         + plan adherence 14 (from the analysis)
+ *         (no counted rule → exactly the old 45 / 35 / 20)
  *   Exit  = profit kept on winners 42 + stop respected 33 + runner rules 25
  *         (per trade, from the day's trades)
  *
@@ -79,7 +81,7 @@ export interface TapeScoreResult {
     /** Risk, 0-100: rules kept 45 / loss size 27 / stop size 18 / re-entries 10. Null without a
      *  rules audit. One of three equal axes (⅓). */
     risk: number | null
-    /** Entry, 0-100: checklist 45 / order-flow Score 35 / plan adherence 20.
+    /** Entry, 0-100: checklist 31.5 / entry rules 30 / order-flow Score 24.5 / plan adherence 14.
      *  Null without an analysis execution read. One of three equal axes (⅓). */
     entry: number | null
     /** Exit, 0-100: profit kept 42 / stop respected 33 / runner rules 25.
@@ -300,6 +302,7 @@ function readAxes(
   const risk = blendAxis('risk', { rules: session.rules, lossSize: tp('lossSize'), stopSize: tp('stopSize'), reentry: tp('reentry') })
   const entry = blendAxis('entry', {
     checklist: session.checklist,
+    entryRules: tp('entryRules'),
     flow: includeFlow ? tp('flow') : { score: null, n: sums.flow.n },
     plan: session.plan,
   })
@@ -481,7 +484,7 @@ export function aggregateTapeScore(days: (TapeScoreDay | null | undefined)[]): T
   const exitSums = mergeTradeSums(axisDays.map(d => d.trade_sums))
   const pooled: TradeSums = {
     lossSize: riskSums.lossSize, stopSize: riskSums.stopSize, reentry: riskSums.reentry,
-    flow: entrySums.flow,
+    entryRules: entrySums.entryRules, flow: entrySums.flow,
     kept: exitSums.kept, stopRespected: exitSums.stopRespected, runner: exitSums.runner,
   }
 
