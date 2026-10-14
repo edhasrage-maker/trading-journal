@@ -21,6 +21,7 @@ import { symbolToMultiplier } from './futures-symbols.ts'
 import { isOutsideRth } from './rth.ts'
 import { CAPTURE_UNITS_DISCIPLINE } from './coach-methodology.ts'
 import { computeSessionFacts, sessionFactsBlock } from './session-facts.ts'
+import { availableMfePtsStored, exitContracts } from './available-mfe.ts'
 import {
   OWNER_RAILS, isEmptyScoringProfile, resolveRails, resolveRubric, scoringProfileSummary, activeRailIds, sizeCapFor,
   type RailConfig, type ScoringProfile,
@@ -1094,7 +1095,7 @@ export function profitFactorToSubMetric(pf: number | null): number | null {
  * measures "how well did you capture on average," not "how badly did one
  * give-back drag the day."
  */
-type MfeCaptureTrade = Pick<Trade, 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'pnl' | 'symbol' | 'high_during_position' | 'low_during_position'> & { mfe_dollars_per_leg?: number | null }
+type MfeCaptureTrade = Pick<Trade, 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'pnl' | 'symbol' | 'high_during_position' | 'low_during_position'> & { mfe_dollars_per_leg?: number | null; exits_json?: unknown; entry_time?: string | null }
 export function computeMfeCaptureDeterministic(
   trades: MfeCaptureTrade[],
 ): { value: number | null; eligibleCount: number } {
@@ -1112,9 +1113,9 @@ export function computeMfeCaptureDeterministic(
     if (peakPts < 0.2 * plannedRiskPts) continue  // MFE too small — denominator noise
     const mult = symbolToMultiplier(t.symbol ?? '')
     if (mult === 0) continue
-    const mfeDollars = (t.mfe_dollars_per_leg != null && t.mfe_dollars_per_leg > 0)
-      ? t.mfe_dollars_per_leg
-      : peakPts * t.quantity * mult
+    // Available position (src/lib/available-mfe.ts): each contract only while
+    // it was on — stored value when present, the fills otherwise.
+    const mfeDollars = availableMfePtsStored(t, peakPts) * (exitContracts(t.exits_json) || t.quantity) * mult
     if (mfeDollars <= 0) continue
     const raw = t.pnl / mfeDollars
     sum += Math.max(0, Math.min(1, raw))

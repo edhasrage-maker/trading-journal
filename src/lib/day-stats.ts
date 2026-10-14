@@ -303,7 +303,11 @@ export function isFreshStats(
 // the trader's usual risk spread (mean + SD of recent planned dollar risk), so
 // the rollup carries `sum_risk_sq`, `trade_parts` carries the size-up inputs
 // (`size_up`), and the verdict fields are resolved when days are read.
-export const STATS_VERSION = 12
+// v13 (2026-10-14): MFE is measured on the AVAILABLE position
+// (src/lib/available-mfe.ts) — a scaled-out trade's contracts each count only
+// while they were on — so `mgmt` sums and the Exit "profit kept" factor move on
+// every day with a scale-out.
+export const STATS_VERSION = 13
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`

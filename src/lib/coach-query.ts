@@ -177,7 +177,7 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
   const { rows: native } = await fetchByDayIds(
     sb,
     'trades',
-    'id, trading_day_id, pnl, entry_time, exit_time, entry_price, exit_price, stop_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, entry_atr_1m, exits_json',
+    'id, trading_day_id, pnl, entry_time, exit_time, entry_price, exit_price, stop_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, entry_atr_1m, exits_json, mfe_dollars_per_leg',
     Array.from(dayById.keys()),
     { paginate: true },
   )

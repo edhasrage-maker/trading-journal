@@ -17,6 +17,7 @@
  */
 
 import { MULTIPLIERS, symbolRoot } from './futures-symbols'
+import { availableMfePtsStored, exitContracts } from './available-mfe'
 import { anchorExcursionToFills } from './excursion-guard'
 
 /**
@@ -69,10 +70,13 @@ export interface TradeExcursionInput {
   /** Closing fill. Optional — used only to anchor the traded range, which the
    *  exit price belongs inside as much as the entry does. */
   exit_price?: number | null
-  /** Scaling-aware best-case $ (peak per leg). Optional — callers without the
-   *  backfill column (e.g. the EOD trades select) omit it, and the tick-precise
-   *  full-position ceiling is used instead. */
+  /** Stored available-position best case in $ (src/lib/available-mfe.ts).
+   *  Optional — without it a scaled-out trade is measured from its fills. */
   mfe_dollars_per_leg?: number | null
+  /** Exit fills + entry time, so a scaled-out trade's contracts are each
+   *  measured only while they were on. Optional — absent → one exit assumed. */
+  exits_json?: unknown
+  entry_time?: string | null
   /** ATR-10 (1m) at entry. Optional — enables volatility-normalized (×ATR)
    *  excursion. Null/absent → the ×ATR fields come back null. */
   entry_atr_1m?: number | null
@@ -155,14 +159,13 @@ export function interpretExcursion(t: TradeExcursionInput, roundTripAtr: number 
   // the tick-precise full-position ceiling (favorable extreme × qty × mult).
   // Unknown instrument (mult == null) → no $ figure at all (a backfilled
   // mfe_dollars_per_leg for such a symbol is itself untrustworthy $1/point).
+  // Available position (src/lib/available-mfe.ts): a scaled-out trade's
+  // contracts each count only while they were on — the stored value when
+  // present, the fills otherwise — never every contract held to the peak.
   let mfeUsd: number | null = null
-  if (mult != null) {
-    mfeUsd = t.mfe_dollars_per_leg ?? null
-    if (mfePts != null && t.quantity != null) {
-      const ceiling = mfePts * t.quantity * mult
-      if (mfeUsd == null) mfeUsd = ceiling
-      else if (ceiling > 0) mfeUsd = Math.min(mfeUsd, ceiling)
-    }
+  if (mult != null && mfePts != null) {
+    const qty = exitContracts(t.exits_json) || t.quantity
+    if (qty != null) mfeUsd = availableMfePtsStored(t, mfePts) * qty * mult
   }
   let capPct: number | null = null
   let leftUsd: number | null = null

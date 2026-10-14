@@ -1,5 +1,6 @@
 import { mfeMaePoints, type TradeWithExcursion } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { availableMfePtsStored } from '@/lib/available-mfe'
 
 /**
  * Trade management — the ONE definition behind every "how much did I keep"
@@ -20,6 +21,11 @@ import { symbolToMultiplier } from '@/lib/futures-symbols'
  * and carries three raw facts in one unit: MFE (best point), MAE (worst point)
  * and the result. "Kept" is then just result ÷ MFE over the trades that went
  * your way, with losses subtracted — what actually ended up in the account.
+ *
+ * MFE is measured on the AVAILABLE position (src/lib/available-mfe.ts): each
+ * contract only while it was still on, so a scale-out is graded on what its
+ * plan could bank — not on every contract held to the best price. Whether a
+ * trade went your way still asks about the best price while ANY contract was on.
  *
  * Everything is stored as SUMS + COUNTS so a week, a month or a setup is the
  * same arithmetic over more trades, never an average of daily averages.
@@ -44,8 +50,12 @@ export interface MgmtTradeInput {
   quantity: number | null
   symbol: string | null
   entry_atr_1m?: number | null
+  entry_time?: string | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   exits_json?: any
+  /** Stored available-position MFE in dollars for a scaled-out trade
+   *  (src/lib/available-mfe.ts). Absent → the fill-only rule. */
+  mfe_dollars_per_leg?: number | null
 }
 
 /** One trade's read, in all three units. Magnitudes for MFE/MAE; result signed. */
@@ -93,7 +103,13 @@ function tradedQty(t: MgmtTradeInput): number | null {
 /** The three raw facts of one trade, in every unit. No sorting — a trade with
  *  no ATR and no stop still has a best point, a worst point and a result. */
 export interface TradeFacts {
+  /** Favorable excursion per contract on the available position (each
+   *  contract only while it was on). Equals the position's best for a trade
+   *  with one exit. */
   mfe: Record<MgmtUnit, number | null>
+  /** The position's best favorable move in points, while ANY contract was on —
+   *  what "went your way" is judged on. */
+  peakPts: number
   mae: Record<MgmtUnit, number | null>
   result: Record<MgmtUnit, number | null>
   /** ATR used for the ×ATR values (live override, else stored). Null = none. */
@@ -127,13 +143,16 @@ export function tradeFacts(t: MgmtTradeInput, opts: { atr?: number | null } = {}
   // You cannot bank more than the best price the trade reached, so a positive
   // result is a floor on the favorable move. Fill-vs-logged-price rounding
   // otherwise leaves a perfect exit reading a hair over 100%.
-  const mfePts = resPts > 0 ? Math.max(xc.mfe, resPts) : xc.mfe
+  const peakPts = resPts > 0 ? Math.max(xc.mfe, resPts) : xc.mfe
+  const availPts = availableMfePtsStored(t, xc.mfe)
+  const mfePts = resPts > 0 ? Math.max(availPts, resPts) : availPts
   const maePts = xc.mae
   const usd = qty * mult
   return {
     mfe: { pts: mfePts, dollars: mfePts * usd, atr: atr != null ? mfePts / atr : null },
     mae: { pts: maePts, dollars: maePts * usd, atr: atr != null ? maePts / atr : null },
     result: { pts: resPts, dollars: t.pnl, atr: atr != null ? resPts / atr : null },
+    peakPts,
     atr,
     riskPts,
   }
@@ -158,7 +177,7 @@ export function tradeMgmt(
   const threshold = f.atr != null ? multiple * f.atr : f.riskPts
   if (threshold == null) return null
   const mfePts = f.mfe.pts as number, resPts = f.result.pts as number
-  const went = mfePts >= threshold - 1e-9
+  const went = f.peakPts >= threshold - 1e-9
   return {
     went,
     mfe: f.mfe,

@@ -3,6 +3,7 @@
 import { mfeMaePoints, avgCaptureRatio, type TradeWithExcursion } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { useMfeUnit, formatMfeMae, type MfeUnit } from '@/lib/mfe-unit'
+import { availableMfePtsStored, exitContracts } from '@/lib/available-mfe'
 import type { Trade } from '@/lib/supabase/types'
 
 /**
@@ -60,13 +61,16 @@ export default function AvgMfeMaeCard({ trades, dayAtrRef, variant = 'card', cla
     const mfeVals: number[] = []
     const maeVals: number[] = []
     for (const t of trades) {
-      const xc = mfeMaePoints(t)
-      if (!xc) continue
+      const pos = mfeMaePoints(t)
+      if (!pos) continue
+      // MFE on the available position: a scaled-out trade's contracts each
+      // count only while they were on (src/lib/available-mfe.ts).
+      const xc = { mfe: availableMfePtsStored(t as never, pos.mfe), mae: pos.mae }
       if (mfeUnit === 'pts') {
         mfeVals.push(xc.mfe); maeVals.push(xc.mae)
       } else if (mfeUnit === 'dollars') {
         const mult = symbolToMultiplier(t.symbol ?? '')
-        const qty = t.quantity ?? 1
+        const qty = exitContracts((t as { exits_json?: unknown }).exits_json) || (t.quantity ?? 1)
         mfeVals.push(xc.mfe * qty * mult)
         maeVals.push(xc.mae * qty * mult)
       } else {
