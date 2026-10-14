@@ -58,7 +58,7 @@ function fakeDb(tables: Record<string, Row[]>, opts: { failUpdates?: boolean; er
         }
         const shaped = rows.map(r => {
           if (!pickCols || pickCols.includes('stats_json->')) {
-            return { ...r, atr_stop: (r.stats_json as { exit?: { atr_stop?: number } } | null)?.exit?.atr_stop ?? null }
+            return { ...r, atr_stop: (r.stats_json as { trade_parts?: { atr_stop?: number } } | null)?.trade_parts?.atr_stop ?? null }
           }
           return r
         })
@@ -126,12 +126,12 @@ const day = (id: string, date: string, extra: Row = {}) => ({
 
   console.log('\nTHE BACKGROUND WARM REBUILDS ONLY WHAT IS STALE')
   {
-    const fresh = { stats_json: { exit: { atr_stop: 1 } }, stats_version: STATS_VERSION }
+    const fresh = { stats_json: { trade_parts: { atr_stop: 1 } }, stats_version: STATS_VERSION }
     const days = [
       day('fresh', '2026-10-13', fresh),
-      day('old-version', '2026-10-12', { stats_json: { exit: { atr_stop: 1 } }, stats_version: STATS_VERSION - 1 }),
+      day('old-version', '2026-10-12', { stats_json: { trade_parts: { atr_stop: 1 } }, stats_version: STATS_VERSION - 1 }),
       day('no-cache', '2026-10-11', { stats_json: null, stats_version: STATS_VERSION }),
-      day('other-atr', '2026-10-10', { stats_json: { exit: { atr_stop: 1.5 } }, stats_version: STATS_VERSION }),
+      day('other-atr', '2026-10-10', { stats_json: { trade_parts: { atr_stop: 1.5 } }, stats_version: STATS_VERSION }),
     ]
     const db = fakeDb({ trading_days: days, trades: [], market_context: [], trader_profile: [] })
     const n = await warmDayStats(db.client, 'trader-a')

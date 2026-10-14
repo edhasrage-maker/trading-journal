@@ -186,7 +186,7 @@ export function warmDayStats(supabase: AnyClient, traderKey: string): Promise<nu
         // Only what freshness needs, via JSON paths — not the rollups themselves.
         supabase
           .from('trading_days')
-          .select('id, stats_version, atr_stop:stats_json->exit->atr_stop')
+          .select('id, stats_version, atr_stop:stats_json->trade_parts->atr_stop')
           .order('date', { ascending: false })
           .limit(DAY_WINDOW),
         loadAtrStopTarget(supabase),
@@ -199,7 +199,7 @@ export function warmDayStats(supabase: AnyClient, traderKey: string): Promise<nu
       // which is never the current setting, so it counts as stale too.
       const stale = ((cacheRes.data ?? []) as CacheRow[]).filter(r => !isFreshStats({
         stats_version: r.stats_version,
-        stats_json: r.atr_stop == null ? null : ({ exit: { atr_stop: r.atr_stop } } as unknown as DayStatsStored),
+        stats_json: r.atr_stop == null ? null : ({ trade_parts: { atr_stop: r.atr_stop } } as unknown as DayStatsStored),
       }, atrStopTarget))
       if (stale.length === 0) return 0
 
