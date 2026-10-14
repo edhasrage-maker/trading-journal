@@ -13,6 +13,7 @@
  */
 
 import { chartSeriesRoot, miniContractSymbol } from '@/lib/futures-symbols'
+import { exitEvents } from '@/lib/available-mfe'
 
 export interface AtrBar {
   ts: string             // ISO timestamp
@@ -149,6 +150,10 @@ interface PostExitTrade {
   direction: 'long' | 'short' | null
   exit_price: number | null
   exit_time: string | null
+  /** Exit fills. When present the window starts at the LAST fill, from its
+   *  price: a scaled-out trade's `exit_price` is the average of every fill,
+   *  which sits away from where price was when the runner came off. */
+  exits_json?: unknown
 }
 
 /**
@@ -160,8 +165,11 @@ export function postExitExtension(
   trade: PostExitTrade,
   windowMinutes = POST_EXIT_WINDOW_MIN,
 ): PostExitData | null {
-  if (!trade.direction || trade.exit_price == null || !trade.exit_time) return null
-  const exitMs = new Date(trade.exit_time).getTime()
+  const last = exitEvents(trade.exits_json).at(-1)
+  const exitPrice = last?.price ?? trade.exit_price
+  const exitTime = last?.time ?? trade.exit_time
+  if (!trade.direction || exitPrice == null || !exitTime) return null
+  const exitMs = new Date(exitTime).getTime()
   const endMs = exitMs + windowMinutes * 60_000
   const windowBars = bars.filter(b => {
     const t = new Date(b.ts).getTime()
@@ -176,11 +184,11 @@ export function postExitExtension(
   }
   const isLong = trade.direction === 'long'
   const continued_favorable_pts = isLong
-    ? Math.max(0, maxHigh - trade.exit_price)
-    : Math.max(0, trade.exit_price - minLow)
+    ? Math.max(0, maxHigh - exitPrice)
+    : Math.max(0, exitPrice - minLow)
   const continued_against_pts = isLong
-    ? Math.max(0, trade.exit_price - minLow)
-    : Math.max(0, maxHigh - trade.exit_price)
+    ? Math.max(0, exitPrice - minLow)
+    : Math.max(0, maxHigh - exitPrice)
   const lastBarMs = new Date(windowBars[windowBars.length - 1].ts).getTime()
   const full_window = lastBarMs >= endMs - 60_000
   return { continued_favorable_pts, continued_against_pts, full_window }

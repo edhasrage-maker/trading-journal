@@ -156,3 +156,51 @@ export function postExitVerdict(t: VerdictTrade, ext: PostExitData | null | unde
     title: `The market went essentially nowhere in the 15 min after exit.${partialNote}`,
   }
 }
+
+/**
+ * What price did after a PLANNED exit — the target or the stop doing its job.
+ * Facts only, no verdict: the plan ran its course, so nothing is graded, but the
+ * move after still says something about where the target or stop sat (founder,
+ * 2026-10-14: "even though the target hit it should still tell me what happened
+ * after the exit so we can gather more data on my exits").
+ *
+ * Same 15-min window, materiality bar (1×ATR, else ½R, else 3 pts) and unit as
+ * the hand-closed verdicts above. The window only records the largest move each
+ * way, not which came first — the tooltip says so.
+ */
+export function plannedExitRead(
+  t: VerdictTrade,
+  kind: 'target' | 'stopped',
+  ext: PostExitData | null | undefined,
+): { label: string; title: string } {
+  const base = kind === 'target' ? 'target hit' : 'stopped'
+  const closed = kind === 'target' ? 'Closed at your target.' : 'Closed at your stop.'
+  if (!ext) return { label: base, title: `${closed} No price data after the exit yet.` }
+
+  const riskPts = (t.entry_price != null && t.stop_price != null) ? Math.abs(t.entry_price - t.stop_price) : null
+  const atr = t.entry_atr_1m != null && t.entry_atr_1m > 0 ? t.entry_atr_1m : null
+  const thresh = materialThresholdPts(riskPts, atr)
+  const mag = (pts: number): string => {
+    if (atr != null) return `${(pts / atr).toFixed(1)}×ATR`
+    if (riskPts != null && riskPts > 0) return `${(pts / riskPts).toFixed(1)}R`
+    return `${Math.round(pts)}pts`
+  }
+  const up = ext.continued_favorable_pts   // further your way after the exit
+  const dn = ext.continued_against_pts     // back against you after the exit
+
+  let label: string
+  if (kind === 'target') {
+    label = up >= thresh && up >= dn ? `${base} — ran ${mag(up)} more`
+      : dn >= thresh ? `${base} — reversed ${mag(dn)} after`
+        : `${base} — flat after`
+  } else {
+    label = dn >= thresh && dn >= up ? `${base} — kept going ${mag(dn)} against`
+      : up >= thresh ? `${base} — came back ${mag(up)}`
+        : `${base} — flat after`
+  }
+  const partial = ext.full_window ? '' : ' (partial window — bars ran out)'
+  return {
+    label,
+    title: `${closed} In the 15 min after your last fill: ${up.toFixed(1)} pts further your way, ${dn.toFixed(1)} pts against — the largest move each way, not which came first.${partial}`,
+  }
+}

@@ -187,7 +187,7 @@ async function backfillExcursionsFromBars(
       // Post-exit continuation over POST_EXIT_WINDOW_MIN after exit (same source as
       // the local Sierra import + backfill-post-exit script). Needs exit data.
       if (r.post_exit_favorable_pts == null && r.exit_time && r.exit_price != null && r.direction) {
-        const pe = postExitExtension(bars, { direction: r.direction, exit_price: r.exit_price, exit_time: r.exit_time })
+        const pe = postExitExtension(bars, { direction: r.direction, exit_price: r.exit_price, exit_time: r.exit_time, exits_json: (r as { exits_json?: unknown }).exits_json })
         if (pe) {
           r.post_exit_favorable_pts = Math.round(pe.continued_favorable_pts * 100) / 100
           r.post_exit_against_pts = Math.round(pe.continued_against_pts * 100) / 100

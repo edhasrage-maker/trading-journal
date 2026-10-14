@@ -90,7 +90,7 @@ async function main() {
       if (atr != null) update.entry_atr_1m = r2(atr)
     }
     if (t.post_exit_favorable_pts == null) {
-      const pe = postExitExtension(bars, { direction: t.direction, exit_price: t.exit_price, exit_time: t.exit_time })
+      const pe = postExitExtension(bars, { direction: t.direction, exit_price: t.exit_price, exit_time: t.exit_time, exits_json: (t as { exits_json?: unknown }).exits_json })
       if (pe) {
         update.post_exit_favorable_pts = r2(pe.continued_favorable_pts)
         update.post_exit_against_pts = r2(pe.continued_against_pts)

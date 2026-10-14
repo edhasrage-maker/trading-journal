@@ -22,7 +22,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X,
 import { maeHeatRatio, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
 import { tradeFacts, tradeMgmt, mgmtBarGeometry, formatKept, exitKind, type TradeMgmt } from '@/lib/trade-management'
 import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
-import { postExitVerdict, type VerdictTrade, type VerdictTone } from '@/lib/post-exit-verdict'
+import { postExitVerdict, plannedExitRead, type VerdictTrade, type VerdictTone } from '@/lib/post-exit-verdict'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
@@ -706,11 +706,13 @@ export default function SessionTradeTable({
           const stopHeat = t.stop_price != null ? maeHeatRatio(t) : null
           const facts = tradeFacts(t, { atr: liveAtr })
           const kept = keptCell(tradeMgmt(t, { atr: liveAtr, thresholdAtr: giveBackAtr }))
-          // The plan running its course needs no verdict; only an exit made by
-          // hand gets one.
+          // The plan running its course gets no verdict, only what price did
+          // after; an exit made by hand gets a verdict.
           const kind = exitKind(t)
           const postVerdict = kind === 'manual' || kind == null ? postExitVerdict(t as VerdictTrade, postExitByTradeId?.[t.id]) : null
-          const postLabel = kind === 'stopped' ? 'stopped' : kind === 'target' ? 'target hit' : postVerdict ? `${postVerdict.glyph} ${postVerdict.label}` : '—'
+          const postLabel = kind === 'stopped' || kind === 'target'
+            ? plannedExitRead(t as VerdictTrade, kind, postExitByTradeId?.[t.id]).label
+            : postVerdict ? `${postVerdict.glyph} ${postVerdict.label}` : '—'
           const postCls = kind === 'stopped' || kind === 'target' ? 'text-gray-400' : postVerdict ? VERDICT_TONE_CLASS[postVerdict.tone] : 'text-gray-600'
           const flowScore = scoreOf(t)
           return (
@@ -921,7 +923,7 @@ export default function SessionTradeTable({
                   </div>
                 )}
               <ResizeHandle id="mfe" onStart={startResize} onReset={resetWidths} /></th>}
-              {showPostExit && <th data-col="postExit" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap" title="How the trade ended. 'stopped' and 'target hit' are the plan running its course, so they are stated plainly. A verdict appears only when you closed the trade by hand: what the market did in the 15 min after you were out.">After exit<ResizeHandle id="postExit" onStart={startResize} onReset={resetWidths} /></th>}
+              {showPostExit && <th data-col="postExit" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap" title="What the market did in the 15 min after your last fill. 'stopped' and 'target hit' are the plan running its course, so they say what price did without a verdict. A verdict appears only when you closed the trade by hand.">After exit<ResizeHandle id="postExit" onStart={startResize} onReset={resetWidths} /></th>}
               <th data-col="actions" className="w-8" />
             </tr>
           </thead>
@@ -1177,19 +1179,29 @@ export default function SessionTradeTable({
                   })()}
                   {showPostExit && (() => {
                     const ext = postExitByTradeId?.[t.id]
-                    // The plan running its course is stated plainly — no verdict.
-                    // A stop-out used to read "early — recovered…" whenever price
-                    // bounced in the next 15 minutes, which it does after most
-                    // exits of every kind.
+                    // The plan running its course gets no verdict — a stop-out used
+                    // to read "early — recovered…" whenever price bounced in the
+                    // next 15 minutes, which it does after most exits of every
+                    // kind — but it does say what price did after, in neutral
+                    // grey, so there is data on where the target or stop sat
+                    // (founder, 2026-10-14).
                     const kind = exitKind(t)
                     if (kind === 'stopped' || kind === 'target') {
-                      const after = ext
-                        ? ` In the 15 min after: ${ext.continued_favorable_pts.toFixed(1)} pts further your way, ${ext.continued_against_pts.toFixed(1)} pts against.`
-                        : ''
+                      const read = plannedExitRead(t as VerdictTrade, kind, ext)
+                      const partialPlanned = ext != null && ext.full_window === false
                       return (
-                        <td className="py-1.5 pr-3 text-left text-gray-400"
-                          title={(kind === 'stopped' ? 'Closed at your stop.' : 'Closed at your target.') + after}>
-                          {kind === 'stopped' ? 'stopped' : 'target hit'}
+                        <td className="py-1.5 pr-3 text-left text-gray-400" title={read.title}>
+                          <span className={`block truncate ${colWidths ? '' : 'max-w-[15rem]'}`}>
+                            {read.label}
+                            {partialPlanned && (
+                              <span
+                                className="ml-1.5 align-middle text-[9px] font-normal text-amber-400/80 border border-amber-700/50 rounded px-1 py-0.5"
+                                title="The 15-minute window after the exit hasn't fully elapsed yet — this updates once it does."
+                              >
+                                partial window
+                              </span>
+                            )}
+                          </span>
                         </td>
                       )
                     }

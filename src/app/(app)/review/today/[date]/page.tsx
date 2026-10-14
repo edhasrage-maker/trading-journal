@@ -122,6 +122,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         direction: t.direction,
         exit_price: t.exit_price,
         exit_time: t.exit_time,
+        exits_json: t.exits_json,
       })
       if (ext != null) postExitByTradeId[t.id] = ext
     }
