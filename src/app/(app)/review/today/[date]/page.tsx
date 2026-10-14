@@ -17,6 +17,12 @@ import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
+/** The "You committed to this before the open" card at the top of the Recap.
+ *  Hidden for now (founder, 2026-10-13: "not sure if this is helpful"). Only
+ *  the card is off — Prep still saves the commitment and the week / month
+ *  recaps still read it — so setting this back to true restores it as it was. */
+const SHOW_COMMITMENT_CARD: boolean = false
+
 export default async function EodPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params
   const supabase: AnyClient = await createClient()
@@ -131,7 +137,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
 
   return (
     <>
-      {commitment && <CommitmentResolution date={date} commitment={commitment} />}
+      {SHOW_COMMITMENT_CARD && commitment && <CommitmentResolution date={date} commitment={commitment} />}
       <EodClient
         date={date}
         initialDay={day}
