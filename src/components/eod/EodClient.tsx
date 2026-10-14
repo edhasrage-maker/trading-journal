@@ -101,7 +101,7 @@ function DayFact({ label, value, valueClass, title }: {
 }) {
   return (
     <div
-      className="hidden lg:flex flex-col justify-center min-w-0 border border-gray-800 rounded-[3px] p-[18px]"
+      className="hidden lg:flex flex-col justify-center items-center text-center min-w-0 border border-gray-800 rounded-[3px] p-[18px]"
       title={title}
     >
       <p className="text-xs text-gray-500 whitespace-nowrap">{label}</p>

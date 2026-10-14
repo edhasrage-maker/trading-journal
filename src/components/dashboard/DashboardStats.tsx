@@ -330,7 +330,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
           // fine for a high-R approach. Neutral by default, green only when strong.
           tone={stats.tradeWinRate == null ? 'neutral' : stats.tradeWinRate >= 0.6 ? 'positive' : 'neutral'}
           valueNode={stats.payoffR == null ? undefined : (
-            <span className="flex items-baseline gap-2 flex-wrap">
+            <span className="flex items-baseline justify-center gap-2 flex-wrap">
               <span>{stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}</span>
               <span className="text-gray-600 text-lg font-normal">·</span>
               <span className={stats.breakEvenPayoff != null && stats.payoffR > stats.breakEvenPayoff ? 'text-green-400' : 'text-gray-200'}>
@@ -466,14 +466,14 @@ function StatCard({
   // rounded card read as generic template chrome; dropping the fill lets the
   // tile sit ON the page instead of floating above it, and the near-square
   // corner reads instrument rather than app-card.
-  // Centred, because in the five-across row these tiles stretch to the height
-  // of the Trade management card beside them: top-aligned, a small number sat
-  // above a hole. The value grows with the tile — today's 20px on a phone or a
+  // Centred both ways, because in the five-across row these tiles stretch to the
+  // height of the Trade management card beside them: top-left, a small number
+  // sat in the corner of an empty box. The value grows with the tile — today's 20px on a phone or a
   // narrow row, 26px once the row is wide — and stops there, so P&L never
   // out-shouts the score above it.
   const valueSize = valueClass ?? 'text-[length:clamp(1.25rem,2vw,1.625rem)] leading-tight'
   return (
-    <div className={`border border-gray-800 rounded-[3px] p-[18px] flex flex-col justify-center ${className ?? ''}`} title={title}>
+    <div className={`border border-gray-800 rounded-[3px] p-[18px] flex flex-col justify-center items-center text-center ${className ?? ''}`} title={title}>
       <p className="text-xs text-gray-500 mb-1 whitespace-nowrap">{label}</p>
       {/* Blank value is intentional (e.g. the MFE tile, whose numbers live at the
           bar ends) — skip the line entirely so it doesn't leave an empty gap. */}
