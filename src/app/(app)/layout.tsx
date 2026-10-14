@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 import Masthead from '@/components/Masthead'
 import AppMain from '@/components/AppMain'
 import CoachChat from '@/components/CoachChat'
@@ -8,6 +9,7 @@ import DemoBanner from '@/components/DemoBanner'
 import { UiModeProvider } from '@/lib/ui-mode'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { isDemoEmail } from '@/lib/demo'
+import { dayStatsRequest, warmDayStats } from '@/lib/day-stats-batch'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -19,6 +21,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Archives (the latter two only in the local build — they need `.scid`).
   const isAdmin = LOCAL_FEATURES_ENABLED || (!!user.email && user.email === process.env.ADMIN_EMAIL)
   const isDemo = !LOCAL_FEATURES_ENABLED && isDemoEmail(user.email)
+
+  // Once this page is sent: rebuild any stale dashboard rollups. A deploy that
+  // changes the rollup (STATS_VERSION) dirties every day at once; doing it here
+  // means the first page load after the deploy absorbs it, not the next
+  // dashboard click. Layouts render on full page loads only — which is what the
+  // first navigation after a deploy is. The dashboard rebuilds its own (it has
+  // to render them); the demo account is read-only.
+  const statsRequest = dayStatsRequest()
+  if (!isDemo) {
+    after(async () => {
+      if (!statsRequest.rebuiltByPage) await warmDayStats(supabase, user.id)
+    })
+  }
 
   return (
     <UiModeProvider>

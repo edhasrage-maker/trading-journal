@@ -18,7 +18,7 @@ import { mergeMgmtTotals } from '@/lib/trade-management'
 import type { TradingDay, Trade } from '@/lib/supabase/types'
 import { aggregateTapeScore } from '@/lib/tapescore'
 import {
-  computeDayStats, fromStoredStats, toStoredStats, scoreDayRollups, isFreshStats, STATS_VERSION, ROLLUP_TRADE_COLS,
+  fromStoredStats, scoreDayRollups, isFreshStats,
   type DayStatsStored,
 } from '@/lib/day-stats'
 import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
@@ -29,6 +29,8 @@ import { DashboardHero, type HeroPeriods } from '@/components/review/ReviewMonth
 import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
 import { resolveReviewScope } from '@/lib/review-scope'
 import Link from 'next/link'
+import { after } from 'next/server'
+import { computeDayRollups, writeDayRollups, dayStatsRequest } from '@/lib/day-stats-batch'
 
 const PAGE_SIZE = 1000
 
@@ -43,6 +45,9 @@ export default async function DashboardPage() {
   // under the wrong calendar day.
   const today = todayPT()
   const supabase = await createClient()
+  // This page rebuilds its own stale days (it renders them), so the layout's
+  // background warm stands down for this request.
+  dayStatsRequest().rebuiltByPage = true
   const perf = { phases: [] as Array<{ name: string; ms: number; rows?: number }>, t0: Date.now() }
   const tick = (name: string, rows?: number) => {
     const ms = Date.now() - perf.t0
@@ -160,113 +165,21 @@ export default async function DashboardPage() {
   const dirtyIds = dirtyDays.map(d => d.id)
   tick('partition (dirty)', dirtyIds.length)
 
-  // Trade stats per day (count + setup tags + summed pnl + MFE/MAE inputs) —
-  // one batched query, grouped in code. PnL is needed so the dashboard can
-  // fall back to sum(trades.pnl) when the user hasn't saved an explicit
-  // eod_pnl override yet. high_during_position / low_during_position +
-  // direction + entry_price + symbol + quantity feed the per-day avg MFE / MAE.
-  type TradeSlim = {
-    id: string
-    trading_day_id: string
-    entry_time: string | null
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tags_json: any
-    pnl: number | null
-    direction: 'long' | 'short' | null
-    entry_price: number | null
-    stop_price: number | null
-    high_during_position: number | null
-    low_during_position: number | null
-    quantity: number | null
-    symbol: string | null
-    // Per-trade Wilder ATR-10 at entry minute, populated by
-    // scripts/backfill-entry-metrics.ts. When null (e.g. pre-2025 trades),
-    // falls back to day-level market_context.atr_1m.
-    entry_atr_1m: number | null
-    // Needed by the scaling-aware MFE-capture calc: the per-leg exits + any
-    // backfilled per-leg $. Without exits_json a scaled-out trade reads LOWER
-    // here than on the EOD recap (which has the full trade data).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    exits_json: any
-    mfe_dollars_per_leg: number | null
-    // The Exit score reads the exit fill, the planned target and the 5-minute
-    // structure (src/lib/exit-score.ts).
-    exit_price: number | null
-    tp1_price: number | null
-    structure_5m_alignment: 'following' | 'fading' | 'neutral' | null
-  }
-  // Chunk trading_day_ids for the .in() — 50 UUIDs per chunk to stay under
-  // PostgREST URL-length limits. Trades pagination per chunk: range() up to
-  // PAGE_SIZE because a busy 6-month chunk could exceed the 1000-row cap. All
-  // three fetches are scoped to dirtyIds — steady state that's empty → no-ops.
-  async function fetchDirtyBlobs(): Promise<Map<string, Pick<TradingDay, 'ai_analysis_json' | 'eod_ai_analysis_json'>>> {
-    const out = new Map<string, Pick<TradingDay, 'ai_analysis_json' | 'eod_ai_analysis_json'>>()
-    if (dirtyIds.length === 0) return out
-    const CHUNK = 50
-    for (let i = 0; i < dirtyIds.length; i += CHUNK) {
-      const slice = dirtyIds.slice(i, i + CHUNK)
-      const { data, error } = await supabase
-        .from('trading_days')
-        .select('id, ai_analysis_json, eod_ai_analysis_json')
-        .in('id', slice)
-      if (error) throw new Error(`trading_days blobs: ${error.message}`)
-      for (const r of (data ?? []) as (Pick<TradingDay, 'id' | 'ai_analysis_json' | 'eod_ai_analysis_json'>)[]) {
-        out.set(r.id, { ai_analysis_json: r.ai_analysis_json, eod_ai_analysis_json: r.eod_ai_analysis_json })
-      }
-    }
-    return out
-  }
-  async function fetchTradesAll(): Promise<TradeSlim[]> {
-    if (dirtyIds.length === 0) return []
-    const CHUNK = 50
-    const out: TradeSlim[] = []
-    for (let i = 0; i < dirtyIds.length; i += CHUNK) {
-      const slice = dirtyIds.slice(i, i + CHUNK)
-      for (let p = 0; p < 50; p++) {
-        const { data, error } = await supabase
-          .from('trades')
-          .select(`trading_day_id, entry_time, ${ROLLUP_TRADE_COLS}`)
-          .in('trading_day_id', slice)
-          .order('id', { ascending: true })
-          .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
-        if (error) throw new Error(`trades: ${error.message}`)
-        const batch = (data ?? []) as TradeSlim[]
-        out.push(...batch)
-        if (batch.length < PAGE_SIZE) break
-      }
-    }
-    return out
-  }
-  async function fetchContexts(): Promise<{ trading_day_id: string; atr_1m: number | null }[]> {
-    if (dirtyIds.length === 0) return []
-    const CHUNK = 50
-    const out: { trading_day_id: string; atr_1m: number | null }[] = []
-    for (let i = 0; i < dirtyIds.length; i += CHUNK) {
-      const slice = dirtyIds.slice(i, i + CHUNK)
-      const { data } = await supabase
-        .from('market_context')
-        .select('trading_day_id, atr_1m')
-        .in('trading_day_id', slice)
-      if (data) out.push(...(data as { trading_day_id: string; atr_1m: number | null }[]))
-    }
-    return out
-  }
-  const [blobsByDayId, tradesAll, contextsRaw] = await Promise.all([fetchDirtyBlobs(), fetchTradesAll(), fetchContexts()])
-  tick('dirty trades + blobs + contexts', tradesAll.length)
-  const tradesByDay = new Map<string, TradeSlim[]>()
-  for (const t of tradesAll) {
-    const arr = tradesByDay.get(t.trading_day_id) ?? []
-    arr.push(t)
-    tradesByDay.set(t.trading_day_id, arr)
-  }
-  const prepAtrByDay = new Map<string, number | null>()
-  for (const c of contextsRaw) {
-    prepAtrByDay.set(c.trading_day_id, c.atr_1m)
-  }
+  // Dirty days are recomputed here (the page has to render them) by the shared
+  // batch engine — the same one the layout's background warm uses, reading a
+  // few chunks at a time in parallel — and stored AFTER the response is sent
+  // (below), so the click never waits on the writes.
+  const dirtyRollups = await computeDayRollups(
+    supabase,
+    dirtyDays.map(d => ({ ...d, achievements: achievementsByDayId.get(d.id) ?? [] })),
+    atrStopTarget,
+  )
+  tick('dirty days computed', dirtyRollups.length)
+  const dirtyById = new Map(dirtyRollups.map(r => [r.id, r]))
 
   // Per-day rollup: fresh days rehydrate from the cache (column-owned fields
-  // re-merged from the row); dirty days recompute via the SAME shared pure
-  // function so a cached row and a freshly-computed one are identical.
+  // re-merged from the row); dirty days come from the SAME shared pure
+  // function, so a cached row and a freshly-computed one are identical.
   const rolledUp = recentDaysBase.map(d => {
     const cached = statsByDayId.get(d.id)
     if (cached) {
@@ -278,22 +191,8 @@ export default async function DashboardPage() {
         achievements: achievementsByDayId.get(d.id) ?? [],
       })
     }
-    const blob = blobsByDayId.get(d.id)
-    return computeDayStats(
-      {
-        id: d.id,
-        date: d.date,
-        eod_pnl: d.eod_pnl,
-        day_type: d.day_type,
-        day_types: d.day_types,
-        ai_analysis_json: blob?.ai_analysis_json ?? null,
-        eod_ai_analysis_json: blob?.eod_ai_analysis_json ?? null,
-        achievements: achievementsByDayId.get(d.id) ?? [],
-      },
-      tradesByDay.get(d.id) ?? [],
-      prepAtrByDay.get(d.id) ?? null,
-      { atrStopTarget },
-    )
+    // computeDayRollups returns one rollup per day it was given.
+    return dirtyById.get(d.id)!
   })
   tick('per-day rollup', rolledUp.length)
 
@@ -310,25 +209,17 @@ export default async function DashboardPage() {
   const recentDaysMapped = scoreDayRollups(rolledUp, riskHistory)
   tick('exit + tapescore', recentDaysMapped.length)
 
-  // Read-through write-back: warm the cache for the days we just recomputed so
-  // the next load serves them from cache. Best-effort — a stats-only UPDATE
-  // leaves the input columns untouched, so the BEFORE UPDATE invalidation
-  // trigger preserves what we write. Skipped when the columns are absent
-  // (pre-migration) or for read-only demo users (the write errors → swallowed;
-  // they simply recompute each load, which is correct). Never blocks the render
-  // on failure; errors are swallowed so a warm-cache miss can't break the page.
-  if (cacheAvailable && dirtyDays.length > 0) {
-    const byId = new Map(rolledUp.map(r => [r.id, r]))
-    await Promise.all(dirtyDays.map(d => {
-      const rollup = byId.get(d.id)
-      if (!rollup) return Promise.resolve()
-      return supabase
-        .from('trading_days')
-        .update({ stats_json: toStoredStats(rollup), stats_version: STATS_VERSION } as never)
-        .eq('id', d.id)
-        .then(() => {}, () => {})
-    }))
-    tick('read-through write-back', dirtyDays.length)
+  // Store the days just recomputed so the next load reads them from cache —
+  // after the response is sent, a bounded number of writes at a time
+  // (src/lib/day-stats-batch.ts). Best-effort: a pre-migration DB or the
+  // read-only demo user fails the write and simply recomputes next load, which
+  // is correct.
+  if (cacheAvailable && dirtyRollups.length > 0) {
+    after(async () => {
+      const t = Date.now()
+      const written = await writeDayRollups(supabase, dirtyRollups)
+      console.log(`[dashboard perf] stored ${written}/${dirtyRollups.length} recomputed days after the response in ${Date.now() - t}ms`)
+    })
   }
 
   // ── Hero: TapeScore + finding, adjustable by window ────────────────────
