@@ -11,7 +11,7 @@ import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
 import { ScoreBreakdownInfo, type HeroPeriodData } from '@/components/review/ReviewMonthHero'
 import { tapeScorePeriodSentence } from '@/lib/tapescore'
-import { EXIT_AXIS_DESC, exitFactorsTooltip } from '@/lib/exit-rollup'
+import { AXIS_DESC, axisTooltip } from '@/lib/tapescore-axes'
 import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
 
 /**
@@ -82,7 +82,7 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
   const [mfeUnit] = useMfeUnit()
   const kept = mgmtView(mgmt, mfeUnit)
   const { scorePeriod, carryover } = hero
-  const { score, band, risk, entry, exit, exitFactors, scoredDays } = scorePeriod
+  const { score, band, risk, entry, exit, parts, scoredDays } = scorePeriod
 
   // A freshly-imported journal has sessions but NO TapeScore anywhere: the
   // score comes from the end-of-day read, which runs per session and on
@@ -142,7 +142,7 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
         <TapeScoreRing
           score={score}
           band={band}
-          title="TapeScore — one 0-100 score per day: risk, entry and exit, weighted equally. Days that broke 2+ risk rails cap at 49."
+          title="TapeScore — one 0-100 score per day: risk, entry and exit, weighted equally. Days that broke the rules or the daily loss limit cap at 49."
         />
         <div className="flex-1 min-w-[240px]">
           <div className="flex items-center gap-2 mb-2">
@@ -165,15 +165,15 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
             <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
               {risk != null && (
                 <HeroChip label={`Risk ${risk}`} tone={risk >= 70 ? 'good' : risk >= 50 ? 'mid' : 'bad'}
-                  title="Risk (0-100): size and the 5 account guardrails." />
+                  title={axisTooltip(`Risk (0-100): ${AXIS_DESC.risk}.`, parts, 'risk')} />
               )}
               {entry != null && (
                 <HeroChip label={`Entry ${entry}`} tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
-                  title="Entry (0-100): setup, timing, stop placement." />
+                  title={axisTooltip(`Entry (0-100): ${AXIS_DESC.entry}.`, parts, 'entry')} />
               )}
               {exit != null && (
                 <HeroChip label={`Exit ${exit}`} tone={exit >= 70 ? 'good' : exit >= 50 ? 'mid' : 'bad'}
-                  title={exitFactorsTooltip(`Exit (0-100): ${EXIT_AXIS_DESC}.`, exitFactors)} />
+                  title={axisTooltip(`Exit (0-100): ${AXIS_DESC.exit}.`, parts, 'exit')} />
               )}
             </div>
           )}

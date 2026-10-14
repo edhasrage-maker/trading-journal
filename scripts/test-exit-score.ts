@@ -1,8 +1,9 @@
 /**
- * Tests for the Exit score wiring — the definition (src/lib/exit-score.ts), the
- * per-day storage + average-risk rule (src/lib/exit-rollup.ts), the rollup
- * (src/lib/day-stats.ts) and the TapeScore blend (src/lib/tapescore.ts).
- * Pure: no network, no database.
+ * Tests for the five per-trade factors (src/lib/exit-score.ts — profit kept,
+ * stop respected and runner rules for Exit; loss size and stop size for Risk)
+ * and their per-day storage + average-risk rule (src/lib/exit-rollup.ts).
+ * How the factors blend into the three axes is tested in
+ * scripts/test-tapescore-axes.ts. Pure: no network, no database.
  *
  *   npx tsx scripts/test-exit-score.ts   (also wired into `npm test`)
  *
@@ -10,21 +11,15 @@
  * $20 of risk at one lot), ATR 10, target 120 unless a case says otherwise.
  */
 import {
-  exitTradeScores, exitScoreView, emptyExitSums, addExitScores, mergeExitSums, lossSizeInputs, lossSizeScore,
-  runnerAttempted, EXIT_FACTORS, EXIT_WEIGHTS,
-  type ExitTradeInput, type ExitSums,
+  exitTradeScores, lossSizeInputs, lossSizeScore, runnerAttempted, TRADE_FACTORS,
+  type ExitTradeInput,
 } from '../src/lib/exit-score'
 import {
-  avgRiskBefore, exitInSequence, dayExitStored, dayExitSums, exitFactorLines,
+  avgRiskBefore, tradeSumsInSequence, dayTradeInputs, dayTradeSums, tradeFlowTotal,
   AVG_RISK_WINDOW_TRADES, AVG_RISK_MIN_TRADES, type RiskDay,
 } from '../src/lib/exit-rollup'
-import {
-  computeTapeScore, tapeScoreBase, tapeScoreWithExit, aggregateTapeScore, type TapeScoreResult,
-} from '../src/lib/tapescore'
-import {
-  computeDayStats, scoreDayRollups, toStoredStats, fromStoredStats, isFreshStats, STATS_VERSION,
-  type TradeForStats, type DayForStats,
-} from '../src/lib/day-stats'
+import { emptyTradeSums } from '../src/lib/tapescore-axes'
+import type { TradeForStats } from '../src/lib/day-stats'
 
 let failures = 0
 function check(name: string, cond: boolean, detail?: string) {
@@ -131,29 +126,6 @@ console.log('5 · runner rules')
   check('a "TP1 only" tag is not a runner', !runnerAttempted(long({ exit: 120, tags_json: { trade_management: ['TP1 only'] } })))
 }
 
-// ── Weights: absent factors share their weight ───────────────────────────────
-console.log('weights')
-{
-  const sums = emptyExitSums()
-  addExitScores(sums, { kept: 1, lossSize: 1, stopRespected: 1, stopSize: 1 })
-  const v = exitScoreView(sums)
-  near('no runner: profit kept carries 25/85', v.factors.kept.weight, 0.25 / 0.85, 1e-9)
-  near('no runner: loss size carries 25/85', v.factors.lossSize.weight, 0.25 / 0.85, 1e-9)
-  near('no runner: stop respected carries 20/85', v.factors.stopRespected.weight, 0.20 / 0.85, 1e-9)
-  near('no runner: stop size carries 15/85', v.factors.stopSize.weight, 0.15 / 0.85, 1e-9)
-  near('no runner: runner carries 0', v.factors.runner.weight, 0, 1e-12)
-  check('rounded: 29 / 29 / 24 / 18', [v.factors.kept, v.factors.lossSize, v.factors.stopRespected, v.factors.stopSize]
-    .map(f => Math.round(f.weight * 100)).join('/') === '29/29/24/18')
-  const all = emptyExitSums()
-  addExitScores(all, { kept: 1, lossSize: 0, stopRespected: 1, stopSize: 0, runner: 1 })
-  near('all five present: plain 25/25/20/15/15 blend', exitScoreView(all).score, 25 + 20 + 15)
-  near('weights sum to 1', EXIT_FACTORS.reduce((a, k) => a + EXIT_WEIGHTS[k], 0), 1, 1e-12)
-  check('nothing to judge → no Exit score', exitScoreView(emptyExitSums()).score === null)
-  const lines = exitFactorLines(v.factors)
-  check('a factor with no trades reads "not applicable"', lines.find(l => l.key === 'runner')?.detail === 'not applicable')
-  check('a judged factor reads "score · trades"', lines.find(l => l.key === 'kept')?.detail === '100 · 1 trade')
-}
-
 // ── Day storage: rollup path = direct path ───────────────────────────────────
 console.log('day storage')
 {
@@ -165,15 +137,34 @@ console.log('day storage')
     long({ exit: 130, high_during_position: 132, quantity: 2, exits_json: [{ qty: 1, price: 120 }, { qty: 1, price: 130 }] }),
   ]
   for (const avg of [null, 15, 20, 37.5]) {
-    const direct = emptyExitSums()
-    for (const t of day) addExitScores(direct, exitTradeScores(t, { avgRiskDollars: avg }))
-    const stored = JSON.parse(JSON.stringify(dayExitStored(day, 1)))   // survives stats_json
-    const viaStore = dayExitSums(stored, avg)!
-    const same = EXIT_FACTORS.every(k => direct[k].n === viaStore[k].n && Math.abs(direct[k].sum - viaStore[k].sum) < 1e-12)
+    const direct = emptyTradeSums()
+    for (const t of day) {
+      const s = exitTradeScores(t, { avgRiskDollars: avg })
+      for (const k of TRADE_FACTORS) { const v = s[k]; if (v != null) { direct[k].n++; direct[k].sum += v } }
+    }
+    const stored = JSON.parse(JSON.stringify(dayTradeInputs(day, 1)))   // survives stats_json
+    const viaStore = dayTradeSums(stored, avg)!
+    const same = TRADE_FACTORS.every(k => direct[k].n === viaStore[k].n && Math.abs(direct[k].sum - viaStore[k].sum) < 1e-12)
     check(`stored-then-scored = scored directly (avg ${avg ?? 'none'})`, same, JSON.stringify({ direct, viaStore }))
   }
-  check('stored inputs record the ATR stop setting', dayExitStored(day, 2).atr_stop === 2 && dayExitStored(day).atr_stop === 1)
-  check('the 2-ATR setting changes stop size', dayExitStored(day, 2).stopSize.sum > dayExitStored(day, 1).stopSize.sum)
+  check('stored inputs record the ATR stop setting', dayTradeInputs(day, 2).atr_stop === 2 && dayTradeInputs(day).atr_stop === 1)
+  check('the 2-ATR setting changes stop size', dayTradeInputs(day, 2).stopSize.sum > dayTradeInputs(day, 1).stopSize.sum)
+}
+
+// ── Order-flow Score: read from the trade, stored as total ÷ 100 ────────────
+console.log('order-flow Score inputs')
+{
+  check('read from review_json.score.total (any version)', tradeFlowTotal({ review_json: { score: { total: 72 } } }) === 72)
+  check('read from the lean JSON-path column', tradeFlowTotal({ flow_total: 55 }) === 55)
+  check('a trade without a Score reads null', tradeFlowTotal({ review_json: { verdict: undefined } as never }) === null && tradeFlowTotal({}) === null)
+  const day = [
+    { ...long({ exit: 110 }), flow_total: 80 },
+    { ...long({ exit: 95 }), flow_total: 40 },
+    long({ exit: 120 }),
+  ]
+  const s = dayTradeInputs(day, 1)
+  check('only scored trades count (2 of 3)', s.flow.n === 2)
+  near('stored as total ÷ 100, summed', s.flow.sum, 1.2, 1e-12)
 }
 
 // ── Average dollar risk: one rule ────────────────────────────────────────────
@@ -194,88 +185,18 @@ console.log('average dollar risk')
   near('whole days only (25 + a full day of 10 = 35 trades)', avgRiskBefore('2026-03-03', whole), 3500 / 35)
   check('days with no stop trades are skipped, not counted', avgRiskBefore('2026-03-03', [...whole, d('2026-03-02b', 0, 0)]) === avgRiskBefore('2026-03-03', whole))
   // The sequence helper uses the same rule for every day of a window.
-  const window = ten.map(x => ({ ...x, exit: null }))
-  const seq = exitInSequence(window)
+  const window = ten.map(x => ({ ...x, trade_parts: null }))
+  const seq = tradeSumsInSequence(window)
   const agree = window.every((x, i) => {
     const a = seq[i].avgRiskDollars, b = avgRiskBefore(x.date, window)
     return (a == null && b == null) || (a != null && b != null && Math.abs(a - b) < 1e-9)
   })
-  check('exitInSequence agrees with avgRiskBefore on every day', agree)
+  check('tradeSumsInSequence agrees with avgRiskBefore on every day', agree)
   // History supplies the days before a window; a date in both counts once.
   const hist = [d('2026-01-20', 3000, 30)]
-  near('history before the window feeds its first day', exitInSequence([{ ...d('2026-02-01', 10, 1), exit: null }], hist)[0].avgRiskDollars, 100)
+  near('history before the window feeds its first day', tradeSumsInSequence([{ ...d('2026-02-01', 10, 1), trade_parts: null }], hist)[0].avgRiskDollars, 100)
   near('a date in both window and history counts once (window wins)',
-    exitInSequence([{ ...d('2026-01-20', 600, 10), exit: null }, { ...d('2026-01-21', 0, 0), exit: null }], hist)[1].avgRiskDollars, 60)
-}
-
-// ── TapeScore: Exit is passed in, never read from the analysis ──────────────
-console.log('tapescore blend')
-{
-  const rails = (pass: number) => ({
-    per_rule: Object.fromEntries(['P1', 'P2', 'P3', 'P4', 'P5'].map((id, i) => [id, { status: i < pass ? 'pass' : 'fail' }])),
-    verdict: pass >= 4 ? 'Compliant' : 'Breach',
-  })
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const execution: any = { execution_parameters: 0.7, prep_adherence: 0.7, profit_factor: 1.4, mfe_capture: 0.1, composite: 0.6 }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const r = computeTapeScore({ process: rails(5) as any, execution, exit: 90 })!
-  check('the Exit axis is the value passed in, not mfe_capture', r.components.exit === 90, String(r.components.exit))
-  check('score = (Risk + Entry + Exit) / 3', r.score === Math.round((100 + 70 + 90) / 3), String(r.score))
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const noExit = computeTapeScore({ process: rails(5) as any, execution, exit: null })!
-  check('no Exit → axis absent, Risk + Entry re-weight', noExit.components.exit === null && noExit.score === 85, String(noExit.score))
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const breach = computeTapeScore({ process: rails(3) as any, execution, exit: 100 })!
-  check('Breach cap unchanged (≤49)', breach.score === 49 && breach.capped)
-  check('legacy row unchanged and ignores Exit', computeTapeScore({ legacyScore: 7.4, exit: 10 })?.score === 74 && computeTapeScore({ legacyScore: 7.4, exit: 10 })?.basis === 'legacy')
-  check('no analysis → no TapeScore, whatever the trades say', computeTapeScore({ exit: 95 }) === null)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const base = tapeScoreBase({ process: rails(4) as any, execution })!
-  const roundTrip = tapeScoreWithExit(JSON.parse(JSON.stringify(base)), 77)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  check('base cached as JSON + Exit later = computed in one go', JSON.stringify(roundTrip) === JSON.stringify(computeTapeScore({ process: rails(4) as any, execution, exit: 77 })))
-}
-
-// ── Period: Exit pooled over trades, headline = mean of day scores ──────────
-console.log('period pooling')
-{
-  // Day A: one winner kept in full. Day B: three winners that kept nothing.
-  const a = emptyExitSums(); addExitScores(a, { kept: 1 })
-  const b = emptyExitSums(); for (let i = 0; i < 3; i++) addExitScores(b, { kept: 0 })
-  const day = (score: number, exit: number, sums: ExitSums) => ({
-    tapescore: { score, band: 'mid', basis: 'v15', capped: false, components: { risk: 100, entry: 50, exit, passCount: 5, railCount: 5, verdict: 'Compliant' } } as TapeScoreResult,
-    exit_sums: sums,
-  })
-  const p = aggregateTapeScore([day(83, 100, a), day(50, 0, b), { tapescore: null, exit_sums: a }])
-  check('period Exit = pooled over the 4 trades (25), not the mean of days (50)', p.exit === 25, String(p.exit))
-  check('period factors carry the pooled count', p.exitFactors?.kept.n === 4)
-  check('headline = mean of day TapeScores (66.5 → 67)', p.score === 67, String(p.score))
-  check('an unscored day adds nothing to the period Exit', p.scoredDays === 2)
-  check('merge is plain addition', mergeExitSums([a, b]).kept.n === 4)
-}
-
-// ── The rollup carries the inputs; the score is finished in sequence ────────
-console.log('rollup')
-{
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const eod: any = { process: { per_rule: Object.fromEntries(['P1', 'P2', 'P3', 'P4', 'P5'].map(id => [id, { status: 'pass' }])), verdict: 'Compliant' }, execution: { execution_parameters: 0.8, prep_adherence: 0.8, profit_factor: 2, composite: 0.8 } }
-  const mkDay = (date: string, withEod: boolean): DayForStats => ({ id: date, date, eod_pnl: null, day_type: null, day_types: null, ai_analysis_json: null, eod_ai_analysis_json: withEod ? eod : null })
-  // Six prior days of five $20-risk trades (30 trades), then a day with a $30 loss.
-  const prior = Array.from({ length: 6 }, (_, i) => computeDayStats(mkDay(`2026-04-0${i + 1}`, false), Array.from({ length: 5 }, () => long({ exit: 110, high_during_position: 110 })), null))
-  const today = computeDayStats(mkDay('2026-04-07', true), [long({ exit: 85, low_during_position: 85 })], null)
-  check('rollup stores Exit inputs and the Risk+Entry base, not a finished score', 'exit' in today && 'tape' in today && !('tapescore' in today))
-  const scored = scoreDayRollups([...prior, today])
-  const t = scored[scored.length - 1]
-  near('loss size measured against the prior 30 trades ($20 avg) → 1.5× ≈ 0.56', t.exit_sums?.lossSize.sum, 0.5556, 0.001)
-  check('the finished TapeScore carries that Exit', t.tapescore?.components.exit === Math.round(exitScoreView(t.exit_sums!).score!))
-  check('an unanalysed day still has Exit sums but no TapeScore', scored[0].tapescore === null && scored[0].exit_sums != null)
-  const stored = toStoredStats(t)
-  check('the read-time fields are never cached', !('tapescore' in stored) && !('exit_sums' in stored))
-  const back = fromStoredStats(JSON.parse(JSON.stringify(stored)), { id: t.id, date: t.date, day_type: null, day_types: null })
-  check('a cached row scores identically', JSON.stringify(scoreDayRollups([...prior, back]).at(-1)!.tapescore) === JSON.stringify(t.tapescore))
-  check('fresh at this version + same ATR setting', isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 1))
-  check('stale when the ATR setting changed', !isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 2))
-  check('stale at the old version', !isFreshStats({ stats_json: stored, stats_version: 9 }, 1))
+    tradeSumsInSequence([{ ...d('2026-01-20', 600, 10), trade_parts: null }, { ...d('2026-01-21', 0, 0), trade_parts: null }], hist)[1].avgRiskDollars, 60)
 }
 
 if (failures > 0) {

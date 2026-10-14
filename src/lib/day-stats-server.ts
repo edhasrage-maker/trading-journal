@@ -20,7 +20,7 @@ import {
   type DayForStats, type TradeForStats,
 } from './day-stats'
 import { AVG_RISK_WINDOW_TRADES, normalizeAtrStopTarget, type RiskDay } from './exit-rollup'
-import { resolveRubric, type ScoringProfile } from './scoring-profile'
+import { includeFlowScoreInEntry, resolveRubric, type ScoringProfile } from './scoring-profile'
 import { pickMarketContext } from './market-context-select'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,24 +30,41 @@ type AnyClient = any
 // query that feeds the rollup.
 const TRADE_COLS = ROLLUP_TRADE_COLS
 
+/** The two scoring-profile settings TapeScore reads. */
+export interface TapeScoreSettings {
+  /** The ATR stop setting (`stop: { mode: 'atr', value }`; default 1) — the
+   *  yardstick for Risk's "Stop size". Baked into the cached sums. */
+  atrStopTarget: number
+  /** Include the order-flow Score in Entry (default ON). Applied at read time. */
+  includeFlow: boolean
+}
+
 /**
- * The trader's ATR stop setting (scoring profile → `stop: { mode: 'atr', value }`;
- * default 1) — the yardstick for the Exit score's "Stop size" factor. Resolved
- * through the same `resolveRubric` the trade Score uses, so the two can't read
- * the setting differently. Never throws: a DB without the column (the local
- * owner build) or a missing row is the default.
+ * The trader's TapeScore settings from their scoring profile, in one read. The
+ * ATR stop setting is resolved through the same `resolveRubric` the trade Score
+ * uses, so the two can't read it differently. Never throws: a DB without the
+ * column (the local owner build) or a missing row is the defaults.
  */
-export async function loadAtrStopTarget(supabase: AnyClient): Promise<number> {
+export async function loadTapeScoreSettings(supabase: AnyClient): Promise<TapeScoreSettings> {
+  const defaults: TapeScoreSettings = { atrStopTarget: 1, includeFlow: includeFlowScoreInEntry(null) }
   try {
     const { data, error } = await supabase
       .from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle()
-    if (error || !data) return 1
+    if (error || !data) return defaults
     const sp = data.scoring_profile_json && typeof data.scoring_profile_json === 'object'
       ? (data.scoring_profile_json as ScoringProfile) : null
-    return normalizeAtrStopTarget(resolveRubric(sp).atrStopTarget)
+    return {
+      atrStopTarget: normalizeAtrStopTarget(resolveRubric(sp).atrStopTarget),
+      includeFlow: includeFlowScoreInEntry(sp),
+    }
   } catch {
-    return 1
+    return defaults
   }
+}
+
+/** Just the ATR stop setting — what the per-day write path bakes into the cache. */
+export async function loadAtrStopTarget(supabase: AnyClient): Promise<number> {
+  return (await loadTapeScoreSettings(supabase)).atrStopTarget
 }
 
 /** Prior days fetched per round trip while looking for 30 stop trades. */
@@ -163,7 +180,7 @@ export async function recomputeDayStats(supabase: AnyClient, dayId: string): Pro
       // instrument. Picking the wrong one badly skews the ×ATR fallback (ES
       // atr_1m ~2 vs NQ ~10). See src/lib/market-context-select.ts.
       supabase.from('market_context').select('symbol, atr_1m').eq('trading_day_id', dayId),
-      // The Exit score's "Stop size" is graded against the trader's own setting.
+      // Risk's "Stop size" is graded against the trader's own setting.
       loadAtrStopTarget(supabase),
     ])
     const trades = (tradesRes?.data ?? []) as TradeForStats[]

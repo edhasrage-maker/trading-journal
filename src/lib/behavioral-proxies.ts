@@ -205,19 +205,11 @@ export function computeBehavioralProxies(
     })
   }
 
-  // 4. Pressing into drawdown — sizing up while red on the day or after a loss.
-  //    "Sizing up" means bigger than ANY size already taken today, not merely
-  //    bigger than the previous trade: going 5 → 3 → 5 is a return to normal
-  //    size after a reduced trade, and flagging it was a false alarm.
+  // 4. Pressing into drawdown — sizing up while red on the day or after a loss
+  //    (see pressingRows; TapeScore's "no size-up after a loss" rail reads the
+  //    same definition through pressingDrawdownIds).
   {
-    const hits: Row[] = []
-    let maxSoFar = rows[0]?.quantity ?? 0
-    for (let i = 1; i < rows.length; i++) {
-      const r = rows[i]
-      const q = r.quantity ?? 0
-      if (q > maxSoFar && (r.runningPnlBefore < 0 || r.prevOutcome === 'loss')) hits.push(r)
-      maxSoFar = Math.max(maxSoFar, q)
-    }
+    const hits = pressingRows(rows)
     const count = hits.length
     const severity: ProxySeverity = count >= 2 ? 'flag' : count === 1 ? 'mild' : 'none'
     proxies.push({
@@ -251,6 +243,53 @@ export function computeBehavioralProxies(
   }
 
   return { tradeCount: n, hasSignal: proxies.some(p => p.severity !== 'none'), proxies }
+}
+
+/** Pressing into drawdown: a trade entered while the day's closed P&L was below
+ *  zero or right after a loss, at a size bigger than ANY size already taken
+ *  today — not merely bigger than the previous trade: going 5 → 3 → 5 is a
+ *  return to normal size after a reduced trade, and flagging it was a false
+ *  alarm. The day's first trade is never a hit. */
+function pressingRows(rows: Row[]): Row[] {
+  const hits: Row[] = []
+  let maxSoFar = rows[0]?.quantity ?? 0
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i]
+    const q = r.quantity ?? 0
+    if (q > maxSoFar && (r.runningPnlBefore < 0 || r.prevOutcome === 'loss')) hits.push(r)
+    maxSoFar = Math.max(maxSoFar, q)
+  }
+  return hits
+}
+
+/** IDs of one day's trades that pressed into drawdown (proxy #4) — the single
+ *  definition behind both the recap flag and TapeScore's "no size-up after a
+ *  loss" rail. Pass one day's trades. */
+export function pressingDrawdownIds(trades: ProxyTrade[]): string[] {
+  return pressingRows(buildRows(trades)).map(r => r.id)
+}
+
+/**
+ * IDs of one day's trades entered within `withinMin` minutes AFTER the exit of
+ * an earlier losing trade that day (any earlier trade, not only the previous
+ * one). A trade whose times are missing is never one. TapeScore's "Re-entries"
+ * part judges these (5 minutes); the revenge proxy above is the tighter
+ * previous-trade-only, 2-minute read.
+ */
+export function reentryAfterLossIds(trades: ProxyTrade[], withinMin: number): string[] {
+  const rows = buildRows(trades)
+  const out: string[] = []
+  for (let i = 1; i < rows.length; i++) {
+    const entry = rows[i].entry_time ? Date.parse(rows[i].entry_time as string) : NaN
+    if (!Number.isFinite(entry)) continue
+    const quick = rows.slice(0, i).some(u => {
+      if (!(u.pnl != null && u.pnl < 0) || !u.exit_time) return false
+      const gap = (entry - Date.parse(u.exit_time)) / 60000
+      return Number.isFinite(gap) && gap >= 0 && gap <= withinMin
+    })
+    if (quick) out.push(rows[i].id)
+  }
+  return out
 }
 
 function fmtSignedUsd(n: number): string {

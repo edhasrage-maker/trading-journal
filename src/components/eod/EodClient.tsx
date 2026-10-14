@@ -36,6 +36,7 @@ import { type BarLike } from '@/lib/analytics'
 import { mgmtTotals } from '@/lib/trade-management'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import { buildHighlights } from '@/lib/trade-highlights'
+import { effectiveAnalysis } from '@/lib/tapescore-day-rules'
 import type {
   TradingDay,
   Trade,
@@ -71,13 +72,15 @@ interface Props {
    *  measurement. Defaults to 1× when unset / pre-migration. */
   giveBackAtr?: number
   /** The trader's average planned dollar risk going INTO this day — the
-   *  yardstick for the Exit score's "Loss size" (src/lib/exit-rollup.ts).
+   *  yardstick for Risk's "Loss size" (src/lib/exit-rollup.ts).
    *  Server-computed from the prior days by the same rule every surface uses.
    *  Null = fewer than 5 stop trades before this day. */
   exitAvgRiskDollars?: number | null
   /** The trader's ATR stop setting (scoring profile; default 1) — the
-   *  yardstick for the Exit score's "Stop size". */
+   *  yardstick for Risk's "Stop size". */
   atrStopTarget?: number
+  /** The trader's setting: include the order-flow Score in Entry (default on). */
+  includeFlowScore?: boolean
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -107,6 +110,7 @@ export default function EodClient({
   giveBackAtr = 1,
   exitAvgRiskDollars = null,
   atrStopTarget = 1,
+  includeFlowScore = true,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -184,6 +188,12 @@ export default function EodClient({
     const a = initialDay?.eod_ai_analysis_json
     return a && Object.keys(a).length > 0 ? (a as EodAiAnalysis) : null
   })
+  // The analysis as TapeScore reads it — the stored audit and checklist with the
+  // read-time corrections from the day's trades (a broken daily loss limit is a
+  // Breach, the size-up rule re-read from the fills, "no mistakes tagged" from
+  // the tags). The score card and the rules card both show this one, so they
+  // can't disagree; the stored analysis itself is never rewritten.
+  const scoredAnalysis = useMemo(() => effectiveAnalysis(aiAnalysis, trades), [aiAnalysis, trades])
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
@@ -987,11 +997,12 @@ export default function EodClient({
           While the session is live the score stays hidden and the card carries
           just the numbers and Trade management. */}
       <TapeScoreHeader
-        analysis={aiAnalysis}
+        analysis={scoredAnalysis}
         prepScore={day?.ai_analysis_json?.score ?? null}
         trades={trades}
         avgRiskDollars={exitAvgRiskDollars}
         atrStopTarget={atrStopTarget}
+        includeFlow={includeFlowScore}
         tradeCount={trades.length}
         winRate={winRate}
         pnl={computedPnl}
@@ -1247,7 +1258,7 @@ export default function EodClient({
           analysis. */}
       <div data-tour="eod-analyze">
         <EodAnalysisCard
-          analysis={aiAnalysis}
+          analysis={scoredAnalysis}
           loading={analyzing}
           onAnalyze={runAnalysis}
           disabled={trades.length === 0 && !day?.eod_notes}

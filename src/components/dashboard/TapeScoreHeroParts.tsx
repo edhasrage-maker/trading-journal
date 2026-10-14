@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Info, X } from 'lucide-react'
-import { EXIT_AXIS_DESC } from '@/lib/exit-rollup'
+import { ENTRY_CHECKLIST_DESC } from '@/lib/tapescore-axes'
 
 /**
  * Shared One-TapeScore hero primitives (Pt 13).
@@ -55,19 +55,22 @@ export function TapeScoreFormulaInfo() {
           <p className="mb-2 text-gray-400">One 0-100 score per session — three equal parts across the trade lifecycle:</p>
           <ul className="space-y-1.5 mb-2">
             <li className="flex justify-between gap-3">
-              <span><strong className="text-gray-200">Risk</strong> — size and the 5 account guardrails</span>
+              <span><strong className="text-gray-200">Risk</strong> — rules kept 45% · loss size 27% · stop size 18% · re-entries after a loss 10%</span>
               <span className="font-mono text-gray-400 shrink-0">⅓</span>
             </li>
             <li className="flex justify-between gap-3">
-              <span><strong className="text-gray-200">Entry</strong> — setup, timing, stop placement</span>
+              <span>
+                <strong className="text-gray-200">Entry</strong> — checklist 45% · order-flow Score 35% (if you include it) · plan adherence 20%
+                <span className="block text-[11px] text-gray-500 mt-0.5">Checklist: {ENTRY_CHECKLIST_DESC}.</span>
+              </span>
               <span className="font-mono text-gray-400 shrink-0">⅓</span>
             </li>
             <li className="flex justify-between gap-3">
-              <span><strong className="text-gray-200">Exit</strong> — {EXIT_AXIS_DESC}</span>
+              <span><strong className="text-gray-200">Exit</strong> — profit kept on winners 42% · stop respected 33% · runner rules 25%</span>
               <span className="font-mono text-gray-400 shrink-0">⅓</span>
             </li>
           </ul>
-          <p className="text-gray-500">Manage risk → enter well → exit well. A session that breaks 2 or more of the 5 risk rails is capped at 49 (can&apos;t read green or amber) — so risk still floors the score even at equal weight. Missing a layer re-weights the rest. Each part of Exit is scored only on the trades it applies to. A period score is the mean of its scored days.</p>
+          <p className="text-gray-500">Manage risk → enter well → exit well. Trade-by-trade parts are scored only on the trades they apply to; a part with nothing to judge hands its weight to the others in that axis, and a missing axis re-weights the rest. A session that breaks its daily loss limit, or breaks the rules beyond the one lapse allowed, is capped at 49 (can&apos;t read green or amber). A period score is the mean of its scored days.</p>
         </div>
       )}
     </span>

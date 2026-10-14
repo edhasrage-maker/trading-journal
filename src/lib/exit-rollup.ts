@@ -1,22 +1,26 @@
-import {
-  EXIT_FACTORS, EXIT_LABELS, emptyExitSums, exitScoreView, exitTradeScores, lossSizeInputs, lossSizeScore,
-  type ExitFactorKey, type ExitFactorSum, type ExitScoreView, type ExitSums, type ExitTradeInput,
-} from '@/lib/exit-score'
+import { exitTradeScores, lossSizeInputs, lossSizeScore, type ExitTradeInput } from '@/lib/exit-score'
+import { emptyTradeSums, type FactorSum, type TradeSums } from '@/lib/tapescore-axes'
+import { reentryAfterLossIds } from '@/lib/behavioral-proxies'
+import { REENTRY_WINDOW_MIN, hasFreshTrigger, toProxyTrades } from '@/lib/tapescore-day-rules'
 
 /**
- * Plumbing between the Exit score definition (src/lib/exit-score.ts) and the
- * places that show it. Nothing here decides how a trade is scored — it stores a
- * day's inputs, works out the trader's average dollar risk, and reads the
- * result for a day or a period.
+ * Plumbing between the per-trade parts of TapeScore and the places that show
+ * them. Nothing here decides how a trade is scored (src/lib/exit-score.ts) or
+ * how parts are weighted (src/lib/tapescore-axes.ts) — it stores a day's
+ * per-trade inputs, works out the trader's average dollar risk, and reads the
+ * result for a day.
  *
- * Why a day cannot simply store its Exit score: four of the five factors need
- * only the trade itself, but "Loss size" measures a loss against the trader's
- * AVERAGE dollar risk, which comes from EARLIER days. So a day stores the four
- * self-contained factors as sums + counts and its losing trades as raw pairs,
- * and the fifth factor is worked out when the days are read in sequence.
+ * The per-trade parts: Risk's loss size, stop size and re-entries after a loss,
+ * Entry's order-flow Score, and Exit's profit kept, stop respected and runner
+ * rules.
+ *
+ * Why a day cannot simply store its scores: "Loss size" measures a loss against
+ * the trader's AVERAGE dollar risk, which comes from EARLIER days. So a day
+ * stores the other parts as sums + counts and its losing trades as raw pairs,
+ * and loss size is worked out when the days are read in sequence.
  *
  * One rule for the average, used by every surface (dashboard, recaps, the
- * Recap day page), so a day never shows two different Exit numbers:
+ * Recap day page), so a day never shows two different Risk numbers:
  *
  *   take the most recent PRIOR days — whole days, strictly before the date —
  *   going back until they cover at least 30 trades with a logged stop; the
@@ -30,52 +34,91 @@ export const AVG_RISK_WINDOW_TRADES = 30
 /** Below this many, there is no average. */
 export const AVG_RISK_MIN_TRADES = 5
 
-/** What a day keeps for its Exit score — JSON-safe, cached in `stats_json`. */
-export interface DayExitStored {
+/** What a day keeps for its per-trade parts — JSON-safe, cached in `stats_json`. */
+export interface DayTradeInputs {
   /** The trader's ATR stop setting the "Stop size" sums were computed with. A
    *  cached row whose value differs from the current setting is stale. */
   atr_stop: number
-  kept: ExitFactorSum
-  stopRespected: ExitFactorSum
-  stopSize: ExitFactorSum
-  runner: ExitFactorSum
+  stopSize: FactorSum
+  /** Risk's "Re-entries": trades entered within 5 minutes of a losing exit
+   *  that day, 1 = fresh trigger, 0 = none. */
+  reentry: FactorSum
+  /** Order-flow Score: each scored trade's total ÷ 100. Always stored; whether
+   *  it counts toward Entry is the trader's setting, applied when read. */
+  flow: FactorSum
+  kept: FactorSum
+  stopRespected: FactorSum
+  runner: FactorSum
   /** One entry per losing trade "Loss size" judges:
    *  [dollars lost, the trade's own planned dollar risk or null]. */
   losses: Array<[number, number | null]>
 }
 
-/** The trader's ATR stop setting as the Exit score uses it (default 1). */
+/** The trader's ATR stop setting as "Stop size" uses it (default 1). */
 export function normalizeAtrStopTarget(v: number | null | undefined): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 1
 }
 
-/** A day's Exit inputs from its trades. */
-export function dayExitStored(trades: readonly ExitTradeInput[], atrStopTarget?: number | null): DayExitStored {
+/** A trade as the order-flow Score is read from it: the full `review_json`
+ *  (the Recap page) or just its total (the rollup's lean JSON-path select). */
+export interface FlowScoredTrade {
+  review_json?: { score?: { total?: unknown } | null } | null
+  flow_total?: unknown
+}
+
+/** A trade's order-flow Score total (0-100), or null when it carries none.
+ *  Any version — only `total` is read. */
+export function tradeFlowTotal(t: FlowScoredTrade): number | null {
+  const v = t.review_json?.score?.total ?? t.flow_total
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null
+}
+
+type StoredKey = 'stopSize' | 'kept' | 'stopRespected' | 'runner'
+const STORED: readonly StoredKey[] = ['stopSize', 'kept', 'stopRespected', 'runner']
+
+/** A trade as the per-trade parts read it. Times are optional: without them a
+ *  trade is simply never a quick re-entry. */
+export type PartsTrade = ExitTradeInput & FlowScoredTrade & {
+  id?: string | null
+  entry_time?: string | null
+  exit_time?: string | null
+}
+
+/** A day's per-trade inputs from its trades. */
+export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: number | null): DayTradeInputs {
   const target = normalizeAtrStopTarget(atrStopTarget)
-  const sums = emptyExitSums()
-  const losses: DayExitStored['losses'] = []
+  const sums = emptyTradeSums()
+  const losses: DayTradeInputs['losses'] = []
+  // Re-entries: found on the whole day's sequence, then judged per trade.
+  const proxies = toProxyTrades(trades)
+  const reentries = new Set(reentryAfterLossIds(proxies, REENTRY_WINDOW_MIN))
+  trades.forEach((t, i) => {
+    if (reentries.has(proxies[i].id)) { sums.reentry.n += 1; sums.reentry.sum += hasFreshTrigger(t) ? 1 : 0 }
+  })
   for (const t of trades) {
     // avgRiskDollars is deliberately absent: the average belongs to the read.
     const s = exitTradeScores(t, { atrStopTarget: target })
-    for (const k of SELF_CONTAINED) { const v = s[k]; if (v != null) { sums[k].n += 1; sums[k].sum += v } }
+    for (const k of STORED) { const v = s[k]; if (v != null) { sums[k].n += 1; sums[k].sum += v } }
     const pair = lossSizeInputs(t)
     if (pair) losses.push(pair)
+    const flow = tradeFlowTotal(t)
+    if (flow != null) { sums.flow.n += 1; sums.flow.sum += flow / 100 }
   }
   return {
     atr_stop: target,
-    kept: sums.kept, stopRespected: sums.stopRespected, stopSize: sums.stopSize, runner: sums.runner,
+    stopSize: sums.stopSize, reentry: sums.reentry, flow: sums.flow,
+    kept: sums.kept, stopRespected: sums.stopRespected, runner: sums.runner,
     losses,
   }
 }
-type SelfContainedKey = Exclude<ExitFactorKey, 'lossSize'>
-const SELF_CONTAINED: readonly SelfContainedKey[] = ['kept', 'stopRespected', 'stopSize', 'runner']
 
-/** A day's full Exit sums, with "Loss size" scored against `avgRiskDollars`
+/** A day's full per-trade sums, with "Loss size" scored against `avgRiskDollars`
  *  (null = no average; each loss falls back to its own planned risk). */
-export function dayExitSums(stored: DayExitStored | null | undefined, avgRiskDollars: number | null): ExitSums | null {
+export function dayTradeSums(stored: DayTradeInputs | null | undefined, avgRiskDollars: number | null): TradeSums | null {
   if (!stored) return null
-  const sums = emptyExitSums()
-  for (const k of SELF_CONTAINED) {
+  const sums = emptyTradeSums()
+  for (const k of [...STORED, 'reentry', 'flow'] as const) {
     sums[k].n = stored[k]?.n || 0
     sums[k].sum = stored[k]?.sum || 0
   }
@@ -114,14 +157,12 @@ export function avgRiskBefore(date: string, days: readonly RiskDay[]): number | 
   return n >= AVG_RISK_MIN_TRADES && sum > 0 ? sum / n : null
 }
 
-/** One day's Exit, read in sequence. */
-export interface DayExit {
+/** One day's per-trade parts, read in sequence. */
+export interface DayTradeRead {
   /** The average dollar risk "Loss size" was measured against (null = none yet). */
   avgRiskDollars: number | null
-  /** Sums + counts per factor — what a period pools. Null when the day carries no Exit inputs. */
-  sums: ExitSums | null
-  /** The day's Exit score, 0..100 unrounded; null when no factor had a trade to judge. */
-  score: number | null
+  /** Sums + counts per part — what a period pools. Null when the day carries no inputs. */
+  sums: TradeSums | null
 }
 
 /**
@@ -130,10 +171,10 @@ export interface DayExit {
  * caller loaded only for this purpose). A date present in both counts once,
  * from `days`. Returns one entry per input day, in input order.
  */
-export function exitInSequence<T extends RiskDay & { exit?: DayExitStored | null }>(
+export function tradeSumsInSequence<T extends RiskDay & { trade_parts?: DayTradeInputs | null }>(
   days: readonly T[],
   history: readonly RiskDay[] = [],
-): DayExit[] {
+): DayTradeRead[] {
   const own = new Set(days.map(d => d.date))
   const all: RiskDay[] = [...days, ...history.filter(h => !own.has(h.date))]
     .filter(d => (d.risk_sample ?? 0) > 0)
@@ -148,8 +189,7 @@ export function exitInSequence<T extends RiskDay & { exit?: DayExitStored | null
       n += all[hi].risk_sample ?? 0
     }
     const avgRiskDollars = n >= AVG_RISK_MIN_TRADES && sum > 0 ? sum / n : null
-    const sums = dayExitSums(d.exit, avgRiskDollars)
-    return { avgRiskDollars, sums, score: sums ? exitScoreView(sums).score : null }
+    return { avgRiskDollars, sums: dayTradeSums(d.trade_parts, avgRiskDollars) }
   })
 }
 
@@ -162,41 +202,4 @@ function lowerBound(sorted: readonly RiskDay[], date: string): number {
     else hi = mid
   }
   return lo
-}
-
-// ── Showing why ───────────────────────────────────────────────────────────
-
-/** What the Exit axis is made of, in one phrase — for the places that describe the axis. */
-export const EXIT_AXIS_DESC = EXIT_FACTORS.map(k => EXIT_LABELS[k].toLowerCase()).join(', ')
-
-export interface ExitFactorLine {
-  key: ExitFactorKey
-  label: string
-  /** 0..100 rounded; null = no trade to judge. */
-  score: number | null
-  /** How many trades the factor judged. */
-  n: number
-  /** "81 · 12 trades" / "not applicable". */
-  detail: string
-}
-
-/** The five factors behind an Exit number, in order, ready to print. */
-export function exitFactorLines(factors: ExitScoreView['factors'] | null | undefined): ExitFactorLine[] {
-  return EXIT_FACTORS.map(key => {
-    const f = factors?.[key]
-    const n = f?.n ?? 0
-    const score = f?.score != null && n > 0 ? Math.round(f.score) : null
-    return {
-      key,
-      label: EXIT_LABELS[key],
-      score,
-      n,
-      detail: score != null ? `${score} · ${n} trade${n === 1 ? '' : 's'}` : 'not applicable',
-    }
-  })
-}
-
-/** The same five lines as hover text, one per line, under a heading. */
-export function exitFactorsTooltip(heading: string, factors: ExitScoreView['factors'] | null | undefined): string {
-  return [heading, ...exitFactorLines(factors).map(l => `${l.label}: ${l.detail}`)].join('\n')
 }

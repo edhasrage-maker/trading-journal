@@ -7,9 +7,8 @@ import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroPa
 import TradeManagementCard from '@/components/TradeManagementCard'
 import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { ScoreCluster, ScoreBreakdownInfo } from '@/components/review/ReviewMonthHero'
-import type { ExitSums } from '@/lib/exit-score'
-import { EXIT_AXIS_DESC, exitFactorsTooltip } from '@/lib/exit-rollup'
 import type { LiftDragView } from '@/lib/lift-drag'
+import { AXIS_DESC, axisTooltip, type TradeSums } from '@/lib/tapescore-axes'
 
 /**
  * Period-selectable dashboard header: the TapeScore hero (one 0-100 score,
@@ -75,9 +74,9 @@ export interface DayStat {
   /** One TapeScore — derived server-side (src/lib/tapescore.ts). Null when
    *  the day has no EOD analysis (any rubric). */
   tapescore: TapeScoreResult | null
-  /** The day's Exit sums + counts (src/lib/exit-rollup.ts). A period's Exit
-   *  axis pools these over its trades — it is never a mean of daily scores. */
-  exit_sums?: ExitSums | null
+  /** The day's per-trade sums + counts (src/lib/exit-rollup.ts). A period's
+   *  axes pool these over its trades — never a mean of daily values. */
+  trade_sums?: TradeSums | null
 }
 
 type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year'
@@ -471,14 +470,14 @@ function TapeScoreHero({ period, periodLabel }: {
   period: ReturnType<typeof aggregateTapeScore>
   periodLabel: string
 }) {
-  const { score, band, scoredDays, verdictDays, compliantDays, entry, exit, exitFactors } = period
+  const { score, band, scoredDays, verdictDays, compliantDays, risk, entry, exit, parts } = period
   const sentence = tapeScorePeriodSentence(period)
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-3 sm:mb-4 flex items-center gap-5 flex-wrap">
       <TapeScoreRing
         score={score}
         band={band}
-        title="TapeScore — one 0-100 score per day: risk, entry and exit, weighted equally. Days that broke 2+ risk rails cap at 49."
+        title="TapeScore — one 0-100 score per day: risk, entry and exit, weighted equally. Days that broke the rules or the daily loss limit cap at 49."
       />
       <div className="flex-1 min-w-[240px]">
         {score != null ? (
@@ -491,25 +490,25 @@ function TapeScoreHero({ period, periodLabel }: {
               {periodLabel} · {scoredDays} scored session{scoredDays === 1 ? '' : 's'}
             </p>
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-              {verdictDays > 0 && (
+              {risk != null && (
                 <HeroChip
-                  label={`Risk limits ${compliantDays}/${verdictDays}`}
-                  tone={compliantDays / verdictDays >= 0.85 ? 'good' : compliantDays / verdictDays >= 0.6 ? 'mid' : 'bad'}
-                  title="Sessions that kept at least 4 of the 5 account risk rails, out of sessions with a rails audit. These rails are guardrails, not a measure of trade quality."
+                  label={`Risk ${risk}`}
+                  tone={risk >= 70 ? 'good' : risk >= 50 ? 'mid' : 'bad'}
+                  title={axisTooltip(`Risk (0-100), over the period: ${AXIS_DESC.risk}. ${compliantDays} of ${verdictDays} sessions kept the rules.`, parts, 'risk')}
                 />
               )}
               {entry != null && (
                 <HeroChip
                   label={`Entry ${entry}`}
                   tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
-                  title="Average entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — the exit is scored separately"
+                  title={axisTooltip(`Entry (0-100), over the period: ${AXIS_DESC.entry}.`, parts, 'entry')}
                 />
               )}
               {exit != null && (
                 <HeroChip
                   label={`Exit ${exit}`}
                   tone={exit >= 70 ? 'good' : exit >= 50 ? 'mid' : 'bad'}
-                  title={exitFactorsTooltip(`Exit (0-100), over the period's trades: ${EXIT_AXIS_DESC}.`, exitFactors)}
+                  title={axisTooltip(`Exit (0-100), over the period's trades: ${AXIS_DESC.exit}.`, parts, 'exit')}
                 />
               )}
             </div>

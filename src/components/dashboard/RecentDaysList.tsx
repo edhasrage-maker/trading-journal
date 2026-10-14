@@ -6,8 +6,7 @@ import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { TrendingUp, TrendingDown, Minus, Trash2, Loader2, Check, ChevronUp, ChevronDown } from 'lucide-react'
 import type { TapeScoreResult } from '@/lib/tapescore'
-import { exitScoreView, type ExitSums } from '@/lib/exit-score'
-import { exitFactorsTooltip } from '@/lib/exit-rollup'
+import { axisTooltip, type TradeSums } from '@/lib/tapescore-axes'
 import AchievementCoin from '@/components/AchievementCoin'
 import { ACHIEVEMENT_CATALOG, type AchievementId } from '@/lib/achievements'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
@@ -48,9 +47,9 @@ export interface DayRowData {
   /** One TapeScore (Ruleset amendment 5) — the single 0-100 headline derived
    *  server-side from rules + execution + prep. Null = day never analyzed. */
   tapescore: TapeScoreResult | null
-  /** The day's Exit sums + counts — the five factors behind the Exit number in
-   *  the TapeScore tooltip (src/lib/exit-rollup.ts). */
-  exit_sums?: ExitSums | null
+  /** The day's per-trade sums + counts (src/lib/exit-rollup.ts) — what a
+   *  period's axes pool over its trades. */
+  trade_sums?: TradeSums | null
   win_rate: number | null
   avg_mfe_pts: number | null
   avg_mae_pts: number | null
@@ -653,7 +652,7 @@ function DayRowItem({
         const cellNodes: Record<ReorderableColumnId, React.ReactNode> = {
           tapescore: (
             <td key="tapescore" className={`py-2 pr-3 text-center ${cellBg}`}>
-              <TapeScorePill result={day.tapescore} exitSums={day.exit_sums} date={day.date} />
+              <TapeScorePill result={day.tapescore} date={day.date} />
             </td>
           ),
           trades: (
@@ -725,7 +724,7 @@ function DayRowItem({
  * the restraint the score exists to reward. Sample-size caveats belong on the
  * statistical read-outs (win rate, expectancy, capture %), not here.
  */
-function TapeScorePill({ result, exitSums, date }: { result: TapeScoreResult | null; exitSums?: ExitSums | null; date: string }) {
+function TapeScorePill({ result, date }: { result: TapeScoreResult | null; date: string }) {
   // An ungraded session used to render a dead grey dash. On a freshly imported
   // journal that's the ENTIRE column, which reads as "broken" rather than "not
   // done yet" — so the empty cell carries the action that fills it. Deliberately
@@ -745,19 +744,15 @@ function TapeScorePill({ result, exitSums, date }: { result: TapeScoreResult | n
     result.band === 'high' ? 'text-green-300 border-green-800/60 bg-green-950/40'
     : result.band === 'mid' ? 'text-amber-300 border-amber-800/60 bg-amber-950/40'
     : 'text-red-300 border-red-800/60 bg-red-950/40'
-  const { passCount, railCount, entry, exit } = result.components
-  const axes = [
-    passCount != null ? `Risk limits respected: ${passCount}/${railCount ?? 5}` : null,
-    entry != null ? `Entry ${entry}` : null,
-    exit != null ? `Exit ${exit}` : null,
-    result.capped ? 'capped at 49 — 2+ rails broke' : null,
-  ].filter(Boolean).join(' · ')
-  // The five factors behind the Exit number, one per line under the axes.
+  const { risk, entry, exit } = result.components
+  // Each axis on a line, with the parts behind it underneath.
   const tooltip = result.basis === 'legacy'
     ? 'Scored under an earlier rubric (pre-v1.3 single score).'
-    : exit != null && exitSums
-      ? exitFactorsTooltip(`${axes}\nExit, five parts:`, exitScoreView(exitSums).factors)
-      : axes
+    : [
+        risk != null ? axisTooltip(`Risk ${risk}${result.capped ? ' (capped at 49 — rules broken)' : ''}`, result.parts, 'risk') : null,
+        entry != null ? axisTooltip(`Entry ${entry}`, result.parts, 'entry', { checklistItems: false }) : null,
+        exit != null ? axisTooltip(`Exit ${exit}`, result.parts, 'exit') : null,
+      ].filter(Boolean).join('\n\n')
   return (
     <span
       className={`font-mono font-bold border rounded px-1.5 py-0.5 inline-block w-9 text-center text-xs ${color}`}

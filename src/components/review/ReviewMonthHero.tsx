@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { TapeScorePeriod } from '@/lib/tapescore'
-import { exitFactorLines, exitFactorsTooltip } from '@/lib/exit-rollup'
+import { AXIS_DESC, ENTRY_CHECKLIST_DESC, axisPartLines, axisTooltip } from '@/lib/tapescore-axes'
 import type { Carryover } from '@/lib/prep-carryover'
 import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
 
@@ -87,9 +87,9 @@ function CompositionRing({ score, subs, size = 132 }: {
 /** The axis labels + one-line descriptions the breakdown popover shows. Kept in
  *  one place so the ⓘ and any future copy stay in sync. */
 const SCORE_AXES = [
-  { key: 'risk' as const, name: 'Risk', desc: 'size and account limits', wt: '⅓' },
-  { key: 'entry' as const, name: 'Entry', desc: 'setup, timing, stop placement', wt: '⅓' },
-  { key: 'exit' as const, name: 'Exit', desc: 'five parts, each scored on the trades it applies to', wt: '⅓' },
+  { key: 'risk' as const, name: 'Risk', desc: 'how you managed risk', wt: '⅓' },
+  { key: 'entry' as const, name: 'Entry', desc: 'the trade idea', wt: '⅓' },
+  { key: 'exit' as const, name: 'Exit', desc: 'how you got out', wt: '⅓' },
 ]
 
 /** The ⓘ on the TapeScore — the score's makeup moved here (out of the hero) so
@@ -108,10 +108,8 @@ export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
   if (period.score == null) return null
   // An axis with nothing to judge reads "—", not 0: a zero is a score.
   const vals: Record<'risk' | 'entry' | 'exit', number | null> = {
-    risk: period.risk ?? 0, entry: period.entry ?? 0, exit: period.exit,
+    risk: period.risk, entry: period.entry, exit: period.exit,
   }
-  // The five factors behind the Exit number — label, score, trades judged.
-  const exitLines = exitFactorLines(period.exitFactors)
   return (
     <span className="relative inline-flex" ref={ref}>
       <button
@@ -137,21 +135,24 @@ export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
                   <span className="text-[14px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>{vals[a.key] ?? '—'}</span>
                 </span>
               </div>
-              {a.key === 'exit' && (
-                <div className="mt-1">
-                  {exitLines.map(l => (
-                    <div key={l.key} className="flex items-baseline justify-between gap-3 text-[11px] leading-[1.55]">
-                      <span className="text-gray-500">{l.label}</span>
-                      <span className={cn('tabular-nums flex-shrink-0', l.score != null ? 'text-gray-300' : 'text-gray-600')}>{l.detail}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* The parts behind the axis number — label, score, how much it judged. */}
+              <div className="mt-1">
+                {axisPartLines(period.parts, a.key).map(l => (
+                  <div
+                    key={l.key}
+                    className="flex items-baseline justify-between gap-3 text-[11px] leading-[1.55]"
+                    title={l.key === 'checklist' ? `Checklist items: ${ENTRY_CHECKLIST_DESC}.` : undefined}
+                  >
+                    <span className="text-gray-500">{l.label}</span>
+                    <span className={cn('tabular-nums flex-shrink-0', l.score != null ? 'text-gray-300' : 'text-gray-600')}>{l.detail}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
           {period.scoredDays > 0 && (
             <p className="text-[11px] text-gray-600 mt-2 pt-2 border-t border-gray-800">
-              Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}. A session that breaks 2+ risk rails caps at 49.
+              Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}. A session that breaks the rules or its daily loss limit caps at 49.
             </p>
           )}
         </div>
@@ -168,17 +169,13 @@ export function ScoreCluster({ period, size = 148 }: { period: TapeScorePeriod; 
     return <p className="text-[13px] text-gray-500 max-w-[36ch] leading-normal">No graded sessions in this window yet — run Analyze Session on a day to score it.</p>
   }
   const subs = { risk: period.risk ?? 0, entry: period.entry ?? 0, exit: period.exit ?? 0 }
-  // Exit with no trade to judge reads "—" (the axis is absent), never 0. Its
-  // hover text carries the five factors behind the number.
-  const comps: Array<{ name: string; score: number | null; title?: string }> = [
-    { name: 'Risk', score: subs.risk },
-    { name: 'Entry', score: subs.entry },
-    {
-      name: 'Exit',
-      score: period.exit,
-      title: exitFactorsTooltip('Exit — five parts, each scored on the trades it applies to:', period.exitFactors),
-    },
-  ]
+  // An absent axis reads "—", never 0. Each row's hover text carries the parts
+  // behind its number.
+  const comps: Array<{ name: string; score: number | null; title?: string }> = SCORE_AXES.map(a => ({
+    name: a.name,
+    score: period[a.key],
+    title: axisTooltip(`${a.name} — ${AXIS_DESC[a.key]}:`, period.parts, a.key),
+  }))
   return (
     <div className="flex items-center gap-6 flex-wrap">
       <CompositionRing score={period.score} subs={subs} size={size} />

@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { clientError } from '@/lib/api-error'
 import { computeDayStats, scoreDayRollups, ROLLUP_TRADE_COLS, type DayForStats, type TradeForStats } from '@/lib/day-stats'
-import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
+import { loadTapeScoreSettings, loadRiskHistory } from '@/lib/day-stats-server'
 import { tagKey } from '@/lib/tradezella-import'
 import type { TradingDay } from '@/lib/supabase/types'
 
@@ -33,8 +33,9 @@ const CHUNK = 50
  *     matching trades only;
  *   - achievements are dropped, since a day-level coin like "Career Day" says
  *     nothing about one setup's trades.
- * TapeScore is kept — it is labelled per-session wherever it appears. Its Exit
- * axis is computed from the session's trades, so the score is built from ALL of
+ * TapeScore is kept — it is labelled per-session wherever it appears. Its
+ * per-trade parts (loss size, stop size, the order-flow Score, the three Exit
+ * parts) are computed from the session's trades, so the score is built from ALL of
  * the day's trades (and read in sequence, like every other surface) and then
  * attached to the filtered rollup; scoring the matching trades alone would give
  * the same session a different TapeScore here than on the unfiltered dashboard.
@@ -56,10 +57,11 @@ export async function GET(req: Request) {
     }
 
     const supabase: AnyClient = await createClient()
-    // Both feed the Exit axis: the trader's ATR stop setting, and the days
-    // before the range that the average-dollar-risk rule reaches back to.
-    const [atrStopTarget, riskHistory] = await Promise.all([
-      loadAtrStopTarget(supabase),
+    // Both feed the per-trade parts: the trader's TapeScore settings (ATR stop
+    // setting, order-flow Score on/off), and the days before the range that the
+    // average-dollar-risk rule reaches back to.
+    const [{ atrStopTarget, includeFlow }, riskHistory] = await Promise.all([
+      loadTapeScoreSettings(supabase),
       loadRiskHistory(supabase, from),
     ])
 
@@ -139,6 +141,7 @@ export async function GET(req: Request) {
       scoreDayRollups(
         days.map(d => computeDayStats(dayInput(d), allByDay.get(d.id) ?? [], prepAtr.get(d.id) ?? null, { atrStopTarget })),
         riskHistory,
+        { includeFlow },
       ).map(r => [r.id, r]),
     )
 
@@ -151,7 +154,12 @@ export async function GET(req: Request) {
         return {
           ...computeDayStats(dayInput(d), matchedByDay.get(d.id)!, prepAtr.get(d.id) ?? null, { atrStopTarget }),
           tapescore: session?.tapescore ?? null,
-          exit_sums: session?.exit_sums ?? null,
+          trade_sums: session?.trade_sums ?? null,
+          // The rules audit is a whole-session fact too (the size-up rule is
+          // re-read from ALL the day's trades), so it comes from the session.
+          process_verdict: session?.process_verdict ?? null,
+          process_v13_score: session?.process_v13_score ?? null,
+          process_breach_rules: session?.process_breach_rules ?? null,
         }
       })
 

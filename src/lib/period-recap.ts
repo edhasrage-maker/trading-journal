@@ -2,7 +2,7 @@ import {
   computeDayStats, fromStoredStats, toStoredStats, scoreDayRollups, isFreshStats, STATS_VERSION, ROLLUP_TRADE_COLS,
   type DayStatsRollup, type DayStatsStored, type ScoredDayRollup,
 } from '@/lib/day-stats'
-import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
+import { loadTapeScoreSettings, loadRiskHistory } from '@/lib/day-stats-server'
 import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { aggregateTapeScore, type TapeScorePeriod } from '@/lib/tapescore'
 import { rMultiple, type TradeLike } from '@/lib/analytics'
@@ -25,7 +25,7 @@ const PAGE_SIZE = 1000
 
 export interface PeriodDay {
   /** The day's rollup, read in sequence — it carries the finished TapeScore and
-   *  the day's Exit sums (see `scoreDayRollups`). */
+   *  the day's per-trade sums (see `scoreDayRollups`). */
   rollup: ScoredDayRollup
   commitment: PrepCommitment | null
 }
@@ -36,11 +36,12 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
   // pre-migration DB the stats columns don't exist and that query errors, which
   // we read as "every day dirty" (same reasoning as the dashboard).
   //
-  // Two more reads ride along, both for the Exit axis: the trader's ATR stop
-  // setting ("Stop size" is graded against it), and the days BEFORE the window
-  // that the average-dollar-risk rule reaches back to ("Loss size" on the
-  // window's first days is measured against them) — one tiny query each.
-  const [dayResult, statsResult, atrStopTarget, riskHistory] = await Promise.all([
+  // Two more reads ride along for the per-trade parts: the trader's TapeScore
+  // settings (Risk's "Stop size" is graded against the ATR stop setting; the
+  // order-flow Score joins Entry unless switched off), and the days BEFORE the
+  // window that the average-dollar-risk rule reaches back to ("Loss size" on
+  // the window's first days is measured against them) — one tiny query each.
+  const [dayResult, statsResult, { atrStopTarget, includeFlow }, riskHistory] = await Promise.all([
     sb.from('trading_days')
       .select('id, date, eod_pnl, day_type, day_types, prep_notes_json, achievements_json')
       .gte('date', start)
@@ -50,7 +51,7 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
       .select('id, stats_json, stats_version')
       .gte('date', start)
       .lte('date', end) as Promise<{ data: { id: string; stats_json: DayStatsStored | null; stats_version: number | null }[] | null; error: unknown }>,
-    loadAtrStopTarget(sb),
+    loadTapeScoreSettings(sb),
     loadRiskHistory(sb, start),
   ])
 
@@ -133,8 +134,8 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
       )
   })
 
-  // Finish each day's TapeScore — its Exit axis needs the days before it.
-  const scored = scoreDayRollups(rolledUp, riskHistory)
+  // Finish each day's TapeScore — Risk's loss size needs the days before it.
+  const scored = scoreDayRollups(rolledUp, riskHistory, { includeFlow })
   const out: PeriodDay[] = days.map((d, i) => ({
     rollup: scored[i],
     commitment: d.prep_notes_json?.commitment ?? null,

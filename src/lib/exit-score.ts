@@ -2,49 +2,41 @@ import { exitKind, tradeFacts, type MgmtTradeInput, type TradeFacts } from '@/li
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 
 /**
- * Exit score — the "Exit" axis of TapeScore, from five named factors
- * (founder-directed, 2026-10-13). Deterministic: every number comes from the
- * trade's own logged prices and fills; nothing is estimated by the AI.
+ * The five per-trade factors (founder-directed, 2026-10-13; split across two
+ * axes 2026-10-14). Deterministic: every number comes from the trade's own
+ * logged prices and fills; nothing is estimated by the AI.
  *
- *   1  Profit kept        25%  WINNERS only. A winner that reached its planned
- *                              target counts in full; any other winner counts
- *                              for the share of its best point it kept.
- *   2  Loss size          25%  LOSERS only. The dollar loss against the
- *                              trader's own average dollar risk. Full marks up
- *                              to 1.1× that average, none at 2× or more.
- *   3  Stop respected     20%  Trades whose logged stop came into play. Passes
- *                              when price never traded past it by more than
- *                              slippage while the trade was on.
- *   4  Stop size          15%  Trades with a stop and an entry ATR. Passes when
- *                              the stop is no wider than the trader's ATR stop
- *                              setting (1× the 1-minute ATR-10 by default).
- *   5  Runner             15%  Only trades where a second target was attempted.
- *                              The parts that can be measured today: the first
- *                              target was actually filled, and the 5-minute
- *                              structure was with the trade.
+ *   Exit axis (src/lib/tapescore-axes.ts — 42 / 33 / 25):
+ *   1  Profit kept        WINNERS only. A winner that reached its planned
+ *                         target counts in full; any other winner counts for
+ *                         the share of its best point it kept.
+ *   3  Stop respected     Trades whose logged stop came into play. Passes when
+ *                         price never traded past it by more than slippage
+ *                         while the trade was on.
+ *   5  Runner             Only trades where a second target was attempted. The
+ *                         parts that can be measured today: the first target
+ *                         was actually filled, and the 5-minute structure was
+ *                         with the trade.
  *
- * A factor with no trades to judge drops out and the others share its weight in
- * proportion (no runner → 25/25/20/15 becomes 29/29/24/18). A trade that never
- * went anywhere is not an exit failure and is not counted against factor 1.
+ *   Risk axis (moved from Exit 2026-10-14; rules kept 50 / loss size 30 / stop size 20):
+ *   2  Loss size          LOSERS only. The dollar loss against the trader's own
+ *                         average dollar risk. Full marks up to 1.1× that
+ *                         average, none at 2× or more.
+ *   4  Stop size          Trades with a stop and an entry ATR. Passes when the
+ *                         stop is no wider than the trader's ATR stop setting
+ *                         (1× the 1-minute ATR-10 by default).
  *
- * Everything is kept as SUMS + COUNTS per factor so a week or a month is the
- * same arithmetic over more trades, never an average of daily scores.
+ * Definitions and thresholds are unchanged by the move. A trade that never went
+ * anywhere is not an exit failure and is not counted against factor 1. How the
+ * factors are weighted and pooled lives in src/lib/tapescore-axes.ts.
  *
  * NOT MEASURED YET (factor 5): whether the stop was moved to breakeven after
  * the first target, the 4-hour alignment, and which trailing method was used.
  * None of these is recorded on a trade today.
  */
 
-export type ExitFactorKey = 'kept' | 'lossSize' | 'stopRespected' | 'stopSize' | 'runner'
-export const EXIT_FACTORS: readonly ExitFactorKey[] = ['kept', 'lossSize', 'stopRespected', 'stopSize', 'runner']
-export const EXIT_WEIGHTS: Record<ExitFactorKey, number> = { kept: 0.25, lossSize: 0.25, stopRespected: 0.20, stopSize: 0.15, runner: 0.15 }
-export const EXIT_LABELS: Record<ExitFactorKey, string> = {
-  kept: 'Profit kept on winners',
-  lossSize: 'Loss size on losers',
-  stopRespected: 'Stop respected',
-  stopSize: 'Stop size',
-  runner: 'Runner rules',
-}
+export type TradeFactorKey = 'kept' | 'lossSize' | 'stopRespected' | 'stopSize' | 'runner'
+export const TRADE_FACTORS: readonly TradeFactorKey[] = ['kept', 'lossSize', 'stopRespected', 'stopSize', 'runner']
 
 /** Loss ÷ average risk: full marks up to here … */
 const LOSS_OK = 1.1
@@ -75,7 +67,7 @@ export interface ExitContext {
 }
 
 /** One trade's score on each factor that applies to it, 0..1. */
-export type ExitTradeScores = Partial<Record<ExitFactorKey, number>>
+export type ExitTradeScores = Partial<Record<TradeFactorKey, number>>
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 
@@ -182,42 +174,4 @@ export function plannedRiskDollars(t: ExitTradeInput): number | null {
   const mult = symbolToMultiplier(t.symbol ?? '')
   const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * mult
   return risk > 0 ? risk : null
-}
-
-export interface ExitFactorSum { n: number; sum: number }
-export type ExitSums = Record<ExitFactorKey, ExitFactorSum>
-export const emptyExitSums = (): ExitSums => ({
-  kept: { n: 0, sum: 0 }, lossSize: { n: 0, sum: 0 }, stopRespected: { n: 0, sum: 0 }, stopSize: { n: 0, sum: 0 }, runner: { n: 0, sum: 0 },
-})
-
-export function addExitScores(sums: ExitSums, s: ExitTradeScores): void {
-  for (const k of EXIT_FACTORS) { const v = s[k]; if (v != null) { sums[k].n += 1; sums[k].sum += v } }
-}
-
-export function mergeExitSums(list: (ExitSums | null | undefined)[]): ExitSums {
-  const tot = emptyExitSums()
-  for (const s of list) { if (!s) continue; for (const k of EXIT_FACTORS) { tot[k].n += s[k]?.n || 0; tot[k].sum += s[k]?.sum || 0 } }
-  return tot
-}
-
-export interface ExitScoreView {
-  /** 0..100, or null when no factor had a trade to judge. */
-  score: number | null
-  factors: Record<ExitFactorKey, { score: number | null; n: number; /** share of the Exit score this factor carried, 0..1 */ weight: number }>
-}
-
-/** Read a set of sums: each factor's score, and the blend with absent factors' weight shared out. */
-export function exitScoreView(sums: ExitSums): ExitScoreView {
-  let wsum = 0
-  for (const k of EXIT_FACTORS) if (sums[k].n > 0) wsum += EXIT_WEIGHTS[k]
-  const factors = {} as ExitScoreView['factors']
-  let score = 0
-  for (const k of EXIT_FACTORS) {
-    const n = sums[k].n
-    const s = n > 0 ? (sums[k].sum / n) * 100 : null
-    const w = n > 0 && wsum > 0 ? EXIT_WEIGHTS[k] / wsum : 0
-    factors[k] = { score: s, n, weight: w }
-    if (s != null) score += s * w
-  }
-  return { score: wsum > 0 ? score : null, factors }
 }

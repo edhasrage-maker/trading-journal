@@ -3,8 +3,8 @@
 import { useMemo, type ReactNode } from 'react'
 import type { EodAiAnalysis } from '@/lib/supabase/types'
 import { tapeScoreFromAnalyses, tapeScoreDaySentence, type TapeScoreResult } from '@/lib/tapescore'
-import { exitScoreView, type ExitTradeInput } from '@/lib/exit-score'
-import { EXIT_AXIS_DESC, dayExitStored, dayExitSums, exitFactorsTooltip } from '@/lib/exit-rollup'
+import { dayTradeInputs, dayTradeSums, type PartsTrade } from '@/lib/exit-rollup'
+import { AXIS_DESC, axisTooltip } from '@/lib/tapescore-axes'
 import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
 
 /**
@@ -30,6 +30,7 @@ export default function TapeScoreHeader({
   trades,
   avgRiskDollars,
   atrStopTarget,
+  includeFlow = true,
   tradeCount,
   winRate,
   pnl,
@@ -39,14 +40,17 @@ export default function TapeScoreHeader({
   analysis: EodAiAnalysis | null
   /** Prep AI quality score (1-10) from ai_analysis_json.score. */
   prepScore: number | null
-  /** The day's trades — the Exit axis is scored from them, live, so an edit in
-   *  the drawer moves it. */
-  trades: ExitTradeInput[]
+  /** The day's trades — the per-trade parts (Risk's loss size and stop size,
+   *  Entry's order-flow Score, the Exit parts) are scored from them, live, so
+   *  an edit in the drawer moves them. */
+  trades: PartsTrade[]
   /** The trader's average dollar risk going into this day (server-computed by
    *  the shared rule in src/lib/exit-rollup.ts); null = none yet. */
   avgRiskDollars: number | null
   /** The trader's ATR stop setting (default 1). */
   atrStopTarget: number
+  /** The trader's setting: include the order-flow Score in Entry (default on). */
+  includeFlow?: boolean
   tradeCount: number
   /** Share of the day's trades that closed green, 0-100. */
   winRate: number
@@ -56,16 +60,16 @@ export default function TapeScoreHeader({
   /** The card's right half (Trade management). */
   aside?: ReactNode
 }) {
-  // The day's Exit, through the same two steps the per-day rollup takes
-  // (store the day's inputs, then score them against the average risk), so this
-  // header and the dashboard can't disagree about the same day.
-  const exitView = useMemo(() => {
-    const sums = dayExitSums(dayExitStored(trades, atrStopTarget), avgRiskDollars)
-    return sums ? exitScoreView(sums) : null
-  }, [trades, atrStopTarget, avgRiskDollars])
+  // The day's per-trade parts, through the same two steps the per-day rollup
+  // takes (store the day's inputs, then score them against the average risk),
+  // so this header and the dashboard can't disagree about the same day.
+  const tradeSums = useMemo(
+    () => dayTradeSums(dayTradeInputs(trades, atrStopTarget), avgRiskDollars),
+    [trades, atrStopTarget, avgRiskDollars],
+  )
   const result = useMemo(
-    () => tapeScoreFromAnalyses(analysis, prepScore, exitView?.score ?? null),
-    [analysis, prepScore, exitView],
+    () => tapeScoreFromAnalyses(analysis, prepScore, tradeSums, { includeFlow }),
+    [analysis, prepScore, tradeSums, includeFlow],
   )
   const scored = showScore && result != null
   // An empty day with nothing graded has nothing to say yet.
@@ -73,7 +77,6 @@ export default function TapeScoreHeader({
 
   const pnlCls = pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'
   const pnlText = `${pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(pnl)).toLocaleString()}`
-  const exitTitle = exitFactorsTooltip(`Exit (0-100): ${EXIT_AXIS_DESC}.`, exitView?.factors)
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col lg:flex-row gap-5 lg:gap-7">
@@ -102,7 +105,7 @@ export default function TapeScoreHeader({
             )}
           </div>
           {scored ? (
-            <Chips result={result} exitTitle={exitTitle} />
+            <Chips result={result} />
           ) : showScore && tradeCount > 0 ? (
             <p className="text-xs text-gray-500">Not scored yet — run Analyze Session below for the day&rsquo;s TapeScore.</p>
           ) : null}
@@ -130,7 +133,7 @@ function Ring({ score, band }: { score: number; band: 'high' | 'mid' | 'low' }) 
   return (
     <div
       className="relative w-[104px] h-[104px] shrink-0"
-      title="TapeScore — one 0-100 score for the day: risk, entry and exit, weighted equally. Days that broke 2+ risk rails cap at 49."
+      title="TapeScore — one 0-100 score for the day: risk, entry and exit, weighted equally. Days that broke the rules or the daily loss limit cap at 49."
     >
       <svg width="104" height="104" viewBox="0 0 92 92" className="-rotate-90">
         <circle cx="46" cy="46" r={R} fill="none" stroke="#1f2937" strokeWidth="7" />
@@ -150,33 +153,34 @@ function Ring({ score, band }: { score: number; band: 'high' | 'mid' | 'low' }) 
   )
 }
 
-function Chips({ result, exitTitle }: { result: TapeScoreResult; exitTitle: string }) {
-  const { passCount, railCount, entry, exit } = result.components
+function Chips({ result }: { result: TapeScoreResult }) {
+  const { risk, entry, exit } = result.components
+  // Each chip's hover text lists the parts behind its number.
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       {result.basis === 'legacy' ? (
         <Chip label="Scored under an earlier rubric" tone="mid" title="Pre-v1.3 analysis — re-run Analyze Session to grade under the current rules." />
       ) : (
         <>
-          {passCount != null && (
+          {risk != null && (
             <Chip
-              label={`Risk limits ${passCount}/${railCount ?? 5}`}
-              tone={passCount >= (railCount ?? 5) ? 'good' : passCount === (railCount ?? 5) - 1 ? 'mid' : 'bad'}
-              title="The five account risk rails: daily loss limit, size cap, no size-up after a loss, 90s cooldown, trade cap. These are guardrails, not a measure of trade quality."
+              label={`Risk ${risk}`}
+              tone={risk >= 70 ? 'good' : risk >= 50 ? 'mid' : 'bad'}
+              title={axisTooltip(`Risk (0-100): ${AXIS_DESC.risk}.${result.capped ? ' Rules broken — the day caps at 49.' : ''}`, result.parts, 'risk')}
             />
           )}
           {entry != null && (
             <Chip
               label={`Entry ${entry}`}
               tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
-              title="Entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — the exit is scored separately"
+              title={axisTooltip(`Entry (0-100): ${AXIS_DESC.entry}.`, result.parts, 'entry')}
             />
           )}
           {exit != null && (
             <Chip
               label={`Exit ${exit}`}
               tone={exit >= 70 ? 'good' : exit >= 50 ? 'mid' : 'bad'}
-              title={exitTitle}
+              title={axisTooltip(`Exit (0-100): ${AXIS_DESC.exit}.`, result.parts, 'exit')}
             />
           )}
         </>

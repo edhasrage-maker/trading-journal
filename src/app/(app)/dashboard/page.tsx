@@ -21,7 +21,7 @@ import {
   fromStoredStats, scoreDayRollups, isFreshStats,
   type DayStatsStored,
 } from '@/lib/day-stats'
-import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
+import { loadTapeScoreSettings, loadRiskHistory } from '@/lib/day-stats-server'
 import { computeCarryover } from '@/lib/prep-carryover'
 import { liftDragByScope, type LiftDragTrade } from '@/lib/lift-drag'
 import type { TradeWithExcursion } from '@/lib/analytics'
@@ -93,10 +93,11 @@ export default async function DashboardPage() {
   //     which we read as "all days dirty"; folding it into the main select would
   //     null the WHOLE dataset there — same reason achievements stays separate),
   //   - achievements (separate + guarded, unchanged).
-  // Plus the trader's ATR stop setting: the Exit score's "Stop size" factor is
-  // graded against it, so it decides both how a dirty day is recomputed and
-  // whether a cached one is still current.
-  const [recentResult, statsResult, achResult, atrStopTarget] = await Promise.all([
+  // Plus the trader's TapeScore settings: Risk's "Stop size" is graded against
+  // the ATR stop setting, so it decides both how a dirty day is recomputed and
+  // whether a cached one is still current; the order-flow Score setting is
+  // applied when the days are read, so it never dirties the cache.
+  const [recentResult, statsResult, achResult, { atrStopTarget, includeFlow }] = await Promise.all([
     supabase
       .from('trading_days')
       .select('id, date, eod_pnl, day_type, day_types')
@@ -115,7 +116,7 @@ export default async function DashboardPage() {
       .gte('date', statsWindowStartParallel)
       .order('date', { ascending: false })
       .limit(PAGE_SIZE) as unknown as Promise<{ data: { id: string; achievements_json: string[] | null }[] | null; error: unknown }>,
-    loadAtrStopTarget(supabase),
+    loadTapeScoreSettings(supabase),
   ])
   tick('recentDays + stats + achievements')
 
@@ -196,8 +197,8 @@ export default async function DashboardPage() {
   })
   tick('per-day rollup', rolledUp.length)
 
-  // Finish each day's TapeScore: its Exit axis is measured against the trader's
-  // average dollar risk over the days BEFORE it, so the days are read in
+  // Finish each day's TapeScore: Risk's loss size is measured against the
+  // trader's average dollar risk over the days BEFORE it, so the days are read in
   // sequence here (src/lib/exit-rollup.ts) — the same rule the recaps and the
   // Recap day page use. The window is the whole journal, so the days are each
   // other's history; only an account that fills the PAGE_SIZE window needs the
@@ -206,8 +207,8 @@ export default async function DashboardPage() {
   const riskHistory = recentDaysBase.length >= PAGE_SIZE && oldestDate
     ? await loadRiskHistory(supabase, oldestDate)
     : []
-  const recentDaysMapped = scoreDayRollups(rolledUp, riskHistory)
-  tick('exit + tapescore', recentDaysMapped.length)
+  const recentDaysMapped = scoreDayRollups(rolledUp, riskHistory, { includeFlow })
+  tick('trade parts + tapescore', recentDaysMapped.length)
 
   // Store the days just recomputed so the next load reads them from cache —
   // after the response is sent, a bounded number of writes at a time
@@ -343,8 +344,8 @@ export default async function DashboardPage() {
     overall_grade: d.overall_grade,
     process_verdict: d.process_verdict,
     tapescore: d.tapescore,
-    // The day's Exit sums — a period's Exit axis pools these over its trades.
-    exit_sums: d.exit_sums,
+    // The day's per-trade sums — a period's axes pool these over its trades.
+    trade_sums: d.trade_sums,
   }))
 
   // The overview's sessions table gets ALL scored days (the filter defaults to

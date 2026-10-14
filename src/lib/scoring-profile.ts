@@ -62,6 +62,19 @@ export interface ScoringProfile {
     scales_out?: boolean | null
     edge_style?: 'trend' | 'mean_reversion' | 'breakout' | 'range' | null
   } | null
+  /** TapeScore settings (amendment 9). `entry_flow_score`: include each
+   *  trade's order-flow Score in the Entry grade. Absent = ON — read it
+   *  through `includeFlowScoreInEntry`, never off this field directly. */
+  tapescore?: {
+    entry_flow_score?: boolean | null
+  } | null
+}
+
+/** Does this trader include the order-flow Score in their Entry grade? On
+ *  unless they switched it off (founder, 2026-10-14). A trader with no scored
+ *  trades loses nothing either way: the part simply has nothing to judge. */
+export function includeFlowScoreInEntry(sp?: ScoringProfile | null): boolean {
+  return sp?.tapescore?.entry_flow_score !== false
 }
 
 /** Owner Ruleset v1.3 defaults — used whenever the profile omits a field. */
