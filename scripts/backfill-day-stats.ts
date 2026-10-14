@@ -26,7 +26,8 @@
 
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
-import { computeDayStats, toStoredStats, STATS_VERSION, type TradeForStats } from '../src/lib/day-stats.ts'
+import { computeDayStats, toStoredStats, STATS_VERSION, ROLLUP_TRADE_COLS, type TradeForStats } from '../src/lib/day-stats.ts'
+import { resolveRubric, type ScoringProfile } from '../src/lib/scoring-profile.ts'
 
 const PUBLIC = process.argv.includes('--public')
 const APPLY = process.argv.includes('--apply')
@@ -52,8 +53,10 @@ if (!URL || !KEY) {
 const sb: any = createClient(URL, KEY)
 
 const PAGE = 1000
-const TRADE_COLS =
-  'id, trading_day_id, tags_json, pnl, direction, entry_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg'
+// The SAME columns every in-app rollup query selects — a private list here once
+// drifted (it lacked exit_price), and a column the Exit score needs but this
+// script did not fetch would be cached as a confidently wrong score.
+const TRADE_COLS = `trading_day_id, ${ROLLUP_TRADE_COLS}`
 
 async function main() {
   console.log(`Target: ${PUBLIC ? 'PUBLIC/cloud' : 'personal'} DB (${envFile})  |  ${APPLY ? 'APPLY' : 'DRY RUN'}${FORCE ? '  |  FORCE' : ''}  |  STATS_VERSION=${STATS_VERSION}`)
@@ -65,13 +68,34 @@ async function main() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ai_analysis_json: any; eod_ai_analysis_json: any
     stats_version: number | null; stats_json: unknown
+    user_id?: string | null
+  }
+  // The Exit score's "Stop size" factor is graded against each trader's own ATR
+  // stop setting, and the value used is stored in the rollup — the app treats a
+  // row computed with a different setting as stale. So resolve it per trader
+  // (cloud: one profile row per user; personal DB: single-tenant, default 1 when
+  // the column is absent).
+  const atrStopByUser = new Map<string, number>()
+  let atrStopDefault = 1
+  {
+    const { data, error } = PUBLIC
+      ? await sb.from('trader_profile').select('user_id, scoring_profile_json').eq('id', 'default')
+      : await sb.from('trader_profile').select('scoring_profile_json').eq('id', 'default')
+    if (!error) {
+      for (const r of (data ?? []) as { user_id?: string | null; scoring_profile_json?: ScoringProfile | null }[]) {
+        const sp = r.scoring_profile_json && typeof r.scoring_profile_json === 'object' ? r.scoring_profile_json : null
+        const target = resolveRubric(sp).atrStopTarget
+        if (PUBLIC && r.user_id) atrStopByUser.set(r.user_id, target)
+        else atrStopDefault = target
+      }
+    }
   }
   const days: DayRow[] = []
   for (let p = 0; p < 1000; p++) {
     const { data, error } = await sb
       .from('trading_days')
-      .select('id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json, stats_version, stats_json')
-      .order('date', { ascending: true })
+      .select(`id, date, eod_pnl, day_type, day_types, ai_analysis_json, eod_ai_analysis_json, stats_version, stats_json${PUBLIC ? ', user_id' : ''}`)
+      .order('date', { ascending: true }).order('id', { ascending: true })
       .range(p * PAGE, p * PAGE + PAGE - 1)
     if (error) { console.error('trading_days fetch failed:', error.message); process.exit(1) }
     const batch = (data ?? []) as DayRow[]
@@ -120,6 +144,7 @@ async function main() {
       { id: d.id, date: d.date, eod_pnl: d.eod_pnl, day_type: d.day_type, day_types: d.day_types, ai_analysis_json: d.ai_analysis_json, eod_ai_analysis_json: d.eod_ai_analysis_json },
       tradesByDay.get(d.id) ?? [],
       atrByDay.get(d.id) ?? null,
+      { atrStopTarget: (d.user_id ? atrStopByUser.get(d.user_id) : undefined) ?? atrStopDefault },
     )
     if (!APPLY) continue
     const { error } = await sb

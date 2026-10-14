@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { TapeScorePeriod } from '@/lib/tapescore'
+import { exitFactorLines, exitFactorsTooltip } from '@/lib/exit-rollup'
 import type { Carryover } from '@/lib/prep-carryover'
 import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
 
@@ -48,12 +49,12 @@ function arc(cx: number, cy: number, r: number, a0: number, a1: number): string 
  *  faint track, with clear gaps. */
 function CompositionRing({ score, subs, size = 132 }: {
   score: number
-  subs: { risk: number; entry: number; capture: number }
+  subs: { risk: number; entry: number; exit: number }
   size?: number
 }) {
   const b = bandOf(score)
   const cx = 66, cy = 66, r = 51, W = 9, GAP = 8
-  const segs: Array<[number, number]> = [[1 / 3, subs.risk], [1 / 3, subs.entry], [1 / 3, subs.capture]]
+  const segs: Array<[number, number]> = [[1 / 3, subs.risk], [1 / 3, subs.entry], [1 / 3, subs.exit]]
   const usable = 360 - GAP * segs.length
   let a = 0
   const paths: Array<{ d: string; stroke: string; cap: 'butt' | 'round' }> = []
@@ -88,7 +89,7 @@ function CompositionRing({ score, subs, size = 132 }: {
 const SCORE_AXES = [
   { key: 'risk' as const, name: 'Risk', desc: 'size and account limits', wt: '⅓' },
   { key: 'entry' as const, name: 'Entry', desc: 'setup, timing, stop placement', wt: '⅓' },
-  { key: 'capture' as const, name: 'Exit', desc: 'how much of the move you kept', wt: '⅓' },
+  { key: 'exit' as const, name: 'Exit', desc: 'five parts, each scored on the trades it applies to', wt: '⅓' },
 ]
 
 /** The ⓘ on the TapeScore — the score's makeup moved here (out of the hero) so
@@ -105,9 +106,12 @@ export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [open])
   if (period.score == null) return null
-  const vals: Record<'risk' | 'entry' | 'capture', number> = {
-    risk: period.risk ?? 0, entry: period.entry ?? 0, capture: period.capture ?? 0,
+  // An axis with nothing to judge reads "—", not 0: a zero is a score.
+  const vals: Record<'risk' | 'entry' | 'exit', number | null> = {
+    risk: period.risk ?? 0, entry: period.entry ?? 0, exit: period.exit,
   }
+  // The five factors behind the Exit number — label, score, trades judged.
+  const exitLines = exitFactorLines(period.exitFactors)
   return (
     <span className="relative inline-flex" ref={ref}>
       <button
@@ -122,15 +126,27 @@ export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
         <div className="absolute z-50 top-6 left-0 w-72 bg-gray-900 border border-gray-700 rounded-lg p-3 text-left shadow-[0_24px_60px_-30px_rgba(0,0,0,0.9)]">
           <p className="text-[12.5px] text-gray-400 mb-2.5">Decision quality — three equal parts across the trade:</p>
           {SCORE_AXES.map((a, i) => (
-            <div key={a.key} className={cn('flex items-baseline justify-between gap-3 py-1.5', i > 0 && 'border-t border-gray-800')}>
-              <span className="min-w-0">
-                <span className="text-[13px] text-gray-100">{a.name}</span>
-                <span className="text-[11px] text-gray-500 ml-1.5">{a.desc}</span>
-              </span>
-              <span className="flex items-baseline gap-2 flex-shrink-0">
-                <span className="text-[10px] text-gray-500 tabular-nums">{a.wt}</span>
-                <span className="text-[14px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>{vals[a.key]}</span>
-              </span>
+            <div key={a.key} className={cn('py-1.5', i > 0 && 'border-t border-gray-800')}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="min-w-0">
+                  <span className="text-[13px] text-gray-100">{a.name}</span>
+                  <span className="text-[11px] text-gray-500 ml-1.5">{a.desc}</span>
+                </span>
+                <span className="flex items-baseline gap-2 flex-shrink-0">
+                  <span className="text-[10px] text-gray-500 tabular-nums">{a.wt}</span>
+                  <span className="text-[14px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>{vals[a.key] ?? '—'}</span>
+                </span>
+              </div>
+              {a.key === 'exit' && (
+                <div className="mt-1">
+                  {exitLines.map(l => (
+                    <div key={l.key} className="flex items-baseline justify-between gap-3 text-[11px] leading-[1.55]">
+                      <span className="text-gray-500">{l.label}</span>
+                      <span className={cn('tabular-nums flex-shrink-0', l.score != null ? 'text-gray-300' : 'text-gray-600')}>{l.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
           {period.scoredDays > 0 && (
@@ -151,20 +167,26 @@ export function ScoreCluster({ period, size = 148 }: { period: TapeScorePeriod; 
   if (period.score == null) {
     return <p className="text-[13px] text-gray-500 max-w-[36ch] leading-normal">No graded sessions in this window yet — run Analyze Session on a day to score it.</p>
   }
-  const subs = { risk: period.risk ?? 0, entry: period.entry ?? 0, capture: period.capture ?? 0 }
-  const comps: Array<{ name: string; score: number }> = [
+  const subs = { risk: period.risk ?? 0, entry: period.entry ?? 0, exit: period.exit ?? 0 }
+  // Exit with no trade to judge reads "—" (the axis is absent), never 0. Its
+  // hover text carries the five factors behind the number.
+  const comps: Array<{ name: string; score: number | null; title?: string }> = [
     { name: 'Risk', score: subs.risk },
     { name: 'Entry', score: subs.entry },
-    { name: 'Exit', score: subs.capture },
+    {
+      name: 'Exit',
+      score: period.exit,
+      title: exitFactorsTooltip('Exit — five parts, each scored on the trades it applies to:', period.exitFactors),
+    },
   ]
   return (
     <div className="flex items-center gap-6 flex-wrap">
       <CompositionRing score={period.score} subs={subs} size={size} />
       <div className="min-w-[150px]">
         {comps.map((c, i) => (
-          <div key={c.name} className={cn('flex items-baseline justify-between gap-4 py-2', i > 0 && 'border-t border-gray-800')}>
+          <div key={c.name} title={c.title} className={cn('flex items-baseline justify-between gap-4 py-2', i > 0 && 'border-t border-gray-800')}>
             <span className="text-[13.5px] text-gray-200">{c.name}</span>
-            <span className="text-[16px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>{c.score}</span>
+            <span className="text-[16px] font-bold tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>{c.score ?? '—'}</span>
           </div>
         ))}
       </div>

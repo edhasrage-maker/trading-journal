@@ -6,7 +6,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { GhostButton } from '@/components/ui/Section'
-import { ScoreCluster } from '@/components/review/ReviewMonthHero'
+import { ScoreCluster, ScoreBreakdownInfo } from '@/components/review/ReviewMonthHero'
 import GameFilm, { type FilmFrame } from '@/components/review/GameFilm'
 import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { EvidenceBar } from '@/lib/prep-carryover'
@@ -167,6 +167,7 @@ export default function PeriodRecapClient(p: RecapProps) {
               TapeScore
             </span>
             <span className="text-[11px] text-gray-500">· {p.scoreLabel}</span>
+            <ScoreBreakdownInfo period={p.scorePeriod} />
           </div>
           <ScoreCluster period={p.scorePeriod} />
           {p.scorePeriod.score != null && (

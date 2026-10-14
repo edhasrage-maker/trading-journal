@@ -17,7 +17,11 @@ import { mergeMgmtTotals } from '@/lib/trade-management'
 // the file so the bundle doesn't carry unused code.
 import type { TradingDay, Trade } from '@/lib/supabase/types'
 import { aggregateTapeScore } from '@/lib/tapescore'
-import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type DayStatsStored } from '@/lib/day-stats'
+import {
+  computeDayStats, fromStoredStats, toStoredStats, scoreDayRollups, isFreshStats, STATS_VERSION, ROLLUP_TRADE_COLS,
+  type DayStatsStored,
+} from '@/lib/day-stats'
+import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
 import { computeCarryover } from '@/lib/prep-carryover'
 import type { TradeWithExcursion } from '@/lib/analytics'
 import { DashboardHero, type HeroPeriods } from '@/components/review/ReviewMonthHero'
@@ -83,7 +87,10 @@ export default async function DashboardPage() {
   //     which we read as "all days dirty"; folding it into the main select would
   //     null the WHOLE dataset there — same reason achievements stays separate),
   //   - achievements (separate + guarded, unchanged).
-  const [recentResult, statsResult, achResult] = await Promise.all([
+  // Plus the trader's ATR stop setting: the Exit score's "Stop size" factor is
+  // graded against it, so it decides both how a dirty day is recomputed and
+  // whether a cached one is still current.
+  const [recentResult, statsResult, achResult, atrStopTarget] = await Promise.all([
     supabase
       .from('trading_days')
       .select('id, date, eod_pnl, day_type, day_types')
@@ -102,6 +109,7 @@ export default async function DashboardPage() {
       .gte('date', statsWindowStartParallel)
       .order('date', { ascending: false })
       .limit(PAGE_SIZE) as unknown as Promise<{ data: { id: string; achievements_json: string[] | null }[] | null; error: unknown }>,
+    loadAtrStopTarget(supabase),
   ])
   tick('recentDays + stats + achievements')
 
@@ -117,13 +125,14 @@ export default async function DashboardPage() {
   // dashboard owns. The EOD recap shows only the day's earns, not this strip.
   const collectionCounts = achievementCounts(Array.from(achievementsByDayId.values()))
 
-  // Fresh cache map: dayId → stored rollup, ONLY for rows at the current version.
+  // Fresh cache map: dayId → stored rollup, ONLY for rows at the current version
+  // AND computed with the trader's current ATR stop setting (isFreshStats).
   // A missing/errored stats query (pre-migration) leaves this empty → all dirty.
   const cacheAvailable = !statsResult.error
   const statsByDayId = new Map<string, DayStatsStored>()
   if (cacheAvailable && statsResult.data) {
     for (const r of statsResult.data) {
-      if (r.stats_json != null && r.stats_version === STATS_VERSION) {
+      if (isFreshStats(r, atrStopTarget)) {
         statsByDayId.set(r.id, r.stats_json)
       }
     }
@@ -179,6 +188,11 @@ export default async function DashboardPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     exits_json: any
     mfe_dollars_per_leg: number | null
+    // The Exit score reads the exit fill, the planned target and the 5-minute
+    // structure (src/lib/exit-score.ts).
+    exit_price: number | null
+    tp1_price: number | null
+    structure_5m_alignment: 'following' | 'fading' | 'neutral' | null
   }
   // Chunk trading_day_ids for the .in() — 50 UUIDs per chunk to stay under
   // PostgREST URL-length limits. Trades pagination per chunk: range() up to
@@ -210,7 +224,7 @@ export default async function DashboardPage() {
       for (let p = 0; p < 50; p++) {
         const { data, error } = await supabase
           .from('trades')
-          .select('id, trading_day_id, entry_time, tags_json, pnl, direction, entry_price, exit_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
+          .select(`trading_day_id, entry_time, ${ROLLUP_TRADE_COLS}`)
           .in('trading_day_id', slice)
           .order('id', { ascending: true })
           .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
@@ -252,7 +266,7 @@ export default async function DashboardPage() {
   // Per-day rollup: fresh days rehydrate from the cache (column-owned fields
   // re-merged from the row); dirty days recompute via the SAME shared pure
   // function so a cached row and a freshly-computed one are identical.
-  const recentDaysMapped = recentDaysBase.map(d => {
+  const rolledUp = recentDaysBase.map(d => {
     const cached = statsByDayId.get(d.id)
     if (cached) {
       return fromStoredStats(cached, {
@@ -277,9 +291,23 @@ export default async function DashboardPage() {
       },
       tradesByDay.get(d.id) ?? [],
       prepAtrByDay.get(d.id) ?? null,
+      { atrStopTarget },
     )
   })
-  tick('per-day rollup', recentDaysMapped.length)
+  tick('per-day rollup', rolledUp.length)
+
+  // Finish each day's TapeScore: its Exit axis is measured against the trader's
+  // average dollar risk over the days BEFORE it, so the days are read in
+  // sequence here (src/lib/exit-rollup.ts) — the same rule the recaps and the
+  // Recap day page use. The window is the whole journal, so the days are each
+  // other's history; only an account that fills the PAGE_SIZE window needs the
+  // days before its oldest row fetched separately.
+  const oldestDate = recentDaysBase.length > 0 ? recentDaysBase[recentDaysBase.length - 1].date : null
+  const riskHistory = recentDaysBase.length >= PAGE_SIZE && oldestDate
+    ? await loadRiskHistory(supabase, oldestDate)
+    : []
+  const recentDaysMapped = scoreDayRollups(rolledUp, riskHistory)
+  tick('exit + tapescore', recentDaysMapped.length)
 
   // Read-through write-back: warm the cache for the days we just recomputed so
   // the next load serves them from cache. Best-effort — a stats-only UPDATE
@@ -289,7 +317,7 @@ export default async function DashboardPage() {
   // they simply recompute each load, which is correct). Never blocks the render
   // on failure; errors are swallowed so a warm-cache miss can't break the page.
   if (cacheAvailable && dirtyDays.length > 0) {
-    const byId = new Map(recentDaysMapped.map(r => [r.id, r]))
+    const byId = new Map(rolledUp.map(r => [r.id, r]))
     await Promise.all(dirtyDays.map(d => {
       const rollup = byId.get(d.id)
       if (!rollup) return Promise.resolve()
@@ -339,7 +367,7 @@ export default async function DashboardPage() {
     const days = recentDaysMapped.filter(d => d.date >= w.start)
     const trades = allTrades.filter(t => (dayDateById.get(t.trading_day_id) ?? '') >= w.start)
     return [w.key, {
-      scorePeriod: aggregateTapeScore(days.map(d => d.tapescore)),
+      scorePeriod: aggregateTapeScore(days),
       carryover: computeCarryover(trades as unknown as TradeWithExcursion[], w.findingLabel),
       tradeCount: trades.length,
       findingLabel: w.findingLabel,
@@ -404,6 +432,8 @@ export default async function DashboardPage() {
     overall_grade: d.overall_grade,
     process_verdict: d.process_verdict,
     tapescore: d.tapescore,
+    // The day's Exit sums — a period's Exit axis pools these over its trades.
+    exit_sums: d.exit_sums,
   }))
 
   // The overview's sessions table gets ALL scored days (the filter defaults to

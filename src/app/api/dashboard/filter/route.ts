@@ -1,7 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { clientError } from '@/lib/api-error'
-import { computeDayStats, type DayForStats, type TradeForStats } from '@/lib/day-stats'
+import { computeDayStats, scoreDayRollups, ROLLUP_TRADE_COLS, type DayForStats, type TradeForStats } from '@/lib/day-stats'
+import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
 import { tagKey } from '@/lib/tradezella-import'
 import type { TradingDay } from '@/lib/supabase/types'
 
@@ -32,7 +33,11 @@ const CHUNK = 50
  *     matching trades only;
  *   - achievements are dropped, since a day-level coin like "Career Day" says
  *     nothing about one setup's trades.
- * TapeScore is kept — it is labelled per-session wherever it appears.
+ * TapeScore is kept — it is labelled per-session wherever it appears. Its Exit
+ * axis is computed from the session's trades, so the score is built from ALL of
+ * the day's trades (and read in sequence, like every other surface) and then
+ * attached to the filtered rollup; scoring the matching trades alone would give
+ * the same session a different TapeScore here than on the unfiltered dashboard.
  *
  * Session-scoped client, so RLS confines the read to the signed-in trader.
  */
@@ -51,6 +56,12 @@ export async function GET(req: Request) {
     }
 
     const supabase: AnyClient = await createClient()
+    // Both feed the Exit axis: the trader's ATR stop setting, and the days
+    // before the range that the average-dollar-risk rule reaches back to.
+    const [atrStopTarget, riskHistory] = await Promise.all([
+      loadAtrStopTarget(supabase),
+      loadRiskHistory(supabase, from),
+    ])
 
     // 1. Sessions in range.
     type DayRow = Pick<TradingDay, 'id' | 'date' | 'day_type' | 'ai_analysis_json' | 'eod_ai_analysis_json'> & { day_types: string[] | null }
@@ -78,7 +89,7 @@ export async function GET(req: Request) {
       for (let p = 0; p < 50; p++) {
         const { data, error } = await supabase
           .from('trades')
-          .select('id, trading_day_id, tags_json, pnl, direction, entry_price, exit_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
+          .select(`trading_day_id, ${ROLLUP_TRADE_COLS}`)
           .in('trading_day_id', slice)
           .order('id', { ascending: true })
           .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -97,8 +108,12 @@ export async function GET(req: Request) {
     // 3. Keep trades carrying ANY selected setup. tagKey folds case, spacing and
     //    "&" → "and", so "Supply & Demand" and "Supply And Demand" match.
     const matchedByDay = new Map<string, TradeRow[]>()
+    const allByDay = new Map<string, TradeRow[]>()
     let tradeCount = 0
     for (const t of trades) {
+      const all = allByDay.get(t.trading_day_id) ?? []
+      all.push(t)
+      allByDay.set(t.trading_day_id, all)
       const setups = (t.tags_json?.setups ?? []) as string[]
       if (!setups.some(s => wanted.has(tagKey(s)))) continue
       const arr = matchedByDay.get(t.trading_day_id) ?? []
@@ -107,21 +122,37 @@ export async function GET(req: Request) {
       tradeCount++
     }
 
-    // 4. Roll up each day that had a match.
+    // 4. Each session's own TapeScore, from the WHOLE session read in sequence
+    //    (every day in range, matched or not — an unmatched day's risk still
+    //    counts toward the average the next day's losses are measured against).
+    const dayInput = (d: DayRow): DayForStats => ({
+      id: d.id,
+      date: d.date,
+      eod_pnl: null,
+      day_type: d.day_type,
+      day_types: Array.isArray(d.day_types) ? d.day_types : null,
+      ai_analysis_json: d.ai_analysis_json ?? null,
+      eod_ai_analysis_json: d.eod_ai_analysis_json ?? null,
+      achievements: [],
+    })
+    const sessionById = new Map(
+      scoreDayRollups(
+        days.map(d => computeDayStats(dayInput(d), allByDay.get(d.id) ?? [], prepAtr.get(d.id) ?? null, { atrStopTarget })),
+        riskHistory,
+      ).map(r => [r.id, r]),
+    )
+
+    // 5. Roll up each day that had a match over its matching trades, and give
+    //    it the session's score.
     const rollups = days
       .filter(d => matchedByDay.has(d.id))
       .map(d => {
-        const day: DayForStats = {
-          id: d.id,
-          date: d.date,
-          eod_pnl: null,
-          day_type: d.day_type,
-          day_types: Array.isArray(d.day_types) ? d.day_types : null,
-          ai_analysis_json: d.ai_analysis_json ?? null,
-          eod_ai_analysis_json: d.eod_ai_analysis_json ?? null,
-          achievements: [],
+        const session = sessionById.get(d.id)
+        return {
+          ...computeDayStats(dayInput(d), matchedByDay.get(d.id)!, prepAtr.get(d.id) ?? null, { atrStopTarget }),
+          tapescore: session?.tapescore ?? null,
+          exit_sums: session?.exit_sums ?? null,
         }
-        return computeDayStats(day, matchedByDay.get(d.id)!, prepAtr.get(d.id) ?? null)
       })
 
     return NextResponse.json({ days: rollups, tradeCount })

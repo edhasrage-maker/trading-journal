@@ -3,6 +3,8 @@
 import { useMemo } from 'react'
 import type { EodAiAnalysis } from '@/lib/supabase/types'
 import { tapeScoreFromAnalyses, tapeScoreDaySentence } from '@/lib/tapescore'
+import { exitScoreView, type ExitTradeInput } from '@/lib/exit-score'
+import { EXIT_AXIS_DESC, dayExitStored, dayExitSums, exitFactorsTooltip } from '@/lib/exit-rollup'
 import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
 
 /**
@@ -17,6 +19,9 @@ import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
 export default function TapeScoreHeader({
   analysis,
   prepScore,
+  trades,
+  avgRiskDollars,
+  atrStopTarget,
   tradeCount,
   winCount,
   lossCount,
@@ -25,14 +30,29 @@ export default function TapeScoreHeader({
   analysis: EodAiAnalysis | null
   /** Prep AI quality score (1-10) from ai_analysis_json.score. */
   prepScore: number | null
+  /** The day's trades — the Exit axis is scored from them, live, so an edit in
+   *  the drawer moves it. */
+  trades: ExitTradeInput[]
+  /** The trader's average dollar risk going into this day (server-computed by
+   *  the shared rule in src/lib/exit-rollup.ts); null = none yet. */
+  avgRiskDollars: number | null
+  /** The trader's ATR stop setting (default 1). */
+  atrStopTarget: number
   tradeCount: number
   winCount: number
   lossCount: number
   pnl: number
 }) {
+  // The day's Exit, through the same two steps the per-day rollup takes
+  // (store the day's inputs, then score them against the average risk), so this
+  // header and the dashboard can't disagree about the same day.
+  const exitView = useMemo(() => {
+    const sums = dayExitSums(dayExitStored(trades, atrStopTarget), avgRiskDollars)
+    return sums ? exitScoreView(sums) : null
+  }, [trades, atrStopTarget, avgRiskDollars])
   const result = useMemo(
-    () => tapeScoreFromAnalyses(analysis, prepScore),
-    [analysis, prepScore],
+    () => tapeScoreFromAnalyses(analysis, prepScore, exitView?.score ?? null),
+    [analysis, prepScore, exitView],
   )
   if (!result) return null
 
@@ -48,7 +68,7 @@ export default function TapeScoreHeader({
   // New analyses carry an AI-written day headline; legacy rows fall back to
   // the deterministic sentence so every scored day still gets a verdict.
   const sentence = analysis?.headline?.trim() || tapeScoreDaySentence(result)
-  const { passCount, railCount, entry, capture } = result.components
+  const { passCount, railCount, entry, exit } = result.components
   const pnlCls = pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'
 
   return (
@@ -102,14 +122,14 @@ export default function TapeScoreHeader({
                 <Chip
                   label={`Entry ${entry}`}
                   tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
-                  title="Entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — capture is scored separately"
+                  title="Entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — the exit is scored separately"
                 />
               )}
-              {capture != null && (
+              {exit != null && (
                 <Chip
-                  label={`Exit ${capture}`}
-                  tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
-                  title="Exit / profit capture (0-100): how much of the favorable move you kept — MFE captured"
+                  label={`Exit ${exit}`}
+                  tone={exit >= 70 ? 'good' : exit >= 50 ? 'mid' : 'bad'}
+                  title={exitFactorsTooltip(`Exit (0-100): ${EXIT_AXIS_DESC}.`, exitView?.factors)}
                 />
               )}
             </>

@@ -1,4 +1,4 @@
-import { exitKind, tradeFacts, type MgmtTradeInput } from '@/lib/trade-management'
+import { exitKind, tradeFacts, type MgmtTradeInput, type TradeFacts } from '@/lib/trade-management'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 
 /**
@@ -104,6 +104,38 @@ function firstTargetFilled(t: ExitTradeInput): boolean {
   return prices.some(p => (p - tp) * sign >= -1e-9)
 }
 
+/** A trade's own planned dollar risk, at the size its fills actually traded. Null without a stop. */
+function ownRiskDollars(f: TradeFacts, pnl: number): number | null {
+  const res = f.result.pts as number
+  const qtyUsd = res !== 0 ? Math.abs(pnl / res) : null                         // dollars per point for this trade
+  return f.riskPts != null && qtyUsd != null ? f.riskPts * qtyUsd : null
+}
+
+/**
+ * Factor 2 for one losing trade: its dollar loss against a yardstick — the
+ * trader's average dollar risk when that is known, else the trade's own planned
+ * risk. Null when there is neither. Split out of `exitTradeScores` (which calls
+ * it) so a stored loss can be scored later, once the average is known, by the
+ * same arithmetic.
+ */
+export function lossSizeScore(lossDollars: number, ownRisk: number | null, avgRiskDollars?: number | null): number | null {
+  const yardstick = avgRiskDollars != null && avgRiskDollars > 0 ? avgRiskDollars : ownRisk
+  if (yardstick == null || !(yardstick > 0)) return null
+  const ratio = Math.abs(lossDollars) / yardstick
+  return ratio <= LOSS_OK ? 1 : ratio >= LOSS_ZERO ? 0 : (LOSS_ZERO - ratio) / (LOSS_ZERO - LOSS_OK)
+}
+
+/**
+ * The two numbers factor 2 needs from a losing trade — [dollars lost, its own
+ * planned dollar risk or null] — for scoring with `lossSizeScore` once the
+ * trader's average risk is known. Null for a trade factor 2 does not judge.
+ */
+export function lossSizeInputs(t: ExitTradeInput, ctx: ExitContext = {}): [number, number | null] | null {
+  const f = tradeFacts(t, { atr: ctx.atr })
+  if (!f || t.pnl == null || !(t.pnl < 0)) return null
+  return [Math.abs(t.pnl), ownRiskDollars(f, t.pnl)]
+}
+
 export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitTradeScores {
   const out: ExitTradeScores = {}
   const f = tradeFacts(t, { atr: ctx.atr })
@@ -118,13 +150,8 @@ export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitT
 
   // 2 · loss size — losers only, in dollars against the trader's average risk
   if (t.pnl < 0) {
-    const qtyUsd = res !== 0 ? Math.abs(t.pnl / res) : null                     // dollars per point for this trade
-    const ownRisk = f.riskPts != null && qtyUsd != null ? f.riskPts * qtyUsd : null
-    const yardstick = ctx.avgRiskDollars != null && ctx.avgRiskDollars > 0 ? ctx.avgRiskDollars : ownRisk
-    if (yardstick != null && yardstick > 0) {
-      const ratio = Math.abs(t.pnl) / yardstick
-      out.lossSize = ratio <= LOSS_OK ? 1 : ratio >= LOSS_ZERO ? 0 : (LOSS_ZERO - ratio) / (LOSS_ZERO - LOSS_OK)
-    }
+    const s = lossSizeScore(Math.abs(t.pnl), ownRiskDollars(f, t.pnl), ctx.avgRiskDollars)
+    if (s != null) out.lossSize = s
   }
 
   // 3 · stop respected — only when the logged stop came into play

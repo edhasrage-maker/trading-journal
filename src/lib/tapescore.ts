@@ -1,4 +1,5 @@
 import type { EodAiAnalysis, ExecutionScore, ProcessVerdict, RuleStatus } from '@/lib/supabase/types'
+import { exitScoreView, mergeExitSums, type ExitScoreView, type ExitSums } from '@/lib/exit-score'
 
 /**
  * One TapeScore (Ruleset amendment 6, 2026-07-23).
@@ -8,13 +9,29 @@ import type { EodAiAnalysis, ExecutionScore, ProcessVerdict, RuleStatus } from '
  * every historical row gets a TapeScore for free and re-weights can't strand
  * stale stored values.
  *
- *   TapeScore = round((Risk + Entry + Capture) / 3)   — the three axes weighted equally
+ *   TapeScore = round((Risk + Entry + Exit) / 3)   — the three axes weighted equally
  *
  *   Risk    = pass_count/5 × 100 over the five safety rails (size + account limits)
  *   Entry   = the execution composite with MFE-capture REMOVED, renormalized
  *             (execution parameters 41 / prep adherence 24 / profit factor 11
  *             → /76), × 100. Ran-but-unscoreable → 0.
- *   Capture = mfe_capture × 100 — how much of the move you kept (the "Exit" axis).
+ *   Exit    = the five-factor Exit score (src/lib/exit-score.ts): profit kept
+ *             on winners, loss size on losers, stop respected, stop size,
+ *             runner rules. Computed from the day's trades and PASSED IN — this
+ *             module never reads `execution.mfe_capture` (amendment 8).
+ *
+ * AMENDMENT 8 (2026-10-13, founder-directed) — the Exit axis is no longer the
+ * AI-influenced `mfe_capture` stored in the EOD analysis. It is the
+ * deterministic five-factor Exit score, supplied by the caller because one of
+ * its factors (loss size) is measured against the trader's average dollar risk
+ * from EARLIER days — see src/lib/exit-rollup.ts. So a day's score is built in
+ * two steps: `tapeScoreBase` (Risk + Entry, from the analysis — cacheable) and
+ * `tapeScoreWithExit` (the blend, once the day's Exit is known). A day whose
+ * Exit has no factor with a trade to judge has no Exit axis and the other two
+ * re-weight. `mfe_capture` stays in the stored analysis and in the Execution
+ * card's composite; it just no longer feeds TapeScore. A PERIOD's Exit is
+ * pooled over the period's trades (sums merged, read once), never a mean of
+ * daily Exit scores; the period headline stays the mean of day TapeScores.
  *
  * AMENDMENT 6 (2026-07-23, founder-directed) — the score decomposes into the
  * same three axes the Review composition ring shows, mapping the trade
@@ -27,8 +44,8 @@ import type { EodAiAnalysis, ExecutionScore, ProcessVerdict, RuleStatus } from '
  * AMENDMENT 7 (2026-07-24, founder-directed) — the three axes are now weighted
  * EQUALLY (⅓ each), retiring the risk-dominant 50/30/20 blend. The axes were
  * relabelled to read as non-overlapping stages — Risk = size + account limits,
- * Entry = setup / timing / stop, Exit = how much of the move you kept — so no
- * single stage owns the score. This re-scores history (weights only; the
+ * Entry = setup / timing / stop, Exit = how the trade was closed (redefined by
+ * amendment 8) — so no single stage owns the score. This re-scores history (weights only; the
  * per-axis math is unchanged). Risk keeps an outsized FLOOR effect regardless of
  * the equal weight: the Breach cap still pins a rule-breaking session at 49.
  *
@@ -52,8 +69,9 @@ export interface TapeScoreResult {
     risk: number | null
     /** Entry quality, 0-100 — execution composite minus capture. One of three equal axes (⅓). */
     entry: number | null
-    /** Profit capture, 0-100 (mfe_capture × 100) — the "Exit" axis. One of three equal axes (⅓). */
-    capture: number | null
+    /** The Exit axis, 0-100 — the five-factor Exit score (src/lib/exit-score.ts).
+     *  Null when no factor had a trade to judge. One of three equal axes (⅓). */
+    exit: number | null
     /** Safety rails passed, 0..railCount. Null on legacy-basis rows. */
     passCount: number | null
     /** How many rails this trader actually tracks (active_rails when the
@@ -72,7 +90,7 @@ export interface TapeScoreResult {
 // one-line change per axis.
 const W_RISK = 1 / 3
 const W_ENTRY = 1 / 3
-const W_CAPTURE = 1 / 3
+const W_EXIT = 1 / 3
 const BREACH_CAP = 49
 
 export function tapeScoreBand(score: number): TapeScoreBand {
@@ -106,9 +124,31 @@ export interface TapeScoreInput {
   execution?: ExecutionScore | null
   /** Pre-v1.3 rows: the single 0-10 `score` field. */
   legacyScore?: number | null
-  /** @deprecated Amendment 6 dropped plan quality from the score — Capture
-   *  replaced it. Still accepted so existing call sites compile; ignored. */
+  /** @deprecated Amendment 6 dropped plan quality from the score. Still
+   *  accepted so existing call sites compile; ignored. */
   prepScore?: number | null
+  /** The day's Exit score, 0-100 (src/lib/exit-score.ts via exit-rollup.ts).
+   *  Null/absent = no factor had a trade to judge: the Exit axis drops out and
+   *  the other two re-weight. */
+  exit?: number | null
+}
+
+/**
+ * The part of a day's TapeScore that comes from its EOD analysis alone — Risk
+ * and Entry, unrounded — before the Exit axis is blended in. JSON-safe: this is
+ * what the per-day rollup caches, because the day's Exit depends on earlier
+ * days and can only be known at read time.
+ */
+export interface TapeScoreBase {
+  basis: 'v15' | 'legacy'
+  /** Unrounded axis values, 0-100. Null = that axis is absent. */
+  risk: number | null
+  entry: number | null
+  passCount: number | null
+  railCount: number | null
+  verdict: 'Compliant' | 'Breach' | null
+  /** Legacy-basis rows only: the finished 0-100 score. */
+  legacy: number | null
 }
 
 /** Map a profit factor to the 0..1 sub-metric scale the composite uses
@@ -143,7 +183,12 @@ function entryFromExecution(e: ExecutionScore): number | null {
   return e.composite ?? null
 }
 
-export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null {
+/**
+ * Step 1 — everything a day's TapeScore takes from its EOD analysis: Risk and
+ * Entry, the rails verdict, or a legacy score. Null when the day has no
+ * analysis at all (it then has no TapeScore, whatever its trades say).
+ */
+export function tapeScoreBase(input: TapeScoreInput): TapeScoreBase | null {
   const { process, execution, legacyScore } = input
 
   // Risk is scored over the rails the trader TRACKS. `active_rails` is absent on
@@ -151,7 +196,7 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
   // five, so they keep the historical /5 denominator exactly. An empty array
   // means they track nothing, which makes Risk unscoreable rather than a free
   // 5/5: the axis drops out and the remaining two re-weight, the same way a
-  // missing capture read already behaves.
+  // missing Exit already behaves.
   const tracked = process?.active_rails?.length ?? null
   const railDenom = tracked ?? 5
   const passCount = process?.per_rule && railDenom > 0
@@ -159,39 +204,26 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
     : null
   const risk = passCount != null ? (passCount / railDenom) * 100 : null
 
-  // Split execution into Entry (composite minus capture) and Capture. An
-  // execution object whose sub-metrics are all null means the analysis ran and
-  // nothing was scoreable — a real 0 on both axes, not missing data (matches
-  // the dashboard's overall_grade convention).
+  // Entry is the execution composite minus capture. An execution object whose
+  // sub-metrics are all null means the analysis ran and nothing was scoreable —
+  // a real 0, not missing data (matches the dashboard's overall_grade
+  // convention). `mfe_capture` is deliberately not read: the Exit axis is
+  // supplied by the caller (amendment 8).
   let entry: number | null = null
-  let capture: number | null = null
   if (execution != null) {
     const e = entryFromExecution(execution)
-    entry = e != null ? clamp01(e) * 100 : null
-    capture = execution.mfe_capture != null ? clamp01(execution.mfe_capture) * 100 : null
-    if (entry == null && capture == null) { entry = 0; capture = 0 }
+    entry = e != null ? clamp01(e) * 100 : 0
   }
 
   // Rails alone never make a TapeScore without an execution read either — the
   // day reads as unanalyzed until an EOD analysis (or a legacy score) exists.
-  if (risk == null && entry == null && capture == null) {
+  if (risk == null && entry == null) {
     if (legacyScore == null) return null
-    const score = Math.round(clamp(legacyScore, 0, 10) * 10)
     return {
-      score,
-      band: tapeScoreBand(score),
-      basis: 'legacy',
-      capped: false,
-      components: { risk: null, entry: null, capture: null, passCount: null, railCount: null, verdict: null },
+      basis: 'legacy', risk: null, entry: null, passCount: null, railCount: null, verdict: null,
+      legacy: Math.round(clamp(legacyScore, 0, 10) * 10),
     }
   }
-
-  let weighted = 0
-  let weightSum = 0
-  if (risk != null) { weighted += W_RISK * risk; weightSum += W_RISK }
-  if (entry != null) { weighted += W_ENTRY * entry; weightSum += W_ENTRY }
-  if (capture != null) { weighted += W_CAPTURE * capture; weightSum += W_CAPTURE }
-  let score = Math.round(weighted / weightSum)
 
   // With a known rail set, trust the verdict the analysis already derived
   // proportionally (see applyDeterministicOverrides) — re-deriving it as
@@ -201,8 +233,44 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
     passCount == null ? null
       : tracked != null ? (process?.verdict ?? null)
         : passCount >= 4 ? 'Compliant' : 'Breach'
+
+  return {
+    basis: 'v15', risk, entry, passCount,
+    railCount: passCount != null ? railDenom : null,
+    verdict, legacy: null,
+  }
+}
+
+/**
+ * Step 2 — blend the day's Exit (0-100, or null when no factor had a trade to
+ * judge) into its base. A legacy-basis day is returned as it always was: it has
+ * no axes, so there is nothing for Exit to join.
+ */
+export function tapeScoreWithExit(base: TapeScoreBase | null | undefined, exitScore: number | null | undefined): TapeScoreResult | null {
+  if (!base) return null
+  if (base.basis === 'legacy') {
+    const score = base.legacy ?? 0
+    return {
+      score,
+      band: tapeScoreBand(score),
+      basis: 'legacy',
+      capped: false,
+      components: { risk: null, entry: null, exit: null, passCount: null, railCount: null, verdict: null },
+    }
+  }
+
+  const { risk, entry } = base
+  const exit = exitScore != null && Number.isFinite(exitScore) ? clamp(exitScore, 0, 100) : null
+
+  let weighted = 0
+  let weightSum = 0
+  if (risk != null) { weighted += W_RISK * risk; weightSum += W_RISK }
+  if (entry != null) { weighted += W_ENTRY * entry; weightSum += W_ENTRY }
+  if (exit != null) { weighted += W_EXIT * exit; weightSum += W_EXIT }
+  let score = Math.round(weighted / weightSum)
+
   let capped = false
-  if (verdict === 'Breach' && score > BREACH_CAP) {
+  if (base.verdict === 'Breach' && score > BREACH_CAP) {
     score = BREACH_CAP
     capped = true
   }
@@ -215,25 +283,40 @@ export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null 
     components: {
       risk: risk != null ? Math.round(risk) : null,
       entry: entry != null ? Math.round(entry) : null,
-      capture: capture != null ? Math.round(capture) : null,
-      passCount,
-      railCount: passCount != null ? railDenom : null,
-      verdict,
+      exit: exit != null ? Math.round(exit) : null,
+      passCount: base.passCount,
+      railCount: base.railCount,
+      verdict: base.verdict,
     },
   }
 }
 
-/** Convenience wrapper over the stored analysis blobs. */
-export function tapeScoreFromAnalyses(
+/** Both steps at once, for a caller that already knows the day's Exit. */
+export function computeTapeScore(input: TapeScoreInput): TapeScoreResult | null {
+  return tapeScoreWithExit(tapeScoreBase(input), input.exit ?? null)
+}
+
+/** The base (Risk + Entry) from the stored analysis blobs. */
+export function tapeScoreBaseFromAnalyses(
   eod: EodAiAnalysis | null | undefined,
   prepScore: number | null | undefined,
-): TapeScoreResult | null {
-  return computeTapeScore({
+): TapeScoreBase | null {
+  return tapeScoreBase({
     process: eod?.process ?? null,
     execution: eod?.execution ?? null,
     legacyScore: eod?.score ?? null,
     prepScore: prepScore ?? null,
   })
+}
+
+/** Convenience wrapper over the stored analysis blobs. `exit` is the day's Exit
+ *  score (0-100 or null) — required, so no caller can forget the third axis. */
+export function tapeScoreFromAnalyses(
+  eod: EodAiAnalysis | null | undefined,
+  prepScore: number | null | undefined,
+  exit: number | null,
+): TapeScoreResult | null {
+  return tapeScoreWithExit(tapeScoreBaseFromAnalyses(eod, prepScore), exit)
 }
 
 /** Deterministic one-sentence day verdict — the fallback when the analysis
@@ -261,16 +344,34 @@ export interface TapeScorePeriod {
   /** Days with a rails verdict / days of those that were Compliant (≥4/5). */
   verdictDays: number
   compliantDays: number
-  /** Mean axis values across days where each was present. */
+  /** Mean Risk / Entry across days where each was present. */
   risk: number | null
   entry: number | null
-  capture: number | null
+  /** The period's Exit axis, 0-100: POOLED over the trades of its scored days
+   *  (their Exit sums merged, read once) — never a mean of daily Exit scores.
+   *  Null when no factor had a trade to judge. */
+  exit: number | null
+  /** The five factors behind `exit` — each one's score and trade count. */
+  exitFactors: ExitScoreView['factors'] | null
 }
 
-export function aggregateTapeScore(days: (TapeScoreResult | null | undefined)[]): TapeScorePeriod {
-  const scored = days.filter((d): d is TapeScoreResult => d != null)
+/** One day as the period aggregate reads it. */
+export interface TapeScoreDay {
+  tapescore: TapeScoreResult | null
+  /** The day's Exit sums + counts (src/lib/exit-rollup.ts), for pooling. */
+  exit_sums?: ExitSums | null
+}
+
+export function aggregateTapeScore(days: (TapeScoreDay | null | undefined)[]): TapeScorePeriod {
+  const scoredDays = days.filter((d): d is TapeScoreDay & { tapescore: TapeScoreResult } => d?.tapescore != null)
+  const scored = scoredDays.map(d => d.tapescore)
   const withVerdict = scored.filter(d => d.components.verdict != null)
   const score = mean(scored.map(d => d.score))
+  // The Exit axis sits beside Risk and Entry, so it covers the same days they
+  // do: the ones that carry axes at all (a legacy-basis day has none).
+  const exitView = exitScoreView(mergeExitSums(
+    scoredDays.filter(d => d.tapescore.basis === 'v15').map(d => d.exit_sums),
+  ))
   return {
     score: score != null ? Math.round(score) : null,
     band: score != null ? tapeScoreBand(Math.round(score)) : null,
@@ -279,7 +380,8 @@ export function aggregateTapeScore(days: (TapeScoreResult | null | undefined)[])
     compliantDays: withVerdict.filter(d => d.components.verdict === 'Compliant').length,
     risk: roundedMean(scored.map(d => d.components.risk)),
     entry: roundedMean(scored.map(d => d.components.entry)),
-    capture: roundedMean(scored.map(d => d.components.capture)),
+    exit: exitView.score != null ? Math.round(exitView.score) : null,
+    exitFactors: exitView.score != null ? exitView.factors : null,
   }
 }
 

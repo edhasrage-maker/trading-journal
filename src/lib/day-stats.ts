@@ -1,7 +1,9 @@
 import { symbolToMultiplier, symbolRoot } from '@/lib/futures-symbols'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
-import { tapeScoreFromAnalyses, type TapeScoreResult } from '@/lib/tapescore'
+import { tapeScoreBaseFromAnalyses, tapeScoreWithExit, type TapeScoreBase, type TapeScoreResult } from '@/lib/tapescore'
 import { mgmtTotals, type MgmtTotals } from '@/lib/trade-management'
+import { dayExitStored, exitInSequence, normalizeAtrStopTarget, type DayExitStored, type RiskDay } from '@/lib/exit-rollup'
+import type { ExitSums } from '@/lib/exit-score'
 import type { TradingDay } from '@/lib/supabase/types'
 
 /**
@@ -31,7 +33,22 @@ export interface TradeForStats {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   exits_json: any
   mfe_dollars_per_leg: number | null
+  /** The Exit score reads these two (src/lib/exit-score.ts): the planned
+   *  target decides whether a winner "reached its target", and the 5-minute
+   *  structure is one of the runner rules. A select that omits them does not
+   *  fail — it silently scores every winner as a hand-closed exit. */
+  tp1_price: number | null
+  structure_5m_alignment: 'following' | 'fading' | 'neutral' | null
 }
+
+/**
+ * The exact trade columns `computeDayStats` reads. EVERY query that feeds the
+ * rollup selects this string (plus its own grouping key), so the dashboard, the
+ * recaps, the filter and the write path can never compute a day from different
+ * columns.
+ */
+export const ROLLUP_TRADE_COLS =
+  'id, tags_json, pnl, direction, entry_price, exit_price, stop_price, tp1_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, structure_5m_alignment, exits_json, mfe_dollars_per_leg'
 
 /** The day-level inputs (columns) the rollup reads. */
 export interface DayForStats {
@@ -62,7 +79,14 @@ export interface DayStatsRollup {
   overall_grade: number | null
   process_verdict: 'Compliant' | 'Breach' | null
   process_v13_score: number | null
-  tapescore: TapeScoreResult | null
+  /** The part of the day's TapeScore that comes from its EOD analysis — Risk
+   *  and Entry, before the Exit axis. The finished `tapescore` is NOT on the
+   *  rollup: the day's Exit depends on earlier days, so it is attached when
+   *  days are read in sequence (`scoreDayRollups`). Null = never analyzed. */
+  tape: TapeScoreBase | null
+  /** The day's Exit inputs (src/lib/exit-rollup.ts): four factors as sums +
+   *  counts, and the losing trades as raw pairs for the fifth. */
+  exit: DayExitStored
   process_breach_rules: string[] | null
   win_rate: number | null
   avg_mfe_pts: number | null
@@ -114,6 +138,72 @@ export interface DayStatsRollup {
 }
 
 /**
+ * A day read in sequence: the rollup plus the two things that need the days
+ * before it. This is the shape every surface renders from — `tapescore` exists
+ * only here, so nothing can print a day's score without its Exit.
+ */
+export interface ScoredDayRollup extends DayStatsRollup {
+  /** One TapeScore: Risk + Entry from the analysis, Exit from the trades. */
+  tapescore: TapeScoreResult | null
+  /** The day's Exit sums + counts with "Loss size" scored against the trader's
+   *  average dollar risk going into the day. A period pools these. */
+  exit_sums: ExitSums | null
+}
+
+/**
+ * Attach each day's Exit and finished TapeScore. `history` is earlier days the
+ * caller loaded only so the first days of `rollups` have an average dollar risk
+ * to be measured against (see `loadRiskHistory`); days already in `rollups`
+ * serve as each other's history. Order is preserved.
+ */
+export function scoreDayRollups(rollups: readonly DayStatsRollup[], history: readonly RiskDay[] = []): ScoredDayRollup[] {
+  const exits = exitInSequence(rollups, history)
+  return rollups.map((r, i) => {
+    const x = exits[i]
+    return {
+      ...r,
+      tapescore: tapeScoreWithExit(r.tape, x?.score ?? null),
+      exit_sums: x?.sums ?? null,
+    }
+  })
+}
+
+/** Summed planned dollar risk + count over a day's trades with a logged stop —
+ *  the two numbers the average-risk rule reads. The same loop the rollup runs,
+ *  shared so a day whose cache is missing yields the identical figures. */
+export function dayRiskSums(
+  trades: ReadonlyArray<Pick<TradeForStats, 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'symbol'>>,
+): { sum_risk_dollars: number; risk_sample: number } {
+  let sum = 0, n = 0
+  for (const t of trades) {
+    if (t.pnl == null || t.entry_price == null || t.stop_price == null || t.quantity == null) continue
+    const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * symbolToMultiplier(t.symbol ?? '')
+    if (risk > 0) { sum += risk; n++ }
+  }
+  return { sum_risk_dollars: sum, risk_sample: n }
+}
+
+/** Rollups have carried `sum_risk_dollars` / `risk_sample` since this version,
+ *  computed the same way ever since — a cached row at or above it has usable
+ *  risk sums even when the rest of it is due a recompute. */
+export const RISK_SUMS_SINCE_VERSION = 7
+
+/**
+ * Is a cached `stats_json` row usable as-is? It must be at the current version
+ * AND have been computed with the trader's current ATR stop setting — the
+ * "Stop size" sums are baked in with it, so changing the setting makes every
+ * cached row stale exactly like a version bump does.
+ */
+export function isFreshStats(
+  row: { stats_json: DayStatsStored | null; stats_version: number | null },
+  atrStopTarget: number | null | undefined,
+): row is { stats_json: DayStatsStored; stats_version: number } {
+  return row.stats_json != null
+    && row.stats_version === STATS_VERSION
+    && row.stats_json.exit?.atr_stop === normalizeAtrStopTarget(atrStopTarget)
+}
+
+/**
  * Cache format version for the materialized `trading_days.stats_json`. Bump this
  * whenever `computeDayStats`'s formula or output shape changes: the dashboard
  * read path treats any row whose `stats_version` != this constant as dirty and
@@ -144,7 +234,12 @@ export interface DayStatsRollup {
 // the one "went your way / never got going / kept" definition that replaces the
 // eight capture formulas. Every cached row must recompute to carry it, or the
 // dashboard card would count only the days that happened to be dirty.
-export const STATS_VERSION = 9
+// v10 (2026-10-13): TapeScore amendment 8 — the Exit axis became the five-factor
+// Exit score. The rollup no longer caches a finished `tapescore` (its Exit needs
+// the days before it); it caches `tape` (Risk + Entry) and `exit` (the day's
+// Exit inputs) instead, and the score is finished at read time. Every cached row
+// must recompute: an old row has neither field, so it would read as unscored.
+export const STATS_VERSION = 10
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
@@ -155,8 +250,12 @@ export type DayStatsStored = Omit<DayStatsRollup, 'id' | 'date' | 'day_type' | '
 /** Project a full rollup down to what we store in `stats_json` (drops the
  *  column-owned fields so the cache never disagrees with the row). */
 export function toStoredStats(r: DayStatsRollup): DayStatsStored {
+  // `tapescore` / `exit_sums` are read-time fields (ScoredDayRollup). A scored
+  // day is a DayStatsRollup to the type system, so drop them here rather than
+  // trust every caller to pass the unscored one — a cached finished score would
+  // go stale the moment an earlier day changed.
   /* eslint-disable @typescript-eslint/no-unused-vars */
-  const { id, date, day_type, day_types, achievements, ...stored } = r
+  const { id, date, day_type, day_types, achievements, tapescore, exit_sums, ...stored } = r as ScoredDayRollup
   /* eslint-enable @typescript-eslint/no-unused-vars */
   return stored
 }
@@ -186,8 +285,15 @@ export function fromStoredStats(
  * tapescore libs, so this matches the EOD recap and analytics exactly.
  *
  * @param prepAtr  the day's market_context.atr_1m (fallback ATR display value).
+ * @param opts.atrStopTarget  the trader's ATR stop setting (scoring profile;
+ *                 default 1) — the yardstick for the Exit score's "Stop size".
  */
-export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepAtr: number | null): DayStatsRollup {
+export function computeDayStats(
+  day: DayForStats,
+  trades: TradeForStats[],
+  prepAtr: number | null,
+  opts: { atrStopTarget?: number | null } = {},
+): DayStatsRollup {
   // Top setups across the day's trades, sorted by frequency.
   const setupCounts = new Map<string, number>()
   for (const t of trades) {
@@ -226,16 +332,14 @@ export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepA
   // Average planned dollar risk and lot size, plus the instrument split. Risk
   // is the honest size measure: more lots on a smaller-tick instrument is
   // dollar parity, not an escalation, and a contracts-only read inverts that.
-  let riskSum = 0, riskN = 0, qtySum = 0, qtyN = 0
+  let qtySum = 0, qtyN = 0
   const symbolCounts: Record<string, number> = {}
   for (const t of tradesWithPnl) {
     if (t.quantity != null) { qtySum += t.quantity; qtyN++ }
     const root = symbolRoot(t.symbol ?? '')
     if (root) symbolCounts[root] = (symbolCounts[root] ?? 0) + 1
-    if (t.entry_price == null || t.stop_price == null || t.quantity == null) continue
-    const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * symbolToMultiplier(t.symbol ?? '')
-    if (risk > 0) { riskSum += risk; riskN++ }
   }
+  const { sum_risk_dollars: riskSum, risk_sample: riskN } = dayRiskSums(tradesWithPnl)
 
   // Avg MFE / MAE per trade (points + $), floored at 0 per trade.
   const mfeMaeTrades = trades.filter(t =>
@@ -355,7 +459,8 @@ export function computeDayStats(day: DayForStats, trades: TradeForStats[], prepA
       }
       return Math.round((passCount / ruleIds.length) * 10)
     })(),
-    tapescore: tapeScoreFromAnalyses(day.eod_ai_analysis_json, day.ai_analysis_json?.score ?? null),
+    tape: tapeScoreBaseFromAnalyses(day.eod_ai_analysis_json, day.ai_analysis_json?.score ?? null),
+    exit: dayExitStored(trades, opts.atrStopTarget),
     process_breach_rules: (() => {
       const p = day.eod_ai_analysis_json?.process
       if (!p?.per_rule) return null

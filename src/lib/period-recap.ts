@@ -1,4 +1,8 @@
-import { computeDayStats, fromStoredStats, toStoredStats, STATS_VERSION, type DayStatsRollup, type DayStatsStored } from '@/lib/day-stats'
+import {
+  computeDayStats, fromStoredStats, toStoredStats, scoreDayRollups, isFreshStats, STATS_VERSION, ROLLUP_TRADE_COLS,
+  type DayStatsRollup, type DayStatsStored, type ScoredDayRollup,
+} from '@/lib/day-stats'
+import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
 import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { aggregateTapeScore, type TapeScorePeriod } from '@/lib/tapescore'
 import { rMultiple, type TradeLike } from '@/lib/analytics'
@@ -20,7 +24,9 @@ type AnyClient = any
 const PAGE_SIZE = 1000
 
 export interface PeriodDay {
-  rollup: DayStatsRollup
+  /** The day's rollup, read in sequence — it carries the finished TapeScore and
+   *  the day's Exit sums (see `scoreDayRollups`). */
+  rollup: ScoredDayRollup
   commitment: PrepCommitment | null
 }
 
@@ -29,7 +35,12 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
   // Day columns + commitment; the stats cache separately and GUARDED — on a
   // pre-migration DB the stats columns don't exist and that query errors, which
   // we read as "every day dirty" (same reasoning as the dashboard).
-  const [dayResult, statsResult] = await Promise.all([
+  //
+  // Two more reads ride along, both for the Exit axis: the trader's ATR stop
+  // setting ("Stop size" is graded against it), and the days BEFORE the window
+  // that the average-dollar-risk rule reaches back to ("Loss size" on the
+  // window's first days is measured against them) — one tiny query each.
+  const [dayResult, statsResult, atrStopTarget, riskHistory] = await Promise.all([
     sb.from('trading_days')
       .select('id, date, eod_pnl, day_type, day_types, prep_notes_json, achievements_json')
       .gte('date', start)
@@ -39,6 +50,8 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
       .select('id, stats_json, stats_version')
       .gte('date', start)
       .lte('date', end) as Promise<{ data: { id: string; stats_json: DayStatsStored | null; stats_version: number | null }[] | null; error: unknown }>,
+    loadAtrStopTarget(sb),
+    loadRiskHistory(sb, start),
   ])
 
   interface DayRow {
@@ -56,7 +69,7 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
   const statsByDayId = new Map<string, DayStatsStored>()
   if (cacheAvailable && statsResult.data) {
     for (const r of statsResult.data) {
-      if (r.stats_json != null && r.stats_version === STATS_VERSION) statsByDayId.set(r.id, r.stats_json)
+      if (isFreshStats(r, atrStopTarget)) statsByDayId.set(r.id, r.stats_json)
     }
   }
 
@@ -83,7 +96,7 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
     for (let p = 0; p < 10; p++) {
       const { data } = await sb
         .from('trades')
-        .select('id, trading_day_id, tags_json, pnl, direction, entry_price, exit_price, stop_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, exits_json, mfe_dollars_per_leg')
+        .select(`trading_day_id, ${ROLLUP_TRADE_COLS}`)
         .in('trading_day_id', dirtyIds)
         .order('id', { ascending: true })
         .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
@@ -98,10 +111,10 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
     }
   }
 
-  const out: PeriodDay[] = days.map(d => {
+  const rolledUp: DayStatsRollup[] = days.map(d => {
     const achievements = Array.isArray(d.achievements_json) ? d.achievements_json : []
     const cached = statsByDayId.get(d.id)
-    const rollup = cached
+    return cached
       ? fromStoredStats(cached, { id: d.id, date: d.date, day_type: d.day_type, day_types: d.day_types, achievements })
       : computeDayStats(
         {
@@ -116,14 +129,21 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
         },
         tradesByDay.get(d.id) ?? [],
         prepAtrByDay.get(d.id) ?? null,
+        { atrStopTarget },
       )
-    return { rollup, commitment: d.prep_notes_json?.commitment ?? null }
   })
+
+  // Finish each day's TapeScore — its Exit axis needs the days before it.
+  const scored = scoreDayRollups(rolledUp, riskHistory)
+  const out: PeriodDay[] = days.map((d, i) => ({
+    rollup: scored[i],
+    commitment: d.prep_notes_json?.commitment ?? null,
+  }))
 
   // Best-effort write-back so the next load serves these from cache. Read-only
   // (demo) users just error → swallowed → they recompute each visit, correctly.
   if (cacheAvailable && dirtyIds.length > 0) {
-    const byId = new Map(out.map(p => [p.rollup.id, p.rollup]))
+    const byId = new Map(rolledUp.map(r => [r.id, r]))
     await Promise.all(dirtyIds.map(id => {
       const rollup = byId.get(id)
       if (!rollup) return Promise.resolve()
@@ -254,7 +274,7 @@ export function summarizePeriod(days: PeriodDay[]): PeriodSummary {
     mgmt: mergeMgmtTotals(days.map(d => d.rollup.mgmt)),
     railsDays,
     railsKept,
-    score: aggregateTapeScore(days.map(d => d.rollup.tapescore)),
+    score: aggregateTapeScore(days.map(d => d.rollup)),
     winRate: winsDenom > 0 ? Math.round((wins / winsDenom) * 100) : null,
     avgR: rSample > 0 ? Math.round(((sumWinR - sumLossR) / rSample) * 100) / 100 : null,
     rSample,

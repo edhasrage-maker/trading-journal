@@ -7,6 +7,8 @@ import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroPa
 import TradeManagementCard from '@/components/TradeManagementCard'
 import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { ScoreCluster, ScoreBreakdownInfo } from '@/components/review/ReviewMonthHero'
+import type { ExitSums } from '@/lib/exit-score'
+import { EXIT_AXIS_DESC, exitFactorsTooltip } from '@/lib/exit-rollup'
 
 /**
  * Period-selectable dashboard header: the TapeScore hero (one 0-100 score,
@@ -72,6 +74,9 @@ export interface DayStat {
   /** One TapeScore — derived server-side (src/lib/tapescore.ts). Null when
    *  the day has no EOD analysis (any rubric). */
   tapescore: TapeScoreResult | null
+  /** The day's Exit sums + counts (src/lib/exit-rollup.ts). A period's Exit
+   *  axis pools these over its trades — it is never a mean of daily scores. */
+  exit_sums?: ExitSums | null
 }
 
 type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year'
@@ -244,7 +249,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     // One TapeScore hero aggregate (amendment 5): mean day score over scored
     // days + component means + rules-kept ratio. Replaces the old Execution /
     // Compliance stat card — those two dimensions now read as hero chips.
-    const tapePeriod = aggregateTapeScore(inPeriod.map(d => d.tapescore))
+    const tapePeriod = aggregateTapeScore(inPeriod)
 
     return {
       pnl,
@@ -432,12 +437,12 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
 }
 
 /** The One-TapeScore dashboard hero: 0-100 ring, plain-language verdict, and
- *  the three axis chips (Risk kept / Entry / Capture). */
+ *  the three axis chips (Risk kept / Entry / Exit). */
 function TapeScoreHero({ period, periodLabel }: {
   period: ReturnType<typeof aggregateTapeScore>
   periodLabel: string
 }) {
-  const { score, band, scoredDays, verdictDays, compliantDays, entry, capture } = period
+  const { score, band, scoredDays, verdictDays, compliantDays, entry, exit, exitFactors } = period
   const sentence = tapeScorePeriodSentence(period)
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-3 sm:mb-4 flex items-center gap-5 flex-wrap">
@@ -468,14 +473,14 @@ function TapeScoreHero({ period, periodLabel }: {
                 <HeroChip
                   label={`Entry ${entry}`}
                   tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
-                  title="Average entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — capture is scored separately"
+                  title="Average entry quality (0-100): entry/stop/target parameters, prep adherence, profit factor — the exit is scored separately"
                 />
               )}
-              {capture != null && (
+              {exit != null && (
                 <HeroChip
-                  label={`Exit ${capture}`}
-                  tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
-                  title="Average exit / profit capture (0-100): how much of the favorable move you kept — MFE captured"
+                  label={`Exit ${exit}`}
+                  tone={exit >= 70 ? 'good' : exit >= 50 ? 'mid' : 'bad'}
+                  title={exitFactorsTooltip(`Exit (0-100), over the period's trades: ${EXIT_AXIS_DESC}.`, exitFactors)}
                 />
               )}
             </div>

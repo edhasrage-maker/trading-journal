@@ -7,7 +7,7 @@ import DashboardStats, { type DayStat } from './DashboardStats'
 import DashboardCharts from './DashboardCharts'
 import RecentDaysSection from './RecentDaysSection'
 import type { DayRowData } from './RecentDaysList'
-import type { DayStatsRollup } from '@/lib/day-stats'
+import type { ScoredDayRollup } from '@/lib/day-stats'
 
 type RangeKey = '1m' | '3m' | '6m' | 'ytd' | '1y' | 'all'
 
@@ -81,7 +81,7 @@ export default function DashboardFilterScope({
   const [draftSetups, setDraftSetups] = useState<string[]>([])
   const [draftRange, setDraftRange] = useState<RangeKey>('3m')
   const [applied, setApplied] = useState<Applied | null>(null)
-  const [fetched, setFetched] = useState<{ key: string; days: DayStatsRollup[]; tradeCount: number } | null>(null)
+  const [fetched, setFetched] = useState<{ key: string; days: ScoredDayRollup[]; tradeCount: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -124,7 +124,7 @@ export default function DashboardFilterScope({
       const res = await fetch(`/api/dashboard/filter?${qs.toString()}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Could not apply the filter.')
-      setFetched({ key: keyOf(next), days: data.days as DayStatsRollup[], tradeCount: data.tradeCount as number })
+      setFetched({ key: keyOf(next), days: data.days as ScoredDayRollup[], tradeCount: data.tradeCount as number })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not apply the filter.')
       setApplied(null)

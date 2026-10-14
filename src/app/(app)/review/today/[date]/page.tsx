@@ -12,6 +12,8 @@ import { getAtrConfig, getGiveBackAtr } from '@/lib/atr-config-server'
 import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
 import { achievementCounts } from '@/lib/achievements'
 import { pickMarketContext } from '@/lib/market-context-select'
+import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
+import { avgRiskBefore } from '@/lib/exit-rollup'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
 import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
@@ -26,7 +28,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   // atrCfg = the trader's chosen ATR measurement (drives the ATR@ column);
   // giveBackAtr = their "was up" multiple; tags = the tag library; pnlHistory +
   // achievements are all-days rollups. All independent → one round-trip stage.
-  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes, heatRes] = await Promise.all([
+  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes, heatRes, atrStopTarget, riskHistory] = await Promise.all([
     getAtrConfig(supabase),
     getGiveBackAtr(supabase),
     supabase.from('trading_days').select('*').eq('date', date).maybeSingle(),
@@ -43,7 +45,14 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
       .not('high_during_position', 'is', null)
       .order('entry_time', { ascending: false })
       .limit(HEAT_BASELINE_WINDOW),
+    // The TapeScore header's Exit axis: the trader's ATR stop setting ("Stop
+    // size"), and the days before this one that the average-dollar-risk rule
+    // reaches back to ("Loss size"). The same two inputs, by the same rule, the
+    // dashboard and the recaps use — so this day shows one Exit everywhere.
+    loadAtrStopTarget(supabase),
+    loadRiskHistory(supabase, date),
   ])
+  const exitAvgRiskDollars = avgRiskBefore(date, riskHistory)
   const day = dayRes.data as TradingDay | null
   const tags = tagsRes.data as TradeTag[] | null
   const pnlHistory = ((dayPnlRes.data ?? []) as { date: string; eod_pnl: number }[]).map(d => ({ date: d.date, pnl: d.eod_pnl }))
@@ -148,6 +157,8 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         heatBaseline={heatBaseline}
         achievementCounts={counts}
         giveBackAtr={giveBackAtr}
+        exitAvgRiskDollars={exitAvgRiskDollars}
+        atrStopTarget={atrStopTarget}
       />
     </>
   )

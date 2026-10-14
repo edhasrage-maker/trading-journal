@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Info, X } from 'lucide-react'
+import { EXIT_AXIS_DESC } from '@/lib/exit-rollup'
 
 /**
  * Shared One-TapeScore hero primitives (Pt 13).
@@ -62,11 +63,11 @@ export function TapeScoreFormulaInfo() {
               <span className="font-mono text-gray-400 shrink-0">⅓</span>
             </li>
             <li className="flex justify-between gap-3">
-              <span><strong className="text-gray-200">Exit</strong> — how much of the move you kept</span>
+              <span><strong className="text-gray-200">Exit</strong> — {EXIT_AXIS_DESC}</span>
               <span className="font-mono text-gray-400 shrink-0">⅓</span>
             </li>
           </ul>
-          <p className="text-gray-500">Manage risk → enter well → exit well. A session that breaks 2 or more of the 5 risk rails is capped at 49 (can&apos;t read green or amber) — so risk still floors the score even at equal weight. Missing a layer re-weights the rest. A period score is the mean of its scored days.</p>
+          <p className="text-gray-500">Manage risk → enter well → exit well. A session that breaks 2 or more of the 5 risk rails is capped at 49 (can&apos;t read green or amber) — so risk still floors the score even at equal weight. Missing a layer re-weights the rest. Each part of Exit is scored only on the trades it applies to. A period score is the mean of its scored days.</p>
         </div>
       )}
     </span>

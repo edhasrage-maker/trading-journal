@@ -11,6 +11,7 @@ import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
 import { ScoreBreakdownInfo, type HeroPeriodData } from '@/components/review/ReviewMonthHero'
 import { tapeScorePeriodSentence } from '@/lib/tapescore'
+import { EXIT_AXIS_DESC, exitFactorsTooltip } from '@/lib/exit-rollup'
 import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
 
 /**
@@ -81,7 +82,7 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
   const [mfeUnit] = useMfeUnit()
   const kept = mgmtView(mgmt, mfeUnit)
   const { scorePeriod, carryover } = hero
-  const { score, band, risk, entry, capture, scoredDays } = scorePeriod
+  const { score, band, risk, entry, exit, exitFactors, scoredDays } = scorePeriod
 
   // A freshly-imported journal has sessions but NO TapeScore anywhere: the
   // score comes from the end-of-day read, which runs per session and on
@@ -170,9 +171,9 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
                 <HeroChip label={`Entry ${entry}`} tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
                   title="Entry (0-100): setup, timing, stop placement." />
               )}
-              {capture != null && (
-                <HeroChip label={`Exit ${capture}`} tone={capture >= 70 ? 'good' : capture >= 50 ? 'mid' : 'bad'}
-                  title="Exit (0-100): how much of the move you kept." />
+              {exit != null && (
+                <HeroChip label={`Exit ${exit}`} tone={exit >= 70 ? 'good' : exit >= 50 ? 'mid' : 'bad'}
+                  title={exitFactorsTooltip(`Exit (0-100): ${EXIT_AXIS_DESC}.`, exitFactors)} />
               )}
             </div>
           )}

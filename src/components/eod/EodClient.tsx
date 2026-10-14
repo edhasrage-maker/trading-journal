@@ -70,6 +70,14 @@ interface Props {
   /** The trader's round-trip "was up" multiple (×ATR) from Settings → ATR
    *  measurement. Defaults to 1× when unset / pre-migration. */
   giveBackAtr?: number
+  /** The trader's average planned dollar risk going INTO this day — the
+   *  yardstick for the Exit score's "Loss size" (src/lib/exit-rollup.ts).
+   *  Server-computed from the prior days by the same rule every surface uses.
+   *  Null = fewer than 5 stop trades before this day. */
+  exitAvgRiskDollars?: number | null
+  /** The trader's ATR stop setting (scoring profile; default 1) — the
+   *  yardstick for the Exit score's "Stop size". */
+  atrStopTarget?: number
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -126,6 +134,8 @@ export default function EodClient({
   achievementCounts,
   heatBaseline = null,
   giveBackAtr = 1,
+  exitAvgRiskDollars = null,
+  atrStopTarget = 1,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -1045,6 +1055,9 @@ export default function EodClient({
         <TapeScoreHeader
           analysis={aiAnalysis}
           prepScore={day?.ai_analysis_json?.score ?? null}
+          trades={trades}
+          avgRiskDollars={exitAvgRiskDollars}
+          atrStopTarget={atrStopTarget}
           tradeCount={trades.length}
           winCount={winCount}
           lossCount={lossCount}
