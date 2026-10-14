@@ -5,6 +5,7 @@ import { Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { Carryover } from '@/lib/prep-carryover'
+import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
 
 /**
  * The Dashboard hero (the locked dashboard, artifact cebe7c02).
@@ -281,9 +282,11 @@ export function DashboardHero({ periods }: { periods: HeroPeriods }) {
 
   return (
     <div>
-      <div className="grid gap-8 items-start lg:grid-cols-[auto_1fr]">
-        {/* TapeScore — the score, named and decomposed (left) */}
-        <div className="lg:border-r border-gray-800 lg:pr-8 pb-6 lg:pb-0 border-b lg:border-b-0">
+      <div className={cn('grid gap-8 items-start', SHOW_FINDING_CALLOUT && 'lg:grid-cols-[auto_1fr]')}>
+        {/* TapeScore — the score, named and decomposed (left). With the finding
+            hidden it keeps its own width and loses the rule that divided it from
+            the finding; the block itself is unchanged. */}
+        <div className={cn(SHOW_FINDING_CALLOUT ? 'lg:border-r border-gray-800 lg:pr-8 pb-6 lg:pb-0 border-b lg:border-b-0' : 'w-fit max-w-full')}>
           <div className="flex items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-1.5">
               <span className="text-base font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
@@ -297,7 +300,8 @@ export function DashboardHero({ periods }: { periods: HeroPeriods }) {
           <ScoreCluster period={scoreData.scorePeriod} />
         </div>
 
-        {/* Finding — the read (right) */}
+        {/* Finding — the read (right). Hidden for now, see SHOW_FINDING_CALLOUT. */}
+        {SHOW_FINDING_CALLOUT && (
         <div className="lg:pl-1">
           <div className="flex items-center justify-between gap-3 mb-2.5">
             <span className="font-mono text-[11.5px] tracking-wide text-gray-500">{c.eyebrow}</span>
@@ -321,10 +325,11 @@ export function DashboardHero({ periods }: { periods: HeroPeriods }) {
             <span className="text-[15px] font-semibold text-gray-100 leading-snug max-w-[52ch]">{c.next}</span>
           </div>
         </div>
+        )}
       </div>
 
       {/* Evidence — R per trade, across the bottom */}
-      {evidence.length > 0 && (
+      {SHOW_FINDING_CALLOUT && evidence.length > 0 && (
         <div className="mt-7 pt-5 border-t border-gray-800">
           <div className="flex items-baseline justify-between mb-3 max-w-[560px]">
             <span className="text-[12.5px] text-gray-500">The evidence</span>

@@ -14,14 +14,10 @@ import { achievementCounts } from '@/lib/achievements'
 import { pickMarketContext } from '@/lib/market-context-select'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
+import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
-
-/** The "You committed to this before the open" card at the top of the Recap.
- *  Hidden for now (founder, 2026-10-13: "not sure if this is helpful"). Only
- *  the card is off — Prep still saves the commitment and the week / month
- *  recaps still read it — so setting this back to true restores it as it was. */
-const SHOW_COMMITMENT_CARD: boolean = false
 
 export default async function EodPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params
@@ -137,7 +133,9 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
 
   return (
     <>
-      {SHOW_COMMITMENT_CARD && commitment && <CommitmentResolution date={date} commitment={commitment} />}
+      {/* The "You committed to this before the open" card — hidden for now, see
+          SHOW_FINDING_CALLOUT. */}
+      {SHOW_FINDING_CALLOUT && commitment && <CommitmentResolution date={date} commitment={commitment} />}
       <EodClient
         date={date}
         initialDay={day}

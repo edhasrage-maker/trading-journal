@@ -10,6 +10,8 @@ import { useUiMode } from '@/lib/ui-mode'
 import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
 import { ScoreBreakdownInfo, type HeroPeriodData } from '@/components/review/ReviewMonthHero'
+import { tapeScorePeriodSentence } from '@/lib/tapescore'
+import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
 
 /**
  * Beginner ("Highlights") dashboard — a coach REPORT, not a lighter journal.
@@ -95,8 +97,17 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
   // shows, in plain words.
   const state = ungraded ? 'ungraded' : carryover == null ? 'none' : carryover.mode === 'protect' ? 'edge' : 'leak'
   const tone = TONE[state]
+  // With the finding hidden (SHOW_FINDING_CALLOUT) the headline is the score's
+  // own sentence — "Discipline held. 5 of 5 sessions kept the rules." Never the
+  // "nothing separated itself" line: that would claim we looked and found
+  // nothing, when a finding exists and is simply not shown.
   const verdictText = ungraded
     ? 'Your trades are in — none of your sessions are graded yet.'
+    : !SHOW_FINDING_CALLOUT
+      ? tapeScorePeriodSentence(scorePeriod)
+        ?? (tradedDays === 0
+          ? 'Log or import a few sessions and your score shows up here.'
+          : 'Run Analyze Session on a day to see this month’s score.')
     : carryover
       ? carryover.finding + (carryover.mode === 'protect' ? ' — keep leaning on it.' : '.')
       : tradedDays === 0
@@ -134,8 +145,17 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
         />
         <div className="flex-1 min-w-[240px]">
           <div className="flex items-center gap-2 mb-2">
-            <span className={`w-2 h-2 rounded-full ${tone.dot}`} />
-            <span className={`text-xs font-medium ${tone.text}`}>{tone.label}</span>
+            {/* The dot + "Clear edge / Clear leak / No clear read" is the finding's
+                state, so it goes when the finding does. "Not graded yet" is not
+                a finding and stays. */}
+            {SHOW_FINDING_CALLOUT || ungraded ? (
+              <>
+                <span className={`w-2 h-2 rounded-full ${tone.dot}`} />
+                <span className={`text-xs font-medium ${tone.text}`}>{tone.label}</span>
+              </>
+            ) : (
+              <span className="text-xs font-medium text-gray-400">TapeScore</span>
+            )}
             <span className="text-[11px] text-gray-500">· this month</span>
             <ScoreBreakdownInfo period={scorePeriod} />
           </div>
@@ -199,7 +219,7 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
             Grade {dayLabel(gradeDate)} <ChevronRight className="w-4 h-4" />
           </Link>
         </div>
-      ) : (
+      ) : SHOW_FINDING_CALLOUT ? (
         <div className="rounded-xl border p-4" style={{ background: 'rgba(224,163,60,0.08)', borderColor: 'rgba(224,163,60,0.35)' }}>
           <div className="flex items-center gap-2 mb-1.5">
             <Target className="w-4 h-4 text-amber-400" />
@@ -207,7 +227,7 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
           </div>
           <p className="text-sm text-gray-200 leading-relaxed">{focus}</p>
         </div>
-      )}
+      ) : null}
 
       {/* Clean stat chips — the calm reference row (numbers, not verdicts).
           A 30-day quick-reference, labelled so its window is unmistakably
