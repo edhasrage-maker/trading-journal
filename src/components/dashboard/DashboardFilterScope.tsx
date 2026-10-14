@@ -8,6 +8,7 @@ import DashboardCharts from './DashboardCharts'
 import RecentDaysSection from './RecentDaysSection'
 import type { DayRowData } from './RecentDaysList'
 import type { ScoredDayRollup } from '@/lib/day-stats'
+import type { LiftDragView } from '@/lib/lift-drag'
 
 type RangeKey = '1m' | '3m' | '6m' | 'ytd' | '1y' | 'all'
 
@@ -51,6 +52,8 @@ interface Props {
   /** The score lives in the stat row (no band above this one), so the filter
    *  bar opens the page: no rule or gap above it. */
   scoreInRow?: boolean
+  /** Profit factor lifter / drag per scope — see DashboardStats. */
+  liftDrag?: Record<string, LiftDragView | null>
 }
 
 /**
@@ -75,7 +78,7 @@ interface Props {
  */
 export default function DashboardFilterScope({
   statsDays, tableDays, allSetups, today, windowStart, windowEnd, defaultFilterStart, achievements,
-  scoreInRow = false,
+  scoreInRow = false, liftDrag,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [draftSetups, setDraftSetups] = useState<string[]>([])
@@ -308,6 +311,10 @@ export default function DashboardFilterScope({
             hideScoreHero
             rangeLabel={active ? label : undefined}
             scoreInRow={scoreInRow}
+            liftDrag={liftDrag}
+            // A time-range filter reads like a Period; a setup filter hides the
+            // lifter and drag — they rank the whole book, not those setups.
+            liftDragScope={active ? (applied.setups.length > 0 ? null : `r:${applied.range}`) : undefined}
           />
         )}
       </div>

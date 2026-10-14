@@ -1,10 +1,12 @@
 'use client'
 
+import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useMfeUnit, formatMfeMae, type MfeUnit } from '@/lib/mfe-unit'
 import {
   mgmtView, mgmtBarGeometry, formatKept,
   type MgmtTotals, type MgmtGroupView,
 } from '@/lib/trade-management'
+import { formatPfDelta, type LiftDragFactor, type LiftDragView } from '@/lib/lift-drag'
 
 /**
  * The trade-management card — one component for the dashboard (a period) and
@@ -25,6 +27,10 @@ interface Props {
   totals: MgmtTotals
   /** Outer class. Defaults to the dashboard's blend-in stat tile. */
   className?: string
+  /** Dashboard only: the profit factor, with the one thing lifting it and the
+   *  one dragging it (src/lib/lift-drag.ts), under "Net per trade". `window`
+   *  says which sessions it covers — it can be wider than the card's period. */
+  profitFactor?: { view: LiftDragView; window: string } | null
 }
 
 const UNIT_OPTIONS: { value: MfeUnit; label: string }[] = [
@@ -35,7 +41,7 @@ const UNIT_OPTIONS: { value: MfeUnit; label: string }[] = [
 
 const plural = (n: number) => (n === 1 ? '' : 's')
 
-export default function TradeManagementCard({ totals, className }: Props) {
+export default function TradeManagementCard({ totals, className, profitFactor }: Props) {
   const [unit, setUnit] = useMfeUnit()
   const v = mgmtView(totals, unit)
   const scale = {
@@ -114,6 +120,70 @@ export default function TradeManagementCard({ totals, className }: Props) {
           )}
         </>
       )}
+      {profitFactor && <ProfitFactorSection view={profitFactor.view} windowLabel={profitFactor.window} />}
+    </div>
+  )
+}
+
+const fmtPf = (x: number | null) => (x == null ? 'no losses' : x.toFixed(2))
+const fmtPct = (x: number | null) => (x == null ? '—' : `${Math.round(x * 100)}%`)
+
+/** "Profit factor 1.22" and, under it, the one thing lifting it and the one
+ *  dragging it. Fills the space the card's rows leave under Net per trade
+ *  (founder, 2026-10-13). Profit factor is in R whatever the unit menu says. */
+function ProfitFactorSection({ view, windowLabel }: { view: LiftDragView; windowLabel: string }) {
+  return (
+    <div className="mt-2.5 pt-2 border-t border-gray-800">
+      <div
+        className="flex items-baseline justify-between gap-2 text-[13px]"
+        title={`Profit factor = R won ÷ R lost, in R so position size doesn't change it. ${view.trades} trades across ${view.sessions} sessions. Each line below is the one thing, out of ${view.candidates} known at entry, that moves it most when its trades are left out.${view.extended ? ' Shorter periods are widened to your last 60 sessions so the pick holds still from week to week.' : ''}`}
+      >
+        <span className="text-gray-500 min-w-0">
+          Profit factor <span className="text-[11px] text-gray-600">· {windowLabel}</span>
+        </span>
+        <span className="font-bold text-gray-200 whitespace-nowrap">{view.pf.toFixed(2)}</span>
+      </div>
+      {view.lift && <FactorRow kind="lift" f={view.lift} pf={view.pf} candidates={view.candidates} />}
+      {view.drag && <FactorRow kind="drag" f={view.drag} pf={view.pf} candidates={view.candidates} />}
+      {!view.lift && !view.drag && (
+        <p className="mt-1.5 text-[11px] text-gray-500">
+          Nothing lifts or drags it clearly enough to name yet.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function FactorRow({ kind, f, pf, candidates }: { kind: 'lift' | 'drag'; f: LiftDragFactor; pf: number; candidates: number }) {
+  const lift = kind === 'lift'
+  // The range in the order it is read: nearest zero first.
+  const range = lift
+    ? `${formatPfDelta(f.lo)} to ${formatPfDelta(f.hi)}`
+    : `${formatPfDelta(f.hi)} to ${formatPfDelta(f.lo)}`
+  const title = [
+    `${f.label}: ${f.n} trade${plural(f.n)}, ${fmtPct(f.winRate)} won, profit factor ${fmtPf(f.pf)}.`,
+    `Every other trade: ${f.restN} trade${plural(f.restN)}, ${fmtPct(f.restWinRate)} won, profit factor ${fmtPf(f.pfWithout)}.`,
+    '',
+    `In 8 of 10 reshuffles of these sessions, leaving them out ${lift ? 'lowered' : 'raised'} your profit factor by ${range.replace(/[+−]/g, '')}. Picked as the strongest of ${candidates} things known at entry, so next month it usually reads smaller.`,
+  ].join('\n')
+  return (
+    <div className="mt-2 flex items-center gap-2.5" title={title}>
+      <span
+        className={`flex-none inline-flex items-center justify-center w-6 h-6 rounded-full ${lift ? 'bg-green-400/10 text-green-400' : 'bg-red-400/10 text-red-400'}`}
+        aria-hidden="true"
+      >
+        {lift ? <ArrowUp className="w-3.5 h-3.5" strokeWidth={2.5} /> : <ArrowDown className="w-3.5 h-3.5" strokeWidth={2.5} />}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-gray-200 leading-snug">
+          <span className={`text-xs font-semibold ${lift ? 'text-green-400' : 'text-red-400'}`}>{lift ? 'Lifting it' : 'Dragging it'}</span>{' '}
+          <span className="font-semibold">{f.label}</span>
+        </p>
+        <p className="text-[11px] text-gray-500 leading-snug">
+          {f.n} trade{plural(f.n)} · {pf.toFixed(2)} would be {f.pfWithout.toFixed(2)} without them · range {range}
+        </p>
+      </div>
+      <span className={`flex-none font-bold ${lift ? 'text-green-400' : 'text-red-400'}`}>{formatPfDelta(f.delta)}</span>
     </div>
   )
 }

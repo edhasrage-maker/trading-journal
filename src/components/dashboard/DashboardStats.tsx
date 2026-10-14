@@ -9,6 +9,7 @@ import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { ScoreCluster, ScoreBreakdownInfo } from '@/components/review/ReviewMonthHero'
 import type { ExitSums } from '@/lib/exit-score'
 import { EXIT_AXIS_DESC, exitFactorsTooltip } from '@/lib/exit-rollup'
+import type { LiftDragView } from '@/lib/lift-drag'
 
 /**
  * Period-selectable dashboard header: the TapeScore hero (one 0-100 score,
@@ -133,6 +134,14 @@ function periodBounds(period: Period): { start: string; end: string } {
   }
 }
 
+/** "Jun 22 – Oct 13", with years only when the span crosses one. */
+function dateSpan(from: string, to: string): string {
+  const fmt = (iso: string, year: boolean) =>
+    new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}), timeZone: 'UTC' })
+  const cross = from.slice(0, 4) !== to.slice(0, 4)
+  return `${fmt(from, cross)} – ${fmt(to, cross)}`
+}
+
 function ymd(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -168,9 +177,15 @@ interface Props {
    *  same Period as everything else. Set while the dashboard's top band (the
    *  score + the finding) is hidden — see SHOW_FINDING_CALLOUT. */
   scoreInRow?: boolean
+  /** What lifts and drags the profit factor, per scope ("p:30d", "r:3m") —
+   *  src/lib/lift-drag.ts. Shown under Net per trade in Trade management. */
+  liftDrag?: Record<string, LiftDragView | null>
+  /** Which scope to show. Undefined → the Period menu's; null → hide it (a
+   *  setup filter is on, and the read is about the whole book). */
+  liftDragScope?: string | null
 }
 
-export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d', rangeLabel, scoreInRow = false }: Props) {
+export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d', rangeLabel, scoreInRow = false, liftDrag, liftDragScope }: Props) {
   const [period, setPeriod] = useState<Period>(defaultPeriod)
   const effectivePeriod: Period = rangeLabel ? 'all' : period
   // Hydrate from localStorage after mount so SSR matches initial render.
@@ -268,6 +283,18 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       v13Count: v13Scores.length,
     }
   }, [days, effectivePeriod])
+
+  // Profit factor, lifter and drag for the scope on screen. A period shorter
+  // than 60 sessions is read over the last 60, and the label says so.
+  const liftDragView = liftDragScope === null ? null : liftDrag?.[liftDragScope ?? `p:${period}`] ?? null
+  const profitFactor = liftDragView
+    ? {
+        view: liftDragView,
+        window: liftDragView.extended
+          ? `last ${liftDragView.sessions} sessions, ${dateSpan(liftDragView.from, liftDragView.to)}`
+          : `${(rangeLabel ?? PERIOD_LABELS[period]).toLowerCase()}, ${liftDragView.sessions} sessions`,
+      }
+    : null
 
   // The three stat tiles, built once and placed by whichever layout renders
   // below. `bare` drops a tile's own border when it sits inside a shared card.
@@ -415,6 +442,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
           </div>
           <TradeManagementCard
             totals={stats.mgmt}
+            profitFactor={profitFactor}
             className="min-w-0 sm:col-span-2 xl:col-span-1 border border-gray-800 rounded-[3px] p-[18px]"
           />
         </div>
@@ -428,6 +456,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
         {tradeWinCard({ className: 'col-span-2 lg:col-span-1' })}
         <TradeManagementCard
           totals={stats.mgmt}
+          profitFactor={profitFactor}
           className="col-span-2 border border-gray-800 rounded-[3px] p-[18px]"
         />
       </div>

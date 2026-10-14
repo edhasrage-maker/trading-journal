@@ -23,6 +23,7 @@ import {
 } from '@/lib/day-stats'
 import { loadAtrStopTarget, loadRiskHistory } from '@/lib/day-stats-server'
 import { computeCarryover } from '@/lib/prep-carryover'
+import { liftDragByScope, type LiftDragTrade } from '@/lib/lift-drag'
 import type { TradeWithExcursion } from '@/lib/analytics'
 import { DashboardHero, type HeroPeriods } from '@/components/review/ReviewMonthHero'
 import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
@@ -348,7 +349,7 @@ export default async function DashboardPage() {
   for (let p = 0; p < 50; p++) {
     const { data } = await supabase
       .from('trades')
-      .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, high_during_position, low_during_position, exit_time, tp1_price, entry_atr_1m, structure_5m_alignment')
+      .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, high_during_position, low_during_position, exit_time, tp1_price, entry_atr_1m, structure_5m_alignment, structure_5m_regime')
       .order('id', { ascending: true })
       .range(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE - 1)
     const batch = (data ?? []) as Trade[]
@@ -375,6 +376,25 @@ export default async function DashboardPage() {
     }]
   })) as HeroPeriods
   tick('hero periods')
+
+  // What lifts and drags the profit factor, for every Period option and Filter
+  // range the Trade management card can be showing (src/lib/lift-drag.ts).
+  // Same all-history read as the hero; periods under 60 sessions share one
+  // widened window, so this is two or three reads, not twelve.
+  const liftDragTrades: LiftDragTrade[] = []
+  for (const t of allTrades) {
+    const date = dayDateById.get(t.trading_day_id)
+    if (date && date <= today) liftDragTrades.push({ ...(t as unknown as Omit<LiftDragTrade, 'date'>), date })
+  }
+  // A read that fails must never take the dashboard down: the card simply
+  // goes without the section.
+  let liftDrag: ReturnType<typeof liftDragByScope> = {}
+  try {
+    liftDrag = liftDragByScope(liftDragTrades, today)
+  } catch (err) {
+    console.error('[dashboard] lift/drag failed', err)
+  }
+  tick('lift/drag', liftDragTrades.length)
 
   // Pending session → a banner (not a forced redirect to Today). Cheap query;
   // the layout also resolves scope for the nav dot.
@@ -572,6 +592,7 @@ export default async function DashboardPage() {
           defaultFilterStart={defaultFilterStart}
           achievements={<AchievementCollection counts={collectionCounts} />}
           scoreInRow={!SHOW_FINDING_CALLOUT}
+          liftDrag={liftDrag}
         />
       </DashboardModeSwitch>
     </div>
