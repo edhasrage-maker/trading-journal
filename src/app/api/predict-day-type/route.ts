@@ -8,6 +8,7 @@ import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { clientError } from '@/lib/api-error'
 
 const client = new Anthropic()
+const PREDICTION_TOOL = 'record_day_type_prediction'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -197,28 +198,62 @@ async function handle(req: Request) {
   const traderProfile = await getTraderProfile()
   const prompt = profileContextBlock(traderProfile) + buildPrompt(date, ctx, notes, dayTypeDefs, ibRead ?? null)
 
+  // The answer comes back through a FORCED TOOL CALL, not as JSON typed into
+  // the reply. The free-text version extracted the first {...} with a regex and
+  // JSON.parse'd it, and it broke whenever the reasoning quoted the trader — a
+  // level, a phrase from their notes — with an unescaped double quote
+  // ("Expected ',' or ']' after property value in JSON"). Tool input arrives
+  // from the API already parsed, so there is no string to get wrong.
+  // (Native structured outputs would do the same, but this model doesn't
+  // support them; a forced tool_choice is the equivalent here.)
+  const labels = dayTypeDefs.map(d => d.label)
   const message = await client.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 900,
+    // Headroom: a cut-off tool call arrives incomplete, and 3–5 sentences of
+    // reasoning plus the predictions can run past the old 900.
+    max_tokens: 2000,
+    tools: [{
+      name: PREDICTION_TOOL,
+      description: 'Record the day-type prediction for this session.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          predictions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string', enum: labels },
+                confidence: { type: 'string', enum: CONFIDENCE_VALUES },
+              },
+              required: ['label', 'confidence'],
+            },
+          },
+          reasoning: { type: 'string' },
+        },
+        required: ['predictions', 'reasoning'],
+      },
+    }],
+    tool_choice: { type: 'tool', name: PREDICTION_TOOL },
     messages: [{ role: 'user', content: prompt }],
   })
-  const text = message.content[0]?.type === 'text' ? message.content[0].text : ''
+  const toolUse = message.content.find(b => b.type === 'tool_use')
 
   let parsed: PredictResponse
   try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('No JSON object found in Claude response')
+    if (message.stop_reason === 'max_tokens') throw new Error('The reply was cut off before it finished')
+    if (!toolUse || toolUse.type !== 'tool_use') throw new Error('No prediction returned')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = JSON.parse(jsonMatch[0]) as any
+    const raw = toolUse.input as any
     if (typeof raw?.reasoning !== 'string') throw new Error('Response missing reasoning')
     if (!Array.isArray(raw?.predictions)) throw new Error('Response missing predictions[] array')
-    const allowed = new Set(dayTypeDefs.map(d => d.label))
+    const allowed = new Set(labels)
     const predictions: PredictionItem[] = []
     for (const p of raw.predictions) {
       if (typeof p?.label !== 'string') continue
-      if (!allowed.has(p.label)) {
-        throw new Error(`Prediction "${p.label}" is not in the day_type library (${[...allowed].join(', ')})`)
-      }
+      // A label outside the library is dropped, not fatal: one stray pick
+      // shouldn't throw away the valid ones beside it.
+      if (!allowed.has(p.label)) continue
       const confidence = CONFIDENCE_VALUES.includes(p.confidence) ? (p.confidence as Confidence) : 'medium'
       // Always derive axis server-side from the canonical mapping; ignore
       // whatever Claude returned to avoid taxonomy drift.
@@ -243,11 +278,12 @@ async function handle(req: Request) {
     }
     parsed = { predictions: dedupedByAxis, reasoning: raw.reasoning }
   } catch (e) {
-    console.error('[predict-day-type] parse failed:', e, '\nraw text:', text.slice(0, 500))
+    const rawSnippet = JSON.stringify(toolUse && toolUse.type === 'tool_use' ? toolUse.input : message.content).slice(0, 500)
+    console.error('[predict-day-type] unusable prediction:', e, '\nstop_reason:', message.stop_reason, '\nraw:', rawSnippet)
     return NextResponse.json(
       {
-        error: `Claude returned malformed output: ${e instanceof Error ? e.message : 'unknown'}`,
-        rawSnippet: text.slice(0, 500),
+        error: `The prediction came back unusable: ${e instanceof Error ? e.message : 'unknown'}. Try again.`,
+        rawSnippet,
       },
       { status: 500 },
     )
@@ -406,14 +442,9 @@ Set "confidence" honestly:
 
 ══ RESPONSE FORMAT ══
 
-Respond with ONLY a valid JSON object (no markdown, no code fences, no preamble):
-{
-  "predictions": [
-    { "label": "<exact label string>", "confidence": "high" | "medium" | "low" },
-    ...
-  ],
-  "reasoning": "<3-5 sentences. Cite specific numbers or notes from the inputs. Walk through EACH label you returned — why structural pick, why regime pick, why each flag (or why no flag). If you're overriding any heuristic above, explain why explicitly. If you intentionally omitted an axis (e.g. no flags fit), say so.>"
-}
+Record your answer with the ${PREDICTION_TOOL} tool:
+- predictions: [{ label: <exact label string>, confidence: "high" | "medium" | "low" }, ...]
+- reasoning: <3-5 sentences. Cite specific numbers or notes from the inputs. Walk through EACH label you returned — why structural pick, why regime pick, why each flag (or why no flag). If you're overriding any heuristic above, explain why explicitly. If you intentionally omitted an axis (e.g. no flags fit), say so.>
 
 Rules:
 - "predictions" is an ARRAY — return one entry per axis that has a clear pick (structural and regime when applicable), plus one entry per flag that fits.

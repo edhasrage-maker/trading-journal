@@ -380,77 +380,79 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           </div>
         )}
 
-        {/* The read, said plainly. There is no grade: a letter and an instruction
-            ("Grade C · Be selective") were shown on nearly every morning, and the
-            trader's whole book earned the same grade — it described the trader,
-            not the day. What can honestly be said is whether days like this one
-            have run differently from the trader's average, and usually they
-            have not. */}
-        {outcome && effectiveMatch && !beginner && (
-          <DayRead
-            match={effectiveMatch}
-            outcome={outcome}
-            effectivePick={effectivePick}
-            viewOverride={viewOverride}
-            onChangeOverride={setViewOverride}
-            isOverridden={viewOverride !== 'auto' && viewOverride !== autoPick}
-          />
+        {/* The read: today's conditions in words, then how your trades have
+            done in them against your average. Same two lines in both modes. */}
+        {outcome && effectiveMatch && (
+          <ConditionsRead match={effectiveMatch} baseline={outcome.baseline} baselineEv={outcome.baseline_ev} />
         )}
 
-        {/* The five readings the comparison is made on, so the trader can see
-            why today landed where it did. All are 07:30 PT (IB close) values. */}
-        {!beginner && hasAnyMetric && <ConditionStrip inputs={effectiveInputs} />}
+        {/* Everything else — the five readings, which slice of history was
+            matched, the full stats and the snapshot — one click down. On almost
+            every session the read above is the whole answer. */}
+        {!beginner && hasAnyMetric && (
+          <details className="group">
+            <summary className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer inline-block list-none marker:content-none">
+              <span className="group-open:hidden">Details ›</span>
+              <span className="hidden group-open:inline">Hide details ‹</span>
+            </summary>
+            <div className="mt-4 space-y-4">
+              <ConditionStrip inputs={effectiveInputs} />
 
-        {/* Highlights (beginner): just the two numbers that matter to a quick
-            read — how often you win + your profit factor in conditions like
-            today. The grade, EV, sample sizes, and view mechanics stay in
-            Detailed Tape. */}
-        {beginner && outcome && effectiveMatch && (
-          <ConditionsHighlight match={effectiveMatch} />
-        )}
+              {outcome && (
+                <div className="flex items-center gap-3 flex-wrap text-xs text-gray-500">
+                  <span className="font-mono">
+                    {viewOverride !== 'auto' && viewOverride !== autoPick
+                      ? `${effectivePick === 'tertile' ? 'Specific' : 'Broad'} match (manual override)`
+                      : outcome.consolidated.explanation}
+                  </span>
+                  {outcome.best_median && outcome.best_tertile && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-600">View:</span>
+                      <select
+                        value={viewOverride}
+                        onChange={e => setViewOverride(e.target.value as 'auto' | 'median' | 'tertile')}
+                        className="bg-gray-900 border border-gray-700 text-gray-300 text-[11px] rounded px-1.5 py-0.5 font-mono focus:outline-none focus:border-blue-500"
+                        title="Pick which slice of your history today is compared with. Auto uses the better-sampled match; Specific matches today's conditions more tightly, Broad trades precision for a larger sample."
+                      >
+                        <option value="auto">Auto (best match)</option>
+                        <option value="tertile">Specific match</option>
+                        <option value="median">Broad match</option>
+                      </select>
+                    </span>
+                  )}
+                </div>
+              )}
 
-        {/* Conflict warning — Detailed Tape only (it's a sample-mechanics note). */}
-        {!beginner && outcome?.conflict && outcome.conflict_reason && (
-          <div className="bg-orange-950/40 border border-orange-800 rounded-lg px-3 py-2 flex items-start gap-2 text-xs text-orange-200">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-orange-400" />
-            <div>
-              <div className="font-semibold text-orange-300 mb-0.5">Conflict</div>
-              {outcome.conflict_reason}
+              {outcome?.conflict && outcome.conflict_reason && (
+                <div className="bg-orange-950/40 border border-orange-800 rounded-lg px-3 py-2 flex items-start gap-2 text-xs text-orange-200">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-orange-400" />
+                  <div>
+                    <div className="font-semibold text-orange-300 mb-0.5">Conflict</div>
+                    {outcome.conflict_reason}
+                  </div>
+                </div>
+              )}
+
+              {outcome && effectiveMatch && (
+                <ConditionsHighlight match={effectiveMatch} showEv baselineEv={outcome.baseline_ev} baseline={outcome.baseline} />
+              )}
+
+              {/* The notes textarea that used to live here was removed 2026-07-27;
+                  the POST below deliberately omits `notes` so saved notes survive. */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-800">
+                {saveStatus === 'error' && <span className="text-xs text-red-400">Save failed</span>}
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 border border-gray-700 hover:border-gray-600 rounded px-2.5 py-1.5 transition-colors disabled:opacity-60"
+                >
+                  {saving && <Loader2 className="w-3 h-3 animate-spin" />}
+                  {saving ? 'Saving…' : 'Save snapshot'}
+                </button>
+              </div>
             </div>
-          </div>
+          </details>
         )}
-
-        {/* Detailed Tape stat readout — the SAME clean cards as Highlights, plus
-            EV/trade. The grade verdict + which-view-drove-it + the view-switch
-            dropdown all live in the banner above; the previous dense per-view
-            stats table (CI ranges, sessions, total PnL, condition id, vs-your-avg
-            delta) was retired in favor of this simpler read. */}
-        {!beginner && outcome && effectiveMatch && (
-          <ConditionsHighlight match={effectiveMatch} showEv baselineEv={outcome.baseline_ev} baseline={outcome.baseline} />
-        )}
-
-        {/* Save. The notes textarea that used to live here was removed
-            2026-07-27 — the prep page already owns free-text ("what you're
-            watching, plan deviations") and asking for it twice on the same
-            screen just made the trader choose a box. `daily_prep.notes` and its
-            API field are untouched, and the POST below deliberately OMITS the
-            key (the route only writes `notes` when present), so notes saved
-            before the removal survive rather than being nulled on the next save. */}
-        <div className="space-y-2 pt-3 border-t border-gray-800">
-          <div className="flex items-center justify-end gap-3">
-            {saveStatus === 'error' && (
-              <span className="text-xs text-red-400">Save failed</span>
-            )}
-            <button
-              onClick={save}
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 border border-gray-700 hover:border-gray-600 rounded px-2.5 py-1.5 transition-colors disabled:opacity-60"
-            >
-              {saving && <Loader2 className="w-3 h-3 animate-spin" />}
-              {saving ? 'Saving…' : 'Save snapshot'}
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* How this works modal */}
@@ -480,98 +482,98 @@ function readState(match: MatchResult, baselineEv: number | null): ReadState {
   return 'same'
 }
 
-const READ_COPY: Record<ReadState, { head: string; sub: string | null; color: string; rule: string }> = {
-  thin: { head: 'Too few trades to say.', sub: null, color: 'text-gray-400', rule: 'border-gray-700' },
-  // `sub` for this state is written per read (see sameSub) — it has to name the
-  // gap, or the headline contradicts the numbers printed beneath it.
-  same: { head: 'About your average.', sub: null, color: 'text-gray-300', rule: 'border-gray-700' },
-  above: {
-    head: 'Above your average so far.',
-    sub: 'In your history only — a lead to watch, not a rule. It has not been tested on new trades.',
-    color: 'text-green-400', rule: 'border-green-700',
+// Plain words for a bucket. Median buckets only say which HALF of the trader's
+// days this is, so they get comparatives ("busier"); tertiles get thirds
+// ("busy" / "typical" / "quiet"). IB ÷ ATR's thirds are the study's fixed
+// choppy / normal / extended bands, the same words the ledger uses.
+const CONDITION_WORDS: Record<ConditionMetric, Record<string, string>> = {
+  RVOL: { LOW: 'quieter volume', HIGH: 'busier volume', L: 'quiet volume', M: 'typical volume', H: 'busy volume' },
+  DR_ADR: {
+    LOW: 'IB used less of a normal day’s range', HIGH: 'IB used more of a normal day’s range',
+    L: 'IB used little of a normal day’s range', M: 'IB used a typical share of the day’s range', H: 'IB used much of a normal day’s range',
   },
-  below: {
-    head: 'Below your average so far.',
-    sub: 'In your history only — a lead to watch, not a rule. It has not been tested on new trades.',
-    color: 'text-red-400', rule: 'border-red-700',
-  },
+  IB: { LOW: 'smaller opening range', HIGH: 'larger opening range', L: 'small opening range', M: 'typical opening range', H: 'large opening range' },
+  ATR_730: { LOW: 'smaller bars', HIGH: 'bigger bars', L: 'small bars', M: 'typical bars', H: 'big bars' },
+  IB_ATR: { LOW: 'choppier IB', HIGH: 'cleaner IB', L: 'choppy IB', M: 'normal IB', H: 'extended IB' },
+}
+const ROW_COLS: Array<[ConditionMetric, keyof MatchResult['row']]> = [
+  ['RVOL', 'rvol_b'], ['DR_ADR', 'dr_adr_b'], ['IB', 'ib_b'], ['ATR_730', 'atr_730_b'], ['IB_ATR', 'ib_atr_b'],
+]
+
+/** Today's conditions, in words — exactly the ones the comparison is made on. */
+function conditionLabels(match: MatchResult): string[] {
+  return ROW_COLS
+    .map(([metric, col]) => {
+      const bucket = match.row[col] as string
+      if (!bucket || bucket === 'ANY') return null
+      const w = CONDITION_WORDS[metric][bucket]
+      return w ? w[0].toUpperCase() + w.slice(1) : null
+    })
+    .filter((w): w is string => !!w)
+}
+
+const HEADLINE: Record<ReadState, { text: string; color: string }> = {
+  thin: { text: 'Too few trades to compare.', color: 'text-gray-400' },
+  same: { text: 'About your average.', color: 'text-gray-100' },
+  above: { text: 'Better than your average.', color: 'text-green-400' },
+  below: { text: 'Worse than your average.', color: 'text-red-400' },
 }
 
 /**
- * The sentence under "About your average." It used to say only "no different",
- * directly above a win rate, EV and profit factor that were all visibly higher
- * than the trader's — which reads as the panel contradicting itself. The honest
- * version says both things: which way the numbers lean, and why that lean is
- * too small to mean anything (how far this many trades swing by chance).
+ * The whole read in two labelled lines: TODAY — the conditions today shares
+ * with your history, in plain words; YOU — how your trades have done in them
+ * against your own average, with both sides and how much of the gap is chance.
+ *
+ * It replaces a headline + sub-line + strip + stat block that said, at length,
+ * the same thing on every one of the 162 sessions traded in 2026 ("About your
+ * average"). The detail still exists, one click down.
  */
-function sameSub(match: MatchResult, baselineEv: number | null): string {
-  const r = match.row
-  if (baselineEv == null || r.ev_per_trade == null) return 'Nothing in today’s conditions separates your results from your average.'
-  const gap = r.ev_per_trade - baselineEv
-  const swing = r.ev_ci_lo != null && r.ev_ci_hi != null ? (r.ev_ci_hi - r.ev_ci_lo) / 2 : null
-  const n = r.n_trades ?? 0
-  if (Math.abs(gap) < 1) return 'Days like this have run right in line with your average.'
-  const lean = `$${Math.abs(gap).toFixed(0)} a trade ${gap > 0 ? 'better' : 'worse'} on paper`
-  return swing != null
-    ? `${lean}, but ${n} trades swing about ±$${swing.toFixed(0)} a trade by chance — too small a gap to lean on.`
-    : `${lean}, but not by enough to tell apart from chance.`
-}
-
-function DayRead({
-  match,
-  outcome,
-  effectivePick,
-  viewOverride,
-  onChangeOverride,
-  isOverridden,
+function ConditionsRead({
+  match, baseline, baselineEv,
 }: {
   match: MatchResult
-  outcome: LookupOutcome
-  effectivePick: 'median' | 'tertile'
-  viewOverride: 'auto' | 'median' | 'tertile'
-  onChangeOverride: (v: 'auto' | 'median' | 'tertile') => void
-  isOverridden: boolean
+  baseline: LookupOutcome['baseline']
+  baselineEv: number | null
 }) {
-  const state = readState(match, outcome.baseline_ev)
-  const copy = READ_COPY[state]
-  const sub = state === 'same' ? sameSub(match, outcome.baseline_ev) : copy.sub
-  // Show a per-view explanation when overridden so the user understands why
-  // the read changed when they toggled.
-  const explanation = isOverridden
-    ? `${effectivePick === 'tertile' ? 'Specific' : 'Broad'} match (manual override)`
-    : outcome.consolidated.explanation
+  const r = match.row
+  const state = readState(match, baselineEv)
+  const head = HEADLINE[state]
+  const labels = conditionLabels(match)
+  const n = r.n_trades ?? 0
+  const pct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v * 100)}%`)
+  const pf = (v: number | null | undefined) => (v == null ? '—' : v.toFixed(2))
+  const gap = r.ev_per_trade != null && baselineEv != null ? r.ev_per_trade - baselineEv : null
+  const swing = r.ev_ci_lo != null && r.ev_ci_hi != null ? (r.ev_ci_hi - r.ev_ci_lo) / 2 : null
+
+  let detail: string
+  if (state === 'thin') {
+    detail = `Only ${n} of your trades fall on days like this — numbers appear at ${MIN_SAMPLE}+.`
+  } else {
+    const sides = `${pct(r.trade_wr)} win rate, PF ${pf(r.profit_factor)} over ${n} trades — vs ${pct(baseline?.wr)} and ${pf(baseline?.pf)} across all ${baseline?.n ?? '—'}.`
+    const why = state === 'same'
+      ? gap != null && Math.abs(gap) >= 1 && swing != null
+        ? ` $${Math.abs(gap).toFixed(0)} a trade ${gap > 0 ? 'better' : 'worse'} on paper, inside the ±$${swing.toFixed(0)} that ${n} trades swing by chance.`
+        : ' Right in line with your average.'
+      : ' The whole 95% range clears your average — from your history, not yet tested on new trades.'
+    detail = sides + why
+  }
+
   return (
-    <div className={`border-l-2 pl-4 py-1 ${copy.rule}`}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
-        <div>
-          <div
-            className={`text-[22px] font-bold tracking-[-0.02em] leading-tight ${copy.color}`}
-            style={{ fontFamily: 'var(--font-display)' }}
-          >
-            {copy.head}
-          </div>
-          {sub && <div className="text-xs text-gray-400 mt-1 max-w-[58ch] leading-normal">{sub}</div>}
-        </div>
-        <div className="text-left sm:text-right text-xs text-gray-500 space-y-1.5">
-          <div className="font-mono">{explanation}</div>
-          {/* Override dropdown — small, only visible when there's something
-              to switch to (both views have a match). */}
-          {outcome.best_median && outcome.best_tertile && (
-            <div className="flex items-center gap-1.5 sm:justify-end">
-              <span className="text-[10px] uppercase tracking-wider text-gray-600">View:</span>
-              <select
-                value={viewOverride}
-                onChange={e => onChangeOverride(e.target.value as 'auto' | 'median' | 'tertile')}
-                className="bg-gray-900 border border-gray-700 text-gray-300 text-[11px] rounded px-1.5 py-0.5 font-mono focus:outline-none focus:border-blue-500"
-                title="Pick which slice of your history today is compared with. Auto uses the better-sampled match; Specific matches today's conditions more tightly, Broad trades precision for a larger sample."
-              >
-                <option value="auto">Auto (best match)</option>
-                <option value="tertile">Specific match</option>
-                <option value="median">Broad match</option>
-              </select>
-            </div>
-          )}
-        </div>
+    <div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2.5 items-baseline">
+      <span className="font-mono text-[10.5px] tracking-wider text-gray-500 uppercase">Today</span>
+      <span className="text-[14px] text-gray-100">
+        {labels.length > 0 ? labels.join(' · ') : <span className="text-gray-500">Not enough readings yet</span>}
+      </span>
+
+      <span className="font-mono text-[10.5px] tracking-wider text-gray-500 uppercase">You</span>
+      <div>
+        <span
+          className={`text-[17px] font-bold tracking-[-0.015em] ${head.color}`}
+          style={{ fontFamily: 'var(--font-display)' }}
+        >
+          {head.text}
+        </span>
+        <p className="text-xs text-gray-400 mt-1 max-w-[70ch] leading-normal">{detail}</p>
       </div>
     </div>
   )
@@ -724,8 +726,8 @@ function HowThisWorksModal({ onClose, vintage }: { onClose: () => void; vintage?
           <div>
             <div className="font-semibold text-white text-sm mb-1">What the read says</div>
             <ul className="space-y-1 text-xs">
-              <li><span className="text-gray-200">About your average</span> — the usual answer. The numbers may lean a little either way, and the line underneath says by how much and how far that many trades swing by chance.</li>
-              <li><span className="text-green-400">Above</span> / <span className="text-red-400">Below your average so far</span> — the whole 95% range of those trades sits on one side of your average. It is a description of your history, not a prediction.</li>
+              <li><span className="text-gray-200">About your average</span> — the usual answer. The numbers may lean a little either way; the line says by how much, and how far that many trades swing by chance.</li>
+              <li><span className="text-green-400">Better</span> / <span className="text-red-400">Worse than your average</span> — the whole 95% range of those trades sits on one side of your average. It is a description of your history, not a prediction.</li>
               <li><span className="text-gray-400">Too few trades to say</span> — fewer than {MIN_SAMPLE} trades on days like today.</li>
             </ul>
           </div>
