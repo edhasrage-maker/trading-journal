@@ -9,6 +9,7 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { liveAtr, postExitExtension, POST_EXIT_WINDOW_MIN } from '@/lib/atr'
 import { clientError } from '@/lib/api-error'
 import { todayPT } from '@/lib/pt-time'
+import { legacyCombinedId } from '@/lib/sc-combine'
 import { fillStructureForDays, STRUCTURE_SPAN_DAYS } from '@/lib/structure-from-bars'
 
 /**
@@ -437,6 +438,25 @@ export async function POST(req: Request) {
     }
     dayIdByDate.set(date, created.id as string)
   }
+
+  // A combined trade imported before 2026-10-15 may carry an id one second
+  // later than the one computed now (see legacyCombinedId). Re-importing its day
+  // must find it, not add it a second time: reuse the id the trader already has.
+  try {
+    const legacy = new Map<string, PendingTrade>()
+    for (const p of pending) {
+      const old = typeof p.row.sierra_trade_id === 'string' ? legacyCombinedId(p.row.sierra_trade_id, p.row.entry_time) : null
+      if (old) legacy.set(old, p)
+    }
+    const ids = [...legacy.keys()]
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await db.from('trades').select('sierra_trade_id').in('sierra_trade_id', ids.slice(i, i + 200))
+      for (const r of (data ?? []) as { sierra_trade_id: string }[]) {
+        const p = legacy.get(r.sierra_trade_id)
+        if (p) p.row.sierra_trade_id = r.sierra_trade_id
+      }
+    }
+  } catch { /* best-effort: without it a re-import can only add duplicates, as before */ }
 
   // user_id auto-fills from the column default (auth.uid()); the stale generated
   // types don't include it, so omitting it typechecks AND is correct at runtime.

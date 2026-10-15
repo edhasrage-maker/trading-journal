@@ -41,6 +41,22 @@ export interface CombineResult {
 
 const round = (n: number, dp = 2) => Math.round(n * 10 ** dp) / 10 ** dp
 
+/**
+ * The id a combined trade got before 2026-10-15. Until then hosted imports read
+ * every Sierra fill late by its own milliseconds (naiveToUtc counted them
+ * twice), so a fill at .500 or later landed in the NEXT second, and the id
+ * (which ends in the entry second) with it. Null when the id is the same either
+ * way, or isn't a combined id.
+ */
+export function legacyCombinedId(id: string, entryIso: string): string | null {
+  if (!id.startsWith('combined:')) return null
+  const t = Date.parse(entryIso)
+  if (!Number.isFinite(t)) return null
+  const ms = ((t % 1000) + 1000) % 1000
+  const legacy = id.replace(/\|[^|]*$/, `|${new Date(t + ms).toISOString().slice(0, 19)}`)
+  return legacy !== id ? legacy : null
+}
+
 export function combineSierraLog(text: string, timezone?: string): CombineResult {
   const { rows } = parseSierraChartLog(text, timezone)
   const accounts = new Set(rows.map(r => r.account))

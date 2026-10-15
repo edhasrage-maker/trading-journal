@@ -74,17 +74,27 @@ import { symbolToMultiplier } from './futures-symbols'
  */
 export function naiveToUtc(y: number, mo: number, d: number, h: number, mi: number, s: number, ms: number, tz?: string): Date {
   if (!tz) return new Date(y, mo - 1, d, h, mi, s, ms)
-  const asUtc = Date.UTC(y, mo - 1, d, h, mi, s, ms)
+  // The offset is worked out on whole seconds: formatToParts has no
+  // milliseconds, so measuring against `asUtc` itself counted them twice and
+  // stored every hosted Sierra fill late by its own ms (09:45:07.625 became
+  // 09:45:08.250) until 2026-10-15.
+  const asUtcSec = Date.UTC(y, mo - 1, d, h, mi, s)
   try {
     const dtf = new Intl.DateTimeFormat('en-US', {
       timeZone: tz, hourCycle: 'h23',
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     })
-    const g = (t: string) => Number(dtf.formatToParts(new Date(asUtc)).find(p => p.type === t)?.value)
-    // How `asUtc` renders in tz → the zone's offset at that instant.
-    const shown = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second'))
-    return new Date(asUtc - (shown - asUtc))
+    // The zone's offset at an instant: how it renders in tz, minus the instant.
+    const offsetAt = (at: number) => {
+      const parts = dtf.formatToParts(new Date(at))
+      const g = (t: string) => Number(parts.find(p => p.type === t)?.value)
+      return Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second')) - at
+    }
+    // Two passes: the first offset is taken at the naive time read as UTC, which
+    // on a daylight-saving switch day can sit on the other side of the switch.
+    const guess = asUtcSec - offsetAt(asUtcSec)
+    return new Date(asUtcSec - offsetAt(guess) + ms)
   } catch {
     return new Date(y, mo - 1, d, h, mi, s, ms) // unknown/invalid tz → server-local
   }
