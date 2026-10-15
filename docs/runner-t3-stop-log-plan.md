@@ -69,10 +69,7 @@ Two things stand in the way today:
    - **At entry or better (my pick).** Every breakeven stop you set since May sat at entry or up to 8 ticks into profit (most often 4). The only stop within 5 ticks of entry on the losing side was Jul 21's.
    - **Within 5 ticks of entry either side.** This matches T2's window, but it turns Jul 21 into a fail: the MES long at 7,544 had its stop pulled to 7,543, 4 ticks *in loss*, 18 s before TP1. It went to 7,544.25 21 s after TP1.
    - Either way, none of the site's 25 runners changes.
-2. **The stop never went to breakeven: how does T3 grade it?**
-   - **Pass.** The rule only forbids moving early.
-   - **Fail.** Your plan is breakeven after TP1.
-   - **No grade.**
+2. **The stop never went to breakeven: how does T3 grade it?** **Decided 2026-10-15: pass.** T3 only forbids moving the stop to breakeven before TP1; how the runner left is T2's job. Reason text, e.g. "Stop never moved to breakeven; it stayed at 30,389."
 3. **How does the stop history get in?**
    - **(a) Export the Trade Activity Log with orders included, not fills only.**
      - A day's file goes from about 10 KB to roughly 100 KB to 1.5 MB.
