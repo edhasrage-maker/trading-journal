@@ -11,11 +11,12 @@ On the **25 runners tapescore.app grades since May** (your logged TP1), the log 
 - **24 of 25** moved the stop to breakeven **after** TP1 filled, 4 to 70 seconds after (usually under 10).
 - **1 of 25** never moved it to breakeven (May 29, explained below).
 - **None** moved it before TP1.
+- **With both of your calls applied** (breakeven = entry or better; never moved = pass), all 25 pass T3.
 
 A wider check gave the same picture: 46 runners rebuilt straight from Sierra's files across all your -PRO accounts (TP1 = the first target order that filled where none was logged).
 - **40** moved the stop after TP1.
 - **5** never moved it (May 4, May 29, Jun 12, Jul 17, Aug 21).
-- **1** depends on what counts as breakeven (Jul 21, see decision 1). It isn't one of the site's 25.
+- **1** was settled by decision 1 (Jul 21): under "entry or better" it passes. It isn't one of the site's 25.
 
 Two things stand in the way today:
 
@@ -65,10 +66,7 @@ Two things stand in the way today:
 
 ## Decisions for you
 
-1. **What counts as "stop at breakeven"?**
-   - **At entry or better (my pick).** Every breakeven stop you set since May sat at entry or up to 8 ticks into profit (most often 4). The only stop within 5 ticks of entry on the losing side was Jul 21's.
-   - **Within 5 ticks of entry either side.** This matches T2's window, but it turns Jul 21 into a fail: the MES long at 7,544 had its stop pulled to 7,543, 4 ticks *in loss*, 18 s before TP1. It went to 7,544.25 21 s after TP1.
-   - Either way, none of the site's 25 runners changes.
+1. **What counts as "stop at breakeven"?** **Decided 2026-10-15: at entry or better.** The stop counts as at breakeven only once it's at the entry price or in profit, so a stop still in loss is a tighter stop, not breakeven. That matches every breakeven stop you set since May: at entry or up to 8 ticks into profit, most often 4. It changes none of the site's 25 runners. The one case it settles is Jul 21 (MES long at 7,544). The stop was pulled to 7,543, 4 ticks in loss, 18 s before TP1; that reads as a tighter stop. It went to breakeven (7,544.25) 21 s after TP1, so it passes.
 2. **The stop never went to breakeven: how does T3 grade it?** **Decided 2026-10-15: pass.** T3 only forbids moving the stop to breakeven before TP1; how the runner left is T2's job. Reason text, e.g. "Stop never moved to breakeven; it stayed at 30,389."
 3. **How does the stop history get in?**
    - **(a) Export the Trade Activity Log with orders included, not fills only.**
