@@ -1,0 +1,260 @@
+<title>Runner Rules Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the app's Settings column and Recap table, stacked as three screens, in TapeScore's carbon palette (light = chartbook). */
+:root {
+  color-scheme: dark;
+  --ground: #0C0D10; --panel: #131519; --panel2: #1B1E23; --line: #282C32; --hair: #1C2026;
+  --ink: #E8EAED; --mut: #969BA3; --faint: #5E636B; --field: #0C0D10; --fieldline: #3D434B;
+  --accent: #4F97CE; --accent-ink: #79B4E6; --pos: #4FC58E; --neg: #E0685F; --warn: #D6B24E;
+  --display: 'Archivo', 'Hanken Grotesk', system-ui, sans-serif;
+  --body: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490; --field: #FFFFFF; --fieldline: #BFC5D8;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+} }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490; --field: #FFFFFF; --fieldline: #BFC5D8;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.page { max-width: 1000px; padding-inline: 16px; padding-block: 28px 64px; margin: 0 auto; display: grid; gap: 40px; }
+.note { font-size: 12px; color: var(--mut); border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; }
+.note b { color: var(--ink); font-weight: 600; }
+.eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); margin: 0 0 10px; }
+h1 { font-family: var(--display); font-size: 24px; font-weight: 700; margin: 0 0 6px; }
+p { margin: 0; }
+.mut { color: var(--mut); } .faint { color: var(--faint); } .small { font-size: 12px; } .xs { font-size: 11px; }
+.screen { display: grid; gap: 14px; }
+.ghost { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; color: var(--faint); font-size: 13px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.rules { display: grid; gap: 10px; }
+.rule { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; background: var(--ground); }
+.rule.cant { border-style: dashed; }
+.rule-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.switch { width: 36px; height: 20px; border-radius: 999px; background: var(--line); border: 0; padding: 2px; cursor: pointer; flex-shrink: 0; display: flex; }
+.switch span { width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"] span { transform: translateX(16px); }
+.switch:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+.name { width: 52px; font-weight: 700; font-family: var(--display); text-align: center; }
+.type { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+.from { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mut); }
+.x { background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
+.sentence { color: var(--ink); font-size: 13.5px; line-height: 2; padding-left: 46px; }
+input.num, input.txt, input.date { background: var(--field); border: 1px solid var(--fieldline); color: var(--ink); border-radius: 6px; padding: 2px 6px; font: inherit; font-size: 13px; }
+input.num { width: 56px; text-align: right; font-variant-numeric: tabular-nums; }
+input.date { width: 128px; font-size: 12px; }
+.tally { padding-left: 46px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tally b { color: var(--mut); font-weight: 600; }
+.cantnote { padding-left: 46px; font-size: 12px; color: var(--warn); }
+.btn { background: none; border: 1px solid var(--line); color: var(--accent-ink); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; justify-self: start; }
+.defs { font-size: 12px; color: var(--mut); border-top: 1px solid var(--hair); padding-top: 10px; display: grid; gap: 4px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 760px; }
+th { text-align: left; font-weight: 400; color: var(--faint); font-size: 12px; padding: 0 12px 8px 0; white-space: nowrap; }
+td { padding: 9px 12px 9px 0; border-top: 1px solid var(--hair); white-space: nowrap; vertical-align: middle; }
+td.r, th.r { text-align: right; }
+.long { color: var(--pos); } .short { color: var(--neg); } .pos { color: var(--pos); } .neg { color: var(--neg); }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font-family: var(--body); line-height: 1; }
+.chip .car { font-size: 9px; opacity: .6; }
+.chip.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, var(--line)); }
+.chip.bad { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 45%, var(--line)); }
+.chip.sel { box-shadow: 0 0 0 1px var(--accent-ink); }
+.dash { color: var(--faint); }
+.detail-row td { border-top: 0; padding-top: 0; white-space: normal; }
+.detail { max-width: 760px; padding: 4px 0 10px; display: grid; gap: 6px; }
+.detail h3 { font-size: 12px; font-weight: 600; margin: 0; color: var(--mut); }
+.lines { display: grid; grid-template-columns: 10px 34px 70px minmax(0, 1fr); gap: 5px 10px; align-items: baseline; font-size: 12.5px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; align-self: center; }
+.dot.pass { background: var(--pos); } .dot.fail { background: var(--neg); } .dot.unk { background: var(--faint); }
+.nm { font-weight: 700; font-family: var(--display); }
+.st { color: var(--mut); } .st.fail { color: var(--neg); } .st.pass { color: var(--pos); }
+.foot { font-size: 11px; color: var(--faint); }
+.tip { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 12.5px; display: grid; gap: 4px; max-width: 520px; }
+.tip .row { display: flex; justify-content: space-between; gap: 16px; }
+.tip .row span:last-child { color: var(--mut); font-variant-numeric: tabular-nums; text-align: right; }
+.tip .new span:first-child { color: var(--accent-ink); font-weight: 600; }
+.axischips { display: flex; gap: 8px; flex-wrap: wrap; }
+.axischip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--mut); }
+.axischip.on { border-color: var(--accent); color: var(--ink); }
+@media (max-width: 760px) { .sentence, .tally, .cantnote { padding-left: 0; } }
+</style>
+
+<div class="page">
+
+  <div class="note">
+    <b>Mockup.</b> Layout and labels are what gets built. The <b>Runner chips and their reasons</b> are your real trades (Oct 14, Sep 18, Jul 1) read from your fills with the settings shown. Every other cell in those rows (Score, Rules, R, Kept, After exit), the tallies and the Exit numbers are <b>placeholders</b>. Rule names T1–T3 are placeholders too; you name them.
+  </div>
+
+  <!-- ═══ SCREEN 1: SETTINGS ═══ -->
+  <section class="screen" aria-labelledby="s1">
+    <p class="eyebrow">Settings → Trading Rules</p>
+    <h1 id="s1">Trading Rules</h1>
+    <div class="ghost"><span>Risk &amp; rules · Safety rails · TapeScore switch</span><span>unchanged</span></div>
+    <div class="ghost"><span>Entry rules · L1 L2 L3 L4 F3 F5 F6</span><span>unchanged</span></div>
+
+    <div>
+      <p class="eyebrow" style="margin-bottom:6px">Runner rules</p>
+      <p class="small mut" style="max-width:680px">For trades that took something at TP1 and kept a piece on. Graded from your fills: how much came off at TP1 and how the rest left. These become the Runner part of your Exit grade from each rule's start date.</p>
+    </div>
+
+    <div class="rules">
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="T1 on"><span></span></button>
+          <input class="txt name" id="n-t1" value="T1" aria-label="Rule name">
+          <span class="type">Scale out at TP1</span>
+          <label class="from">Counts from <input class="date" id="f-t1" type="date" value="2026-10-14"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove T1">×</button>
+        </div>
+        <p class="sentence">Pass when at least <input class="num" id="p-t1" value="60">% of the position comes off at my TP1 price or better.</p>
+        <p class="tally">Since Oct 14 · <b>pass</b> 1 trade · 100% · — &nbsp;|&nbsp; <b>fail</b> 0 &nbsp;|&nbsp; unknown 0</p>
+      </div>
+
+      <div class="rule">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="T2 on"><span></span></button>
+          <input class="txt name" id="n-t2" value="T2" aria-label="Rule name">
+          <span class="type">Runner leaves by the plan</span>
+          <label class="from">Counts from <input class="date" id="f-t2" type="date" value="2026-10-14"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove T2">×</button>
+        </div>
+        <p class="sentence">Pass when what is left after TP1 exits only at breakeven (within <input class="num" id="p-t2be" value="2"> ticks of entry), the target (<input class="num" id="p-t2tg" value="4.0">× ATR from entry, within <input class="num" id="p-t2tol" value="0.25">× ATR), or still open at <input class="num" id="p-t2cl" value="13:00" style="width:64px"> PT. Any other exit counts as closed by hand.</p>
+        <p class="tally">Since Oct 14 · <b>pass</b> 1 trade · 100% · — &nbsp;|&nbsp; <b>fail</b> 0 &nbsp;|&nbsp; unknown 0</p>
+      </div>
+
+      <div class="rule cant">
+        <div class="rule-top">
+          <button class="switch" role="switch" aria-checked="true" aria-label="T3 on"><span></span></button>
+          <input class="txt name" id="n-t3" value="T3" aria-label="Rule name">
+          <span class="type">Stop to breakeven only after TP1</span>
+          <label class="from">Counts from <input class="date" id="f-t3" type="date" value="2026-10-14"></label>
+          <button class="x" title="Remove this rule" aria-label="Remove T3">×</button>
+        </div>
+        <p class="sentence">Pass when the stop moves to breakeven only after TP1 fills, never before.</p>
+        <p class="cantnote">Can't be checked yet: your fills don't show when the stop moved. Every trade shows "unknown" here, which never counts for or against you.</p>
+      </div>
+
+      <button class="btn" type="button">+ Add a runner rule</button>
+
+      <div class="defs">
+        <p>TP1 = the TP1 price logged on the trade. Fills within 30 seconds of each other count as one exit. The first exit at TP1 or better is the scale-out; whatever is still on after it is the runner.</p>
+        <p>ATR = the 1-minute ATR(10) (Wilder) at entry, the one the TP2 study used. Trades that never took anything at TP1 are not judged here; how those ended is Profit kept and Stop respected.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ SCREEN 2: RECAP ═══ -->
+  <section class="screen" aria-labelledby="s2">
+    <p class="eyebrow" id="s2">Recap → trade table (Runner sits next to Kept; only trades that kept a runner get a chip)</p>
+    <div class="card">
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>Time</th><th>Side</th><th class="r">Entry</th><th class="r">TP1</th><th class="r">Qty</th><th class="r">P&amp;L</th>
+            <th class="r">Score</th><th class="r">Rules</th><th class="r">R</th><th class="r">Kept</th><th class="r" title="Your runner rules, passed out of checked. Click for the reasons.">Runner</th><th>After exit</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td>Oct 14 · 08:19</td><td class="short">Short</td><td class="r">30,428.00</td><td class="r">30,398.00</td><td class="r">3</td><td class="r pos">+299.00</td>
+              <td class="r"><span class="chip">84 <span class="car">▾</span></span></td><td class="r"><span class="chip bad">3/7 <span class="car">▾</span></span></td>
+              <td class="r pos">+3.56R</td><td class="r">90%</td>
+              <td class="r"><button class="chip ok sel" data-open="d1" aria-expanded="true">2/2 <span class="car">▴</span></button></td><td class="faint">target hit</td>
+            </tr>
+            <tr id="d1" class="detail-row"><td colspan="12">
+              <div class="detail">
+                <h3>Runner rules · 2 of 2 checked passed · 1 unknown</h3>
+                <div class="lines">
+                  <span class="dot pass"></span><span class="nm">T1</span><span class="st pass">pass</span><span>2 of 3 contracts (67%) came off at 30,392.50 and 30,391.00 (08:29), at TP1 30,398.00 or better.</span>
+                  <span class="dot pass"></span><span class="nm">T2</span><span class="st pass">pass</span><span>The last contract left at 30,351.00 (08:37), 3.83× ATR from entry: the 4× ATR target.</span>
+                  <span class="dot unk"></span><span class="nm">T3</span><span class="st">unknown</span><span>Your fills don't show when the stop moved.</span>
+                </div>
+                <p class="foot">Read from your fills and the logged TP1. ATR at entry 20.10.</p>
+              </div>
+            </td></tr>
+
+            <tr>
+              <td>Sep 18 · 09:48</td><td class="long">Long</td><td class="r">7,685.25</td><td class="r">7,691.25</td><td class="r">5</td><td class="r pos">+160.00</td>
+              <td class="r"><span class="chip">55 <span class="car">▾</span></span></td><td class="r"><span class="dash">—</span></td>
+              <td class="r pos">+1.60R</td><td class="r">78%</td>
+              <td class="r"><button class="chip" data-open="d2">1/2 <span class="car">▾</span></button></td><td class="faint">—</td>
+            </tr>
+            <tr id="d2" class="detail-row" hidden><td colspan="12">
+              <div class="detail">
+                <h3>Runner rules · 1 of 2 checked passed · 1 unknown</h3>
+                <div class="lines">
+                  <span class="dot pass"></span><span class="nm">T1</span><span class="st pass">pass</span><span>3 of 5 contracts (60%) came off at 7,691.25 (09:53), at TP1 7,691.25.</span>
+                  <span class="dot fail"></span><span class="nm">T2</span><span class="st fail">fail</span><span>The last 2 contracts left at 7,692.25 (10:38), 3.29× ATR from entry: not breakeven, the 4× ATR target or 13:00, so closed by hand.</span>
+                  <span class="dot unk"></span><span class="nm">T3</span><span class="st">unknown</span><span>Your fills don't show when the stop moved.</span>
+                </div>
+              </div>
+            </td></tr>
+
+            <tr>
+              <td>Jul 1 · 09:45</td><td class="long">Long</td><td class="r">30,214.00</td><td class="r">30,240.00</td><td class="r">5</td><td class="r pos">+160.00</td>
+              <td class="r"><span class="dash">—</span></td><td class="r"><span class="dash">—</span></td>
+              <td class="r pos">+1.23R</td><td class="r">61%</td>
+              <td class="r"><button class="chip" data-open="d3">1/2 <span class="car">▾</span></button></td><td class="faint">—</td>
+            </tr>
+            <tr id="d3" class="detail-row" hidden><td colspan="12">
+              <div class="detail">
+                <h3>Runner rules · 1 of 2 checked passed · 1 unknown</h3>
+                <div class="lines">
+                  <span class="dot pass"></span><span class="nm">T1</span><span class="st pass">pass</span><span>3 of 5 contracts (60%) came off at 30,240.00 (09:47), at TP1 30,240.00.</span>
+                  <span class="dot fail"></span><span class="nm">T2</span><span class="st fail">fail</span><span>The last 2 contracts left at 30,215.00 (09:49), 4 ticks past entry: outside your breakeven window (2 ticks), so closed by hand.</span>
+                  <span class="dot unk"></span><span class="nm">T3</span><span class="st">unknown</span><span>Your fills don't show when the stop moved.</span>
+                </div>
+              </div>
+            </td></tr>
+
+            <tr>
+              <td>Oct 14 · 08:13</td><td class="short">Short</td><td class="r">30,387.00</td><td class="r">—</td><td class="r">3</td><td class="r neg">−105.00</td>
+              <td class="r"><span class="chip">62 <span class="car">▾</span></span></td><td class="r"><span class="chip">5/7 <span class="car">▾</span></span></td>
+              <td class="r neg">−0.86R</td><td class="r faint">never got going</td>
+              <td class="r"><span class="dash" title="No runner: nothing came off at TP1.">—</span></td><td class="faint">stopped</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ SCREEN 3: EXIT GRADE ═══ -->
+  <section class="screen" aria-labelledby="s3">
+    <p class="eyebrow" id="s3">Recap header → hover the Exit chip</p>
+    <div class="axischips"><span class="axischip">Risk 81</span><span class="axischip">Entry 68</span><span class="axischip on">Exit 88</span></div>
+    <div class="tip" role="note">
+      <strong>Exit (0-100): profit kept on winners, stop respected, runner rules.</strong>
+      <div class="row"><span>Profit kept on winners</span><span>82 · 2 trades</span></div>
+      <div class="row"><span>Stop respected</span><span>100 · 2 trades</span></div>
+      <div class="row new"><span>Runner rules</span><span>100 · 1 trade · your rules</span></div>
+      <p class="xs faint" style="margin-top:4px">Runner rules: your own (Settings → Trading Rules) on trades from each rule's start date, the share of checked rules each runner passed. Without your rules: TP1 filled and the 5-minute structure with you.</p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+document.querySelectorAll('.switch').forEach(s => s.addEventListener('click', () => {
+  const on = s.getAttribute('aria-checked') !== 'true';
+  s.setAttribute('aria-checked', String(on));
+  s.closest('.rule').style.opacity = on ? '' : '.55';
+}));
+document.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+  const row = document.getElementById(b.dataset.open);
+  const open = row.hidden;
+  row.hidden = !open;
+  b.classList.toggle('sel', open);
+  b.setAttribute('aria-expanded', String(open));
+  const c = b.querySelector('.car'); if (c) c.textContent = open ? '▴' : '▾';
+}));
+</script>

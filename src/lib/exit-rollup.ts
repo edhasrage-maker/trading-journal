@@ -1,6 +1,7 @@
 import { exitTradeScores, lossSizeInputs, lossSizeScore, type ExitTradeInput, type RiskYardstick } from '@/lib/exit-score'
 import { emptyTradeSums, type FactorSum, type TradeSums } from '@/lib/tapescore-axes'
 import { entryRulesSig, evaluateRules, tradeRulesScore, type EntryRuleConfig } from '@/lib/entry-rules'
+import { runnerRulesSig, tradeRunnerPart, type RunnerRuleConfig } from '@/lib/runner-rules'
 import type { TradeEntryCtx } from '@/lib/supabase/types'
 import { reentryAfterLossIds } from '@/lib/behavioral-proxies'
 import {
@@ -54,7 +55,8 @@ export interface DayTradeInputs {
    *  rules it passed (src/lib/entry-rules.ts). Baked in with the trader's
    *  rules — `rules_sig` says which; a cached row whose sig differs is stale. */
   entryRules: FactorSum
-  /** entryRulesSig() of the rules `entryRules` was computed with ('' = none). */
+  /** traderRulesSig() of the trader's own rules these sums were computed with —
+   *  entry rules (`entryRules`) and runner rules (`runner`); '' = none. */
   rules_sig: string
   /** Order-flow Score: each scored trade's total ÷ 100. Always stored; whether
    *  it counts toward Entry is the trader's setting, applied when read. */
@@ -113,8 +115,18 @@ export function tradeEntryRulesScore(t: PartsTrade, rules: readonly EntryRuleCon
   return tradeRulesScore(evaluateRules(rules, ctx, { direction: t.direction, symbol: t.symbol, entry_time: t.entry_time ?? null }))
 }
 
-/** A day's per-trade inputs from its trades. `entryRules` = the trader's entry rules (none → the part is absent). */
-export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: number | null, entryRules?: readonly EntryRuleConfig[] | null): DayTradeInputs {
+/** Which of the trader's own rules a day's sums were computed with — entry rules, then runner rules ('' = none). */
+export function traderRulesSig(entryRules?: readonly EntryRuleConfig[] | null, runnerRules?: readonly RunnerRuleConfig[] | null): string {
+  const r = runnerRulesSig(runnerRules)
+  return entryRulesSig(entryRules) + (r ? `|${r}` : '')
+}
+
+/** A day's per-trade inputs from its trades. `entryRules` / `runnerRules` = the trader's own rules
+ *  (none → those parts are absent / the generic Runner part applies). */
+export function dayTradeInputs(
+  trades: readonly PartsTrade[], atrStopTarget?: number | null,
+  entryRules?: readonly EntryRuleConfig[] | null, runnerRules?: readonly RunnerRuleConfig[] | null,
+): DayTradeInputs {
   const target = normalizeAtrStopTarget(atrStopTarget)
   const sums = emptyTradeSums()
   const losses: DayTradeInputs['losses'] = []
@@ -127,7 +139,15 @@ export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: nu
   for (const t of trades) {
     // The yardstick is deliberately absent: it belongs to the read.
     const s = exitTradeScores(t, { atrStopTarget: target })
-    for (const k of STORED) { const v = s[k]; if (v != null) { sums[k].n += 1; sums[k].sum += v } }
+    for (const k of STORED) {
+      if (k === 'runner') continue
+      const v = s[k]; if (v != null) { sums[k].n += 1; sums[k].sum += v }
+    }
+    // Runner rules: the trader's own on trades where one counts (a trade that is not a
+    // runner then has no runner score), else the generic part as before.
+    const rp = tradeRunnerPart(t, runnerRules)
+    const runner = rp.own ? rp.score : (s.runner ?? null)
+    if (runner != null) { sums.runner.n += 1; sums.runner.sum += runner }
     const pair = lossSizeInputs(t)
     if (pair) losses.push(pair)
     const flow = tradeFlowTotal(t)
@@ -137,7 +157,7 @@ export function dayTradeInputs(trades: readonly PartsTrade[], atrStopTarget?: nu
   }
   return {
     atr_stop: target,
-    stopSize: sums.stopSize, reentry: sums.reentry, entryRules: sums.entryRules, rules_sig: entryRulesSig(entryRules as EntryRuleConfig[] | null | undefined), flow: sums.flow,
+    stopSize: sums.stopSize, reentry: sums.reentry, entryRules: sums.entryRules, rules_sig: traderRulesSig(entryRules, runnerRules), flow: sums.flow,
     kept: sums.kept, stopRespected: sums.stopRespected, runner: sums.runner,
     losses,
     size_up: sizeUpInputs(trades),

@@ -25,7 +25,8 @@ import type { ExecutionScore } from '@/lib/supabase/types'
  *   Exit  — how you got out
  *             Profit kept       42%  winners
  *             Stop respected    33%  trades whose stop came into play
- *             Runner rules      25%  trades that went for a second target
+ *             Runner rules      25%  runners: the trader's own runner rules (src/lib/runner-rules.ts)
+ *                                    on trades where one counts, else TP1 filled + 5m structure
  *
  * A part with nothing to judge drops out and the axis's other parts share its
  * weight in proportion (no losers and no quick re-entries → rules 45 / stop size 18 → 71 / 29). The
@@ -107,6 +108,9 @@ export const ENTRY_CHECKLIST_LABELS: Record<(typeof ENTRY_CHECKLIST_KEYS)[number
 
 /** How the Entry rules part counts, for the places that explain Entry. */
 export const ENTRY_RULES_NOTE = 'Entry rules: each trade scores the share of its counted rules it passed; unknowns are left out. A rule only counts on trades from its start date.'
+
+/** How the Exit "Runner rules" part is read, for the places that explain Exit. */
+export const RUNNER_RULES_NOTE = 'Runner rules: your own (Settings → Trading Rules) on trades from each rule\'s start date, the share of checked rules each runner passed. Without your rules: TP1 filled and the 5-minute structure with you.'
 
 /** The checklist items as one phrase. */
 export const ENTRY_CHECKLIST_DESC = ENTRY_CHECKLIST_KEYS.map(k => ENTRY_CHECKLIST_LABELS[k]).join(', ')
@@ -205,6 +209,8 @@ export interface TapeScoreParts {
   flowOn: boolean
   /** The checklist came from an analysis stored before the per-item breakdown. */
   checklistLegacy: boolean
+  /** The trader grades runners with their own runner rules (src/lib/runner-rules.ts). */
+  runnerOwn?: boolean
 }
 
 // ── Showing why ───────────────────────────────────────────────────────────
@@ -236,7 +242,7 @@ export function axisPartLines(parts: TapeScoreParts | null | undefined, axis: Ax
     else if (score == null) detail = 'not applicable'
     else if (key === 'rules' && parts?.rulesKept != null && parts.rulesOf != null) detail = `${score} · ${parts.rulesKept} of ${parts.rulesOf} kept`
     else if (key === 'checklist' && parts?.checklistLegacy && p?.n == null) detail = `${score} · older analysis, all items`
-    else if (p?.n != null) detail = `${score} · ${plural(p.n, TRADE_KEYS.has(key) ? 'trade' : 'session')}`
+    else if (p?.n != null) detail = `${score} · ${plural(p.n, TRADE_KEYS.has(key) ? 'trade' : 'session')}${key === 'runner' && parts?.runnerOwn ? ' · your rules' : ''}`
     else detail = String(score)
     return { key, label: PART_LABELS[key], score, detail, weight: p?.weight ?? 0 }
   })
@@ -255,5 +261,6 @@ export function axisTooltip(
     `${l.label}: ${l.detail}${axis === 'entry' && l.score != null && l.weight > 0 ? ` · ${Math.round(l.weight * 100)}%` : ''}`)
   if (axis === 'entry' && opts.checklistItems !== false) lines.push(`(Checklist: ${ENTRY_CHECKLIST_DESC}.)`)
   if (axis === 'entry') lines.push(ENTRY_RULES_NOTE)
+  if (axis === 'exit') lines.push(RUNNER_RULES_NOTE)
   return [heading, ...lines].join('\n')
 }

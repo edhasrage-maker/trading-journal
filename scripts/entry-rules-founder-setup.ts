@@ -17,6 +17,13 @@
  *    Recap does this by itself when a day is opened; this fills the days not
  *    opened yet, so the Settings tally and the Entry grade are complete.
  *
+ * 3. RUNNER RULES (only with --runner-be <ticks>): puts the TP2 study's
+ *    mechanics into scoring_profile_json.runner_rules — T1 scale out 60% at the
+ *    logged TP1, T2 runner leaves only at breakeven (within <ticks>), 4×ATR ±0.25
+ *    or 13:00 PT, T3 breakeven only after TP1 (unknown) — counting from
+ *    --runner-from (default 2026-10-14). Skipped when the profile already has
+ *    runner rules.
+ *
  * The service key comes from .env.public-feed (local only, never committed).
  */
 import { readFileSync } from 'fs'
@@ -27,10 +34,13 @@ import { readEntryContexts } from '../src/lib/orderflow/server/entry-context-run
 import { FLOW_TRADE_COLUMNS, type FlowTradeRecord, type FlowTradeStore } from '../src/lib/orderflow/server/flow-score-run.ts'
 import { entryCtxIsCurrent } from '../src/lib/orderflow/flow-score-meta.ts'
 import { FOUNDER_ENTRY_RULES, readEntryRules } from '../src/lib/entry-rules.ts'
+import { newRunnerRule, readRunnerRules } from '../src/lib/runner-rules.ts'
 
 const APPLY = process.argv.includes('--apply')
 const FROM = process.argv.includes('--from') ? process.argv[process.argv.indexOf('--from') + 1] : '2026-09-25'
 const FOUNDER = 'edhasrage@gmail.com'
+const RUNNER_BE = process.argv.includes('--runner-be') ? Number(process.argv[process.argv.indexOf('--runner-be') + 1]) : null
+const RUNNER_FROM = process.argv.includes('--runner-from') ? process.argv[process.argv.indexOf('--runner-from') + 1] : '2026-10-14'
 
 async function main() {
   const env: Record<string, string> = {}
@@ -54,6 +64,28 @@ async function main() {
       const { error } = await sb.from('trader_profile').update({ scoring_profile_json: { ...sp, entry_rules: FOUNDER_ENTRY_RULES } }).eq('id', prof.id).eq('user_id', uid)
       if (error) throw new Error(`profile write: ${error.message}`)
       console.log('   saved')
+    }
+  }
+
+  // 3. runner rules (opt-in)
+  if (RUNNER_BE != null) {
+    if (!Number.isFinite(RUNNER_BE) || RUNNER_BE < 0) throw new Error('--runner-be needs a number of ticks')
+    const { data: prof2 } = await sb.from('trader_profile').select('id, scoring_profile_json').eq('user_id', uid).maybeSingle()
+    const sp2 = (prof2?.scoring_profile_json ?? {}) as Record<string, unknown>
+    const have = readRunnerRules(sp2.runner_rules)
+    const runner = [
+      newRunnerRule('scale_out', 'T1', RUNNER_FROM, 't1'),
+      { ...newRunnerRule('runner_exit', 'T2', RUNNER_FROM, 't2'), be_ticks: RUNNER_BE },
+      newRunnerRule('be_after_tp1', 'T3', RUNNER_FROM, 't3'),
+    ]
+    if (have.length) console.log(`3. runner rules: the profile already has ${have.length} (${have.map(r => r.name).join(', ')}) — left as they are`)
+    else {
+      console.log(`3. runner rules: will add T1 (60% at TP1), T2 (breakeven within ${RUNNER_BE} ticks, 4×ATR ±0.25, 13:00), T3 (unknown) from ${RUNNER_FROM}`)
+      if (APPLY && prof2) {
+        const { error } = await sb.from('trader_profile').update({ scoring_profile_json: { ...sp2, runner_rules: runner } }).eq('id', prof2.id).eq('user_id', uid)
+        if (error) throw new Error(`profile write: ${error.message}`)
+        console.log('   saved')
+      }
     }
   }
 

@@ -163,6 +163,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         atrStopTarget={scoreSettings.atrStopTarget}
         includeFlowScore={scoreSettings.includeFlow}
         entryRules={scoreSettings.entryRules}
+        runnerRules={scoreSettings.runnerRules}
       />
     </>
   )

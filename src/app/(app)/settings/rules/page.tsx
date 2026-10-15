@@ -15,7 +15,8 @@
  * when a page loads, so nothing needs re-analysing.
  *
  * Below that, the trader's entry rules (EntryRulesSetting) — graded on every
- * trade from the tick tape and counted in Entry.
+ * trade from the tick tape and counted in Entry — and their runner rules
+ * (RunnerRulesSetting), graded from their fills and counted in Exit.
  *
  * NB the Player Profile (Settings → Player Profile) free text is the coach's
  * NARRATIVE context — editing it does not change grading. This page is the one
@@ -24,6 +25,7 @@
 import { useEffect, useState } from 'react'
 import RulesStep from '@/components/onboarding/RulesStep'
 import EntryRulesSetting from '@/components/settings/EntryRulesSetting'
+import RunnerRulesSetting from '@/components/settings/RunnerRulesSetting'
 import { includeFlowScoreInEntry, type ScoringProfile } from '@/lib/scoring-profile'
 
 export default function RulesSettingsPage() {
@@ -49,6 +51,7 @@ export default function RulesSettingsPage() {
       )}
       <FlowScoreSetting />
       <EntryRulesSetting />
+      <RunnerRulesSetting />
     </div>
   )
 }

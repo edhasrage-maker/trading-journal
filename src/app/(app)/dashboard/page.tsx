@@ -97,7 +97,7 @@ export default async function DashboardPage() {
   // the ATR stop setting, so it decides both how a dirty day is recomputed and
   // whether a cached one is still current; the order-flow Score setting is
   // applied when the days are read, so it never dirties the cache.
-  const [recentResult, statsResult, achResult, { atrStopTarget, includeFlow, entryRules, rulesSig }] = await Promise.all([
+  const [recentResult, statsResult, achResult, { atrStopTarget, includeFlow, entryRules, runnerRules, rulesSig }] = await Promise.all([
     supabase
       .from('trading_days')
       .select('id, date, eod_pnl, day_type, day_types')
@@ -175,6 +175,7 @@ export default async function DashboardPage() {
     dirtyDays.map(d => ({ ...d, achievements: achievementsByDayId.get(d.id) ?? [] })),
     atrStopTarget,
     entryRules,
+    runnerRules,
   )
   tick('dirty days computed', dirtyRollups.length)
   const dirtyById = new Map(dirtyRollups.map(r => [r.id, r]))
@@ -208,7 +209,7 @@ export default async function DashboardPage() {
   const riskHistory = recentDaysBase.length >= PAGE_SIZE && oldestDate
     ? await loadRiskHistory(supabase, oldestDate)
     : []
-  const recentDaysMapped = scoreDayRollups(rolledUp, riskHistory, { includeFlow })
+  const recentDaysMapped = scoreDayRollups(rolledUp, riskHistory, { includeFlow, runnerOwn: runnerRules.some(r => r.on) })
   tick('trade parts + tapescore', recentDaysMapped.length)
 
   // Store the days just recomputed so the next load reads them from cache —

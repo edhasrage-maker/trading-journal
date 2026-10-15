@@ -72,6 +72,10 @@ export interface ScoringProfile {
    *  on every trade from the tape. Read through `readEntryRules`
    *  (src/lib/entry-rules.ts), never off this field directly. */
   entry_rules?: unknown
+  /** The trader's runner rules (Settings → Trading Rules → Runner rules),
+   *  graded from their fills. Read through `readRunnerRules`
+   *  (src/lib/runner-rules.ts), never off this field directly. */
+  runner_rules?: unknown
 }
 
 /** Does this trader include the order-flow Score in their Entry grade? On

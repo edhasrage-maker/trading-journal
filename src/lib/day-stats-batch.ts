@@ -23,6 +23,7 @@ import {
 } from './day-stats'
 import { loadStatsBake } from './day-stats-server'
 import type { EntryRuleConfig } from './entry-rules'
+import type { RunnerRuleConfig } from './runner-rules'
 import { pickMarketContext } from './market-context-select'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -66,6 +67,7 @@ type ContextRow = { trading_day_id: string; symbol: string | null; atr_1m: numbe
  */
 export async function computeDayRollups(
   supabase: AnyClient, days: DayRowForStats[], atrStopTarget: number, entryRules: readonly EntryRuleConfig[] = [],
+  runnerRules: readonly RunnerRuleConfig[] = [],
 ): Promise<DayStatsRollup[]> {
   if (days.length === 0) return []
   const slices = chunks(days.map(d => d.id))
@@ -131,7 +133,7 @@ export async function computeDayRollups(
       },
       dayTrades,
       ctx?.atr_1m ?? null,
-      { atrStopTarget, entryRules },
+      { atrStopTarget, entryRules, runnerRules },
     )
   })
 }
@@ -211,7 +213,7 @@ export function warmDayStats(supabase: AnyClient, traderKey: string): Promise<nu
         if (error) throw new Error(`trading_days: ${error.message}`)
         days.push(...((data ?? []) as DayRowForStats[]))
       })
-      const rollups = await computeDayRollups(supabase, days, bake.atrStopTarget, bake.entryRules)
+      const rollups = await computeDayRollups(supabase, days, bake.atrStopTarget, bake.entryRules, bake.runnerRules)
       const written = await writeDayRollups(supabase, rollups)
       console.log(`[day-stats] warmed ${written}/${stale.length} stale days`)
       return written

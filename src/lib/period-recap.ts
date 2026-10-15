@@ -41,7 +41,7 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
   // order-flow Score joins Entry unless switched off), and the days BEFORE the
   // window that the risk-yardstick rule reaches back to ("Loss size" on
   // the window's first days is measured against them) — one tiny query each.
-  const [dayResult, statsResult, { atrStopTarget, includeFlow, entryRules, rulesSig }, riskHistory] = await Promise.all([
+  const [dayResult, statsResult, { atrStopTarget, includeFlow, entryRules, runnerRules, rulesSig }, riskHistory] = await Promise.all([
     sb.from('trading_days')
       .select('id, date, eod_pnl, day_type, day_types, prep_notes_json, achievements_json')
       .gte('date', start)
@@ -130,12 +130,12 @@ export async function loadPeriodDays(sb: AnyClient, start: string, end: string):
         },
         tradesByDay.get(d.id) ?? [],
         prepAtrByDay.get(d.id) ?? null,
-        { atrStopTarget, entryRules },
+        { atrStopTarget, entryRules, runnerRules },
       )
   })
 
   // Finish each day's TapeScore — Risk's loss size needs the days before it.
-  const scored = scoreDayRollups(rolledUp, riskHistory, { includeFlow })
+  const scored = scoreDayRollups(rolledUp, riskHistory, { includeFlow, runnerOwn: runnerRules.some(r => r.on) })
   const out: PeriodDay[] = days.map((d, i) => ({
     rollup: scored[i],
     commitment: d.prep_notes_json?.commitment ?? null,

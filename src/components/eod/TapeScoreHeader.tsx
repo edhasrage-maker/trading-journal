@@ -5,6 +5,7 @@ import type { EodAiAnalysis } from '@/lib/supabase/types'
 import { tapeScoreFromAnalyses, tapeScoreDaySentence, type TapeScoreResult } from '@/lib/tapescore'
 import { dayTradeInputs, dayTradeSums, type PartsTrade } from '@/lib/exit-rollup'
 import type { EntryRuleConfig } from '@/lib/entry-rules'
+import type { RunnerRuleConfig } from '@/lib/runner-rules'
 import type { RiskYardstick } from '@/lib/exit-score'
 import { AXIS_DESC, axisTooltip } from '@/lib/tapescore-axes'
 import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
@@ -34,6 +35,7 @@ export default function TapeScoreHeader({
   atrStopTarget,
   includeFlow = true,
   entryRules,
+  runnerRules,
   tradeCount,
   winRate,
   pnl,
@@ -56,6 +58,8 @@ export default function TapeScoreHeader({
   includeFlow?: boolean
   /** The trader's entry rules — Entry's "Entry rules" part. */
   entryRules?: EntryRuleConfig[]
+  /** The trader's runner rules — Exit's "Runner rules" part where one counts. */
+  runnerRules?: RunnerRuleConfig[]
   tradeCount: number
   /** Share of the day's trades that closed green, 0-100. */
   winRate: number
@@ -69,12 +73,12 @@ export default function TapeScoreHeader({
   // takes (store the day's inputs, then score them against the risk yardstick),
   // so this header and the dashboard can't disagree about the same day.
   const tradeSums = useMemo(
-    () => dayTradeSums(dayTradeInputs(trades, atrStopTarget, entryRules), riskYardstick),
-    [trades, atrStopTarget, entryRules, riskYardstick],
+    () => dayTradeSums(dayTradeInputs(trades, atrStopTarget, entryRules, runnerRules), riskYardstick),
+    [trades, atrStopTarget, entryRules, runnerRules, riskYardstick],
   )
   const result = useMemo(
-    () => tapeScoreFromAnalyses(analysis, prepScore, tradeSums, { includeFlow }),
-    [analysis, prepScore, tradeSums, includeFlow],
+    () => tapeScoreFromAnalyses(analysis, prepScore, tradeSums, { includeFlow, runnerOwn: !!runnerRules?.some(r => r.on) }),
+    [analysis, prepScore, tradeSums, includeFlow, runnerRules],
   )
   const scored = showScore && result != null
   // An empty day with nothing graded has nothing to say yet.

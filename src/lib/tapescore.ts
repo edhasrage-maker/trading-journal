@@ -142,6 +142,10 @@ export interface TapeScoreOptions {
   /** The trader's setting: include the order-flow Score in Entry. On unless
    *  switched off (see includeFlowScoreInEntry in scoring-profile.ts). */
   includeFlow?: boolean
+  /** The trader has runner rules of their own (Settings → Trading Rules): the
+   *  Exit "Runner rules" part says "your rules". Display only — the sums
+   *  already carry which rules graded each trade. */
+  runnerOwn?: boolean
   /** "No size-up after a loss", resolved against the trader's risk yardstick
    *  going into the day: how many trades sized up. Undefined = the audit is
    *  taken as given (the caller already applied it, or there is nothing to
@@ -357,6 +361,7 @@ export function finishTapeScore(
       risk: axes.risk.parts, entry: axes.entry.parts, exit: axes.exit.parts,
       rulesKept: base.passCount, rulesOf: base.railCount,
       flowOn: includeFlow, checklistLegacy: base.checklistLegacy && base.checklist != null,
+      runnerOwn: !!opts.runnerOwn,
     },
   }
 }
@@ -528,6 +533,7 @@ export function aggregateTapeScore(days: (TapeScoreDay | null | undefined)[]): T
           rulesOf: riskDays.length > 0 ? total(riskDays.map(d => d.tapescore.components.railCount)) : null,
           flowOn: includeFlow,
           checklistLegacy: false,
+          runnerOwn: axisDays.some(d => d.tapescore.parts?.runnerOwn),
         }
       : null,
   }

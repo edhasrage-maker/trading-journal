@@ -30,6 +30,7 @@ import type { Trade } from '@/lib/supabase/types'
 import { ScoreChip, ScoreDetail } from './ScoreChip'
 import { RulesChip, RulesDetail } from './RulesChip'
 import { evaluateRules, type EntryRuleConfig, type RuleResult } from '@/lib/entry-rules'
+import { evaluateRunnerRules, readRunner, type RunnerResult, type RunnerRuleConfig } from '@/lib/runner-rules'
 import { useFlowScores, flowScoreFor, entryCtxFor } from '@/lib/use-flow-scores'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'score' | 'r' | 'mfe' | 'mae'
@@ -56,6 +57,7 @@ const TOGGLEABLE_COLS = [
   { key: 'r', label: 'R' },
   { key: 'mae', label: 'MAE · MFE' },
   { key: 'mfe', label: 'Kept' },
+  { key: 'runner', label: 'Runner' },
   { key: 'postExit', label: 'After exit' },
 ] as const
 type ColKey = (typeof TOGGLEABLE_COLS)[number]['key']
@@ -175,6 +177,9 @@ interface Props {
   /** The trader's entry rules (Settings → Trading Rules). With any switched on,
    *  the review table shows a Rules column next to Score. */
   entryRules?: EntryRuleConfig[]
+  /** The trader's runner rules. With any switched on, the review table shows a
+   *  Runner column next to Kept (a chip only on trades that kept a runner). */
+  runnerRules?: RunnerRuleConfig[]
 }
 
 /**
@@ -248,6 +253,7 @@ export default function SessionTradeTable({
   giveBackAtr = 1,
   postExitByTradeId,
   entryRules,
+  runnerRules,
 }: Props) {
   // Capture (live Intraday) vs review (EOD recap). Every judgment column and the
   // AI sub-rows are gated OFF in capture; the review path evaluates exactly as
@@ -265,6 +271,21 @@ export default function SessionTradeTable({
     if (!hasRules) return null
     const ctx = entryCtxFor(t, liveEntry)
     return { results: evaluateRules(activeRules, ctx, t), readAt: ctx?.read_at ?? null }
+  }
+  // The trader's runner rules, judged from the trade's own fills (src/lib/runner-rules.ts).
+  const activeRunner = useMemo(() => (runnerRules ?? []).filter(r => r.on), [runnerRules])
+  const hasRunner = !isCapture && activeRunner.length > 0
+  const runnerOf = (t: Trade): { results: RunnerResult[] | null; empty: string; foot: string } | null => {
+    if (!hasRunner) return null
+    const results = evaluateRunnerRules(activeRunner, t)
+    const rd = readRunner(t)
+    const empty = rd.runner ? 'Nothing could be checked on this runner.'
+      : rd.why === 'no_tp1' ? 'No TP1 logged, so no runner to grade.'
+      : rd.why === 'all_out_at_tp1' ? 'No runner: everything came off at TP1.'
+      : rd.why === 'no_fills' ? 'No exit fills on this trade.'
+      : 'No runner: nothing came off at TP1.'
+    const atr = (t as { entry_atr_1m?: number | null }).entry_atr_1m
+    return { results, empty, foot: `Read from your fills and the logged TP1.${atr != null ? ` ATR at entry ${Number(atr).toFixed(2)}.` : ''}` }
   }
   // Row-click action: edit in place when an edit handler is provided (Intraday
   // inline form, or the EOD recap drawer), else open the full log (deep-link).
@@ -341,6 +362,7 @@ export default function SessionTradeTable({
   // dismiss. Pinned top-right of the viewport so they don't push the table.
   const [openScoreId, setOpenScoreId] = useState<string | null>(null)
   const [openRulesId, setOpenRulesId] = useState<string | null>(null)
+  const [openRunnerId, setOpenRunnerId] = useState<string | null>(null)
   const [mfeOpen, setMfeOpen] = useState(false)
   const [maeOpen, setMaeOpen] = useState(false)
   const mfeRef = useRef<HTMLDivElement>(null)
@@ -433,6 +455,7 @@ export default function SessionTradeTable({
   const showMfe = isCapture ? false : cols.mfe
   const showMae = isCapture ? false : cols.mae
   const showPostExit = isCapture ? false : cols.postExit
+  const showRunner = hasRunner && cols.runner
   // Column order for the <colgroup> that carries dragged widths. A colgroup is
   // POSITIONAL, so this has to track the header row exactly — hence it is built
   // from the very same flags, immediately below them, rather than restated.
@@ -461,6 +484,7 @@ export default function SessionTradeTable({
     ...(showR ? ['r'] : []),
     ...(showMae ? ['mae'] : []),
     ...(showMfe ? ['mfe'] : []),
+    ...(showRunner ? ['runner'] : []),
     ...(showPostExit ? ['postExit'] : []),
     'actions',
   ]
@@ -564,6 +588,7 @@ export default function SessionTradeTable({
             const isLong = t.direction === 'long'
             const flowScore = scoreOf(t)
             const rules = rulesOf(t)
+            const runner = runnerOf(t)
             return (
               <div
                 key={t.id}
@@ -581,12 +606,16 @@ export default function SessionTradeTable({
                   {rules && (
                     <RulesChip results={rules.results} open={openRulesId === t.id} onToggle={() => setOpenRulesId(openRulesId === t.id ? null : t.id)} />
                   )}
+                  {runner?.results && (
+                    <RulesChip results={runner.results} open={openRunnerId === t.id} onToggle={() => setOpenRunnerId(openRunnerId === t.id ? null : t.id)} title="Your runner rules, passed out of checked. Click for the reasons." />
+                  )}
                   <span className={`text-sm font-semibold ${(pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
                   </span>
                 </div>
                 {flowScore && openScoreId === t.id && <ScoreDetail score={flowScore} />}
                 {rules && openRulesId === t.id && <RulesDetail results={rules.results} readAt={rules.readAt} />}
+                {runner?.results && openRunnerId === t.id && <RulesDetail results={runner.results} readAt={null} label="Runner rules" foot={runner.foot} grade="Exit" />}
                 {overviewText && (
                   <p
                     className={`text-xs text-gray-500 mt-1.5 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
@@ -623,7 +652,7 @@ export default function SessionTradeTable({
           {colsOpen && (
             <div className="absolute right-0 top-full mt-1 z-30 w-44 bg-gray-900 border border-gray-700 rounded-lg p-1.5 shadow-xl">
               <p className="px-2 py-1 text-[10px] uppercase tracking-wider text-gray-600">Show columns</p>
-              {TOGGLEABLE_COLS.filter(c => c.key !== 'rules' || hasRules).map(c => (
+              {TOGGLEABLE_COLS.filter(c => (c.key !== 'rules' || hasRules) && (c.key !== 'runner' || hasRunner)).map(c => (
                 <label
                   key={c.key}
                   className="flex items-center gap-2 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800 rounded cursor-pointer select-none"
@@ -740,6 +769,7 @@ export default function SessionTradeTable({
           const postCls = kind === 'stopped' || kind === 'target' ? 'text-gray-400' : postVerdict ? VERDICT_TONE_CLASS[postVerdict.tone] : 'text-gray-600'
           const flowScore = scoreOf(t)
           const rules = rulesOf(t)
+          const runner = runnerOf(t)
           return (
             <div
               key={t.id}
@@ -770,6 +800,9 @@ export default function SessionTradeTable({
                   {rules && (
                     <RulesChip results={rules.results} open={openRulesId === t.id} onToggle={() => setOpenRulesId(openRulesId === t.id ? null : t.id)} />
                   )}
+                  {runner?.results && (
+                    <RulesChip results={runner.results} open={openRunnerId === t.id} onToggle={() => setOpenRunnerId(openRunnerId === t.id ? null : t.id)} title="Your runner rules, passed out of checked. Click for the reasons." />
+                  )}
                   <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
                   </span>
@@ -778,6 +811,7 @@ export default function SessionTradeTable({
               <div className="px-3 py-2.5">
                 {flowScore && openScoreId === t.id && <ScoreDetail score={flowScore} />}
                 {rules && openRulesId === t.id && <RulesDetail results={rules.results} readAt={rules.readAt} />}
+                {runner?.results && openRunnerId === t.id && <RulesDetail results={runner.results} readAt={null} label="Runner rules" foot={runner.foot} grade="Exit" />}
                 {setup && (
                   <span className="inline-block text-[11px] text-gray-300 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded mb-2">{setup}</span>
                 )}
@@ -958,6 +992,7 @@ export default function SessionTradeTable({
                   </div>
                 )}
               <ResizeHandle id="mfe" onStart={startResize} onReset={resetWidths} /></th>}
+              {showRunner && <th data-col="runner" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden" title="Your runner rules, passed out of checked. Click for the reasons.">Runner<ResizeHandle id="runner" onStart={startResize} onReset={resetWidths} /></th>}
               {showPostExit && <th data-col="postExit" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap" title="What the market did in the 15 min after your last fill. 'stopped' and 'target hit' are the plan running its course, so they say what price did without a verdict. A verdict appears only when you closed the trade by hand.">After exit<ResizeHandle id="postExit" onStart={startResize} onReset={resetWidths} /></th>}
               <th data-col="actions" className="w-8" />
             </tr>
@@ -990,6 +1025,7 @@ export default function SessionTradeTable({
               // The trade's Score (order flow at the fill). Review table only; absent until scored.
               const flowScore = scoreOf(t)
               const rules = rulesOf(t)
+              const runner = runnerOf(t)
               return (
                 <Fragment key={t.id}>
                 <tr
@@ -1218,6 +1254,12 @@ export default function SessionTradeTable({
                       </>
                     )
                   })()}
+                  {showRunner && (
+                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                      <RulesChip results={runner?.results ?? []} open={openRunnerId === t.id} onToggle={() => setOpenRunnerId(openRunnerId === t.id ? null : t.id)}
+                        title="Your runner rules, passed out of checked. Click for the reasons." emptyTitle={runner?.empty ?? ''} />
+                    </td>
+                  )}
                   {showPostExit && (() => {
                     const ext = postExitByTradeId?.[t.id]
                     // The plan running its course gets no verdict — a stop-out used
@@ -1310,6 +1352,14 @@ export default function SessionTradeTable({
                     <td className="pr-2" />
                     <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
                       <ScoreDetail score={flowScore} />
+                    </td>
+                  </tr>
+                )}
+                {runner?.results && showRunner && openRunnerId === t.id && (
+                  <tr className={`${hasOverviewRow ? '' : 'border-b border-gray-800'} ${rowBg}`}>
+                    <td className="pr-2" />
+                    <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
+                      <RulesDetail results={runner.results} readAt={null} label="Runner rules" foot={runner.foot} grade="Exit" />
                     </td>
                   </tr>
                 )}

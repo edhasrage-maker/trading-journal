@@ -22,6 +22,7 @@ import { tagKey } from './tradezella-import'
 import { symbolRoot } from './futures-symbols'
 import { loadTapeScoreSettings } from './day-stats-server'
 import { describeRule, evaluateRules, ruleLabel, shortDate, type EntryRuleConfig, type RuleResult } from './entry-rules'
+import { describeRunnerRule, evaluateRunnerRules, runnerRuleLabel, type RunnerResult, type RunnerRuleConfig } from './runner-rules'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -293,8 +294,10 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
   const giveBackAtr = await getGiveBackAtr(supabase)
   // The trader's own entry rules (Settings → Trading Rules), judged on each
   // native trade from the snapshot of what printed before its fill.
-  const { entryRules } = await loadTapeScoreSettings(supabase)
+  const { entryRules, runnerRules } = await loadTapeScoreSettings(supabase)
   const activeRules: EntryRuleConfig[] = entryRules.filter(r => r.on)
+  // …and their runner rules, judged from each native trade's own fills.
+  const activeRunner: RunnerRuleConfig[] = runnerRules.filter(r => r.on)
 
   // Pull trading_days first so we have the day-type map for cross-tabulation.
   const { data: days } = await supabase
@@ -339,7 +342,7 @@ export async function buildCoachContext(supabase: AnyClient, opts: CoachContextO
     const { rows } = await fetchByDayIds(
       supabase,
       'trades',
-      'id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, exit_price, stop_price, high_during_position, low_during_position, mfe_dollars_per_leg, exits_json, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes, review_json',
+      'id, trading_day_id, entry_time, exit_time, direction, pnl, entry_price, exit_price, stop_price, tp1_price, high_during_position, low_during_position, mfe_dollars_per_leg, exits_json, entry_atr_1m, quantity, symbol, tags_json, structure_5m_alignment, structure_5m_regime, notes, review_json',
       dayIds,
       { paginate: true, refine: q => q.order('entry_time', { ascending: false }).order('id', { ascending: false }) },
     )
@@ -848,6 +851,37 @@ NO TRADE DATA — the trader logged no trades in this window.
     }),
   ].join('\n')
 
+  // The trader's runner rules: pass vs fail over the window's counted runners.
+  const runnerByTrade = new Map<string, RunnerResult[]>()
+  if (activeRunner.length) {
+    for (const t of trades) {
+      if (t._source !== 'native') continue
+      const res = evaluateRunnerRules(activeRunner, t as never)
+      if (res) runnerByTrade.set(t.id, res)
+    }
+  }
+  const runnerRulesLines = !activeRunner.length ? '' : [
+    '',
+    "THE TRADER'S RUNNER RULES (their own, set in Settings → Trading Rules; how they manage what is left after TP1,",
+    'judged by the app from their fills against the TP1 logged on the trade. Only RUNNERS are judged: trades that took',
+    'something at TP1 or better and kept a piece on. "unknown" = the fills cannot show it: say unknown, never guess.',
+    'These follow the TP2 study (holding a runner is variance, not edge); grade the mechanics, not the P&L. Group =',
+    'pass / fail over this window\'s counted runners, as trades / win rate / PF):',
+    ...activeRunner.map(r => {
+      let pw = 0, pl = 0, pn = 0, pwin = 0, fw = 0, fl = 0, fn = 0, fwin = 0, unk = 0
+      for (const t of trades) {
+        const res = runnerByTrade.get(t.id)?.find(x => x.id === r.id)
+        if (!res || !res.counted) continue
+        const pnl = t.pnl ?? 0
+        if (res.status === 'unknown') { unk++; continue }
+        if (res.status === 'pass') { pn++; if (pnl > 0) { pwin++; pw += pnl } else pl -= pnl }
+        else { fn++; if (pnl > 0) { fwin++; fw += pnl } else fl -= pnl }
+      }
+      const grp = (n: number, win: number, w: number, l: number) => n === 0 ? '0' : `${n} / ${Math.round((win / n) * 100)}% / ${l > 0 ? (w / l).toFixed(2) : w > 0 ? '∞' : '0'}`
+      return `  ${runnerRuleLabel(r)} — ${describeRunnerRule(r)}. Counts from ${shortDate(r.from)}. In window: pass ${grp(pn, pwin, pw, pl)} · fail ${grp(fn, fwin, fw, fl)} · unknown ${unk}`
+    }),
+  ].join('\n')
+
   // Recent trades (newest first, capped at recentTradesLimit)
   const recent = trades.slice(0, recentTradesLimit).map(t => {
     const date = t._date || '?'
@@ -863,7 +897,7 @@ NO TRADE DATA — the trader logged no trades in this window.
     const mfeAtr = d?.mfeAtr ?? null
     const maeAtr = d?.maeAtr ?? null
     const sym = t.symbol ? symbolRoot(t.symbol) : null
-    return `${date}${src} ${sym ? sym + ' ' : ''}${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''}${mfeAtr != null ? ` mfe×ATR=${mfeAtr.toFixed(2)}` : ''}${maeAtr != null ? ` mae×ATR=${maeAtr.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}${rulesText(rulesByTrade.get(t.id))}`
+    return `${date}${src} ${sym ? sym + ' ' : ''}${dir}${t.quantity ?? '?'} pnl=${t.pnl?.toFixed(0) ?? '?'}${r != null ? ` R=${r.toFixed(2)}` : ''}${mfeR != null ? ` mfeR=${mfeR.toFixed(2)}` : ''}${cap != null ? ` cap=${Math.round(cap * 100)}%` : ''}${mae != null ? ` mae=${Math.round(mae * 100)}%` : ''}${mfeAtr != null ? ` mfe×ATR=${mfeAtr.toFixed(2)}` : ''}${maeAtr != null ? ` mae×ATR=${maeAtr.toFixed(2)}` : ''} setup=[${setups}]${mistakes !== '—' ? ' mistake=['+mistakes+']' : ''}${t.structure_5m_alignment ? ' 5m='+t.structure_5m_alignment : ''}${rulesText(rulesByTrade.get(t.id))}${rulesText(runnerByTrade.get(t.id), 'runner')}`
   }).join('\n')
 
   // Optional week-over-week comparison — only meaningful for the chatbox's
@@ -1149,6 +1183,7 @@ ${Array.from(structureBuckets.entries()).map(([k, b]) => `  ${k}: ${b.count} tra
 
 ${reviewLines}
 ${entryRulesLines}
+${runnerRulesLines}
 
 BY INSTRUMENT (ES and NQ move differently in ATR terms — use this bucket; the instrument split IS available, never say it is not):
 ${instrumentLines}
@@ -1164,8 +1199,8 @@ ${coachingThread ? '\n' + coachingThread + '\n' : ''}
 
 /** A recent-trade line's entry rules: " rules[L1 fail: 08:39, 08:40 and 08:41 all closed red… · L2 pass]".
  *  Fails carry their reason; rules that do not count yet on the trade are marked. */
-function rulesText(results: RuleResult[] | undefined): string {
+function rulesText(results: (RuleResult | RunnerResult)[] | undefined, tag = 'rules'): string {
   if (!results?.length) return ''
   const parts = results.map(r => `${r.name} ${r.status}${r.status === 'fail' ? `: ${r.reason}` : ''}${r.counted ? '' : ' (not counted yet)'}`)
-  return ` rules[${parts.join(' · ')}]`
+  return ` ${tag}[${parts.join(' · ')}]`
 }

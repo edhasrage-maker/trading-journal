@@ -21,6 +21,7 @@ import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import TapeScoreHeader from './TapeScoreHeader'
 import type { EntryRuleConfig } from '@/lib/entry-rules'
+import type { RunnerRuleConfig } from '@/lib/runner-rules'
 import RecordingCommentary from './RecordingCommentary'
 import BrowserRecap from './BrowserRecap'
 import TradeManagementCard from '@/components/TradeManagementCard'
@@ -86,6 +87,8 @@ interface Props {
   includeFlowScore?: boolean
   /** The trader's entry rules (Settings → Trading Rules) — the Rules column and Entry's "Entry rules" part. */
   entryRules?: EntryRuleConfig[]
+  /** The trader's runner rules — the Runner column and Exit's "Runner rules" part. */
+  runnerRules?: RunnerRuleConfig[]
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -117,6 +120,7 @@ export default function EodClient({
   atrStopTarget = 1,
   includeFlowScore = true,
   entryRules,
+  runnerRules,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -1014,6 +1018,7 @@ export default function EodClient({
         atrStopTarget={atrStopTarget}
         includeFlow={includeFlowScore}
         entryRules={entryRules}
+        runnerRules={runnerRules}
         tradeCount={trades.length}
         winRate={winRate}
         pnl={computedPnl}
@@ -1203,6 +1208,7 @@ export default function EodClient({
         postExitByTradeId={postExitByTradeId}
         bars={bars}
         entryRules={entryRules}
+        runnerRules={runnerRules}
       />
 
       {/* Right-click menu on a trade row → open the full log, or highlight the

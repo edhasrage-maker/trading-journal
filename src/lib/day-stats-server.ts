@@ -21,7 +21,9 @@ import {
 } from './day-stats'
 import { AVG_RISK_WINDOW_TRADES, normalizeAtrStopTarget, type RiskDay } from './exit-rollup'
 import { includeFlowScoreInEntry, resolveRubric, type ScoringProfile } from './scoring-profile'
-import { entryRulesSig, readEntryRules, type EntryRuleConfig } from './entry-rules'
+import { readEntryRules, type EntryRuleConfig } from './entry-rules'
+import { readRunnerRules, type RunnerRuleConfig } from './runner-rules'
+import { traderRulesSig } from './exit-rollup'
 import { pickMarketContext } from './market-context-select'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,11 +43,15 @@ export interface TapeScoreSettings {
   /** The trader's entry rules (`entry_rules`; none = []) — Entry's "Entry
    *  rules" part. Baked into the cached sums; `rulesSig` says which. */
   entryRules: EntryRuleConfig[]
+  /** The trader's runner rules (`runner_rules`; none = []) — Exit's "Runner rules"
+   *  part on the trades where one counts. Baked into the cached sums. */
+  runnerRules: RunnerRuleConfig[]
+  /** traderRulesSig of both: what a cached day must have been computed with. */
   rulesSig: string
 }
 
 /** What the cached day sums are computed with — a cached row made with anything else is stale. */
-export type StatsBake = Pick<TapeScoreSettings, 'atrStopTarget' | 'entryRules' | 'rulesSig'>
+export type StatsBake = Pick<TapeScoreSettings, 'atrStopTarget' | 'entryRules' | 'runnerRules' | 'rulesSig'>
 
 /**
  * The trader's TapeScore settings from their scoring profile, in one read. The
@@ -54,7 +60,7 @@ export type StatsBake = Pick<TapeScoreSettings, 'atrStopTarget' | 'entryRules' |
  * column (the local owner build) or a missing row is the defaults.
  */
 export async function loadTapeScoreSettings(supabase: AnyClient): Promise<TapeScoreSettings> {
-  const defaults: TapeScoreSettings = { atrStopTarget: 1, includeFlow: includeFlowScoreInEntry(null), entryRules: [], rulesSig: '' }
+  const defaults: TapeScoreSettings = { atrStopTarget: 1, includeFlow: includeFlowScoreInEntry(null), entryRules: [], runnerRules: [], rulesSig: '' }
   try {
     const { data, error } = await supabase
       .from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle()
@@ -71,15 +77,16 @@ export async function loadTapeScoreSettings(supabase: AnyClient): Promise<TapeSc
   }
 }
 
-function rulesOf(sp: ScoringProfile | null): { entryRules: EntryRuleConfig[]; rulesSig: string } {
+function rulesOf(sp: ScoringProfile | null): { entryRules: EntryRuleConfig[]; runnerRules: RunnerRuleConfig[]; rulesSig: string } {
   const entryRules = readEntryRules(sp?.entry_rules)
-  return { entryRules, rulesSig: entryRulesSig(entryRules) }
+  const runnerRules = readRunnerRules(sp?.runner_rules)
+  return { entryRules, runnerRules, rulesSig: traderRulesSig(entryRules, runnerRules) }
 }
 
-/** Just what the per-day write path bakes into the cache: the ATR stop setting and the entry rules. */
+/** Just what the per-day write path bakes into the cache: the ATR stop setting and the trader's own rules. */
 export async function loadStatsBake(supabase: AnyClient): Promise<StatsBake> {
-  const { atrStopTarget, entryRules, rulesSig } = await loadTapeScoreSettings(supabase)
-  return { atrStopTarget, entryRules, rulesSig }
+  const { atrStopTarget, entryRules, runnerRules, rulesSig } = await loadTapeScoreSettings(supabase)
+  return { atrStopTarget, entryRules, runnerRules, rulesSig }
 }
 
 /** Prior days fetched per round trip while looking for 30 stop trades. */
@@ -203,7 +210,7 @@ export async function recomputeDayStats(supabase: AnyClient, dayId: string): Pro
     const trades = (tradesRes?.data ?? []) as TradeForStats[]
     const prepAtr = pickMarketContext((ctxRes?.data as { symbol: string | null; atr_1m: number | null }[] | null) ?? [], trades)?.atr_1m ?? null
 
-    const rollup = computeDayStats(day, trades, prepAtr, { atrStopTarget: bake.atrStopTarget, entryRules: bake.entryRules })
+    const rollup = computeDayStats(day, trades, prepAtr, { atrStopTarget: bake.atrStopTarget, entryRules: bake.entryRules, runnerRules: bake.runnerRules })
     const { error } = await supabase
       .from('trading_days')
       .update({ stats_json: toStoredStats(rollup), stats_version: STATS_VERSION })

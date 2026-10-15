@@ -60,7 +60,7 @@ export async function GET(req: Request) {
     // Both feed the per-trade parts: the trader's TapeScore settings (ATR stop
     // setting, order-flow Score on/off), and the days before the range that the
     // risk-yardstick rule reaches back to.
-    const [{ atrStopTarget, includeFlow, entryRules }, riskHistory] = await Promise.all([
+    const [{ atrStopTarget, includeFlow, entryRules, runnerRules }, riskHistory] = await Promise.all([
       loadTapeScoreSettings(supabase),
       loadRiskHistory(supabase, from),
     ])
@@ -139,9 +139,9 @@ export async function GET(req: Request) {
     })
     const sessionById = new Map(
       scoreDayRollups(
-        days.map(d => computeDayStats(dayInput(d), allByDay.get(d.id) ?? [], prepAtr.get(d.id) ?? null, { atrStopTarget, entryRules })),
+        days.map(d => computeDayStats(dayInput(d), allByDay.get(d.id) ?? [], prepAtr.get(d.id) ?? null, { atrStopTarget, entryRules, runnerRules })),
         riskHistory,
-        { includeFlow },
+        { includeFlow, runnerOwn: runnerRules.some(r => r.on) },
       ).map(r => [r.id, r]),
     )
 
@@ -152,7 +152,7 @@ export async function GET(req: Request) {
       .map(d => {
         const session = sessionById.get(d.id)
         return {
-          ...computeDayStats(dayInput(d), matchedByDay.get(d.id)!, prepAtr.get(d.id) ?? null, { atrStopTarget, entryRules }),
+          ...computeDayStats(dayInput(d), matchedByDay.get(d.id)!, prepAtr.get(d.id) ?? null, { atrStopTarget, entryRules, runnerRules }),
           tapescore: session?.tapescore ?? null,
           trade_sums: session?.trade_sums ?? null,
           // The rules audit is a whole-session fact too (the size-up rule is

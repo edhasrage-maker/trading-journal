@@ -19,8 +19,7 @@ import {
   type EntryRuleConfig, type EntryRuleType, type TallyTrade, type TapeMode,
 } from '@/lib/entry-rules'
 import type { TradeEntryCtx } from '@/lib/supabase/types'
-
-const field = 'bg-gray-950 border border-gray-700 text-gray-200 rounded-md px-1.5 py-0.5 text-[13px] focus:outline-none focus:border-blue-500'
+import { NumInput, TextInput, ruleField as field } from './RuleInputs'
 const SAVE_DELAY_MS = 500
 
 export default function EntryRulesSetting() {
@@ -220,37 +219,5 @@ function RuleCard({ rule: r, trades, onChange, onRemove }: {
         </p>
       )}
     </div>
-  )
-}
-
-/** A number box that keeps what is typed and saves on blur / Enter. */
-function NumInput({ value, decimals, aria, onCommit }: { value: number; decimals: number; aria: string; onCommit: (v: number) => void }) {
-  const shown = decimals ? value.toFixed(decimals) : String(Math.round(value))
-  const [text, setText] = useState(shown)
-  const commit = () => {
-    const v = Number(text.replace(',', '.'))
-    if (Number.isFinite(v) && v >= 0) { if (v !== value) onCommit(decimals ? v : Math.round(v)) } else setText(shown)
-  }
-  return (
-    <input
-      value={text} inputMode="decimal" aria-label={aria}
-      onChange={e => setText(e.target.value)}
-      onBlur={commit}
-      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-      className={`${field} w-[52px] text-right tabular-nums`}
-    />
-  )
-}
-
-function TextInput({ value, aria, onCommit }: { value: string; aria: string; onCommit: (v: string) => void }) {
-  const [text, setText] = useState(value)
-  return (
-    <input
-      value={text} aria-label={aria} maxLength={24}
-      onChange={e => setText(e.target.value)}
-      onBlur={() => { if (text !== value) onCommit(text) }}
-      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-      className={`${field} w-14 text-center font-bold`}
-    />
   )
 }
