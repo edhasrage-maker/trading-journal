@@ -1,0 +1,287 @@
+<title>Trade Grade Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the Recap trade table, its phone card, Settings → Tags and the Log page's tags, stacked; TapeScore carbon palette (light = chartbook). */
+:root {
+  color-scheme: dark;
+  --ground: #0C0D10; --panel: #131519; --panel2: #1B1E23; --line: #282C32; --hair: #1C2026;
+  --ink: #E8EAED; --mut: #969BA3; --faint: #5E636B;
+  --accent: #4F97CE; --accent-ink: #79B4E6; --pos: #4FC58E; --neg: #E0685F; --warn: #D6B24E;
+  --bar-mae: #8C352F; --bar-mae-soft: rgba(224,104,95,.35); --bar-mfe: #24704F; --bar-mfe-soft: rgba(79,197,142,.35); --bar-track: #282C32;
+  --display: 'Archivo', 'Hanken Grotesk', system-ui, sans-serif;
+  --body: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+  --bar-mae: #9A3340; --bar-mae-soft: rgba(154,51,64,.30); --bar-mfe: #1F7A6E; --bar-mfe-soft: rgba(31,122,110,.30); --bar-track: #D5D9E6;
+} }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+  --bar-mae: #9A3340; --bar-mae-soft: rgba(154,51,64,.30); --bar-mfe: #1F7A6E; --bar-mfe-soft: rgba(31,122,110,.30); --bar-track: #D5D9E6;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.page { max-width: 1040px; padding-inline: 16px; padding-block: 28px 64px; margin: 0 auto; display: grid; gap: 40px; }
+.note { font-size: 12px; color: var(--mut); border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 4px; }
+.note b { color: var(--ink); font-weight: 600; }
+.eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); margin: 0 0 10px; }
+p { margin: 0; }
+.mut { color: var(--mut); } .faint { color: var(--faint); } .small { font-size: 12px; } .xs { font-size: 11px; }
+.screen { display: grid; gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 760px; }
+th { text-align: left; font-weight: 400; color: var(--faint); font-size: 12px; padding: 0 14px 8px 0; white-space: nowrap; }
+td { padding: 9px 14px 9px 0; border-top: 1px solid var(--hair); white-space: nowrap; vertical-align: middle; }
+td.r, th.r { text-align: right; } td.c, th.c { text-align: center; }
+.short { color: var(--neg); } .pos { color: var(--pos); } .neg { color: var(--neg); }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font-family: var(--body); line-height: 1; }
+.chip .car { font-size: 9px; opacity: .6; }
+.chip.sel { box-shadow: 0 0 0 1px var(--accent-ink); }
+.unit { font-size: 11px; border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px; color: var(--mut); margin-left: 6px; }
+.help { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--faint); font-size: 9px; color: var(--faint); margin-left: 4px; }
+/* MAE · MFE: one column, one header; numbers sit at the two ends of the cell */
+.mm { display: grid; grid-template-columns: 48px 140px 48px; align-items: center; gap: 8px; justify-content: center; }
+.mm .a { text-align: right; } .mm .b { text-align: left; color: var(--mut); }
+.bar { position: relative; height: 8px; background: var(--bar-track); border-radius: 2px; }
+.bar .mae { position: absolute; right: 50%; top: 0; bottom: 0; background: var(--bar-mae); border-radius: 2px 0 0 2px; }
+.bar .mfe { position: absolute; left: 50%; top: 0; bottom: 0; background: var(--bar-mfe); border-radius: 0 2px 2px 0; }
+.bar .zero { position: absolute; left: calc(50% - 1px); top: -3px; height: 14px; width: 2px; background: var(--ink); }
+.past { display: block; font-size: 10px; color: var(--neg); font-weight: 600; text-align: center; }
+.na { color: var(--faint); }
+.detail-row td { border-top: 0; padding-top: 0; white-space: normal; }
+.detail { max-width: 800px; padding: 6px 0 12px; display: grid; gap: 10px; }
+.gradeline { font-size: 13px; font-weight: 600; }
+.gradeline span { color: var(--mut); font-weight: 400; }
+.sec { display: grid; gap: 6px; border-left: 2px solid var(--line); padding-left: 10px; }
+.sec h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--mut); }
+.lines { display: grid; grid-template-columns: 10px minmax(110px, 190px) 70px minmax(0, 1fr); gap: 5px 10px; align-items: baseline; font-size: 12.5px; }
+.lines.rules { grid-template-columns: 10px minmax(150px, 230px) 70px minmax(0, 1fr); }
+.dot { width: 7px; height: 7px; border-radius: 50%; align-self: center; }
+.dot.pass { background: var(--pos); } .dot.fail { background: var(--neg); } .dot.unk { background: var(--faint); }
+.nm { font-weight: 600; }
+.st { color: var(--mut); } .st.fail { color: var(--neg); } .st.pass { color: var(--pos); }
+.lbl { color: var(--faint); }
+.foot { font-size: 11px; color: var(--faint); }
+.split { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; align-items: start; }
+@media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+.phone { border: 1px solid var(--line); border-radius: 18px; padding: 12px; background: var(--ground); display: grid; gap: 8px; max-width: 360px; }
+.mcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; font-size: 13px; }
+.mrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tagbox { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 10px; background: var(--panel); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { font-size: 12px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); display: inline-flex; gap: 6px; align-items: center; }
+.tag.mist { border-color: color-mix(in srgb, var(--neg) 45%, var(--line)); }
+.auto { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent-ink); border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: 4px; padding: 0 4px; }
+</style>
+
+<div class="page">
+
+  <div class="note">
+    <p><b>Mockup.</b> Layout and labels are what gets built. Every number on this page is <b>your real Oct 14</b> (four MNQ shorts), computed from your trades with today's settings. The Rules and Runner columns are gone: both now live inside one per-trade <b>Score</b>.</p>
+    <p>Rules are called by a one-line description built from your numbers (change a number in Settings and the line follows). Your short names (L1, F3…) stay in Settings, show on hover, and are what the coach uses.</p>
+    <p>Score = the trade's grade: Entry and Exit averaged, each built like the day's. Entry = your entry rules 55% / order-flow Score 45% (the day's 30 : 24.5). Exit = profit kept 42 / stop respected 33 / runner rules 25, from the parts that apply. Risk, the checklist and plan adherence stay day-level.</p>
+  </div>
+
+  <!-- ═══ 1. RECAP TABLE ═══ -->
+  <section class="screen" aria-labelledby="s1">
+    <p class="eyebrow" id="s1">Recap → trade table (Oct 14). R, After exit and the other columns are unchanged and left out here</p>
+    <div class="card">
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>Time</th><th>Side</th><th class="r">Entry</th><th class="r">Qty</th><th class="r">P&amp;L</th>
+            <th class="r" title="This trade's grade: Entry and Exit averaged. Click for every reason.">Score</th>
+            <th class="c">MAE · MFE <span class="unit">$ ▾</span><span class="help">?</span></th>
+            <th class="c">Kept</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td>08:13:01</td><td class="short">Short</td><td class="r">30,387.00</td><td class="r">3</td><td class="r neg">−105.00</td>
+              <td class="r"><button class="chip" data-open="d1">34 <span class="car">▾</span></button></td>
+              <td><div class="mm"><span class="a">$105</span><span class="bar"><span class="mae" style="width:36%"></span><span class="mfe" style="width:12%"></span><span class="zero"></span></span><span class="b">$36</span></div><span class="past">past stop</span></td>
+              <td class="c na" title="Never got 1×ATR your way, so there was no exit to grade: an entry question, not an exit one.">N/A</td>
+            </tr>
+            <tr id="d1" class="detail-row" hidden><td colspan="8">
+              <div class="detail">
+                <p class="gradeline">Score 34 <span>· Entry 67 · Exit 0</span></p>
+                <div class="sec"><h4>Entry 67 · your entry rules 71 (5 of 7) · order-flow Score 62</h4>
+                  <div class="lines rules">
+                    <span class="dot fail"></span><span class="nm" title="L3">Last candle my way</span><span class="st fail">fail</span><span>08:12 closed green before your short.</span>
+                    <span class="dot fail"></span><span class="nm" title="F6">Heiken Ashi not already my colour (2+)</span><span class="st fail">fail</span><span>Heiken Ashi had been red for 12 candles (08:01 to 08:12) before your short.</span>
+                  </div>
+                  <p class="xs faint">The other five passed (No 3 candles in a row against, Tape inside ±2, No big candle against, No fading a big candle or spike, Tape not 2+ against); in the app every rule gets its line, as in the 08:19 row.</p>
+                </div>
+                <div class="sec"><h4>Exit 0 · stop respected 0</h4>
+                  <div class="lines">
+                    <span class="dot fail"></span><span>Stop respected</span><span class="st fail">no</span><span>Price traded past your stop by more than slippage while you were in.</span>
+                    <span class="dot unk"></span><span>Profit kept</span><span class="st">—</span><span class="mut">Never got 1×ATR your way: not an exit to grade.</span>
+                  </div>
+                </div>
+              </div>
+            </td></tr>
+
+            <tr>
+              <td>08:14:55</td><td class="short">Short</td><td class="r">30,393.00</td><td class="r">3</td><td class="r neg">−102.00</td>
+              <td class="r"><button class="chip" data-open="d2">92 <span class="car">▾</span></button></td>
+              <td><div class="mm"><span class="a">$102</span><span class="bar"><span class="mae" style="width:35%"></span><span class="mfe" style="width:12%"></span><span class="zero"></span></span><span class="b">$35</span></div><span class="past">past stop</span></td>
+              <td class="c na" title="Never got 1×ATR your way, so there was no exit to grade: an entry question, not an exit one.">N/A</td>
+            </tr>
+            <tr id="d2" class="detail-row" hidden><td colspan="8">
+              <div class="detail">
+                <p class="gradeline">Score 92 <span>· Entry 85 · Exit 100</span></p>
+                <div class="sec"><h4>Entry 85 · your entry rules 86 (6 of 7) · order-flow Score 84</h4>
+                  <div class="lines rules">
+                    <span class="dot fail"></span><span class="nm" title="L3">Last candle my way</span><span class="st fail">fail</span><span>08:13 closed green before your short.</span>
+                  </div>
+                </div>
+                <div class="sec"><h4>Exit 100 · stop respected 100</h4>
+                  <div class="lines">
+                    <span class="dot pass"></span><span>Stop respected</span><span class="st pass">yes</span><span>Out at your stop, within slippage.</span>
+                  </div>
+                </div>
+              </div>
+            </td></tr>
+
+            <tr>
+              <td>08:19:16</td><td class="short">Short</td><td class="r">30,428.00</td><td class="r">3</td><td class="r pos">+299.00</td>
+              <td class="r"><button class="chip sel" data-open="d3" aria-expanded="true">81 <span class="car">▴</span></button></td>
+              <td><div class="mm"><span class="a">$18</span><span class="bar"><span class="mae" style="width:6%"></span><span class="mfe" style="width:50%"></span><span class="zero"></span></span><span class="b">$299</span></div></td>
+              <td class="c">100%</td>
+            </tr>
+            <tr id="d3" class="detail-row"><td colspan="8">
+              <div class="detail">
+                <p class="gradeline">Score 81 <span>· Entry 61 · Exit 100</span></p>
+                <div class="sec"><h4>Entry 61 · your entry rules 43 (3 of 7) · order-flow Score 84</h4>
+                  <div class="lines rules">
+                    <span class="dot fail"></span><span class="nm" title="L1">No 3 candles in a row against</span><span class="st fail">fail</span><span>08:15 to 08:18 all closed green (4 in a row) before your short.</span>
+                    <span class="dot fail"></span><span class="nm" title="L2">Tape inside ±2</span><span class="st fail">fail</span><span>Tape Reader +3.1 over the 480 s before the fill, outside ±2 against your short.</span>
+                    <span class="dot fail"></span><span class="nm" title="L3">Last candle my way</span><span class="st fail">fail</span><span>08:18 closed green before your short.</span>
+                    <span class="dot pass"></span><span class="nm" title="L4">No big candle against (last 3)</span><span class="st pass">pass</span><span>No large green candle in 08:16–08:18 (largest 1.2× ATR).</span>
+                    <span class="dot pass"></span><span class="nm" title="F3">No fading a big candle or spike (3 min)</span><span class="st pass">pass</span><span>No large candle or delta spike against you in the 3 minutes before the fill.</span>
+                    <span class="dot fail"></span><span class="nm" title="F5">Tape not 2+ against</span><span class="st fail">fail</span><span>Tape Reader +3.1 over the 480 s before the fill: 2 or more against your short.</span>
+                    <span class="dot pass"></span><span class="nm" title="F6">Heiken Ashi not already my colour (2+)</span><span class="st pass">pass</span><span>Heiken Ashi was green on 08:18, not yet your colour.</span>
+                  </div>
+                  <div class="lines">
+                    <span class="dot pass"></span><span class="lbl">Who was in control?</span><span class="st">33/33</span><span>Sellers. Their last 2 pushes moved price down.</span>
+                    <span class="dot pass"></span><span class="lbl">Were big buyers trapped?</span><span class="st">22/22</span><span>There were no big buyers. Their push was weak and had already failed.</span>
+                    <span class="dot pass"></span><span class="lbl">Had sellers stepped in?</span><span class="st">22/22</span><span>Yes. Sellers pushed price down from this price at 08:06.</span>
+                    <span class="dot unk"></span><span class="lbl">At a key level?</span><span class="st">0/16</span><span>No. None nearby.</span>
+                    <span class="dot pass"></span><span class="lbl">Fading the tape?</span><span class="st">7/7</span><span>No. The tape leaned 4.1 against you, short of pressure (6).</span>
+                  </div>
+                </div>
+                <div class="sec"><h4>Exit 100 · profit kept 100 · runner rules 100 (2 of 2)</h4>
+                  <div class="lines">
+                    <span class="dot pass"></span><span>Profit kept</span><span class="st pass">100%</span><span>Reached your target.</span>
+                    <span class="dot unk"></span><span>Stop respected</span><span class="st">—</span><span class="mut">Your stop never came into play.</span>
+                  </div>
+                  <div class="lines rules">
+                    <span class="dot pass"></span><span class="nm" title="T1">60% off at TP1</span><span class="st pass">pass</span><span>2 of 3 contracts (67%) came off at 30,392.50 and 30,391.00 (08:29), at TP1 30,398.00 or better.</span>
+                    <span class="dot pass"></span><span class="nm" title="T2">Runner out at BE, 4× ATR or 13:00</span><span class="st pass">pass</span><span>The last contract left at 30,351.00 (08:37), 3.83× ATR from entry: the 4× ATR target.</span>
+                    <span class="dot unk"></span><span class="nm" title="T3">Breakeven only after TP1</span><span class="st">unknown</span><span>Your fills don't show when the stop moved.</span>
+                  </div>
+                </div>
+                <p class="foot">Entry reads only what printed before your fill at 08:19:16 PT. The two Tape Reader numbers (+3.1 and 4.1) are two windows of the same study: your rules use the 480 s before the fill (your research); the order-flow Score uses 8 clock minutes (your chart). The order-flow lines keep their exact wording; this note says which is which.</p>
+              </div>
+            </td></tr>
+
+            <tr>
+              <td>11:28:00</td><td class="short">Short</td><td class="r">30,168.00</td><td class="r">5</td><td class="r pos">+202.50</td>
+              <td class="r"><button class="chip" data-open="d4">67 <span class="car">▾</span></button></td>
+              <td><div class="mm"><span class="a">$95</span><span class="bar"><span class="mae" style="width:16%"></span><span class="mfe" style="width:48%"></span><span class="zero"></span></span><span class="b">$288</span></div></td>
+              <td class="c">70%</td>
+            </tr>
+            <tr id="d4" class="detail-row" hidden><td colspan="8">
+              <div class="detail">
+                <p class="gradeline">Score 67 <span>· Entry 64 · Exit 70</span></p>
+                <div class="sec"><h4>Entry 64 · your entry rules 71 (5 of 7) · order-flow Score 54</h4>
+                  <div class="lines rules">
+                    <span class="dot fail"></span><span class="nm" title="L3">Last candle my way</span><span class="st fail">fail</span><span>11:27 closed green before your short.</span>
+                    <span class="dot fail"></span><span class="nm" title="F6">Heiken Ashi not already my colour (2+)</span><span class="st fail">fail</span><span>Heiken Ashi had been red for 5 candles (11:23 to 11:27) before your short.</span>
+                  </div>
+                </div>
+                <div class="sec"><h4>Exit 70 · profit kept 70</h4>
+                  <div class="lines">
+                    <span class="dot fail"></span><span>Profit kept</span><span class="st">70%</span><span>Kept 70% of the best point the trade reached.</span>
+                  </div>
+                </div>
+              </div>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 2. PHONE CARD ═══ -->
+  <section class="screen" aria-labelledby="s2">
+    <p class="eyebrow" id="s2">On a phone: one Score chip; MAE · MFE as one line</p>
+    <div class="phone">
+      <div class="mcard">
+        <div class="mrow"><span>08:19:16 · <span class="short">▼ SHORT</span></span><span style="display:flex;gap:8px;align-items:center"><span class="chip">81 <span class="car">▾</span></span><span class="pos" style="font-weight:600">+$299</span></span></div>
+        <div class="mrow small"><span class="mut">MAE · MFE</span><span>$18 · $299</span></div>
+        <div class="mrow small"><span class="mut">Kept</span><span>100%</span></div>
+      </div>
+      <div class="mcard">
+        <div class="mrow"><span>08:13:01 · <span class="short">▼ SHORT</span></span><span style="display:flex;gap:8px;align-items:center"><span class="chip">34 <span class="car">▾</span></span><span class="neg" style="font-weight:600">−$105</span></span></div>
+        <div class="mrow small"><span class="mut">MAE · MFE</span><span>$105 past stop · $36</span></div>
+        <div class="mrow small"><span class="mut">Kept</span><span class="na">N/A</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 3 & 4. TAGS ═══ -->
+  <section class="screen" aria-labelledby="s3">
+    <p class="eyebrow" id="s3">Rule fails become mistake tags, added for you</p>
+    <div class="split">
+      <div class="tagbox">
+        <p class="small"><b>Settings → Tags → Mistakes</b> <span class="mut">· one tag per rule, named for what went wrong, created when the rule is</span></p>
+        <div class="tags">
+          <span class="tag mist">3+ candles in a row against <span class="auto">auto</span></span>
+          <span class="tag mist">Tape outside ±2 <span class="auto">auto</span></span>
+          <span class="tag mist">Last candle against <span class="auto">auto</span></span>
+          <span class="tag mist">Big candle against <span class="auto">auto</span></span>
+          <span class="tag mist">Faded a big candle or spike <span class="auto">auto</span></span>
+          <span class="tag mist">Tape 2+ against <span class="auto">auto</span></span>
+          <span class="tag mist">Heiken Ashi already my colour <span class="auto">auto</span></span>
+          <span class="tag mist">Under 60% at TP1 <span class="auto">auto</span></span>
+          <span class="tag mist">Runner closed by hand <span class="auto">auto</span></span>
+        </div>
+        <p class="xs faint">Rename or remove them like any tag. T3 has no tag: it can't be checked yet.</p>
+      </div>
+      <div class="tagbox">
+        <p class="small"><b>Log → 08:19:16 short</b> <span class="mut">· Mistakes</span></p>
+        <div class="tags">
+          <span class="tag mist">3+ candles in a row against <span class="auto">auto</span></span>
+          <span class="tag mist">Tape outside ±2 <span class="auto">auto</span></span>
+          <span class="tag mist">Last candle against <span class="auto">auto</span></span>
+          <span class="tag mist">Tape 2+ against <span class="auto">auto</span></span>
+        </div>
+        <p class="xs faint">Added when the app reads the tape for the trade (a few minutes after the fill) and, for runner rules, once the trade is closed. Only rules that count on the trade, and only fails; unknown never tags. If you change a rule, the app updates the tags it added; tags you add yourself are never touched.</p>
+      </div>
+    </div>
+    <div class="note">
+      <p><b>Your choice, its side effect:</b> the checklist item "no mistakes tagged" reads these tags too, so a rule fail also costs that checklist item in Entry. Tag performance in Analytics will list them under Mistakes.</p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+document.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+  const row = document.getElementById(b.dataset.open);
+  const open = row.hidden;
+  row.hidden = !open;
+  b.classList.toggle('sel', open);
+  b.setAttribute('aria-expanded', String(open));
+  const c = b.querySelector('.car'); if (c) c.textContent = open ? '▴' : '▾';
+}));
+</script>

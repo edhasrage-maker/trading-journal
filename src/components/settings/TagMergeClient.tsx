@@ -16,6 +16,8 @@ interface Props {
   categories: TagCategoryDef[]
   /** Built-ins they've removed, offered back in a restore row. */
   hidden: TagCategoryDef[]
+  /** Mistake tags the trader's own rules put on trades (src/lib/rule-tags.ts) — marked "auto". */
+  autoMistakes?: string[]
 }
 
 /** Levenshtein distance. Capped at `max+1` for cheap "is it close enough" checks. */
@@ -105,7 +107,7 @@ interface MergeResponse {
 }
 
 export default function TagMergeClient({
-  tags: initialTags, usage: initialUsage, categories: initialCategories, hidden: initialHidden,
+  tags: initialTags, usage: initialUsage, categories: initialCategories, hidden: initialHidden, autoMistakes = [],
 }: Props) {
   const router = useRouter()
   const [tags, setTags] = useState(initialTags)
@@ -740,6 +742,10 @@ export default function TagMergeClient({
                 >
                   <span>
                     {t.label} <span className="text-gray-500">({usageFor(t)})</span>
+                    {t.category === 'mistakes' && autoMistakes.includes(t.label) && (
+                      <span className="ml-1.5 text-[9px] uppercase tracking-wider text-blue-300 border border-blue-500/50 rounded px-1 align-middle"
+                        title="Added for you when one of your rules fails (Settings → Trading Rules).">auto</span>
+                    )}
                     {(t.aliases?.length ?? 0) > 0 && (
                       <span
                         className="text-blue-400/70 ml-1"

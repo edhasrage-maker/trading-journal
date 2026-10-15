@@ -186,6 +186,42 @@ export function describeRule(r: EntryRuleConfig): string {
   }
 }
 
+const bandText = (nq: number | undefined, es: number | undefined, dflt: number) => {
+  const a = fmtG(nq ?? dflt), b = fmtG(es ?? dflt)
+  return a === b ? a : `${a} (ES ${b})`
+}
+
+/** The rule in one line, built from its numbers — what the Recap shows instead of the short name
+ *  (founder, 2026-10-15). Change a number and the line follows. */
+export function ruleOneLiner(r: EntryRuleConfig): string {
+  switch (r.type) {
+    case 'candles_against': return `No ${r.n ?? 3} candles in a row against`
+    case 'last_candle': return 'Last candle my way'
+    case 'large_against': return `No big candle against (last ${r.n ?? 3})`
+    case 'fade_spike': return `No fading a big candle or spike (${r.n ?? 3} min)`
+    case 'ha_run': return `Heiken Ashi not already my colour (${r.n ?? 2}+)`
+    case 'tape':
+      if (r.mode === 'pressure') return 'Tape not past the pressure line'
+      if (r.mode === 'not_against') return `Tape not ${bandText(r.nq, r.es, 2)}+ against`
+      return `Tape inside ±${bandText(r.nq, r.es, 2)}`
+  }
+}
+
+/** The mistake tag a failed rule puts on the trade — what went wrong, in a few words. */
+export function ruleMistakeTag(r: EntryRuleConfig): string {
+  switch (r.type) {
+    case 'candles_against': return `${r.n ?? 3}+ candles in a row against`
+    case 'last_candle': return 'Last candle against'
+    case 'large_against': return 'Big candle against'
+    case 'fade_spike': return 'Faded a big candle or spike'
+    case 'ha_run': return 'Heiken Ashi already my colour'
+    case 'tape':
+      if (r.mode === 'pressure') return 'Tape past the pressure line'
+      if (r.mode === 'not_against') return `Tape ${bandText(r.nq, r.es, 2)}+ against`
+      return `Tape outside ±${bandText(r.nq, r.es, 2)}`
+  }
+}
+
 /** The label a rule goes by: the trader's name, else its type. */
 export const ruleLabel = (r: EntryRuleConfig) => r.name.trim() || RULE_TYPE_LABELS[r.type]
 
@@ -195,7 +231,10 @@ export type RuleStatus = 'pass' | 'fail' | 'unknown'
 
 export interface RuleResult {
   id: string
+  /** The trader's short name ("L1") — hover text, and what the coach uses. */
   name: string
+  /** The rule in one line, from its numbers ("No 3 candles in a row against") — what the Recap shows. */
+  label: string
   status: RuleStatus
   reason: string
   /** The rule counts toward Entry on this trade (it is on, and the trade is on or after its start date). */
@@ -255,7 +294,7 @@ const isSpike = (b: EntryCtxBar, volK: number, deltaK: number): boolean | null =
 export function evaluateRule(rule: EntryRuleConfig, ctx: TradeEntryCtx | null | undefined, trade: RuleTrade): RuleResult {
   const date = ptDateOfIso(trade.entry_time)
   const counted = rule.on && date != null && date >= rule.from
-  const res = (status: RuleStatus, reason: string): RuleResult => ({ id: rule.id, name: ruleLabel(rule), status, reason, counted })
+  const res = (status: RuleStatus, reason: string): RuleResult => ({ id: rule.id, name: ruleLabel(rule), label: ruleOneLiner(rule), status, reason, counted })
   const s = trade.direction === 'long' ? 1 : trade.direction === 'short' ? -1 : 0
   if (!s) return res('unknown', 'The trade has no direction.')
   if (!ctx) return res('unknown', 'No tick data for this trade.')
@@ -316,7 +355,7 @@ export function evaluateRule(rule: EntryRuleConfig, ctx: TradeEntryCtx | null | 
       const x = rule.mode === 'pressure' ? (es ? rule.press_es ?? 6.4 : rule.press_nq ?? 6) : (es ? rule.es ?? 2 : rule.nq ?? 2)
       const press = es ? rule.press_es ?? 6.4 : rule.press_nq ?? 6
       const you = s * ctx.tape                        // + = your way
-      const head = `Tape Reader ${signed(ctx.tape)} at the fill`
+      const head = `Tape Reader ${signed(ctx.tape)} over the 480 s before the fill`
       const pressNote = you <= -press ? `, past the pressure line (${fmtG(press)})` : ''
       if (rule.mode === 'not_against' || rule.mode === 'pressure') {
         const what = rule.mode === 'pressure' ? `the pressure line (${fmtG(x)})` : `${fmtG(x)}`

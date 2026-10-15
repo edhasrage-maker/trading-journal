@@ -1201,6 +1201,6 @@ ${coachingThread ? '\n' + coachingThread + '\n' : ''}
  *  Fails carry their reason; rules that do not count yet on the trade are marked. */
 function rulesText(results: (RuleResult | RunnerResult)[] | undefined, tag = 'rules'): string {
   if (!results?.length) return ''
-  const parts = results.map(r => `${r.name} ${r.status}${r.status === 'fail' ? `: ${r.reason}` : ''}${r.counted ? '' : ' (not counted yet)'}`)
+  const parts = results.map(r => `${r.name} (${r.label}) ${r.status}${r.status === 'fail' ? `: ${r.reason}` : ''}${r.counted ? '' : ' (not counted yet)'}`)
   return ` ${tag}[${parts.join(' · ')}]`
 }

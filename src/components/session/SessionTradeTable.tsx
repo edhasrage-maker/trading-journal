@@ -15,7 +15,7 @@
  * so the EOD render never changes. (Session-merge Pt 13, step 1.)
  */
 
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare, Upload } from 'lucide-react'
@@ -27,10 +27,10 @@ import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
 import type { Trade } from '@/lib/supabase/types'
-import { ScoreChip, ScoreDetail } from './ScoreChip'
-import { RulesChip, RulesDetail } from './RulesChip'
-import { evaluateRules, type EntryRuleConfig, type RuleResult } from '@/lib/entry-rules'
-import { evaluateRunnerRules, readRunner, type RunnerResult, type RunnerRuleConfig } from '@/lib/runner-rules'
+import { GradeChip, TradeGradeDetail } from './TradeGrade'
+import type { EntryRuleConfig } from '@/lib/entry-rules'
+import type { RunnerRuleConfig } from '@/lib/runner-rules'
+import { tradeGrade, type TradeGrade } from '@/lib/trade-grade'
 import { useFlowScores, flowScoreFor, entryCtxFor } from '@/lib/use-flow-scores'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'score' | 'r' | 'mfe' | 'mae'
@@ -53,11 +53,9 @@ const TOGGLEABLE_COLS = [
   { key: 'qty', label: 'Qty' },
   { key: 'atr', label: 'ATR@' },
   { key: 'score', label: 'Score' },
-  { key: 'rules', label: 'Rules' },
   { key: 'r', label: 'R' },
   { key: 'mae', label: 'MAE · MFE' },
   { key: 'mfe', label: 'Kept' },
-  { key: 'runner', label: 'Runner' },
   { key: 'postExit', label: 'After exit' },
 ] as const
 type ColKey = (typeof TOGGLEABLE_COLS)[number]['key']
@@ -109,7 +107,7 @@ function loadColPrefs(): Record<ColKey, boolean> {
  *  the exit for an entry that never worked. */
 function keptCell(m: TradeMgmt | null): { text: string; cls: string; title: string } {
   if (m == null) return { text: '—', cls: 'text-gray-700', title: 'No price data (or no ATR and no stop) to sort this trade by yet.' }
-  if (!m.went) return { text: 'never got going', cls: 'text-gray-500 text-[11px]', title: 'Never got 1×ATR your way, so there was no exit to grade — an entry question, not an exit one.' }
+  if (!m.went) return { text: 'N/A', cls: 'text-gray-600', title: 'Never got 1×ATR your way, so there was no exit to grade: an entry question, not an exit one.' }
   if (m.kept === 0) return { text: '0%', cls: 'text-red-400 font-bold', title: 'Went your way, then gave it all back.' }
   return { text: formatKept(m.kept), cls: 'text-gray-300', title: 'What you banked out of the best point this trade reached.' }
 }
@@ -174,12 +172,14 @@ interface Props {
    *  management card measures it, so the row and the card can't disagree.
    *  Still accepted so existing callers need no change. */
   bars?: BarLike[] | null
-  /** The trader's entry rules (Settings → Trading Rules). With any switched on,
-   *  the review table shows a Rules column next to Score. */
+  /** The trader's entry and runner rules (Settings → Trading Rules) — part of
+   *  each trade's Score (src/lib/trade-grade.ts). */
   entryRules?: EntryRuleConfig[]
-  /** The trader's runner rules. With any switched on, the review table shows a
-   *  Runner column next to Kept (a chip only on trades that kept a runner). */
   runnerRules?: RunnerRuleConfig[]
+  /** The trader includes the order-flow Score in Entry (default on). */
+  includeFlow?: boolean
+  /** The trader's ATR stop setting (default 1). */
+  atrStopTarget?: number
 }
 
 /**
@@ -254,6 +254,8 @@ export default function SessionTradeTable({
   postExitByTradeId,
   entryRules,
   runnerRules,
+  includeFlow = true,
+  atrStopTarget = 1,
 }: Props) {
   // Capture (live Intraday) vs review (EOD recap). Every judgment column and the
   // AI sub-rows are gated OFF in capture; the review path evaluates exactly as
@@ -261,32 +263,14 @@ export default function SessionTradeTable({
   const isCapture = config === 'capture'
   // Scores for trades that have none for their present fill are computed by the
   // site in the background and land here without a reload (review only).
-  const { scores: liveScores, entry: liveEntry } = useFlowScores(trades, !isCapture)
-  const scoreOf = (t: Trade) => (isCapture ? null : flowScoreFor(t, liveScores))
-  // The trader's entry rules, judged on each trade from the snapshot of what
-  // printed before its fill (review only; src/lib/entry-rules.ts).
-  const activeRules = useMemo(() => (entryRules ?? []).filter(r => r.on), [entryRules])
-  const hasRules = !isCapture && activeRules.length > 0
-  const rulesOf = (t: Trade): { results: RuleResult[]; readAt: string | null } | null => {
-    if (!hasRules) return null
-    const ctx = entryCtxFor(t, liveEntry)
-    return { results: evaluateRules(activeRules, ctx, t), readAt: ctx?.read_at ?? null }
-  }
-  // The trader's runner rules, judged from the trade's own fills (src/lib/runner-rules.ts).
-  const activeRunner = useMemo(() => (runnerRules ?? []).filter(r => r.on), [runnerRules])
-  const hasRunner = !isCapture && activeRunner.length > 0
-  const runnerOf = (t: Trade): { results: RunnerResult[] | null; empty: string; foot: string } | null => {
-    if (!hasRunner) return null
-    const results = evaluateRunnerRules(activeRunner, t)
-    const rd = readRunner(t)
-    const empty = rd.runner ? 'Nothing could be checked on this runner.'
-      : rd.why === 'no_tp1' ? 'No TP1 logged, so no runner to grade.'
-      : rd.why === 'all_out_at_tp1' ? 'No runner: everything came off at TP1.'
-      : rd.why === 'no_fills' ? 'No exit fills on this trade.'
-      : 'No runner: nothing came off at TP1.'
-    const atr = (t as { entry_atr_1m?: number | null }).entry_atr_1m
-    return { results, empty, foot: `Read from your fills and the logged TP1.${atr != null ? ` ATR at entry ${Number(atr).toFixed(2)}.` : ''}` }
-  }
+  // The Log (capture) reads just the entry snapshots, for the rule mistake tags.
+  const { scores: liveScores, entry: liveEntry } = useFlowScores(trades, true, { entryOnly: isCapture })
+  // Each trade's Score = its grade: Entry (the trader's entry rules + the
+  // order-flow Score) and Exit (profit kept, stop respected, runner rules),
+  // averaged — src/lib/trade-grade.ts. Review only.
+  const gradeOf = useCallback((t: Trade): TradeGrade | null => (isCapture ? null : tradeGrade(t, {
+    entryRules, runnerRules, includeFlow, atrStopTarget, flow: flowScoreFor(t, liveScores), entryCtx: entryCtxFor(t, liveEntry),
+  })), [isCapture, entryRules, runnerRules, includeFlow, atrStopTarget, liveScores, liveEntry])
   // Row-click action: edit in place when an edit handler is provided (Intraday
   // inline form, or the EOD recap drawer), else open the full log (deep-link).
   const rowAction = onEdit ?? onRowOpen
@@ -328,7 +312,7 @@ export default function SessionTradeTable({
         case 'pnl':
           return t.pnl ?? Number.NEGATIVE_INFINITY
         case 'score':
-          return flowScoreFor(t, liveScores)?.total ?? Number.NEGATIVE_INFINITY
+          return gradeOf(t)?.score ?? Number.NEGATIVE_INFINITY
         case 'r':
           return rMultiple(t, liveAtrByTradeId?.[t.id]) ?? Number.NEGATIVE_INFINITY
         case 'mfe': {
@@ -355,14 +339,12 @@ export default function SessionTradeTable({
       return sortDir === 'asc' ? av - bv : bv - av
     })
     return copy
-  }, [trades, sortKey, sortDir, liveAtrByTradeId, giveBackAtr, liveScores])
+  }, [trades, sortKey, sortDir, liveAtrByTradeId, giveBackAtr, gradeOf])
 
   // Click-to-toggle popups for the MFE % / MAE % column definitions. Same
   // dashboard-style popup pattern as the EOD header — click outside / Esc to
   // dismiss. Pinned top-right of the viewport so they don't push the table.
   const [openScoreId, setOpenScoreId] = useState<string | null>(null)
-  const [openRulesId, setOpenRulesId] = useState<string | null>(null)
-  const [openRunnerId, setOpenRunnerId] = useState<string | null>(null)
   const [mfeOpen, setMfeOpen] = useState(false)
   const [maeOpen, setMaeOpen] = useState(false)
   const mfeRef = useRef<HTMLDivElement>(null)
@@ -450,12 +432,10 @@ export default function SessionTradeTable({
   const showQty = isCapture ? true : cols.qty
   const showAtr = isCapture ? false : cols.atr
   const showScore = isCapture ? false : cols.score
-  const showRules = hasRules && cols.rules
   const showR = isCapture ? false : cols.r
   const showMfe = isCapture ? false : cols.mfe
   const showMae = isCapture ? false : cols.mae
   const showPostExit = isCapture ? false : cols.postExit
-  const showRunner = hasRunner && cols.runner
   // Column order for the <colgroup> that carries dragged widths. A colgroup is
   // POSITIONAL, so this has to track the header row exactly — hence it is built
   // from the very same flags, immediately below them, rather than restated.
@@ -480,11 +460,9 @@ export default function SessionTradeTable({
     ...(showAtr ? ['atr'] : []),
     'pnl',
     ...(showScore ? ['score'] : []),
-    ...(showRules ? ['rules'] : []),
     ...(showR ? ['r'] : []),
     ...(showMae ? ['mae'] : []),
     ...(showMfe ? ['mfe'] : []),
-    ...(showRunner ? ['runner'] : []),
     ...(showPostExit ? ['postExit'] : []),
     'actions',
   ]
@@ -586,9 +564,7 @@ export default function SessionTradeTable({
             const overviewText = summary ?? (t.notes?.trim() || null)
             const overviewIsNotes = !summary && !!t.notes?.trim()
             const isLong = t.direction === 'long'
-            const flowScore = scoreOf(t)
-            const rules = rulesOf(t)
-            const runner = runnerOf(t)
+            const grade = gradeOf(t)
             return (
               <div
                 key={t.id}
@@ -600,22 +576,14 @@ export default function SessionTradeTable({
                   <span className="text-sm text-gray-300 tabular-nums">{time}</span>
                   {setup && <span className="text-xs text-gray-500 truncate">{setup}</span>}
                   <span className="flex-1" />
-                  {flowScore && (
-                    <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
-                  )}
-                  {rules && (
-                    <RulesChip results={rules.results} open={openRulesId === t.id} onToggle={() => setOpenRulesId(openRulesId === t.id ? null : t.id)} />
-                  )}
-                  {runner?.results && (
-                    <RulesChip results={runner.results} open={openRunnerId === t.id} onToggle={() => setOpenRunnerId(openRunnerId === t.id ? null : t.id)} title="Your runner rules, passed out of checked. Click for the reasons." />
+                  {grade && grade.score != null && (
+                    <GradeChip grade={grade} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                   )}
                   <span className={`text-sm font-semibold ${(pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
                   </span>
                 </div>
-                {flowScore && openScoreId === t.id && <ScoreDetail score={flowScore} />}
-                {rules && openRulesId === t.id && <RulesDetail results={rules.results} readAt={rules.readAt} />}
-                {runner?.results && openRunnerId === t.id && <RulesDetail results={runner.results} readAt={null} label="Runner rules" foot={runner.foot} grade="Exit" />}
+                {grade && openScoreId === t.id && <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { thresholdAtr: giveBackAtr })?.went === false} hasStop={t.stop_price != null} />}
                 {overviewText && (
                   <p
                     className={`text-xs text-gray-500 mt-1.5 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
@@ -652,7 +620,7 @@ export default function SessionTradeTable({
           {colsOpen && (
             <div className="absolute right-0 top-full mt-1 z-30 w-44 bg-gray-900 border border-gray-700 rounded-lg p-1.5 shadow-xl">
               <p className="px-2 py-1 text-[10px] uppercase tracking-wider text-gray-600">Show columns</p>
-              {TOGGLEABLE_COLS.filter(c => (c.key !== 'rules' || hasRules) && (c.key !== 'runner' || hasRunner)).map(c => (
+              {TOGGLEABLE_COLS.map(c => (
                 <label
                   key={c.key}
                   className="flex items-center gap-2 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800 rounded cursor-pointer select-none"
@@ -767,9 +735,7 @@ export default function SessionTradeTable({
             ? plannedExitRead(t as VerdictTrade, kind, postExitByTradeId?.[t.id]).label
             : postVerdict ? `${postVerdict.glyph} ${postVerdict.label}` : '—'
           const postCls = kind === 'stopped' || kind === 'target' ? 'text-gray-400' : postVerdict ? VERDICT_TONE_CLASS[postVerdict.tone] : 'text-gray-600'
-          const flowScore = scoreOf(t)
-          const rules = rulesOf(t)
-          const runner = runnerOf(t)
+          const grade = gradeOf(t)
           return (
             <div
               key={t.id}
@@ -794,14 +760,8 @@ export default function SessionTradeTable({
                     both chips they drop to a second line as one group rather
                     than squeezing the side badge or pushing P&L off the card. */}
                 <span className="flex items-center gap-2.5 ml-auto">
-                  {flowScore && (
-                    <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
-                  )}
-                  {rules && (
-                    <RulesChip results={rules.results} open={openRulesId === t.id} onToggle={() => setOpenRulesId(openRulesId === t.id ? null : t.id)} />
-                  )}
-                  {runner?.results && (
-                    <RulesChip results={runner.results} open={openRunnerId === t.id} onToggle={() => setOpenRunnerId(openRunnerId === t.id ? null : t.id)} title="Your runner rules, passed out of checked. Click for the reasons." />
+                  {grade && grade.score != null && (
+                    <GradeChip grade={grade} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                   )}
                   <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
@@ -809,9 +769,7 @@ export default function SessionTradeTable({
                 </span>
               </div>
               <div className="px-3 py-2.5">
-                {flowScore && openScoreId === t.id && <ScoreDetail score={flowScore} />}
-                {rules && openRulesId === t.id && <RulesDetail results={rules.results} readAt={rules.readAt} />}
-                {runner?.results && openRunnerId === t.id && <RulesDetail results={runner.results} readAt={null} label="Runner rules" foot={runner.foot} grade="Exit" />}
+                {grade && openScoreId === t.id && <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { atr: liveAtr, thresholdAtr: giveBackAtr })?.went === false} hasStop={t.stop_price != null} />}
                 {setup && (
                   <span className="inline-block text-[11px] text-gray-300 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded mb-2">{setup}</span>
                 )}
@@ -822,8 +780,7 @@ export default function SessionTradeTable({
                   {!isCapture && <MobileMetric label="ATR@" value={liveAtr != null ? liveAtr.toFixed(2) : '—'} />}
                   <MobileMetric label="TP1" value={t.tp1_price ?? '—'} />
                   {!isCapture && <MobileMetric label="R" value={r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R${rAtrBased ? '*' : ''}`} valueClass={rCls} />}
-                  {!isCapture && <MobileMetric label="MFE" value={magLabel(facts?.mfe[mfeUnit], mfeUnit)} />}
-                  {!isCapture && <MobileMetric label="MAE" value={maeMag + (stopHeat != null && stopHeat > 1 ? ' · past stop' : '')} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} />}
+                  {!isCapture && <div className="col-span-2"><MobileMetric label="MAE · MFE" value={`${maeMag}${stopHeat != null && stopHeat > 1 ? ' past stop' : ''} · ${magLabel(facts?.mfe[mfeUnit], mfeUnit)}`} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} /></div>}
                   {!isCapture && <MobileMetric label="Kept" value={kept.text} valueClass={kept.cls} />}
                   {/* Post-exit verdict spans both columns — the plain-language label
                       is too long for a half-width cell. */}
@@ -883,22 +840,20 @@ export default function SessionTradeTable({
               {showQty && <th data-col="qty" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden">Qty<ResizeHandle id="qty" onStart={startResize} onReset={resetWidths} /></th>}
               {showAtr && <SortableHeader label="ATR@" sortKey="atr" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Live ATR-10 (Wilder) on 1-min bars computed at the trade's entry_time. Reflects volatility at the actual moment of the trade, not the morning prep snapshot." colId="atr" onResize={startResize} onResetWidths={resetWidths} />}
               <SortableHeader label="PnL" sortKey="pnl" align="right" current={sortKey} dir={sortDir} onSort={onSort} colId="pnl" onResize={startResize} onResetWidths={resetWidths} />
-              {showScore && <SortableHeader label="Score" sortKey="score" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="Score out of 100, read from the tape at the fill. Click a score to see why." colId="score" onResize={startResize} onResetWidths={resetWidths} />}
-              {showRules && <th data-col="rules" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden" title="Your entry rules, passed out of checked. Click for the reasons.">Rules<ResizeHandle id="rules" onStart={startResize} onReset={resetWidths} /></th>}
+              {showScore && <SortableHeader label="Score" sortKey="score" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="This trade's grade: Entry and Exit averaged. Click for every reason." colId="score" onResize={startResize} onResetWidths={resetWidths} />}
               {showR && <SortableHeader label="R" sortKey="r" align="right" current={sortKey} dir={sortDir} onSort={onSort} title="R-multiple: realized PnL / planned risk in dollars. Includes the contract multiplier (so MNQ R is in true risk units)." colId="r" onResize={startResize} onResetWidths={resetWidths} />}
-              {showMae && <th data-col="mae" className="relative font-normal pb-2 pr-3 whitespace-nowrap">
-                {/* The excursion column: MAE at the left end of each bar, MFE at
-                    the right, and the entry line between them. The unit dropdown
-                    and the help icon sit in the middle so the two labels stay
-                    over the numbers they name. */}
-                <span className="flex items-end justify-between gap-2">
+              {showMae && <th data-col="mae" className="relative text-center font-normal pb-2 pr-3 whitespace-nowrap">
+                {/* The excursion column, one header centred over it (founder,
+                    2026-10-15): MAE at the left end of each bar, MFE at the
+                    right, the entry line between them. */}
+                <span className="inline-flex items-center justify-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => onSort('mae')}
                     className="inline-flex items-center gap-0.5 hover:text-gray-300 transition-colors"
                     title="Sort by MAE (heat taken)"
                   >
-                    MAE <SortIcon col="mae" current={sortKey} dir={sortDir} />
+                    MAE · MFE <SortIcon col="mae" current={sortKey} dir={sortDir} />
                   </button>
                   <span className="inline-flex items-center gap-1">
                     <select
@@ -922,7 +877,6 @@ export default function SessionTradeTable({
                       <HelpCircle className="w-3 h-3" />
                     </button>
                   </span>
-                  <span>MFE</span>
                 </span>
                 {maeOpen && (
                   <div
@@ -988,11 +942,10 @@ export default function SessionTradeTable({
                       <li><strong>50%</strong>: it ran twice as far as you took</li>
                       <li><strong className="text-red-300">0%</strong>: it went your way, then you gave it all back</li>
                     </ul>
-                    <p className="text-gray-500"><strong className="text-gray-400">never got going</strong> means the trade never got 1×ATR your way. There was no exit to grade — that is an entry question.</p>
+                    <p className="text-gray-500"><strong className="text-gray-400">N/A</strong> means the trade never got 1×ATR your way. There was no exit to grade: that is an entry question.</p>
                   </div>
                 )}
               <ResizeHandle id="mfe" onStart={startResize} onReset={resetWidths} /></th>}
-              {showRunner && <th data-col="runner" className="relative text-right font-normal pb-2 pr-3 whitespace-nowrap overflow-hidden" title="Your runner rules, passed out of checked. Click for the reasons.">Runner<ResizeHandle id="runner" onStart={startResize} onReset={resetWidths} /></th>}
               {showPostExit && <th data-col="postExit" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap" title="What the market did in the 15 min after your last fill. 'stopped' and 'target hit' are the plan running its course, so they say what price did without a verdict. A verdict appears only when you closed the trade by hand.">After exit<ResizeHandle id="postExit" onStart={startResize} onReset={resetWidths} /></th>}
               <th data-col="actions" className="w-8" />
             </tr>
@@ -1023,9 +976,7 @@ export default function SessionTradeTable({
                 : isNearDup ? 'bg-yellow-950/20'
                 : ''
               // The trade's Score (order flow at the fill). Review table only; absent until scored.
-              const flowScore = scoreOf(t)
-              const rules = rulesOf(t)
-              const runner = runnerOf(t)
+              const grade = gradeOf(t)
               return (
                 <Fragment key={t.id}>
                 <tr
@@ -1150,14 +1101,9 @@ export default function SessionTradeTable({
                   </td>
                   {showScore && (
                     <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                      {flowScore
-                        ? <ScoreChip score={flowScore} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                      {grade
+                        ? <GradeChip grade={grade} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                         : <span className="text-gray-700">—</span>}
-                    </td>
-                  )}
-                  {showRules && (
-                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                      <RulesChip results={rules?.results ?? []} open={openRulesId === t.id} onToggle={() => setOpenRulesId(openRulesId === t.id ? null : t.id)} />
                     </td>
                   )}
                   {showR && (() => {
@@ -1239,7 +1185,7 @@ export default function SessionTradeTable({
                             {/* The one heat-vs-stop case that needs saying is the
                                 breach, in words rather than a ratio. */}
                             {stopHeat != null && stopHeat > 1 && (
-                              <span className="block text-[10px] text-red-400 font-semibold"
+                              <span className="block text-center text-[10px] text-red-400 font-semibold"
                                 title="Peak adverse excursion went beyond your planned stop distance — the trade was held past its stop.">
                                 past stop
                               </span>
@@ -1254,12 +1200,6 @@ export default function SessionTradeTable({
                       </>
                     )
                   })()}
-                  {showRunner && (
-                    <td className="py-1.5 pr-3 text-right whitespace-nowrap">
-                      <RulesChip results={runner?.results ?? []} open={openRunnerId === t.id} onToggle={() => setOpenRunnerId(openRunnerId === t.id ? null : t.id)}
-                        title="Your runner rules, passed out of checked. Click for the reasons." emptyTitle={runner?.empty ?? ''} />
-                    </td>
-                  )}
                   {showPostExit && (() => {
                     const ext = postExitByTradeId?.[t.id]
                     // The plan running its course gets no verdict — a stop-out used
@@ -1347,27 +1287,11 @@ export default function SessionTradeTable({
                     </button>
                   </td>
                 </tr>
-                {flowScore && openScoreId === t.id && (
+                {grade && openScoreId === t.id && (
                   <tr className={`${hasOverviewRow ? '' : 'border-b border-gray-800'} ${rowBg}`}>
                     <td className="pr-2" />
                     <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
-                      <ScoreDetail score={flowScore} />
-                    </td>
-                  </tr>
-                )}
-                {runner?.results && showRunner && openRunnerId === t.id && (
-                  <tr className={`${hasOverviewRow ? '' : 'border-b border-gray-800'} ${rowBg}`}>
-                    <td className="pr-2" />
-                    <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
-                      <RulesDetail results={runner.results} readAt={null} label="Runner rules" foot={runner.foot} grade="Exit" />
-                    </td>
-                  </tr>
-                )}
-                {rules && showRules && openRulesId === t.id && (
-                  <tr className={`${hasOverviewRow ? '' : 'border-b border-gray-800'} ${rowBg}`}>
-                    <td className="pr-2" />
-                    <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
-                      <RulesDetail results={rules.results} readAt={rules.readAt} />
+                      <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { atr: liveAtrByTradeId?.[t.id], thresholdAtr: giveBackAtr })?.went === false} hasStop={t.stop_price != null} />
                     </td>
                   </tr>
                 )}

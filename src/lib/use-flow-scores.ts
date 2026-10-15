@@ -45,7 +45,18 @@ function worthAsking(t: Trade, now: number): boolean {
   return Number.isFinite(at) && now - at < TAPE_KEEP_DAYS * 86_400_000
 }
 
-export function useFlowScores(trades: Trade[], enabled: boolean): { scores: Record<string, TradeFlowScore>; entry: Record<string, TradeEntryCtx> } {
+/**
+ * `entryOnly` (the Log page): read just the entry-rules snapshot, not the
+ * order-flow Score — the Log shows no Score; the snapshot is what the rule
+ * mistake tags need.
+ *
+ * After the reads, the trades on screen are sent once to POST
+ * /api/trades/rule-tags so the trader's rule fails become mistake tags
+ * (src/lib/rule-tags.ts). That runs for every signed-in trader (runner rules
+ * need no tape), once per page view per change in what it would read.
+ */
+export function useFlowScores(trades: Trade[], enabled: boolean, opts: { entryOnly?: boolean } = {}): { scores: Record<string, TradeFlowScore>; entry: Record<string, TradeEntryCtx> } {
+  const entryOnly = !!opts.entryOnly
   const [scores, setScores] = useState<Record<string, TradeFlowScore>>({})
   const [entry, setEntry] = useState<Record<string, TradeEntryCtx>>({})
   /** Fills already sent (and not due a retry). */
@@ -69,7 +80,7 @@ export function useFlowScores(trades: Trade[], enabled: boolean): { scores: Reco
     if (!enabled || gateClosed) return
     const now = Date.now()
     const want = trades.filter(t => worthAsking(t, now)
-      && (!flowScoreIsCurrent(t.review_json?.score, t) || !entryCtxIsCurrent(t.review_json?.entry_ctx, t))
+      && ((!entryOnly && !flowScoreIsCurrent(t.review_json?.score, t)) || !entryCtxIsCurrent(t.review_json?.entry_ctx, t))
       && !asked.current.has(keyOf(t)))
     if (!want.length) return
     for (const t of want) asked.current.add(keyOf(t))
@@ -84,7 +95,7 @@ export function useFlowScores(trades: Trade[], enabled: boolean): { scores: Reco
           const res = await fetch('/api/trades/score', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ids: batch.map(t => t.id) }),
+            body: JSON.stringify({ ids: batch.map(t => t.id), ...(entryOnly ? { entryOnly: true } : {}) }),
           })
           if (!res.ok) {
             // not in the beta, signed out, or not set up: stop asking for this page view
@@ -122,7 +133,25 @@ export function useFlowScores(trades: Trade[], enabled: boolean): { scores: Reco
         }
       }
     })()
-  }, [trades, enabled, retry])
+  }, [trades, enabled, retry, entryOnly])
+
+  // Rule mistake tags for the trades on screen — once per page view for each
+  // change in what they would be read from (the fill, the exits, the snapshot).
+  const tagged = useRef(new Set<string>())
+  useEffect(() => {
+    if (!enabled) return
+    const sig = (t: Trade) => `${keyOf(t)}|${Array.isArray(t.exits_json) ? t.exits_json.length : 0}|${entryCtxIsCurrent(entry[t.id] ?? t.review_json?.entry_ctx, t) ? 1 : 0}`
+    const due = trades.filter(t => t.id && !tagged.current.has(sig(t)))
+    if (!due.length) return
+    const timer = setTimeout(() => {
+      for (const t of due) tagged.current.add(sig(t))
+      void fetch('/api/trades/rule-tags', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: due.slice(0, 200).map(t => t.id) }),
+      }).catch(() => { /* quiet: the next page view tries again */ })
+    }, 1500)
+    return () => clearTimeout(timer)
+  }, [trades, entry, enabled])
 
   return { scores, entry }
 }

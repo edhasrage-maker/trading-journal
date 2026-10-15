@@ -3,6 +3,8 @@ import TagMergeClient from '@/components/settings/TagMergeClient'
 import { normalizeTagArray, type TradeTag } from '@/lib/supabase/types'
 import { BUILTIN_TAG_CATEGORIES, resolveTagCategories, type TagCategoryDef } from '@/lib/tag-categories'
 import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
+import { loadTapeScoreSettings } from '@/lib/day-stats-server'
+import { allRuleMistakeTags } from '@/lib/rule-tags'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -61,6 +63,9 @@ export default async function TagsSettingsPage() {
   await tallyUsage(supabase, 'historical_trades', keys, counts)
   const usage: Record<string, number> = {}
   for (const [k, v] of counts) usage[k] = v
+  // the trader's rule mistake tags, marked "auto" in the list
+  const { entryRules, runnerRules } = await loadTapeScoreSettings(supabase)
+  const autoMistakes = allRuleMistakeTags(entryRules, runnerRules)
 
   return (
     <div>
@@ -83,7 +88,7 @@ export default async function TagsSettingsPage() {
           and remove any you don&apos;t use.
         </p>
       </header>
-      <TagMergeClient tags={tags} usage={usage} categories={categories} hidden={hidden} />
+      <TagMergeClient tags={tags} usage={usage} categories={categories} hidden={hidden} autoMistakes={autoMistakes} />
     </div>
   )
 }

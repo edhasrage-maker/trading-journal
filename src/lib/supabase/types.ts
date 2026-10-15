@@ -403,6 +403,9 @@ export interface TradeReview {
   /** What had printed before the fill, for the trader's entry rules
    *  (src/lib/entry-rules.ts). Written read-merge by POST /api/trades/score. */
   entry_ctx?: TradeEntryCtx
+  /** Mistake tags the app added for failed rules (src/lib/rule-tags.ts) —
+   *  the ones it may take off again when a rule changes. */
+  auto_tags?: string[]
 }
 
 /** One closed 1-minute candle before the fill (regular candle; PT clock). */

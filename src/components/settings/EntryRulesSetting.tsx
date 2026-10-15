@@ -85,6 +85,8 @@ export default function EntryRulesSetting() {
         })
         if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? 'Could not save.')
         setError(null)
+        // re-tag every trade the rules reach: a rule fail is a mistake tag (src/lib/rule-tags.ts)
+        void fetch('/api/trades/rule-tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {})
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not save.')
       }

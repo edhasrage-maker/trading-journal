@@ -16,6 +16,9 @@ interface Props {
    *  state so every TagSelector instance sees the new chip immediately
    *  (the journal can have several TradeForms mounted at once). */
   onTagCreated?: (tag: TradeTag) => void
+  /** Mistake tags the app added because one of the trader's rules failed
+   *  (review_json.auto_tags, src/lib/rule-tags.ts) — marked "auto". */
+  autoTags?: string[]
 }
 
 /** Shorter headings than the canonical names where the picker is tight on
@@ -33,7 +36,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const DEFAULT_SELECTED = 'bg-blue-700 border-blue-600 text-white'
 
-export default function TagSelector({ tags, selected, suggested, onChange, onTagCreated }: Props) {
+export default function TagSelector({ tags, selected, suggested, onChange, onTagCreated, autoTags }: Props) {
   // Highlights (beginner) shows only the Setup category; Detailed Tape (pro)
   // shows the full taxonomy. (docs/BEGINNER_PRO_MODES.md)
   const { mode } = useUiMode()
@@ -134,6 +137,10 @@ export default function TagSelector({ tags, selected, suggested, onChange, onTag
                     }`}
                   >
                     {sug && !sel ? '+ ' : ''}{tag.label}
+                    {sel && cat === 'mistakes' && autoTags?.includes(tag.label) && (
+                      <span className="ml-1.5 text-[9px] uppercase tracking-wider border border-white/40 rounded px-1 align-middle"
+                        title="Added by the app: one of your rules failed on this trade. Change the rule in Settings → Trading Rules to change it.">auto</span>
+                    )}
                   </button>
                 )
               })}

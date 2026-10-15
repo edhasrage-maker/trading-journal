@@ -1209,6 +1209,8 @@ export default function EodClient({
         bars={bars}
         entryRules={entryRules}
         runnerRules={runnerRules}
+        includeFlow={includeFlowScore}
+        atrStopTarget={atrStopTarget}
       />
 
       {/* Right-click menu on a trade row → open the full log, or highlight the

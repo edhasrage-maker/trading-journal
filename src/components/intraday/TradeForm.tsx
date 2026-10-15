@@ -681,6 +681,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             <TagSelector
               tags={allTags}
               selected={form.tags}
+              autoTags={trade?.review_json?.auto_tags}
               suggested={form.suggestedTags}
               onChange={t => set('tags', t)}
               onTagCreated={onTagCreated}
@@ -766,6 +767,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           <TagSelector
             tags={allTags}
             selected={form.tags}
+            autoTags={trade?.review_json?.auto_tags}
             suggested={form.suggestedTags}
             onChange={t => set('tags', t)}
             onTagCreated={onTagCreated}

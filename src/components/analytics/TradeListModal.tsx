@@ -247,7 +247,7 @@ function TradeRow({ t }: { t: TradeWithContext }) {
           : !mg.went ? `Never got 1×ATR your way (best point ${xc ? xc.mfe.toFixed(2) : '—'} pts) — no exit to grade.`
           : xc ? `MFE = ${xc.mfe.toFixed(2)} pts` : undefined}
       >
-        {mg == null ? '—' : !mg.went ? 'never got going' : formatKept(mg.kept)}
+        {mg == null ? '—' : !mg.went ? <span className="text-gray-600" title="Never got 1×ATR your way, so there was no exit to grade: an entry question, not an exit one.">N/A</span> : formatKept(mg.kept)}
       </td>
       <td
         className={`py-1.5 pr-3 text-right whitespace-nowrap ${

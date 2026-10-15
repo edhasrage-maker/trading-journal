@@ -121,6 +121,24 @@ export function runnerRulesSig(rules: readonly RunnerRuleConfig[] | null | undef
 
 export const runnerRuleLabel = (r: RunnerRuleConfig) => r.name.trim() || RUNNER_TYPE_LABELS[r.type]
 
+/** The rule in one line, from its numbers — what the Recap shows. */
+export function runnerOneLiner(r: RunnerRuleConfig): string {
+  switch (r.type) {
+    case 'scale_out': return `${r.pct ?? 60}% off at TP1`
+    case 'runner_exit': return `Runner out at BE, ${r.target_atr ?? 4}× ATR or ${r.close ?? '13:00'}`
+    case 'be_after_tp1': return 'Breakeven only after TP1'
+  }
+}
+
+/** The mistake tag a failed rule puts on the trade. Null for a rule that can't fail yet. */
+export function runnerMistakeTag(r: RunnerRuleConfig): string | null {
+  switch (r.type) {
+    case 'scale_out': return `Under ${r.pct ?? 60}% at TP1`
+    case 'runner_exit': return 'Runner closed by hand'
+    case 'be_after_tp1': return null
+  }
+}
+
 /** One rule in plain words (the coach). */
 export function describeRunnerRule(r: RunnerRuleConfig): string {
   switch (r.type) {
@@ -220,7 +238,10 @@ export function readRunner(t: RunnerTrade): RunnerRead {
 export type RunnerStatus = 'pass' | 'fail' | 'unknown'
 export interface RunnerResult {
   id: string
+  /** The trader's short name ("T2") — hover text, and what the coach uses. */
   name: string
+  /** The rule in one line, from its numbers ("Runner out at BE, 4× ATR or 13:00"). */
+  label: string
   status: RunnerStatus
   reason: string
   /** Counts toward Exit on this trade (on, and the trade is on or after its start date). */
@@ -236,7 +257,7 @@ export function evaluateRunnerRules(rules: readonly RunnerRuleConfig[], t: Runne
   const date = ptDateOf(t.entry_time)
   return on.map(r => {
     const counted = date != null && date >= r.from
-    const res = (status: RunnerStatus, reason: string): RunnerResult => ({ id: r.id, name: runnerRuleLabel(r), status, reason, counted })
+    const res = (status: RunnerStatus, reason: string): RunnerResult => ({ id: r.id, name: runnerRuleLabel(r), label: runnerOneLiner(r), status, reason, counted })
     switch (r.type) {
       case 'scale_out': {
         const share = rd.tp1Qty / rd.qty

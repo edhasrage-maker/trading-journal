@@ -69,7 +69,7 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: 'not signed in' }, { status: 401 })
   if (!deepDiveAllowed(user.email)) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
-  let body: { ids?: unknown }
+  let body: { ids?: unknown; entryOnly?: unknown }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid body' }, { status: 400 }) }
   const ids = [...new Set((Array.isArray(body?.ids) ? body.ids : []).filter((x): x is string => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x)))]
   if (!ids.length) return NextResponse.json({ error: 'ids: string[] (trade uuids) required' }, { status: 400 })
@@ -104,7 +104,8 @@ export async function POST(req: Request) {
     const loader = () => (shared ??= (async () => new FlowScoreLoader(await flowSource()))())
     const started = Date.now()
     const entry = await readEntryContexts(store, ids, loader, { deadline: started + BUDGET_MS })
-    const results = await scoreTrades(store, ids, loader, { budgetMs: Math.max(0, BUDGET_MS - (Date.now() - started)) })
+    // `entryOnly` (the Log page): the snapshot alone; no Score is read or written.
+    const results = body.entryOnly === true ? {} : await scoreTrades(store, ids, loader, { budgetMs: Math.max(0, BUDGET_MS - (Date.now() - started)) })
     return NextResponse.json({ v: FLOW_VERSION, results, entry }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) {
     console.error('[trades/score]', e)
