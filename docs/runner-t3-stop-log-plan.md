@@ -6,11 +6,16 @@ Investigation only, 2026-10-15. Nothing is built, nothing written to either data
 
 **Yes, for Sierra users whose import includes order rows, not just fills.** Sierra writes down every
 change to every stop order: the time, the new price, and whether you dragged it or Sierra moved it.
-On your runners since May the log reads cleanly:
+On the **25 runners tapescore.app grades since May** (your logged TP1), the log reads cleanly:
 
-- **40 of 46** moved the stop to breakeven **after** TP1 filled. Usually 2 to 10 seconds after (the full range was 2 s to 4½ min).
-- **5 of 46** never moved the stop to breakeven (May 4, May 29, Jun 12, Jul 17, Aug 21).
-- **1 of 46** depends on what counts as breakeven (Jul 21, see decision 1).
+- **24 of 25** moved the stop to breakeven **after** TP1 filled, 4 to 70 seconds after (usually under 10).
+- **1 of 25** never moved it to breakeven (May 29, explained below).
+- **None** moved it before TP1.
+
+A wider check gave the same picture: 46 runners rebuilt straight from Sierra's files across all your -PRO accounts (TP1 = the first target order that filled where none was logged).
+- **40** moved the stop after TP1.
+- **5** never moved it (May 4, May 29, Jun 12, Jul 17, Aug 21).
+- **1** depends on what counts as breakeven (Jul 21, see decision 1). It isn't one of the site's 25.
 
 Two things stand in the way today:
 
@@ -29,17 +34,19 @@ Two things stand in the way today:
 - Anything at all when the export is fills only.
 - Why you moved it.
 - Anything for NinjaTrader or generic CSV users. T3 stays "unknown" for them.
+- **A fill Sierra never recorded.** On Aug 4 the runner's exit (3 at 7,749, 09:37) is in neither Sierra's own file nor its original export. You added that row by hand: the `.bak` copy lacks it, and its time is exactly 09:37:00.000. So stop history has to be attached to the trade TapeScore already has, by its entry order, never by rebuilding trades from the log. Rebuilding carried 3 phantom contracts into Aug 5 and merged two trades.
 
 **Sierra's own daily files.** `D:\SierraCharts\TradeActivityLogs\*.data` has one file per account per day, back to December 2022, with everything in it. It's Sierra's own binary format, and I decoded it. Rebuilt from those files, your trades since May come out identical to TapeScore's importer on 540 of 543. The other 3 differ only where a position was still open at a file boundary.
 
 ## Checked against your trades
 
-- **The runners:** 46 runners since May. These are your -PRO accounts, with copies of a trade across accounts counted once.
-- **The TP1 used:** your logged TP1 where the local backup has it (through Jul 2). Otherwise the first target order that filled.
-- **Full table:** in the session notes folder, `runners_table.txt`.
+- **The site's 25 runners** (read-only look at your trades on tapescore.app, with your logged TP1):
+  - Every one's entry order is in Sierra's log under the same ID the site stores, so each trade's stops can be found directly.
+  - Table: `hosted_25_table.txt` in the session notes folder. Aug 5 shows "no log" there only because of the rebuild artifact above; read by its entry order, the stop went to 7,787.75 20 s after TP1.
+- **The wider 46:** `runners_table.txt` in the same folder. Copies of a trade across accounts count once.
 
-**"TP2 Breakeven" tags: 4 of 5 agree.**
-- Jun 18, Jun 24, Jun 26 and Jul 1: you dragged the stop to 1 point (4 ticks) past entry 3 to 7 s after TP1, and the runner left on that stop.
+**"TP2 Breakeven" tags on the site: 5 of 6 agree.**
+- Jun 18, Jun 24, Jun 26, Jul 1 and Jul 23: you dragged the stop to entry plus 1 point (4 ticks) 4 to 10 s after TP1, and the runner left on that stop.
 - May 29 disagrees. TapeScore merged two shorts into one trade: 5 at 30,374, then 5 more at 30,360 while the runner was still on.
   - The runner's stop went to 30,380, which is not breakeven for either entry.
   - The runner was stopped out at 30,380 (6 points against the first entry).
@@ -55,13 +62,13 @@ Two things stand in the way today:
 
 **Independent check.** On 76 of 98 trades, the stop price logged on the trade exactly equals the log's stop within a minute of entry. The rest differ by later hand edits. So these are the right orders.
 
-**Not yet checked: the exact 25 runners on tapescore.app**, with their logged TP1 after Jul 2. That needs a read-only look at your trades on the hosted database. It was blocked in this session and needs your OK.
 
 ## Decisions for you
 
 1. **What counts as "stop at breakeven"?**
    - **At entry or better (my pick).** Every breakeven stop you set since May sat at entry or up to 8 ticks into profit (most often 4). The only stop within 5 ticks of entry on the losing side was Jul 21's.
    - **Within 5 ticks of entry either side.** This matches T2's window, but it turns Jul 21 into a fail: the MES long at 7,544 had its stop pulled to 7,543, 4 ticks *in loss*, 18 s before TP1. It went to 7,544.25 21 s after TP1.
+   - Either way, none of the site's 25 runners changes.
 2. **The stop never went to breakeven: how does T3 grade it?**
    - **Pass.** The rule only forbids moving early.
    - **Fail.** Your plan is breakeven after TP1.
@@ -83,7 +90,8 @@ Two things stand in the way today:
    - a fingerprint of the fill, so a re-import with different fills is read again.
 
    It's written the same careful way as the entry rules' `review_json.entry_ctx`, so no SQL migration on either database.
-2. **Read:** the Sierra parser keeps order rows for each trade's stops and targets. This applies to both import routes, and the combine path does it in the browser.
+2. **Read:** the Sierra parser keeps the order rows for each trade's stops. This applies to both import routes, and the combine path does it in the browser.
+   - Stops are found as the children of the trade's own entry orders (the ID in `sierra_trade_id`), not by re-walking positions.
 3. **Grade:** `be_after_tp1` in `src/lib/runner-rules.ts` gives pass, fail or unknown, with reasons like:
    - "Stop to breakeven (30,215) at 09:47:39, 7 s after TP1 filled (09:47:32)."
    - "Stop to breakeven (7,543) at 11:44:37, 18 s before TP1 filled (11:44:55)."
