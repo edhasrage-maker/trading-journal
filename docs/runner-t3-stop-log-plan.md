@@ -64,20 +64,20 @@ Two things stand in the way today:
 **Independent check.** On 76 of 98 trades, the stop price logged on the trade exactly equals the log's stop within a minute of entry. The rest differ by later hand edits. So these are the right orders.
 
 
-## Decisions for you
+## Decisions (all made 2026-10-15)
 
 1. **What counts as "stop at breakeven"?** **Decided 2026-10-15: at entry or better.** The stop counts as at breakeven only once it's at the entry price or in profit, so a stop still in loss is a tighter stop, not breakeven. That matches every breakeven stop you set since May: at entry or up to 8 ticks into profit, most often 4. It changes none of the site's 25 runners. The one case it settles is Jul 21 (MES long at 7,544). The stop was pulled to 7,543, 4 ticks in loss, 18 s before TP1; that reads as a tighter stop. It went to breakeven (7,544.25) 21 s after TP1, so it passes.
 2. **The stop never went to breakeven: how does T3 grade it?** **Decided 2026-10-15: pass.** T3 only forbids moving the stop to breakeven before TP1; how the runner left is T2's job. Reason text, e.g. "Stop never moved to breakeven; it stayed at 30,389."
-3. **How does the stop history get in?**
-   - **(a) Export the Trade Activity Log with orders included, not fills only.**
-     - A day's file goes from about 10 KB to roughly 100 KB to 1.5 MB.
-     - A May to October export in one file would be over the 4 MB upload limit. So the browser would pull out the stop moves before uploading, the way "combine all accounts" already works.
-   - **(b) Upload Sierra's own daily `.data` files.**
-     - Your export habit doesn't change, and the backfill is just those files.
-     - It's Sierra's undocumented format, so a Sierra update could break it.
-   - **My pick:** (a) as the supported path for everyone, plus a one-off local backfill of your May to October trades from the `.data` files. The backfill needs your OK to write to tapescore.app.
+3. **How does the stop history get in?** **Decided 2026-10-15:**
+   - **Going forward:** you export the Trade Activity Log with orders included, not fills only.
+     - A day's file goes from about 10 KB to roughly 100 KB to 1.5 MB, under the 4 MB upload limit.
+     - Longer exports get their stop moves pulled out in the browser before upload, the way "combine all accounts" already works.
+   - **Backfill:** a one-off local run over your May to October trades, reading Sierra's own daily `.data` files.
+     - Each trade's stops are matched by its entry order, which all 25 site runners have.
+     - It runs dry first and shows what it would write. **It asks you before it writes anything to tapescore.app.**
+   - The `.data` format is Sierra's own and undocumented, so it is used only for this backfill, not as an ongoing input.
 
-## How it would be built (after you approve; mockup first for the wording)
+## How it would be built (mockup first for the wording)
 
 1. **Store:** `review_json.stops` on each trade, holding:
    - the stop at the entry fill;
