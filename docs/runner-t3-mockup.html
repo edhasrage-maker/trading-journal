@@ -1,0 +1,166 @@
+<title>Breakeven Rule Wording</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the Recap Score panel's runner lines, the Settings rule card, the auto tag and the import note, stacked as before/after; TapeScore carbon palette (light = chartbook). */
+:root {
+  color-scheme: dark;
+  --ground: #0C0D10; --panel: #131519; --panel2: #1B1E23; --line: #282C32; --hair: #1C2026;
+  --ink: #E8EAED; --mut: #969BA3; --faint: #5E636B;
+  --accent: #4F97CE; --accent-ink: #79B4E6; --pos: #4FC58E; --neg: #E0685F; --warn: #D6B24E;
+  --new-bg: rgba(79,151,206,.10);
+  --display: 'Archivo', 'Hanken Grotesk', system-ui, sans-serif;
+  --body: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+  --new-bg: rgba(47,111,176,.10);
+} }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+  --new-bg: rgba(47,111,176,.10);
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.page { max-width: 1000px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 36px; }
+h1 { font-family: var(--display); font-size: 22px; font-weight: 700; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; }
+.eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); }
+.note { font-size: 12.5px; color: var(--mut); border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 5px; max-width: 760px; }
+.note b { color: var(--ink); font-weight: 600; }
+.q { color: var(--warn); }
+section { display: grid; gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; min-width: 0; }
+.tradehead { font-size: 13px; font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.tradehead b { font-weight: 600; }
+.long { color: var(--pos); } .short { color: var(--neg); } .mut { color: var(--mut); } .faint { color: var(--faint); }
+.sec { display: grid; gap: 6px; border-left: 2px solid var(--line); padding-left: 10px; }
+.sec h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--mut); }
+.lines { display: grid; grid-template-columns: 10px minmax(120px, 210px) 62px minmax(0, 1fr); gap: 6px 10px; align-items: baseline; font-size: 12.5px; }
+.lines > .row { display: contents; }
+.lines .new > * { background: var(--new-bg); }
+.lines .new > .dot { background: none; }
+.dot { width: 7px; height: 7px; border-radius: 50%; align-self: center; }
+.dot.pass { background: var(--pos); } .dot.fail { background: var(--neg); } .dot.unk { background: var(--faint); }
+.nm { font-weight: 600; }
+.st.pass { color: var(--pos); } .st.fail { color: var(--neg); } .st.unk { color: var(--faint); }
+.was { font-size: 11.5px; color: var(--faint); grid-column: 2 / -1; margin-top: -3px; }
+.was s { text-decoration-color: var(--faint); }
+.pair { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; align-items: start; }
+@media (max-width: 760px) { .pair { grid-template-columns: 1fr; } .lines { grid-template-columns: 10px minmax(0, 1fr) 52px; } .lines .txt { grid-column: 2 / -1; } }
+.tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); }
+.tag .auto { font-size: 10px; color: var(--accent-ink); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; }
+.rcard { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; background: var(--panel); }
+.rcard.dashed { border-style: dashed; }
+.rhead { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.switch { width: 34px; height: 19px; border-radius: 10px; background: var(--accent); position: relative; flex: none; }
+.switch::after { content: ''; position: absolute; right: 2px; top: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; }
+.name { border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; font-size: 12.5px; background: var(--panel2); }
+.rbody { font-size: 13.5px; }
+.amber { font-size: 12px; color: var(--warn); }
+.small { font-size: 12px; } .xs { font-size: 11.5px; }
+.tally { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tally b { color: var(--mut); font-weight: 600; }
+.hl { background: var(--new-bg); border-radius: 4px; padding: 0 3px; }
+</style>
+
+<div class="page">
+  <header style="display:grid;gap:8px">
+    <p class="eyebrow">Mockup · runner rule T3 · wording only</p>
+    <h1>"Breakeven only after TP1", graded from your Sierra stop orders</h1>
+    <div class="note">
+      <p><b>What's real:</b> the two trades below are yours from tapescore.app. Their T1 and T2 lines are word for word what the site shows today. Their T3 lines are what the new code says, read from Sierra's log of your stop orders.</p>
+      <p><b>What's an illustration:</b> the "fail" line. None of your 25 runners since May moved the stop to breakeven before TP1, so there is no real one to show.</p>
+      <p><b>Your rules, as decided:</b> breakeven = the stop at your entry price or in profit. A stop that never reaches breakeven passes. Highlighted rows are new or changed.</p>
+    </div>
+  </header>
+
+  <section>
+    <h2>1 · Recap → click a trade's Score → Exit → Runner rules</h2>
+    <div class="card">
+      <div class="tradehead"><b>Jul 1 · 09:45</b> <span class="long">Long</span> <span>5 @ 30,214</span> <span class="mut">TP1 30,240</span></div>
+      <div class="sec">
+        <h4>Runner rules</h4>
+        <div class="lines">
+          <div class="row"><span class="dot pass"></span><span class="nm">60% off at TP1</span><span class="st pass">pass</span><span class="txt">3 of 5 contracts (60%) came off at 30,240.00 (09:47), at TP1 30,240.00.</span></div>
+          <div class="row"><span class="dot pass"></span><span class="nm">Runner out at BE, 4× ATR or 13:00</span><span class="st pass">pass</span><span class="txt">The last 2 contracts left at 30,215.00 (09:49): breakeven.</span></div>
+          <div class="row new"><span class="dot pass"></span><span class="nm">Breakeven only after TP1</span><span class="st pass">pass</span><span class="txt">Stop to breakeven (30,215) at 09:47:39, 8 s after TP1 filled (09:47:31).</span></div>
+          <p class="was">Today: <s>unknown · Your fills don't show when the stop moved.</s></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="tradehead"><b>May 29 · 08:00</b> <span class="short">Short</span> <span>10 @ 30,367</span> <span class="mut">TP1 30,344 · tagged "TP2 Breakeven"</span></div>
+      <div class="sec">
+        <h4>Runner rules</h4>
+        <div class="lines">
+          <div class="row"><span class="dot fail"></span><span class="nm">60% off at TP1</span><span class="st fail">fail</span><span class="txt">3 of 10 contracts (30%) came off at 30,344.00 (08:00), at TP1 30,344.00: under your 60%.</span></div>
+          <div class="row"><span class="dot fail"></span><span class="nm">Runner out at BE, 4× ATR or 13:00</span><span class="st fail">fail</span><span class="txt">Part of the runner left at 30,355.75 (08:06), 0.36× ATR from entry: not breakeven, the 4× ATR target or 13:00, so closed by hand.</span></div>
+          <div class="row new"><span class="dot pass"></span><span class="nm">Breakeven only after TP1</span><span class="st pass">pass</span><span class="txt">The stop never went to breakeven (30,367); it was last at 30,380.</span></div>
+        </div>
+      </div>
+      <p class="xs faint">This is the merged trade: 5 at 30,374, then 5 more at 30,360 while the runner was on. Breakeven is read against the trade's average entry, the same price T2 uses.</p>
+    </div>
+
+    <div class="pair">
+      <div class="card">
+        <p class="eyebrow">Illustration · stop moved before TP1</p>
+        <div class="lines">
+          <div class="row new"><span class="dot fail"></span><span class="nm">Breakeven only after TP1</span><span class="st fail">fail</span><span class="txt">Stop to breakeven (29,709) at 09:41:50, 8 s before TP1 filled (09:41:58).</span></div>
+        </div>
+        <p class="small mut">Like the other rules, a fail that counts puts a mistake tag on the trade:</p>
+        <p><span class="tag">Breakeven before TP1 <span class="auto">auto</span></span></p>
+      </div>
+      <div class="card">
+        <p class="eyebrow">When the stop history isn't there</p>
+        <div class="lines">
+          <div class="row new"><span class="dot unk"></span><span class="nm">Breakeven only after TP1</span><span class="st unk">unknown</span><span class="txt">No stop history for this trade: import your Sierra log with orders included.</span></div>
+          <div class="row new"><span class="dot unk"></span><span class="nm">Breakeven only after TP1</span><span class="st unk">unknown</span><span class="txt">Your log shows no stop order on this trade.</span></div>
+        </div>
+        <p class="small mut">Unknown never counts for or against you, as today. The first line is for a fills-only import, NinjaTrader and CSV. The second is a Sierra log with orders where the trade had no stop attached.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2 · Settings → Trading Rules → Runner rules</h2>
+    <div class="pair">
+      <div class="rcard dashed">
+        <p class="eyebrow">Today</p>
+        <div class="rhead"><span class="switch"></span><span class="name">T3</span><b>Stop to breakeven only after TP1</b></div>
+        <p class="rbody">Pass when the stop moves to breakeven only after TP1 fills, never before.</p>
+        <p class="amber">Can't be checked yet: your fills don't show when the stop moved. Every trade shows "unknown" here, which never counts for or against you.</p>
+      </div>
+      <div class="rcard">
+        <p class="eyebrow">New</p>
+        <div class="rhead"><span class="switch"></span><span class="name">T3</span><b>Stop to breakeven only after TP1</b></div>
+        <p class="rbody">Pass when the stop moves to breakeven only after TP1 fills, never before. <span class="hl">Breakeven = the stop at your entry price or in profit. A stop that never gets there passes.</span></p>
+        <p class="xs mut hl">Read from the stop orders in your Sierra log. Trades imported without orders show "unknown", which never counts for or against you.</p>
+        <p class="tally hl">Since Oct 14 · <b>pass</b> 1 trade · 100% · — &nbsp;|&nbsp; <b>fail</b> 0 &nbsp;|&nbsp; unknown 0</p>
+      </div>
+    </div>
+    <p class="small mut">The "+ Add a runner rule" menu hint changes from <s class="faint">Not checkable from fills yet — shows as unknown</s> to <span class="hl">Read from the stop orders in your Sierra log</span>.</p>
+  </section>
+
+  <section>
+    <h2>3 · Import trades</h2>
+    <div class="card" style="max-width:760px">
+      <p class="mut small">Upload a trade-history export: a CSV from another journal (NinjaTrader, Tradovate, Tradezella), or a Sierra Chart trade-activity log (.txt). We'll match your entries, exits and P&amp;L.</p>
+      <p class="small hl">Sierra Chart: export the Trade Activity Log with orders included, not just fills. Your stop moves are in the orders, and that's how "Stop to breakeven only after TP1" gets checked. A fills-only export still imports every trade.</p>
+    </div>
+    <div class="note">
+      <p class="q"><b>Question for you:</b> what is the setting called in your Sierra Trade Activity Log that shows orders as well as fills? I'll use your words in this note so a Sierra user can find it.</p>
+      <p>Re-importing a day you already imported, this time with orders, adds the stop history to the trades already there. It doesn't create duplicates.</p>
+    </div>
+  </section>
+</div>

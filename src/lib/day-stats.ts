@@ -5,7 +5,7 @@ import { mgmtTotals, type MgmtTotals } from '@/lib/trade-management'
 import { dayTradeInputs, tradeSumsInSequence, normalizeAtrStopTarget, type DayTradeInputs, type RiskDay } from '@/lib/exit-rollup'
 import type { TradeSums } from '@/lib/tapescore-axes'
 import { effectiveAnalysis } from '@/lib/tapescore-day-rules'
-import type { ProcessVerdict, TradeEntryCtx, TradingDay } from '@/lib/supabase/types'
+import type { ProcessVerdict, TradeEntryCtx, TradeStops, TradingDay } from '@/lib/supabase/types'
 import type { EntryRuleConfig } from '@/lib/entry-rules'
 import type { RunnerRuleConfig } from '@/lib/runner-rules'
 
@@ -53,6 +53,9 @@ export interface TradeForStats {
   /** The entry rules' snapshot of the fill (review_json.entry_ctx), selected by
    *  JSON path. Null = not read yet. Entry's "Entry rules" part grades it. */
   entry_ctx?: TradeEntryCtx | null
+  /** The trade's stop orders (review_json.stops), selected by JSON path. Null =
+   *  imported without orders. The runner rule "breakeven only after TP1" reads it. */
+  stops?: TradeStops | null
 }
 
 /**
@@ -62,7 +65,7 @@ export interface TradeForStats {
  * columns.
  */
 export const ROLLUP_TRADE_COLS =
-  'id, entry_time, exit_time, tags_json, pnl, direction, entry_price, exit_price, stop_price, tp1_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, structure_5m_alignment, exits_json, mfe_dollars_per_leg, flow_total:review_json->score->total, entry_ctx:review_json->entry_ctx'
+  'id, entry_time, exit_time, tags_json, pnl, direction, entry_price, exit_price, stop_price, tp1_price, high_during_position, low_during_position, quantity, symbol, entry_atr_1m, structure_5m_alignment, exits_json, mfe_dollars_per_leg, flow_total:review_json->score->total, entry_ctx:review_json->entry_ctx, stops:review_json->stops'
 
 /** The day-level inputs (columns) the rollup reads. */
 export interface DayForStats {

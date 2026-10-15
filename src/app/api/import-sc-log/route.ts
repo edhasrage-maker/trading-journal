@@ -9,6 +9,8 @@ import { isOutsideRth } from '@/lib/rth'
 import { sessionUtcWindow, todayPT } from '@/lib/pt-time'
 import { buildDayRegimeSeries, buildRegimeSeriesFrom1mBars, regimeAtEntry, buildDayEntryMetrics, atrAtEntry, rvolAtEntry } from '@/lib/nq-front-month'
 import { followFade } from '@/lib/market-structure'
+import { writeTradeStops } from '@/lib/trade-stops-server'
+import type { TradeStopOrder } from '@/lib/supabase/types'
 
 /** Canonical 5m-structure confluence labels. MUST stay identical to the strings
  *  in /api/trades/suggest-tags — a near-duplicate casing also exists in the
@@ -151,6 +153,21 @@ export async function POST(req: Request) {
     inserted += dayInserted
     skippedDuplicates += payload.length - dayInserted
     perDate.push({ date: d, trades: payload.length, inserted: dayInserted })
+
+    // 4a. Stop history (review_json.stops) for the runner rule "breakeven only
+    // after TP1" — only when the log carries order rows. Best-effort.
+    {
+      const stops = new Map<string, TradeStopOrder[]>()
+      for (const r of dayRows) if (r.stop_orders) stops.set(r.sierra_trade_id, r.stop_orders)
+      if (stops.size > 0) {
+        try {
+          const n = await writeTradeStops(supabase, stops)
+          if (n > 0) console.log(`[import-sc-log] stop history: ${n} trade(s)`)
+        } catch (e) {
+          console.warn('[import-sc-log] stop history skipped:', e instanceof Error ? e.message : 'unknown')
+        }
+      }
+    }
 
     // 4b. Auto-populate per-trade derived fields from ohlcv_bars (which
     // BarWatcher refreshes every ~3 min, so today's bars exist by the time

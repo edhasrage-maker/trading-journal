@@ -10,6 +10,9 @@ import { liveAtr, postExitExtension, POST_EXIT_WINDOW_MIN } from '@/lib/atr'
 import { clientError } from '@/lib/api-error'
 import { todayPT } from '@/lib/pt-time'
 import { legacyCombinedId } from '@/lib/sc-combine'
+import { readStopOrders } from '@/lib/sc-stops'
+import { writeTradeStops } from '@/lib/trade-stops-server'
+import type { TradeStopOrder } from '@/lib/supabase/types'
 import { fillStructureForDays, STRUCTURE_SPAN_DAYS } from '@/lib/structure-from-bars'
 
 /**
@@ -273,6 +276,9 @@ export async function POST(req: Request) {
   // the user's per-side commission setting. Sierra logs are gross; NinjaTrader
   // (per-fill commission) and Tradezella (Net P&L) already include costs.
   let grossSource = false
+  // Sierra stop orders per trade (an export with orders included), stored in
+  // review_json.stops after the upsert — never a trades column.
+  const stopsBySid = new Map<string, TradeStopOrder[]>()
 
   if (directTrades) {
     // Pre-reconstructed + merged in the browser (combine-all-accounts). Sierra
@@ -283,6 +289,8 @@ export async function POST(req: Request) {
     for (const t of directTrades) {
       const trade_date = ptTradeDate(t.entry_time)
       if (!trade_date || !t.symbol) { skipped++; continue }
+      const so = readStopOrders(t.stop_orders)
+      if (so && typeof t.sierra_trade_id === 'string' && t.sierra_trade_id) stopsBySid.set(t.sierra_trade_id, so)
       pending.push({
         trade_date,
         row: {
@@ -319,6 +327,7 @@ export async function POST(req: Request) {
     for (const r of rows) {
       const trade_date = ptTradeDate(r.entry_time_iso)
       if (!trade_date) { skipped++; continue }
+      if (r.stop_orders) stopsBySid.set(r.sierra_trade_id, r.stop_orders)
       pending.push({
         trade_date,
         row: {
@@ -477,6 +486,18 @@ export async function POST(req: Request) {
       { error: clientError(`Insert failed: ${insErr.message}`, 'Could not import your trades. Please try again.'), total, skipped, warnings },
       { status: 500 },
     )
+  }
+
+  // Stop history for the runner rule "breakeven only after TP1". Every trade in
+  // the upload, new or already there, so re-importing a day with orders included
+  // adds it to the trades the day already had.
+  if (stopsBySid.size > 0) {
+    try {
+      await writeTradeStops(db, stopsBySid)
+    } catch (e) {
+      console.error('[import-trades-csv] stop history skipped:', e instanceof Error ? e.message : 'unknown')
+      warnings.push('Could not save your stop history (import still completed).')
+    }
   }
 
   // 5m structure (follow/fade alignment + pivot regime) from the bar feed.

@@ -406,6 +406,30 @@ export interface TradeReview {
   /** Mistake tags the app added for failed rules (src/lib/rule-tags.ts) —
    *  the ones it may take off again when a rule changes. */
   auto_tags?: string[]
+  /** The trade's stop orders as Sierra logged them, for the runner rule
+   *  "breakeven only after TP1" (src/lib/sc-stops.ts). Written read-merge by the
+   *  Sierra importers when the log carries order rows. */
+  stops?: TradeStops
+}
+
+/** trades.review_json.stops — every price the trade's stop orders worked at. */
+export interface TradeStops {
+  v: string
+  /** The fill it was read for (entry ms | entry price | direction | symbol); a
+   *  trade whose fill no longer matches has no stop history. */
+  src: string
+  /** One per stop order attached to the trade's entry orders. Empty = the log
+   *  had orders but none of them was a stop on this trade. */
+  orders: TradeStopOrder[]
+  /** When it was read (UTC ISO). */
+  at: string
+}
+
+export interface TradeStopOrder {
+  /** Its price when the trade's first entry filled (or when it was placed, if later). UTC ISO time. */
+  start: { t: string; px: number }
+  /** Every later price, oldest first. `by`: you (a drag, an edit) or Sierra's own automation. */
+  moves: { t: string; px: number; by: 'you' | 'auto' }[]
 }
 
 /** One closed 1-minute candle before the fill (regular candle; PT clock). */

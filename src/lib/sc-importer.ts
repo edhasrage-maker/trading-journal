@@ -1,4 +1,6 @@
 import Papa from 'papaparse'
+import { indexStopRows, stopOrdersFor, type ScOrderRow } from './sc-stops'
+import type { TradeStopOrder } from './supabase/types'
 
 /**
  * Sierra Chart Trade Activity Log importer.
@@ -38,6 +40,10 @@ export interface ParsedSCRow {
   // entry here too. The aggregated weighted-average lives in entry/exit_price
   // for PnL math and list-view display.
   exits: Array<{ time: string; price: number; qty: number }>
+  // The stop orders attached to this trade's entry orders (src/lib/sc-stops.ts).
+  // Absent when the log has no order rows at all (a fills-only export), so an
+  // import never overwrites stop history it can't see.
+  stop_orders?: TradeStopOrder[]
 }
 
 export interface ParseOutcome {
@@ -117,6 +123,7 @@ function parseDateTime(raw: string, tz?: string): Date | null {
 interface RawRow {
   ActivityType?: string
   DateTime?: string
+  OrderActionSource?: string
   Symbol?: string
   Quantity?: string
   BuySell?: string
@@ -173,6 +180,8 @@ export function parseSierraChartLog(text: string, tz?: string): ParseOutcome {
 
   const parseErrors: string[] = []
   const fills: Fill[] = []
+  // Order rows (an export with orders included): read for the stops only.
+  const orderRows: ScOrderRow[] = []
   let skippedFiltered = 0
   let skippedNonFill = 0
   let skippedZeroQty = 0
@@ -182,8 +191,22 @@ export function parseSierraChartLog(text: string, tz?: string): ParseOutcome {
     if (!row || !row.ActivityType) continue
     const rowNumber = i + 2 // header is line 1
 
+    if (row.ActivityType === 'Orders') {
+      if (!isLiveAccount(row.TradeAccount)) continue
+      const ots = parseDateTime(row.DateTime ?? '', tz)
+      const praw = (row.Price ?? '').trim()
+      const p = Number(praw)
+      if (ots) orderRows.push({
+        t: ots.getTime(), account: (row.TradeAccount ?? '').trim(), symbol: row.Symbol ?? '',
+        ioid: (row.InternalOrderID ?? '').trim(), parent: (row.ParentInternalOrderID ?? '').trim(),
+        type: row.OrderType ?? '', status: (row.OrderStatus ?? '').trim(),
+        price: praw !== '' && Number.isFinite(p) ? p : null, source: row.OrderActionSource ?? '', seq: i,
+      })
+      continue
+    }
     if (row.ActivityType !== 'Fills') {
-      skippedNonFill++
+      // Positions rows come with an orders-included export; nothing to read there.
+      if (row.ActivityType !== 'Positions') skippedNonFill++
       continue
     }
     if (!isLiveAccount(row.TradeAccount)) {
@@ -289,6 +312,7 @@ export function parseSierraChartLog(text: string, tz?: string): ParseOutcome {
 
   // Aggregate each completed round-trip into a ParsedSCRow
   const rows: ParsedSCRow[] = []
+  const stopIndex = orderRows.length > 0 ? indexStopRows(orderRows) : null
   for (const g of completed) {
     const isLong = g.direction === 'long'
     const opens = g.fills.filter(f => (isLong ? f.side === 'Buy' : f.side === 'Sell'))
@@ -362,6 +386,13 @@ export function parseSierraChartLog(text: string, tz?: string): ParseOutcome {
       high_during_position: high_during_position != null ? round2(high_during_position) : null,
       low_during_position: low_during_position != null ? round2(low_during_position) : null,
       exits,
+      ...(stopIndex ? {
+        stop_orders: stopOrdersFor(stopIndex, {
+          account: g.account,
+          entryOrderIds: opens.map(f => f.internalOrderID.trim()),
+          entryMs: opens[0].ts.getTime(),
+        }),
+      } : {}),
     })
   }
 

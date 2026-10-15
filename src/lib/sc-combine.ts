@@ -1,4 +1,5 @@
 import { parseSierraChartLog } from './sc-importer'
+import type { TradeStopOrder } from './supabase/types'
 
 /**
  * Combine a multi-account Sierra log into ONE set of trades — the trader's
@@ -28,6 +29,9 @@ export interface CombinedTradeRow {
   high_during_position: number | null
   low_during_position: number | null
   exits_json: Array<{ time: string; price: number; qty: number }> | null
+  /** Every copy's stop orders (src/lib/sc-stops.ts); absent for a fills-only log.
+   *  Not a trades column: the server stores it in review_json.stops. */
+  stop_orders?: TradeStopOrder[]
 }
 
 export interface CombineResult {
@@ -86,6 +90,7 @@ export function combineSierraLog(text: string, timezone?: string): CombineResult
     const highs = g.map(r => r.high_during_position).filter((h): h is number => h != null)
     const lows = g.map(r => r.low_during_position).filter((l): l is number => l != null)
     const exits = g.flatMap(r => r.exits ?? []).sort((a, b) => a.time.localeCompare(b.time))
+    const withStops = g.filter(r => r.stop_orders)
 
     trades.push({
       // Deterministic id from the decision itself → re-imports dedupe cleanly.
@@ -101,6 +106,7 @@ export function combineSierraLog(text: string, timezone?: string): CombineResult
       high_during_position: highs.length ? round(Math.max(...highs)) : null,
       low_during_position: lows.length ? round(Math.min(...lows)) : null,
       exits_json: exits.length ? exits : null,
+      ...(withStops.length ? { stop_orders: withStops.flatMap(r => r.stop_orders ?? []) } : {}),
     })
   }
 

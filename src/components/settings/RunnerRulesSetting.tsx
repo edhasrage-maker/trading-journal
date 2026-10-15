@@ -51,7 +51,7 @@ export default function RunnerRulesSetting() {
       for (let p = 0; ; p++) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- exits_json is untyped jsonb
         const { data, error: e } = await (sb as any).from('trades')
-          .select('id, entry_time, direction, symbol, pnl, entry_price, tp1_price, exits_json, entry_atr_1m')
+          .select('id, entry_time, direction, symbol, pnl, entry_price, tp1_price, exits_json, entry_atr_1m, stops:review_json->stops')
           .gte('entry_time', earliest)   // UTC midnight = the evening before in PT, so the whole first day is in
           .order('entry_time', { ascending: true }).order('id', { ascending: true })
           .range(p * PAGE, p * PAGE + PAGE - 1)
@@ -155,15 +155,14 @@ function RunnerCard({ rule: r, trades, onChange, onRemove }: {
   onChange: (patch: Partial<RunnerRuleConfig>) => void
   onRemove: () => void
 }) {
-  const checkable = r.type !== 'be_after_tp1'
-  const tally = useMemo(() => (trades && checkable ? runnerRuleTally(r, trades) : null), [r, trades, checkable])
+  const tally = useMemo(() => (trades ? runnerRuleTally(r, trades) : null), [r, trades])
   const label = r.name.trim() || RUNNER_TYPE_LABELS[r.type]
   const n = (key: 'pct' | 'be_ticks' | 'target_atr' | 'target_tol', decimals: number, aria: string) => (
     // keyed by the saved value, so a value changed elsewhere (clamped, reloaded) re-seeds the box
     <NumInput key={`${key}:${r[key]}`} value={r[key] ?? 0} decimals={decimals} aria={`${label} ${aria}`} onCommit={v => onChange({ [key]: v } as Partial<RunnerRuleConfig>)} />
   )
   return (
-    <div className={`border border-gray-800 rounded-lg px-3.5 py-3 space-y-2 ${checkable ? '' : 'border-dashed'} ${r.on ? '' : 'opacity-55'}`}>
+    <div className={`border border-gray-800 rounded-lg px-3.5 py-3 space-y-2 ${r.on ? '' : 'opacity-55'}`}>
       <div className="flex items-center gap-2.5 flex-wrap">
         <button
           type="button" role="switch" aria-checked={r.on} aria-label={`${label} on`}
@@ -194,11 +193,11 @@ function RunnerCard({ rule: r, trades, onChange, onRemove }: {
             Any other exit counts as closed by hand.
           </>
         )}
-        {r.type === 'be_after_tp1' && <>Pass when the stop moves to breakeven only after TP1 fills, never before.</>}
+        {r.type === 'be_after_tp1' && <>Pass when the stop moves to breakeven only after TP1 fills, never before. Breakeven = the stop at your entry price or in profit. A stop that never gets there passes.</>}
       </div>
-      {!checkable && (
-        <p className="md:pl-[46px] text-xs text-amber-400">
-          Can&apos;t be checked yet: your fills don&apos;t show when the stop moved. Every trade shows &ldquo;unknown&rdquo; here, which never counts for or against you.
+      {r.type === 'be_after_tp1' && (
+        <p className="md:pl-[46px] text-xs text-gray-500">
+          Read from the stop orders in your Sierra log. Trades imported without orders show &ldquo;unknown&rdquo;, which never counts for or against you.
         </p>
       )}
       {tally && (

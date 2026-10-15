@@ -12,6 +12,9 @@ import {
 import { dayTradeInputs, traderRulesSig } from '../src/lib/exit-rollup.ts'
 import { FOUNDER_ENTRY_RULES } from '../src/lib/entry-rules.ts'
 import { axisTooltip } from '../src/lib/tapescore-axes.ts'
+import { STOPS_VERSION } from '../src/lib/sc-stops.ts'
+import { ruleMistakeTagsFor } from '../src/lib/rule-tags.ts'
+import type { TradeStops } from '../src/lib/supabase/types.ts'
 
 let failed = 0
 const check = (name: string, ok: boolean, got?: unknown) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok || got === undefined ? '' : `\n       got: ${JSON.stringify(got)}`}`); if (!ok) failed++ }
@@ -42,7 +45,7 @@ console.log('the mockup\'s trades')
   const a = evaluateRunnerRules(RULES, oct14)!
   check('Oct 14 T1', a[0].status === 'pass' && a[0].reason === '2 of 3 contracts (67%) came off at 30,392.50 and 30,391.00 (08:29), at TP1 30,398.00 or better.', a[0])
   check('Oct 14 T2', a[1].status === 'pass' && a[1].reason === 'The last contract left at 30,351.00 (08:37), 3.83× ATR from entry: the 4× ATR target.', a[1])
-  check('Oct 14 T3', a[2].status === 'unknown' && a[2].reason === 'Your fills don\'t show when the stop moved.', a[2])
+  check('Oct 14 T3 without stop history', a[2].status === 'unknown' && a[2].reason === 'No stop history for this trade: import your Sierra log with orders included.', a[2])
   const b = evaluateRunnerRules(RULES, sep18)!
   check('Sep 18 T1', b[0].status === 'pass' && b[0].reason === '3 of 5 contracts (60%) came off at 7,691.25 (09:53), at TP1 7,691.25.', b[0])
   check('Sep 18 T2', b[1].status === 'fail' && b[1].reason === 'The last 2 contracts left at 7,692.25 (10:38), 3.29× ATR from entry: not breakeven, the 4× ATR target or 13:00, so closed by hand.', b[1])
@@ -52,6 +55,39 @@ console.log('the mockup\'s trades')
   const wide = evaluateRunnerRules(RULES.map(r => (r.type === 'runner_exit' ? { ...r, be_ticks: 5 } : r)), jul1)!
   check('Jul 1 T2 passes with a 5-tick window', wide[1].status === 'pass' && /breakeven/.test(wide[1].reason), wide[1])
   check('scores: Oct 14 = 1, Sep 18 = 0.5 (T3 unknown left out)', runnerRulesScore(a) === 1 && runnerRulesScore(b) === 0.5)
+}
+console.log('breakeven only after TP1, from the stop orders')
+{
+  // [time, price] for where each stop order started and every later price
+  const stops = (date: string, orders: { start: [string, number]; moves?: [string, number][] }[]): TradeStops => ({
+    v: STOPS_VERSION, src: '', at: '',
+    orders: orders.map(o => ({ start: { t: PT(date, o.start[0]), px: o.start[1] }, moves: (o.moves ?? []).map(([h, px]) => ({ t: PT(date, h), px, by: 'you' as const })) })),
+  })
+  const T3 = (t: RunnerTrade) => evaluateRunnerRules(RULES, t)![2]
+  // Jul 1 long 30,214; TP1 filled 09:47:31. Two stops (one per target), the runner's dragged to 30,215 at 09:47:39.
+  const real = stops('2026-07-01', [{ start: ['09:45:07', 30201] }, { start: ['09:45:07', 30201], moves: [['09:47:39', 30215]] }])
+  const pass = T3({ ...jul1, stops: real })
+  check('Jul 1: stop to breakeven 8 s after TP1 = pass, mockup wording', pass.status === 'pass' && pass.reason === 'Stop to breakeven (30,215) at 09:47:39, 8 s after TP1 filled (09:47:31).', pass)
+  check('read inside review_json too', T3({ ...jul1, review_json: { stops: real, score: null } }).reason === pass.reason)
+  const fail = T3({ ...jul1, stops: stops('2026-07-01', [{ start: ['09:45:07', 30201], moves: [['09:46:50', 30214], ['09:48:00', 30220]] }]) })
+  check('at entry before TP1 = fail', fail.status === 'fail' && fail.reason === 'Stop to breakeven (30,214) at 09:46:50, 41 s before TP1 filled (09:47:31).', fail)
+  const tighter = T3({ ...jul1, stops: stops('2026-07-01', [{ start: ['09:45:07', 30201], moves: [['09:46:50', 30213], ['09:48:33', 30215]] }]) })
+  check('still in loss before TP1 is just a tighter stop; breakeven after = pass', tighter.status === 'pass' && tighter.reason === 'Stop to breakeven (30,215) at 09:48:33, 1 min 2 s after TP1 filled (09:47:31).', tighter)
+  const same = T3({ ...jul1, stops: stops('2026-07-01', [{ start: ['09:45:07', 30201], moves: [['09:47:31', 30215]] }]) })
+  check('the same instant as the TP1 fill counts as after', same.status === 'pass', same)
+  const never = T3({ ...jul1, stops: stops('2026-07-01', [{ start: ['09:45:07', 30201], moves: [['09:46:10', 30205], ['09:48:00', 30210]] }]) })
+  check('never at breakeven = pass (founder 2026-10-15)', never.status === 'pass' && never.reason === 'The stop never went to breakeven (30,214); it was last at 30,210.', never)
+  const none = T3({ ...jul1, stops: { v: STOPS_VERSION, src: '', at: '', orders: [] } })
+  check('a log with orders but no stop on the trade = unknown', none.status === 'unknown' && none.reason === 'Your log shows no stop order on this trade.', none)
+  check('an unknown stop-history version = no history', T3({ ...jul1, stops: { ...real, v: 'stops-0' } }).status === 'unknown')
+  // a short: Oct 14 at 30,428, TP1 08:29:22; stop 30,438 to 30,427 at 08:29:32
+  const short = T3({ ...oct14, stops: stops('2026-10-14', [{ start: ['08:19:16', 30438], moves: [['08:29:32', 30427]] }]) })
+  check('short: below entry is in profit', short.status === 'pass' && short.reason === 'Stop to breakeven (30,427) at 08:29:32, 10 s after TP1 filled (08:29:22).', short)
+  const early = stops('2026-10-14', [{ start: ['08:19:16', 30438], moves: [['08:25:00', 30428]] }])
+  check('short: at entry before TP1 = fail', T3({ ...oct14, stops: early }).status === 'fail')
+  check('a counted fail puts "Breakeven before TP1" on the trade', JSON.stringify(ruleMistakeTagsFor({ ...oct14, stops: early, review_json: null }, [], RULES)) === JSON.stringify(['Breakeven before TP1']))
+  check('a pass puts no tag on', ruleMistakeTagsFor({ ...oct14, stops: stops('2026-10-14', [{ start: ['08:19:16', 30438], moves: [['08:29:32', 30427]] }]), review_json: null }, [], RULES).length === 0)
+  check('T3 now counts in the runner score (Jul 1: T1 pass, T2 fail at 2 ticks, T3 pass = 2/3)', Math.abs((runnerRulesScore(evaluateRunnerRules(RULES, { ...jul1, stops: real })) ?? 0) - 2 / 3) < 1e-9)
 }
 console.log('which trades are runners')
 {

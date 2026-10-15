@@ -31,10 +31,10 @@ console.log('one-liners and tags (as the mockup)')
     '3+ candles in a row against', 'Tape outside ±2', 'Last candle against', 'Big candle against',
     'Faded a big candle or spike', 'Tape 2+ against', 'Heiken Ashi already my colour',
   ]), tags)
-  check('runner mistake tags (T3 has none)', JSON.stringify(RUNNER.map(runnerMistakeTag)) === JSON.stringify(['Under 60% at TP1', 'Runner closed by hand', null]))
+  check('runner mistake tags', JSON.stringify(RUNNER.map(runnerMistakeTag)) === JSON.stringify(['Under 60% at TP1', 'Runner closed by hand', 'Breakeven before TP1']))
   check('a number change moves the line and the tag', ruleOneLiner({ ...FOUNDER_ENTRY_RULES[0], n: 4 }) === 'No 4 candles in a row against' && ruleMistakeTag({ ...FOUNDER_ENTRY_RULES[0], n: 4 }) === '4+ candles in a row against')
   check('a different ES band is named', ruleOneLiner({ ...FOUNDER_ENTRY_RULES[1], es: 2.5 }) === 'Tape inside ±2 (ES 2.5)')
-  check('library list = every rule\'s tag, once', allRuleMistakeTags(FOUNDER_ENTRY_RULES, RUNNER).length === 9)
+  check('library list = every rule\'s tag, once', allRuleMistakeTags(FOUNDER_ENTRY_RULES, RUNNER).length === 10)
 }
 
 const PT = (date: string, hms: string) => new Date(`${date}T${hms}-07:00`).toISOString()

@@ -13,6 +13,14 @@
  * no closing on feel — measured against the TP1 price LOGGED on the trade.
  * The hold-or-not score failed its forward test and is deliberately not a rule.
  *
+ * BREAKEVEN ONLY AFTER TP1 is read from the trade's stop orders as Sierra logged
+ * them (review_json.stops, src/lib/sc-stops.ts; plan docs/runner-t3-stop-log-plan.md).
+ * Founder's calls (2026-10-15): breakeven = a stop at the entry price or in
+ * profit (a stop still in loss is just a tighter stop); the first moment any of
+ * the trade's stops is there, before the TP1 fill = fail, at or after it = pass;
+ * a stop that never gets there passes (how the runner left is T2's job). No
+ * stop history (a fills-only import, other platforms) = unknown.
+ *
  * WHICH TRADES ARE JUDGED: a runner — a trade with a logged TP1 whose fills
  * took something at TP1 or better and left a piece on after that exit.
  *   - fills within 30 s of each other are one exit (a limit order filling in
@@ -29,6 +37,8 @@
  * structure with you, src/lib/exit-score.ts) applies as before.
  */
 import { symbolRoot } from '@/lib/futures-symbols'
+import { storedStops } from '@/lib/sc-stops'
+import type { TradeStops } from '@/lib/supabase/types'
 
 export type RunnerRuleType = 'scale_out' | 'runner_exit' | 'be_after_tp1'
 
@@ -61,7 +71,7 @@ export const RUNNER_TYPE_LABELS: Record<RunnerRuleType, string> = {
 export const RUNNER_TYPE_HINTS: Record<RunnerRuleType, string> = {
   scale_out: 'Take at least a set share off at your logged TP1',
   runner_exit: 'The rest leaves only at breakeven, a target in ATRs, or the close',
-  be_after_tp1: "Not checkable from fills yet — shows as unknown",
+  be_after_tp1: 'Read from the stop orders in your Sierra log',
 }
 export const RUNNER_TYPES: readonly RunnerRuleType[] = ['scale_out', 'runner_exit', 'be_after_tp1']
 
@@ -135,7 +145,7 @@ export function runnerMistakeTag(r: RunnerRuleConfig): string | null {
   switch (r.type) {
     case 'scale_out': return `Under ${r.pct ?? 60}% at TP1`
     case 'runner_exit': return 'Runner closed by hand'
-    case 'be_after_tp1': return null
+    case 'be_after_tp1': return 'Breakeven before TP1'
   }
 }
 
@@ -144,7 +154,7 @@ export function describeRunnerRule(r: RunnerRuleConfig): string {
   switch (r.type) {
     case 'scale_out': return `pass when at least ${r.pct ?? 60}% of the position comes off at the logged TP1 price or better`
     case 'runner_exit': return `pass when what is left after TP1 exits only at breakeven (within ${r.be_ticks ?? 2} ticks of entry), the target (${r.target_atr ?? 4}× ATR from entry, within ${r.target_tol ?? 0.25}× ATR), or the ${r.close ?? '13:00'} PT close; any other exit counts as closed by hand`
-    case 'be_after_tp1': return 'the stop moves to breakeven only after TP1 fills — not checkable from fills yet, always unknown'
+    case 'be_after_tp1': return 'pass when the stop moves to breakeven (the entry price or in profit) only after TP1 fills, or never gets there; fail when it got there before TP1 filled; read from the stop orders in the trader’s Sierra log, unknown for a trade imported without them'
   }
 }
 
@@ -159,6 +169,10 @@ export interface RunnerTrade {
   tp1_price?: number | null
   entry_atr_1m?: number | null
   exits_json?: unknown
+  /** The trade's stop orders (review_json.stops), selected on its own … */
+  stops?: TradeStops | null
+  /** … or inside the full review_json (read as review_json.stops, checked on read). */
+  review_json?: unknown
 }
 
 const TICK: Record<string, number> = { NQ: 0.25, MNQ: 0.25, ES: 0.25, MES: 0.25, YM: 1, MYM: 1, RTY: 0.1, M2K: 0.1, CL: 0.01, MCL: 0.01, GC: 0.1, MGC: 0.1 }
@@ -169,6 +183,16 @@ interface Leg { t: number; iso: string; px: number; q: number }
 /** "08:29" PT of an ISO time. */
 function ptHm(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit' })
+}
+/** "08:29:07" PT of a time in ms. */
+const ptHms = (ms: number) => new Date(ms).toLocaleTimeString('en-GB', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+/** A price as the chart shows it: "30,215", "7,544.25". */
+const fmtLevel = (x: number) => x.toLocaleString('en-US', { maximumFractionDigits: 2 })
+/** "7 s", "1 min 2 s", "4 min". */
+function fmtGap(ms: number): string {
+  const s = Math.round(Math.abs(ms) / 1000)
+  if (s < 60) return `${s} s`
+  return s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`
 }
 function ptDateOf(iso: string | null | undefined): string | null {
   if (!iso) return null
@@ -296,8 +320,28 @@ export function evaluateRunnerRules(rules: readonly RunnerRuleConfig[], t: Runne
         }
         return res('pass', `The runner left at ${what.join(' and ')}.`)
       }
-      case 'be_after_tp1':
-        return res('unknown', 'Your fills don\'t show when the stop moved.')
+      case 'be_after_tp1': {
+        const st = storedStops(t.stops ?? (t.review_json as { stops?: unknown } | null | undefined)?.stops ?? null)
+        if (!st) return res('unknown', 'No stop history for this trade: import your Sierra log with orders included.')
+        if (!st.orders.length) return res('unknown', 'Your log shows no stop order on this trade.')
+        const atBe = (px: number) => (px - rd.entry) * rd.sign >= -1e-9
+        // the first moment any of the trade's stops is at breakeven, and where the stops ended
+        let first: { ms: number; px: number } | null = null
+        let last: { ms: number; px: number } | null = null
+        for (const o of st.orders) {
+          const pts = [o.start, ...o.moves].map(p => ({ ms: Date.parse(p.t), px: p.px }))
+          const hit = pts.find(p => atBe(p.px))
+          if (hit && (!first || hit.ms < first.ms)) first = hit
+          const end = pts[pts.length - 1]
+          if (!last || end.ms >= last.ms) last = end
+        }
+        const tp1Ms = Date.parse(rd.tp1Legs[0].iso)
+        if (!first) return res('pass', `The stop never went to breakeven (${fmtLevel(rd.entry)}); it was last at ${fmtLevel(last!.px)}.`)
+        const when = `Stop to breakeven (${fmtLevel(first.px)}) at ${ptHms(first.ms)}, ${fmtGap(first.ms - tp1Ms)}`
+        return first.ms < tp1Ms
+          ? res('fail', `${when} before TP1 filled (${ptHms(tp1Ms)}).`)
+          : res('pass', `${when} after TP1 filled (${ptHms(tp1Ms)}).`)
+      }
     }
   })
 }

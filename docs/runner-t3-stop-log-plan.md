@@ -99,3 +99,20 @@ Two things stand in the way today:
 
 - **T2 can misread a breakeven stop that slipped.** On May 14 at 09:34, the breakeven stop at 29,709 filled at 29,704.75. T2 reads that as "closed by hand"; the log knows it was the stop.
 - **The stop at entry could fill in itself.** The log could fill the trade's stop price automatically on import.
+
+## Built (2026-10-15, branch claude/runner-t3-be-log, not pushed)
+
+- **Wording mockup:** `docs/runner-t3-mockup.html`. The reasons, Settings card, tag and import note in the code match it.
+- **Reading:** `src/lib/sc-stops.ts` reads each trade's stops from the children of its entry orders.
+  - `parseSierraChartLog` keeps order rows.
+  - Both importers write `review_json.stops`, read-merge, through `src/lib/trade-stops-server.ts`. A fills-only import never overwrites it.
+  - The combine-all-accounts path carries it from the browser.
+- **Grading:** `be_after_tp1` in `runner-rules.ts` grades from it: entry or better; at or after the TP1 fill = pass; before = fail; never = pass; no history = unknown. A counted fail adds the mistake tag "Breakeven before TP1".
+- **Score:** day stats select `stops:review_json->stops`. Writing it updates the trade, which clears that day's cached stats.
+- **Backfill:** `scripts/backfill-runner-stops.ts`, dry run by default.
+  - On your trades since May it found stop history for 400 of 402 (2 have no Sierra id).
+  - All 25 runners grade T3 as pass, same as the investigation.
+  - `--apply` has not been run.
+- **Checks:** tsc 0 errors, eslint clean, `npm test` green, with new `scripts/test-sc-stops.ts` and T3 cases in `test-runner-rules.ts`.
+
+**Found along the way (not fixed here):** hosted Sierra imports store fill times late by their own milliseconds. `naiveToUtc` in `src/lib/sc-importer.ts` counts the ms twice when a timezone is given; Sierra's 09:28:15.053 is stored as .106. It's under a second. For T3 it could only misgrade a stop moved within 1 s of the TP1 fill; the closest real case is 4 s.

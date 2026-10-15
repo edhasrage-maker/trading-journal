@@ -254,6 +254,11 @@ export default function ImportPage() {
         Files need to be under <span className="text-gray-300">~4 MB</span>; for a big Sierra log,
         import one account at a time (we&apos;ll offer that automatically).
       </p>
+      <p className="text-gray-500 text-xs mt-2 max-w-2xl">
+        Sierra Chart: export the Trade Activity Log with orders included, not just fills. Your stop moves are
+        in the orders, and that&apos;s how &ldquo;Stop to breakeven only after TP1&rdquo; gets checked. A fills-only
+        export still imports every trade.
+      </p>
 
       <div
         onDragOver={e => { e.preventDefault(); setDragOver(true) }}
