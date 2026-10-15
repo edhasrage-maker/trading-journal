@@ -9,6 +9,7 @@ import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { liveAtr, postExitExtension, POST_EXIT_WINDOW_MIN } from '@/lib/atr'
 import { clientError } from '@/lib/api-error'
 import { todayPT } from '@/lib/pt-time'
+import { fillStructureForDays, STRUCTURE_SPAN_DAYS } from '@/lib/structure-from-bars'
 
 /**
  * The trading day a trade belongs to: the PT calendar date of its entry — the
@@ -456,6 +457,24 @@ export async function POST(req: Request) {
       { error: clientError(`Insert failed: ${insErr.message}`, 'Could not import your trades. Please try again.'), total, skipped, warnings },
       { status: 500 },
     )
+  }
+
+  // 5m structure (follow/fade alignment + pivot regime) from the bar feed.
+  // Nothing on this route set it before, so every trade imported on the hosted
+  // site landed with both fields null. Runs after the insert so it also reaches
+  // existing trades on these sessions: re-importing a day the bar feed hadn't
+  // reached yet fills it in. Bounded to the upload's newest
+  // STRUCTURE_SPAN_DAYS of sessions; older ones in a long history upload stay
+  // null for scripts/backfill-hosted-structure.ts.
+  try {
+    const newest = dates.reduce((a, b) => (a > b ? a : b))
+    const cutoff = new Date(Date.parse(newest + 'T00:00:00Z') - STRUCTURE_SPAN_DAYS * 86_400_000).toISOString().slice(0, 10)
+    const dayIds = dates.filter(d => d >= cutoff).map(d => dayIdByDate.get(d)).filter((x): x is string => !!x)
+    const { filled: n } = await fillStructureForDays(db, dayIds)
+    if (n > 0) warnings.push(`Filled 5m structure (follow/fade) for ${n} trade(s) from market data.`)
+  } catch (e) {
+    console.error('[import-trades-csv] structure fill skipped:', e instanceof Error ? e.message : 'unknown')
+    warnings.push('Could not fill 5m structure from market data (import still completed).')
   }
 
   return NextResponse.json({
