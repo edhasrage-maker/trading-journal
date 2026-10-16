@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { consumeAiUsage } from '@/lib/ai-usage'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { computeCoachScore, type GradableTrade } from '@/lib/coach-score'
+import { stopPlan } from '@/lib/planned-stop'
 import { resolveRubric, scoringProfileSummary, type ScoringProfile } from '@/lib/scoring-profile'
 
 const client = new Anthropic()
@@ -54,6 +55,16 @@ const f1 = (n: number | null | undefined): string => (n == null ? '—' : n.toFi
  *  built from fields already stored on the trade (structure regime, in-trade
  *  excursion, post-exit continuation, exit type). Lines are omitted when their
  *  inputs are missing; an empty block tells the AI to return null. */
+/** The planned stop for the prompt, saying so when it is Sierra's rather than the logged one. */
+function stopLine(t: GradableTrade): string {
+  const plan = stopPlan(t)
+  if (plan.price == null) return '—'
+  if (plan.source !== 'sierra') return String(plan.price)
+  const notes = [t.stop_price != null && t.stop_price !== plan.price ? `logged ${t.stop_price}` : null,
+    plan.final != null && plan.final !== plan.price ? `last at ${plan.final}` : null].filter(Boolean)
+  return `${plan.price} (Sierra, a minute after the fill${notes.length ? `; ${notes.join(', ')}` : ''})`
+}
+
 function buildEvidence(t: GradableTrade): string {
   const lines: string[] = []
   const dir = t.direction
@@ -73,7 +84,7 @@ function buildEvidence(t: GradableTrade): string {
   }
   const exits = [...(t.exits_json ?? []).map(x => x?.price), t.exit_price].filter((p): p is number => typeof p === 'number' && Number.isFinite(p))
   if (e != null && dir && exits.length) {
-    const tp = t.tp1_price, stop = t.stop_price
+    const tp = t.tp1_price, stop = stopPlan(t).final
     const hitTp = tp != null && exits.some(p => (dir === 'long' ? p >= tp : p <= tp))
     const stopped = stop != null && exits.some(p => (dir === 'long' ? p <= stop : p >= stop))
     lines.push(`- Exit: ${hitTp ? 'hit TP1' : stopped ? 'stopped out' : 'discretionary (between TP and stop)'}`)
@@ -149,7 +160,7 @@ export async function POST(req: Request) {
 
 TRADE
 - direction: ${trade.direction ?? '—'}, quantity: ${trade.quantity ?? '—'}
-- entry: ${trade.entry_price ?? '—'}, stop: ${trade.stop_price ?? '—'}, TP1: ${trade.tp1_price ?? '—'}
+- entry: ${trade.entry_price ?? '—'}, stop: ${stopLine(trade)}, TP1: ${trade.tp1_price ?? '—'}
 - tags: ${tagSummary || '(none)'}
 - notes: ${notes || '(none)'}
 ${rulesLine ? `\nTHE TRADER'S OWN RULES (grade against THESE, not generic best practice): ${rulesLine}` : ''}${lensNote}

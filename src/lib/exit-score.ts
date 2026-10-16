@@ -1,5 +1,6 @@
 import { exitKind, tradeFacts, type MgmtTradeInput, type TradeFacts } from '@/lib/trade-management'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { plannedStopPrice, stopPlan, type StopSource } from '@/lib/planned-stop'
 
 /**
  * The five per-trade factors (founder-directed, 2026-10-13; split across two
@@ -10,9 +11,14 @@ import { symbolToMultiplier } from '@/lib/futures-symbols'
  *   1  Profit kept        WINNERS only. A winner that reached its planned
  *                         target counts in full; any other winner counts for
  *                         the share of its best point it kept.
- *   3  Stop respected     Trades whose logged stop came into play. Passes when
- *                         price never traded past it by more than slippage
- *                         while the trade was on.
+ *   3  Stop respected     Trades whose planned stop came into play, or whose
+ *                         stop the trader moved further from entry after the
+ *                         first minute. Passes when price never traded past
+ *                         the planned stop by more than slippage and the stop
+ *                         was never moved away (src/lib/planned-stop.ts:
+ *                         Sierra's stop history where the trade has it, so a
+ *                         stop tightened during the trade is judged at each
+ *                         moment, not by its last price; founder 2026-10-16).
  *   5  Runner             Only trades where a second target was attempted. The
  *                         parts that can be measured today: the first target
  *                         was actually filled, and the 5-minute structure was
@@ -151,7 +157,7 @@ export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitT
   const out: ExitTradeScores = {}
   const f = tradeFacts(t, { atr: ctx.atr })
   if (!f || t.pnl == null) return out
-  const mfe = f.mfe.pts as number, mae = f.mae.pts as number, res = f.result.pts as number
+  const mfe = f.mfe.pts as number, res = f.result.pts as number
 
   // 1 · profit kept — winners only
   if (t.pnl > 0) {
@@ -165,11 +171,9 @@ export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitT
     if (s != null) out.lossSize = s
   }
 
-  // 3 · stop respected — only when the logged stop came into play
-  if (f.riskPts != null && mae >= STOP_IN_PLAY * f.riskPts) {
-    const slip = Math.max(STOP_SLIP_MIN_PTS, STOP_SLIP_SHARE * f.riskPts)
-    out.stopRespected = mae - f.riskPts <= slip + 1e-9 ? 1 : 0
-  }
+  // 3 · stop respected — when the stop came into play, or the trader moved it away
+  const sc = stopCheck(t, f)
+  if (sc?.judged) out.stopRespected = sc.respected ? 1 : 0
 
   // 4 · stop size — against the trader's ATR stop setting
   if (f.riskPts != null && f.atr != null) {
@@ -187,12 +191,51 @@ export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitT
   return out
 }
 
-/** Planned dollar risk of a trade (stop distance × size), or null without a stop. */
-export function plannedRiskDollars(t: {
+export interface StopCheck {
+  /** The stop came into play (or was moved away), so Stop respected judges it. */
+  judged: boolean
+  respected: boolean
+  /** Price went past the planned stop — what the "past stop" label says. */
+  past: boolean
+}
+
+/**
+ * Factor 3 and the "past stop" label, from one reading so they never disagree.
+ * Null without a planned stop.
+ *
+ * With Sierra's stop history (src/lib/planned-stop.ts) the stops were working
+ * the whole time, so price can only get past the planned stop if one was moved
+ * away or pulled: a fill at a working stop at or inside the plan is the stop
+ * doing its job, however the tape printed around the fill, and a stop tightened
+ * and then hit is a stop respected (founder, 2026-10-16). Moving a stop further
+ * from entry after the first minute fails it outright. Without the history, the
+ * logged stop exactly as before: judged once price came within 10% of it,
+ * respected within slippage, "past" once the heat passed it.
+ */
+export function stopCheck(t: ExitTradeInput, f: TradeFacts | null = tradeFacts(t)): StopCheck | null {
+  if (!f || f.riskPts == null) return null
+  const mae = f.mae.pts as number
+  const slip = Math.max(STOP_SLIP_MIN_PTS, STOP_SLIP_SHARE * f.riskPts)
+  const plan = stopPlan(t)
+  if (plan.source !== 'sierra') {
+    return { judged: mae >= STOP_IN_PLAY * f.riskPts, respected: mae - f.riskPts <= slip + 1e-9, past: mae > f.riskPts }
+  }
+  const sign = t.direction === 'long' ? 1 : -1
+  const dist = (px: number) => ((t.entry_price as number) - px) * sign
+  const movedAway = plan.movedAway != null
+  const stopped = exitKind(t) === 'stopped'
+  const atWorkingStop = stopped && plan.final != null && dist(plan.final) <= f.riskPts + 1e-9
+  const past = mae - f.riskPts > slip + 1e-9 && !atWorkingStop
+  return { judged: movedAway || stopped || mae >= STOP_IN_PLAY * f.riskPts, respected: !movedAway && !past, past }
+}
+
+/** Planned dollar risk of a trade (planned stop distance × size), or null without a stop. */
+export function plannedRiskDollars(t: StopSource & {
   entry_price?: number | null; stop_price?: number | null; quantity?: number | null; symbol?: string | null
 }): number | null {
-  if (t.entry_price == null || t.stop_price == null || t.quantity == null) return null
+  const stop = plannedStopPrice(t)
+  if (t.entry_price == null || stop == null || t.quantity == null) return null
   const mult = symbolToMultiplier(t.symbol ?? '')
-  const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * mult
+  const risk = Math.abs(t.entry_price - stop) * t.quantity * mult
   return risk > 0 ? risk : null
 }

@@ -137,7 +137,7 @@ export async function POST(req: Request) {
     const tradeIds = trades.map(t => t.id).filter(Boolean)
     if (tradeIds.length > 0) {
       const { data: regimeRows } = await supabase
-        .from('trades').select('id, structure_5m_regime, direction, entry_price, stop_price, tp1_price').in('id', tradeIds)
+        .from('trades').select('id, structure_5m_regime, direction, entry_price, stop_price, tp1_price, stops:review_json->stops').in('id', tradeIds)
       for (const r of (regimeRows ?? []) as { id: string; structure_5m_regime: string | null }[]) {
         rowById.set(r.id, r)
         if (r.structure_5m_regime) regimeById.set(r.id, r.structure_5m_regime)

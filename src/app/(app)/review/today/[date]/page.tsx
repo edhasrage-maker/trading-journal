@@ -40,7 +40,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
     // only rows that can produce a reading at all.
     supabase
       .from('trades')
-      .select('id, pnl, entry_price, stop_price, quantity, direction, symbol, high_during_position, low_during_position')
+      .select('id, pnl, entry_price, stop_price, quantity, direction, symbol, high_during_position, low_during_position, stops:review_json->stops')
       .not('stop_price', 'is', null)
       .not('high_during_position', 'is', null)
       .order('entry_time', { ascending: false })

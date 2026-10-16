@@ -1,4 +1,5 @@
 import { symbolToMultiplier, symbolRoot } from '@/lib/futures-symbols'
+import { plannedStopPrice } from '@/lib/planned-stop'
 import { avgCaptureRatio, avgMaeHeatRatio, type TradeWithExcursion } from '@/lib/analytics'
 import { tapeScoreBaseFromAnalyses, finishTapeScore, resolvedAudit, type TapeScoreBase, type TapeScoreOptions, type TapeScoreResult } from '@/lib/tapescore'
 import { mgmtTotals, type MgmtTotals } from '@/lib/trade-management'
@@ -54,7 +55,9 @@ export interface TradeForStats {
    *  JSON path. Null = not read yet. Entry's "Entry rules" part grades it. */
   entry_ctx?: TradeEntryCtx | null
   /** The trade's stop orders (review_json.stops), selected by JSON path. Null =
-   *  imported without orders. The runner rule "breakeven only after TP1" reads it. */
+   *  imported without orders. The runner rule "breakeven only after TP1" reads
+   *  it, and every planned-risk number reads the planned stop from it
+   *  (src/lib/planned-stop.ts). */
   stops?: TradeStops | null
 }
 
@@ -230,12 +233,13 @@ function processFields(p: ProcessVerdict | null | undefined): Pick<DayStatsRollu
  *  same loop the rollup runs, shared so a day whose cache is missing yields the
  *  identical figures. */
 export function dayRiskSums(
-  trades: ReadonlyArray<Pick<TradeForStats, 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'symbol'>>,
+  trades: ReadonlyArray<Pick<TradeForStats, 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'symbol' | 'direction' | 'stops'>>,
 ): { sum_risk_dollars: number; sum_risk_sq: number; risk_sample: number } {
   let sum = 0, sq = 0, n = 0
   for (const t of trades) {
-    if (t.pnl == null || t.entry_price == null || t.stop_price == null || t.quantity == null) continue
-    const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * symbolToMultiplier(t.symbol ?? '')
+    const stop = plannedStopPrice(t)
+    if (t.pnl == null || t.entry_price == null || stop == null || t.quantity == null) continue
+    const risk = Math.abs(t.entry_price - stop) * t.quantity * symbolToMultiplier(t.symbol ?? '')
     if (risk > 0) { sum += risk; sq += risk * risk; n++ }
   }
   return { sum_risk_dollars: sum, sum_risk_sq: sq, risk_sample: n }
@@ -245,8 +249,10 @@ export function dayRiskSums(
  *  and `sum_risk_sq` since RISK_SQ_SINCE_VERSION, computed the same way ever
  *  since — a cached row at or above both has usable risk sums even when the
  *  rest of it is due a recompute. */
-export const RISK_SUMS_SINCE_VERSION = 7
-export const RISK_SQ_SINCE_VERSION = 12
+// v14: planned risk reads Sierra's planned stop (src/lib/planned-stop.ts), so
+// sums cached before it are not "computed the same way" any more.
+export const RISK_SUMS_SINCE_VERSION = 14
+export const RISK_SQ_SINCE_VERSION = 14
 
 /**
  * Is a cached `stats_json` row usable as-is? It must be at the current version
@@ -319,7 +325,12 @@ export function isFreshStats(
 // (src/lib/available-mfe.ts) — a scaled-out trade's contracts each count only
 // while they were on — so `mgmt` sums and the Exit "profit kept" factor move on
 // every day with a scale-out.
-export const STATS_VERSION = 13
+// v14 (2026-10-16): planned risk is Sierra's stop a minute after the fill where
+// the trade has its stop history, else the logged stop (src/lib/planned-stop.ts),
+// and Stop respected fails a stop moved further away after that minute. A stop
+// tightened during the trade no longer shrinks R or reads as "past stop" — R,
+// Stop respected, Stop size, Loss size and the risk sums move on those days.
+export const STATS_VERSION = 14
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
@@ -406,8 +417,9 @@ export function computeDayStats(
   // makes the payoff look measured when it was invented.
   let sumWinR = 0, winRCount = 0, sumLossR = 0, lossRCount = 0
   for (const t of tradesWithPnl) {
-    if (t.entry_price == null || t.stop_price == null || t.quantity == null) continue
-    const risk = Math.abs(t.entry_price - t.stop_price) * t.quantity * symbolToMultiplier(t.symbol ?? '')
+    const stop = plannedStopPrice(t)
+    if (t.entry_price == null || stop == null || t.quantity == null) continue
+    const risk = Math.abs(t.entry_price - stop) * t.quantity * symbolToMultiplier(t.symbol ?? '')
     if (!(risk > 0)) continue
     const r = (t.pnl as number) / risk
     if (r > 0) { sumWinR += r; winRCount++ }

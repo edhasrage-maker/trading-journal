@@ -2,6 +2,7 @@ import { tradeMgmt, type TradeMgmt } from '@/lib/trade-management'
 import type Anthropic from '@anthropic-ai/sdk'
 import { symbolRoot, chartSeriesRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { fetchByDayIds } from '@/lib/coach-context'
+import { plannedStopPrice } from '@/lib/planned-stop'
 
 /**
  * A query tool for the chat coach.
@@ -177,7 +178,7 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
   const { rows: native } = await fetchByDayIds(
     sb,
     'trades',
-    'id, trading_day_id, pnl, entry_time, exit_time, entry_price, exit_price, stop_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, entry_atr_1m, exits_json, mfe_dollars_per_leg',
+    'id, trading_day_id, pnl, entry_time, exit_time, entry_price, exit_price, stop_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, entry_atr_1m, exits_json, mfe_dollars_per_leg, stops:review_json->stops',
     Array.from(dayById.keys()),
     { paginate: true },
   )
@@ -221,7 +222,8 @@ async function loadRows(sb: AnyClient, start: string, end: string): Promise<Row[
   for (const t of native as any[]) {
     const day = dayById.get(t.trading_day_id)
     if (!day || t.pnl == null) continue
-    const riskPts = t.entry_price != null && t.stop_price != null ? Math.abs(t.entry_price - t.stop_price) : null
+    const stop = plannedStopPrice(t)
+    const riskPts = t.entry_price != null && stop != null ? Math.abs(t.entry_price - stop) : null
     const mult = symbolToMultiplier(t.symbol ?? '')
     const riskUsd = riskPts != null && t.quantity ? riskPts * t.quantity * mult : null
 

@@ -17,10 +17,16 @@
  */
 
 import { resolveRubric, type ScoringProfile } from '@/lib/scoring-profile'
+import { plannedStopPrice, stopPlan, type StopSource } from '@/lib/planned-stop'
 
 export interface GradableTrade {
   entry_price: number | null
   stop_price: number | null
+  /** Sierra's stop history (on its own or inside review_json): the stop checks
+   *  read the planned stop, and "stopped out" the stop working at the exit
+   *  (src/lib/planned-stop.ts). */
+  stops?: StopSource['stops']
+  review_json?: unknown
   tp1_price: number | null
   direction: 'long' | 'short' | null
   quantity: number | null
@@ -201,7 +207,7 @@ export function computeCoachScore(
   //    trader's ATR stop target (default 1 → [0.5, 1.5]; e.g. a 2-ATR trader →
   //    [1.0, 3.0]). 1.25 upper (× target) for size-ups. N/A without an ATR.
   {
-    const e = t.entry_price, s = t.stop_price, atr = t.entry_atr_1m
+    const e = t.entry_price, s = plannedStopPrice(t), atr = t.entry_atr_1m
     const tgt = rubric.atrStopTarget
     const lo = 0.5 * tgt
     // Label reflects the band; keep the familiar "0.5–1.5× ATR" for the default.
@@ -225,7 +231,7 @@ export function computeCoachScore(
   //    R-multiple (default 2). Below it needs a logged reason (judgment) →
   //    unknown for the AI to check the notes.
   {
-    const e = t.entry_price, s = t.stop_price, tp = t.tp1_price
+    const e = t.entry_price, s = plannedStopPrice(t), tp = t.tp1_price
     const rMult = rubric.tp1RMultiple
     const label = `TP1 ≥ ${rMult}R`
     if (e == null || s == null || tp == null || Math.abs(e - s) === 0) {
@@ -274,7 +280,7 @@ export function computeCoachScore(
   //    automatically (getting stopped is correct execution — an invalidated
   //    idea). Only a discretionary exit BETWEEN target and stop needs a read.
   {
-    const e = t.entry_price, tp = t.tp1_price, stop = t.stop_price, dir = t.direction
+    const e = t.entry_price, tp = t.tp1_price, stop = stopPlan(t).final, dir = t.direction
     const exits = [
       ...(t.exits_json ?? []).map(x => x?.price),
       t.exit_price,

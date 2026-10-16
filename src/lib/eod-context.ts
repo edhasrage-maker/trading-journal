@@ -78,7 +78,7 @@ export async function buildEodContext(
   try {
     const { data: book } = await sb
       .from('trades')
-      .select('id, trading_day_id, pnl, entry_price, stop_price, tp1_price, exit_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position')
+      .select('id, trading_day_id, pnl, entry_price, stop_price, tp1_price, exit_price, quantity, direction, symbol, tags_json, high_during_position, low_during_position, stops:review_json->stops')
       .not('stop_price', 'is', null)
       .order('entry_time', { ascending: false })
       .limit(400) as { data: Parameters<typeof computeTraderBaselines>[0] | null }

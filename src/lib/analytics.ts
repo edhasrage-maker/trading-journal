@@ -7,6 +7,7 @@ import { anchorExcursionToFills, EXCURSION_TOLERANCE_POINTS } from '@/lib/excurs
 // use of these imports (that is why ZERO_STATS carries no `mgmt`).
 import { mgmtTotals, type MgmtTotals, type MgmtTradeInput } from '@/lib/trade-management'
 import { availableMfeDollars } from '@/lib/available-mfe'
+import { plannedStopPrice, type StopSource } from '@/lib/planned-stop'
 
 /**
  * Pure aggregation helpers for the Journal + Analytics views.
@@ -16,7 +17,12 @@ import { availableMfeDollars } from '@/lib/available-mfe'
 
 export type TradeLike = Pick<Trade,
   'id' | 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'entry_time' | 'tags_json' | 'trading_day_id' | 'symbol'
->
+> & {
+  /** Sierra's stop history (review_json.stops), on its own or inside review_json:
+   *  planned risk reads the planned stop from it (src/lib/planned-stop.ts). */
+  stops?: StopSource['stops']
+  review_json?: unknown
+}
 
 /** Same as TradeLike plus the tick-extreme + symbol fields needed for MFE/MAE math. */
 export type TradeWithExcursion = TradeLike & Pick<Trade,
@@ -131,7 +137,7 @@ const ZERO_STATS: PerformanceStats = {
  * Returns null when entry/stop/qty/pnl are missing or risk is zero.
  */
 export function rMultiple(t: TradeLike, atrAtEntry?: number | null): number | null {
-  const ep = t.entry_price, sp = t.stop_price, pnl = t.pnl, qty = t.quantity
+  const ep = t.entry_price, sp = plannedStopPrice(t), pnl = t.pnl, qty = t.quantity
   if (ep == null || pnl == null || qty == null) return null
   const mult = symbolToMultiplier(t.symbol ?? '')
   // Planned-stop R (default): realized PnL ÷ the dollar risk implied by the stop.
@@ -335,8 +341,9 @@ const MIN_MFE_ATR_RATIO = 0.5
 function mfeClearsNoiseFloor(t: TradeWithExcursion & { entry_atr_1m?: number | null }, mfePts: number): boolean {
   const atr = t.entry_atr_1m
   if (atr != null && atr > 0) return mfePts >= atr * MIN_MFE_ATR_RATIO
-  const plannedRiskPts = t.entry_price != null && t.stop_price != null
-    ? Math.abs(t.entry_price - t.stop_price)
+  const stop = plannedStopPrice(t)
+  const plannedRiskPts = t.entry_price != null && stop != null
+    ? Math.abs(t.entry_price - stop)
     : 0
   if (plannedRiskPts > 0) return mfePts >= plannedRiskPts * MIN_MFE_RATIO_FOR_CAPTURE
   return true // no ATR and no stop — can't gauge noise, don't filter out
@@ -542,7 +549,7 @@ export function captureComponentsScaled(
   bars: BarLike[],
 ): CaptureComponents | null {
   if (t.pnl == null || t.quantity == null) return null
-  if (t.entry_price == null || t.stop_price == null) return null
+  if (t.entry_price == null || plannedStopPrice(t) == null) return null
   const xc = mfeMaePoints(t)
   if (!xc) return null
   if (xc.mfe <= 0) return null
@@ -728,10 +735,11 @@ export function formatCapturePct(
  */
 export function isGiveBackTrade(t: TradeWithExcursion): boolean {
   if ((t.pnl ?? 0) >= 0) return false
-  if (t.entry_price == null || t.stop_price == null) return false
+  const stop = plannedStopPrice(t)
+  if (t.entry_price == null || stop == null) return false
   const xc = mfeMaePoints(t)
   if (!xc) return false
-  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  const plannedRiskPts = Math.abs(t.entry_price - stop)
   if (plannedRiskPts === 0) return false
   return xc.mfe >= plannedRiskPts // MFE >= 1R favorable
 }
@@ -749,6 +757,10 @@ export function isGiveBackTrade(t: TradeWithExcursion): boolean {
  *   heat = 1.0 → MAE touched your stop level exactly
  *   heat > 1.0 → MAE went past your stop (you moved it, or got slipped)
  *
+ * Planned risk is the planned stop (src/lib/planned-stop.ts): Sierra's stop a
+ * minute after the fill where the trade has its history, so heat taken before a
+ * stop was tightened is not read against the tighter stop.
+ *
  * Display tip: multiply by 100 and render as "%" so it reads alongside
  * Capture % uniformly. 80% = sat through 80% of planned risk before
  * reversing.
@@ -759,10 +771,11 @@ export function isGiveBackTrade(t: TradeWithExcursion): boolean {
  * Display tip: render as "×R" (e.g. 0.60 → "0.6× R") to preserve the unit.
  */
 export function maeHeatRatio(t: TradeWithExcursion): number | null {
-  if (t.entry_price == null || t.stop_price == null) return null
+  const stop = plannedStopPrice(t)
+  if (t.entry_price == null || stop == null) return null
   const xc = mfeMaePoints(t)
   if (!xc) return null
-  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  const plannedRiskPts = Math.abs(t.entry_price - stop)
   if (plannedRiskPts === 0) return null
   return xc.mae / plannedRiskPts
 }

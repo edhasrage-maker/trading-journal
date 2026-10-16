@@ -212,7 +212,7 @@ export async function POST(req: Request) {
   const ids = frames.map(f => f.id)
   const { data: tradeRows } = await supabase
     .from('trades')
-    .select('id, trading_day_id, direction, entry_price, exit_price, stop_price, tp1_price, quantity, pnl, symbol, entry_time, exit_time, tags_json, notes, screenshot_url, high_during_position, low_during_position, mfe_dollars_per_leg, exits_json')
+    .select('id, trading_day_id, direction, entry_price, exit_price, stop_price, tp1_price, quantity, pnl, symbol, entry_time, exit_time, tags_json, notes, screenshot_url, high_during_position, low_during_position, mfe_dollars_per_leg, exits_json, stops:review_json->stops')
     .in('id', ids)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tradesById = new Map<string, any>((tradeRows ?? []).map((t: any) => [t.id, t]))

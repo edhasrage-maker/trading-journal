@@ -1,6 +1,7 @@
 import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { mfeMaePoints, type TradeWithExcursion } from '@/lib/analytics'
 import type { TradeTags } from '@/lib/supabase/types'
+import { plannedStopPrice } from '@/lib/planned-stop'
 
 /**
  * The trader's own historical baselines, as a prompt block.
@@ -115,8 +116,9 @@ export function computeTraderBaselines(
   let reached = 0, missed = 0, withTarget = 0
 
   for (const t of trades) {
-    if (t.entry_price == null || t.stop_price == null || t.pnl == null || !t.quantity || t.direction == null) continue
-    const riskPts = Math.abs(t.entry_price - t.stop_price)
+    const stop = plannedStopPrice(t)
+    if (t.entry_price == null || stop == null || t.pnl == null || !t.quantity || t.direction == null) continue
+    const riskPts = Math.abs(t.entry_price - stop)
     if (riskPts === 0) continue
     const riskUsd = riskPts * t.quantity * symbolToMultiplier(t.symbol ?? '')
     if (riskUsd === 0) continue

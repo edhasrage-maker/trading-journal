@@ -22,6 +22,7 @@ import { isOutsideRth } from './rth.ts'
 import { CAPTURE_UNITS_DISCIPLINE } from './coach-methodology.ts'
 import { computeSessionFacts, sessionFactsBlock } from './session-facts.ts'
 import { availableMfePtsStored, exitContracts } from './available-mfe.ts'
+import { plannedStopPrice, stopPlan } from './planned-stop.ts'
 import {
   OWNER_RAILS, isEmptyScoringProfile, resolveRails, resolveRubric, scoringProfileSummary, activeRailIds, sizeCapFor,
   type RailConfig, type ScoringProfile,
@@ -363,7 +364,8 @@ export function buildEodPrompt({
         const mgmt = t.tags_json?.trade_management?.join(', ') || '—'
         // Precomputed planned TP1 R so the AI doesn't have to do the division
         // for criterion #3 (it kept miscounting trades that clearly clear 2R).
-        const risk = (t.entry_price != null && t.stop_price != null) ? Math.abs(t.entry_price - t.stop_price) : null
+        const plan = stopPlan(t)
+        const risk = (t.entry_price != null && plan.price != null) ? Math.abs(t.entry_price - plan.price) : null
         const reward = (t.entry_price != null && t.tp1_price != null) ? Math.abs(t.tp1_price - t.entry_price) : null
         const plannedR = (risk && reward && risk > 0) ? `${(reward / risk).toFixed(2)}R` : '?'
         const notes = t.notes?.trim()
@@ -420,7 +422,7 @@ export function buildEodPrompt({
         const postExit = peFav != null && peAgn != null
           ? `continued YOUR way ${peFav}pts, reversed ${peAgn}pts`
           : 'not computed for this trade'
-        return `  ${i + 1}. open ${time} → close ${exitTime} | ${dir} @ ${t.entry_price ?? '?'} stop ${t.stop_price ?? '?'} TP1 ${tp1} exit ${exit} qty ${t.quantity ?? '?'} | PnL ${pnl}
+        return `  ${i + 1}. open ${time} → close ${exitTime} | ${dir} @ ${t.entry_price ?? '?'} stop ${plan.price ?? '?'}${plan.source === 'sierra' && plan.final != null && plan.final !== plan.price ? ` (Sierra, a minute after the fill; last at ${plan.final})` : ''} TP1 ${tp1} exit ${exit} qty ${t.quantity ?? '?'} | PnL ${pnl}
        intra-trade extremes: high=${hdp} low=${ldp}
        AFTER YOU EXITED (15m): ${postExit}
        5m structure AT ENTRY: ${regime5m ?? 'N/A'} (snapshot at the entry bar — you have no reading of what structure did after)
@@ -1095,7 +1097,7 @@ export function profitFactorToSubMetric(pf: number | null): number | null {
  * measures "how well did you capture on average," not "how badly did one
  * give-back drag the day."
  */
-type MfeCaptureTrade = Pick<Trade, 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'pnl' | 'symbol' | 'high_during_position' | 'low_during_position'> & { mfe_dollars_per_leg?: number | null; exits_json?: unknown; entry_time?: string | null }
+type MfeCaptureTrade = Pick<Trade, 'entry_price' | 'stop_price' | 'quantity' | 'direction' | 'pnl' | 'symbol' | 'high_during_position' | 'low_during_position'> & { mfe_dollars_per_leg?: number | null; exits_json?: unknown; entry_time?: string | null; review_json?: unknown }
 export function computeMfeCaptureDeterministic(
   trades: MfeCaptureTrade[],
 ): { value: number | null; eligibleCount: number } {
@@ -1103,12 +1105,13 @@ export function computeMfeCaptureDeterministic(
   let n = 0
   for (const t of trades) {
     if (t.entry_price == null || t.quantity == null || t.pnl == null || t.direction == null) continue
-    if (t.stop_price == null) continue
+    const stop = plannedStopPrice(t)
+    if (stop == null) continue
     const isLong = t.direction === 'long'
     const peakPrice = isLong ? t.high_during_position : t.low_during_position
     if (peakPrice == null) continue
     const peakPts = isLong ? peakPrice - t.entry_price : t.entry_price - peakPrice
-    const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+    const plannedRiskPts = Math.abs(t.entry_price - stop)
     if (plannedRiskPts === 0) continue
     if (peakPts < 0.2 * plannedRiskPts) continue  // MFE too small — denominator noise
     const mult = symbolToMultiplier(t.symbol ?? '')

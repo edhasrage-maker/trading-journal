@@ -9,6 +9,7 @@
 
 import { avgMfeMaeAtr, type TradeWithExcursion } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { plannedStopPrice } from '@/lib/planned-stop'
 
 export type AchievementId =
   | 'sniper'
@@ -98,10 +99,11 @@ export interface AchievementInput {
 /** Realized R for a trade: pnl ÷ planned $ risk (|entry−stop| × qty × mult).
  *  Null when there's no stop or no known multiplier. */
 function tradeR(t: AchievementTrade): number | null {
-  if (t.pnl == null || t.entry_price == null || t.stop_price == null || t.quantity == null) return null
+  const stop = plannedStopPrice(t)
+  if (t.pnl == null || t.entry_price == null || stop == null || t.quantity == null) return null
   const mult = symbolToMultiplier(t.symbol ?? '')
   if (mult === 0) return null
-  const riskPts = Math.abs(t.entry_price - t.stop_price)
+  const riskPts = Math.abs(t.entry_price - stop)
   if (riskPts === 0) return null
   const risk = riskPts * t.quantity * mult
   if (risk <= 0) return null

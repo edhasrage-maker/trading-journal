@@ -1,6 +1,7 @@
 import type { EodAiAnalysis, ProcessVerdict, RuleStatus } from '@/lib/supabase/types'
 import { pressingDrawdownIds, type ProxyTrade } from '@/lib/behavioral-proxies'
 import { plannedRiskDollars, type RiskYardstick } from '@/lib/exit-score'
+import type { StopSource } from '@/lib/planned-stop'
 
 /**
  * What TapeScore reads from a day's TRADES to correct the stored end-of-day
@@ -44,6 +45,9 @@ export interface RulesTrade {
   quantity?: number | null
   entry_price?: number | null
   stop_price?: number | null
+  /** Sierra's stop history: planned risk reads the planned stop (src/lib/planned-stop.ts). */
+  stops?: StopSource['stops']
+  review_json?: unknown
   symbol?: string | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tags_json?: any

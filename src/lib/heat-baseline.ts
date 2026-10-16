@@ -1,4 +1,5 @@
 import { mfeMaePoints, type TradeWithExcursion } from '@/lib/analytics'
+import { plannedStopPrice } from '@/lib/planned-stop'
 
 /**
  * "How close did it come to your stop before it resolved?" — bucketed against
@@ -62,8 +63,9 @@ export function computeHeatBaseline(trades: HeatTrade[]): HeatBaseline | null {
   let stoppedN = 0
 
   for (const t of trades) {
-    if (t.entry_price == null || t.stop_price == null || t.pnl == null) continue
-    const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+    const stop = plannedStopPrice(t)
+    if (t.entry_price == null || stop == null || t.pnl == null) continue
+    const plannedRiskPts = Math.abs(t.entry_price - stop)
     if (plannedRiskPts === 0) continue
     const xc = mfeMaePoints(t)
     if (!xc) continue
@@ -93,8 +95,9 @@ export function computeHeatBaseline(trades: HeatTrade[]): HeatBaseline | null {
 
 /** Where a trade sits on that split. */
 export function heatOf(t: HeatTrade): number | null {
-  if (t.entry_price == null || t.stop_price == null) return null
-  const plannedRiskPts = Math.abs(t.entry_price - t.stop_price)
+  const stop = plannedStopPrice(t)
+  if (t.entry_price == null || stop == null) return null
+  const plannedRiskPts = Math.abs(t.entry_price - stop)
   if (plannedRiskPts === 0) return null
   const xc = mfeMaePoints(t)
   return xc ? xc.mae / plannedRiskPts : null

@@ -1,6 +1,7 @@
 import { mfeMaePoints, type TradeWithExcursion } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { availableMfePtsStored } from '@/lib/available-mfe'
+import { plannedStopPrice, stopPlan, type StopSource } from '@/lib/planned-stop'
 
 /**
  * Trade management — the ONE definition behind every "how much did I keep"
@@ -56,6 +57,10 @@ export interface MgmtTradeInput {
   /** Stored available-position MFE in dollars for a scaled-out trade
    *  (src/lib/available-mfe.ts). Absent → the fill-only rule. */
   mfe_dollars_per_leg?: number | null
+  /** Sierra's stop history (review_json.stops), selected on its own or inside
+   *  review_json: planned risk reads the planned stop (src/lib/planned-stop.ts). */
+  stops?: StopSource['stops']
+  review_json?: unknown
 }
 
 /** One trade's read, in all three units. Magnitudes for MFE/MAE; result signed. */
@@ -114,7 +119,7 @@ export interface TradeFacts {
   result: Record<MgmtUnit, number | null>
   /** ATR used for the ×ATR values (live override, else stored). Null = none. */
   atr: number | null
-  /** Planned risk in points, when a stop is logged. */
+  /** Planned risk in points: Sierra's planned stop, else the logged one (src/lib/planned-stop.ts). */
   riskPts: number | null
 }
 
@@ -136,7 +141,8 @@ export function tradeFacts(t: MgmtTradeInput, opts: { atr?: number | null } = {}
 
   const atrRaw = opts.atr ?? t.entry_atr_1m ?? null
   const atr = atrRaw != null && atrRaw > 0 ? atrRaw : null
-  const riskRaw = t.stop_price != null ? Math.abs(t.entry_price - t.stop_price) : null
+  const stop = plannedStopPrice(t)
+  const riskRaw = stop != null ? Math.abs(t.entry_price - stop) : null
   const riskPts = riskRaw != null && riskRaw > 0 ? riskRaw : null
 
   const resPts = t.pnl / (qty * mult)
@@ -369,7 +375,8 @@ export function exitKind(t: MgmtTradeInput & { tp1_price?: number | null }): Exi
   const entry = t.entry_price
   const tp = t.tp1_price
   if (tp != null && (tp - entry) * sign > 0 && prices.some(p => (p - tp) * sign >= -1e-9)) return 'target'
-  const stop = t.stop_price
+  // the stop working when the trade ended (a tightened stop that was hit is a stop-out)
+  const stop = stopPlan(t).final
   if (stop != null && (stop - entry) * sign < 0 && (t.pnl ?? 0) < 0) {
     const risk = Math.abs(entry - stop)
     const last = prices[prices.length - 1]

@@ -12,6 +12,7 @@
 import type { PostExitData } from '@/lib/atr'
 import { isGiveBackTrade, mfeMaePoints, type TradeWithExcursion } from '@/lib/analytics'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
+import { plannedStopPrice } from '@/lib/planned-stop'
 
 export type VerdictTone = 'good' | 'welltimed' | 'left' | 'giveback' | 'flat'
 
@@ -66,8 +67,9 @@ export function postExitVerdict(t: VerdictTrade, ext: PostExitData | null | unde
     : null
   const win = t.pnl != null ? t.pnl > 0 : (capturedPts != null ? capturedPts > 0 : false)
 
-  const riskPts = (t.entry_price != null && t.stop_price != null)
-    ? Math.abs(t.entry_price - t.stop_price)
+  const stop = plannedStopPrice(t)
+  const riskPts = (t.entry_price != null && stop != null)
+    ? Math.abs(t.entry_price - stop)
     : null
   const atr = t.entry_atr_1m != null && t.entry_atr_1m > 0 ? t.entry_atr_1m : null
   const thresh = materialThresholdPts(riskPts, atr)
@@ -177,7 +179,8 @@ export function plannedExitRead(
   const closed = kind === 'target' ? 'Closed at your target.' : 'Closed at your stop.'
   if (!ext) return { label: base, title: `${closed} No price data after the exit yet.` }
 
-  const riskPts = (t.entry_price != null && t.stop_price != null) ? Math.abs(t.entry_price - t.stop_price) : null
+  const stop = plannedStopPrice(t)
+  const riskPts = (t.entry_price != null && stop != null) ? Math.abs(t.entry_price - stop) : null
   const atr = t.entry_atr_1m != null && t.entry_atr_1m > 0 ? t.entry_atr_1m : null
   const thresh = materialThresholdPts(riskPts, atr)
   const mag = (pts: number): string => {

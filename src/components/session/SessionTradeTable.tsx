@@ -20,7 +20,9 @@ import Link from 'next/link'
 import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare, Upload } from 'lucide-react'
 import { maeHeatRatio, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
+import { plannedStopPrice } from '@/lib/planned-stop'
 import { tradeFacts, tradeMgmt, mgmtBarGeometry, formatKept, exitKind, type TradeMgmt } from '@/lib/trade-management'
+import { stopCheck } from '@/lib/exit-score'
 import { symbolRoot, symbolToMultiplier } from '@/lib/futures-symbols'
 import { postExitVerdict, plannedExitRead, type VerdictTrade, type VerdictTone } from '@/lib/post-exit-verdict'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
@@ -583,7 +585,7 @@ export default function SessionTradeTable({
                     {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
                   </span>
                 </div>
-                {grade && openScoreId === t.id && <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { thresholdAtr: giveBackAtr })?.went === false} hasStop={t.stop_price != null} />}
+                {grade && openScoreId === t.id && <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { thresholdAtr: giveBackAtr })?.went === false} hasStop={plannedStopPrice(t) != null} />}
                 {overviewText && (
                   <p
                     className={`text-xs text-gray-500 mt-1.5 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
@@ -713,7 +715,7 @@ export default function SessionTradeTable({
           const summary = summaries[t.id]
           const liveAtr = liveAtrByTradeId?.[t.id]
           const r = rMultiple(t, liveAtr)
-          const rAtrBased = r != null && t.stop_price == null
+          const rAtrBased = r != null && plannedStopPrice(t) == null
           const rCls = r == null ? 'text-gray-600' : r >= 1 ? 'text-green-400' : r >= 0 ? 'text-green-500' : r >= -0.5 ? 'text-orange-400' : 'text-red-400'
           const xc = mfeMaePoints(t)
           const maePts = xc?.mae ?? null
@@ -724,8 +726,8 @@ export default function SessionTradeTable({
             : mfeUnit === 'atr' ? (maeAtr == null ? '—' : `${maeAtr.toFixed(1)}×`)
             : maePts.toFixed(1)
           const winnerHeat = (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
-          const stopHeat = t.stop_price != null ? maeHeatRatio(t) : null
           const facts = tradeFacts(t, { atr: liveAtr })
+          const pastStop = stopCheck(t, facts)?.past === true
           const kept = keptCell(tradeMgmt(t, { atr: liveAtr, thresholdAtr: giveBackAtr }))
           // The plan running its course gets no verdict, only what price did
           // after; an exit made by hand gets a verdict.
@@ -769,7 +771,7 @@ export default function SessionTradeTable({
                 </span>
               </div>
               <div className="px-3 py-2.5">
-                {grade && openScoreId === t.id && <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { atr: liveAtr, thresholdAtr: giveBackAtr })?.went === false} hasStop={t.stop_price != null} />}
+                {grade && openScoreId === t.id && <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { atr: liveAtr, thresholdAtr: giveBackAtr })?.went === false} hasStop={plannedStopPrice(t) != null} />}
                 {setup && (
                   <span className="inline-block text-[11px] text-gray-300 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded mb-2">{setup}</span>
                 )}
@@ -780,7 +782,7 @@ export default function SessionTradeTable({
                   {!isCapture && <MobileMetric label="ATR@" value={liveAtr != null ? liveAtr.toFixed(2) : '—'} />}
                   <MobileMetric label="TP1" value={t.tp1_price ?? '—'} />
                   {!isCapture && <MobileMetric label="R" value={r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R${rAtrBased ? '*' : ''}`} valueClass={rCls} />}
-                  {!isCapture && <div className="col-span-2"><MobileMetric label="MAE · MFE" value={`${maeMag}${stopHeat != null && stopHeat > 1 ? ' past stop' : ''} · ${magLabel(facts?.mfe[mfeUnit], mfeUnit)}`} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} /></div>}
+                  {!isCapture && <div className="col-span-2"><MobileMetric label="MAE · MFE" value={`${maeMag}${pastStop ? ' past stop' : ''} · ${magLabel(facts?.mfe[mfeUnit], mfeUnit)}`} valueClass={winnerHeat ? 'text-amber-400' : 'text-gray-300'} /></div>}
                   {!isCapture && <MobileMetric label="Kept" value={kept.text} valueClass={kept.cls} />}
                   {/* Post-exit verdict spans both columns — the plain-language label
                       is too long for a half-width cell. */}
@@ -1111,7 +1113,7 @@ export default function SessionTradeTable({
                     const r = rMultiple(t, liveAtr)
                     // Flag when R came from the no-stop/no-TP ATR fallback (R in ATR units)
                     // rather than a planned stop, so the tooltip is honest.
-                    const atrBased = r != null && t.stop_price == null
+                    const atrBased = r != null && plannedStopPrice(t) == null
                     return (
                       <td className={`py-1.5 pr-3 text-right ${
                         r == null ? 'text-gray-700'
@@ -1150,7 +1152,7 @@ export default function SessionTradeTable({
                       : maePts.toFixed(1)
                     const winnerHeat = (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
                     const neverAdverse = maePts === 0
-                    const stopHeat = t.stop_price != null ? maeHeatRatio(t) : null
+                    const pastStop = stopCheck(t, facts)?.past === true
                     return (
                       <>
                         {showMae && (
@@ -1184,7 +1186,7 @@ export default function SessionTradeTable({
                             </span>
                             {/* The one heat-vs-stop case that needs saying is the
                                 breach, in words rather than a ratio. */}
-                            {stopHeat != null && stopHeat > 1 && (
+                            {pastStop && (
                               <span className="block text-center text-[10px] text-red-400 font-semibold"
                                 title="Peak adverse excursion went beyond your planned stop distance — the trade was held past its stop.">
                                 past stop
@@ -1291,7 +1293,7 @@ export default function SessionTradeTable({
                   <tr className={`${hasOverviewRow ? '' : 'border-b border-gray-800'} ${rowBg}`}>
                     <td className="pr-2" />
                     <td colSpan={5 + TOGGLEABLE_COLS.filter(c => cols[c.key]).length} className="pr-2">
-                      <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { atr: liveAtrByTradeId?.[t.id], thresholdAtr: giveBackAtr })?.went === false} hasStop={t.stop_price != null} />
+                      <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { atr: liveAtrByTradeId?.[t.id], thresholdAtr: giveBackAtr })?.went === false} hasStop={plannedStopPrice(t) != null} />
                     </td>
                   </tr>
                 )}

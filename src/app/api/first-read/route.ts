@@ -140,7 +140,7 @@ export async function GET(req: Request) {
     )
     trades = await fetchAll<TeaserTrade>(
       () => db.from('trades').select(
-        'id, trading_day_id, pnl, direction, entry_time, exit_time, quantity, entry_price, exit_price, stop_price, symbol, high_during_position, low_during_position, exits_json, mfe_dollars_per_leg, entry_atr_1m',
+        'id, trading_day_id, pnl, direction, entry_time, exit_time, quantity, entry_price, exit_price, stop_price, symbol, high_during_position, low_during_position, exits_json, mfe_dollars_per_leg, entry_atr_1m, stops:review_json->stops',
       ),
     )
   } catch (e) {

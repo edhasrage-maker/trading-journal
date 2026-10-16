@@ -19,6 +19,7 @@
 import { MULTIPLIERS, symbolRoot } from './futures-symbols'
 import { availableMfePtsStored, exitContracts } from './available-mfe'
 import { anchorExcursionToFills } from './excursion-guard'
+import { plannedStopPrice, type StopSource } from './planned-stop'
 
 /**
  * Favorable-excursion bar a trade must clear to count as "was up" for the
@@ -62,6 +63,10 @@ export interface TradeExcursionInput {
   direction: 'long' | 'short' | null
   entry_price: number | null
   stop_price: number | null
+  /** Sierra's stop history (on its own or inside review_json): planned risk
+   *  reads the planned stop (src/lib/planned-stop.ts). */
+  stops?: StopSource['stops']
+  review_json?: unknown
   pnl: number | null
   quantity: number | null
   symbol: string | null
@@ -132,8 +137,9 @@ export function interpretExcursion(t: TradeExcursionInput, roundTripAtr: number 
   // null for an unknown instrument → every $-denominated metric below is skipped
   // (points and ×ATR still populate). Never fabricate $1/point dollars.
   const mult = symbolMultiplier(t.symbol)
-  const stopDist = (t.entry_price != null && t.stop_price != null)
-    ? Math.abs(t.entry_price - t.stop_price)
+  const stop = plannedStopPrice(t)
+  const stopDist = (t.entry_price != null && stop != null)
+    ? Math.abs(t.entry_price - stop)
     : null
   const r = (mult != null && stopDist && t.quantity) ? pnl / (stopDist * t.quantity * mult) : null
 

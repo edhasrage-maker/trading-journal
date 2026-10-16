@@ -74,7 +74,7 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
   const dayTypesById = new Map(days.map(d => [d.rollup.id, d.rollup.day_types]))
   const { data: bookRaw } = await supabase
     .from('trades')
-    .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol')
+    .select('id, trading_day_id, pnl, entry_price, stop_price, quantity, direction, entry_time, tags_json, symbol, stops:review_json->stops')
     .order('entry_time', { ascending: false })
     .limit(400) as { data: Array<Record<string, unknown>> | null }
   const bookDayIds = Array.from(new Set((bookRaw ?? []).map(t => t.trading_day_id as string).filter(Boolean)))
@@ -218,7 +218,7 @@ async function buildFilm(
   // exit_price / entry_atr_1m / exits_json are what sort a trade into went-your-way
   // and measure what it kept — the same inputs the recap row uses, so a frame
   // here can't read differently from its own trade row.
-  const SELECT_BASE = 'id, trading_day_id, entry_time, entry_price, exit_price, stop_price, quantity, direction, pnl, symbol, high_during_position, low_during_position, entry_atr_1m, exits_json, tags_json, screenshot_url'
+  const SELECT_BASE = 'id, trading_day_id, entry_time, entry_price, exit_price, stop_price, quantity, direction, pnl, symbol, high_during_position, low_during_position, entry_atr_1m, exits_json, tags_json, screenshot_url, stops:review_json->stops'
 
   // review_json may not exist yet (pre-migration) — that query errors with
   // 42703; fall back to the same select without it and flag the gap.

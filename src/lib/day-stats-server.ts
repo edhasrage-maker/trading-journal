@@ -146,12 +146,12 @@ export async function loadRiskHistory(supabase: AnyClient, beforeDate: string): 
       const missing = rows.filter(r => !usable(r)).map(r => r.id)
       const fromTrades = new Map<string, { sum_risk_dollars: number; sum_risk_sq: number; risk_sample: number }>()
       if (missing.length > 0) {
-        type Lean = Pick<TradeForStats, 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'symbol'> & { trading_day_id: string }
+        type Lean = Pick<TradeForStats, 'pnl' | 'entry_price' | 'stop_price' | 'quantity' | 'symbol' | 'direction' | 'stops'> & { trading_day_id: string }
         const byDay = new Map<string, Lean[]>()
         for (let p = 0; p < 20; p++) {
           const { data, error } = await supabase
             .from('trades')
-            .select('trading_day_id, pnl, entry_price, stop_price, quantity, symbol')
+            .select('trading_day_id, pnl, entry_price, stop_price, quantity, symbol, direction, stops:review_json->stops')
             .in('trading_day_id', missing)
             .order('id', { ascending: true })
             .range(p * 1000, p * 1000 + 999)

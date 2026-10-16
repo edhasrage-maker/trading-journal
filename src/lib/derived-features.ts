@@ -1,4 +1,5 @@
 import type { TradeLike } from '@/lib/analytics'
+import { plannedStopPrice } from '@/lib/planned-stop'
 
 /**
  * Non-tag features — the patterns the trader did NOT write down.
@@ -79,8 +80,9 @@ export function deriveEntryFeatures(trades: FeatureTrade[]): Map<string, EntryFe
         ? (Date.parse(t.entry_time) - Date.parse(prev.exit_time)) / 60000
         : null
       const afterLoss = prev != null && (prev.pnl ?? 0) < 0
-      const riskPts = t.entry_price != null && t.stop_price != null
-        ? Math.abs(t.entry_price - t.stop_price)
+      const stop = plannedStopPrice(t)
+      const riskPts = t.entry_price != null && stop != null
+        ? Math.abs(t.entry_price - stop)
         : null
 
       out.set(t.id, {
