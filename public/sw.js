@@ -16,7 +16,9 @@
 //
 // Bump CACHE on any change to this file / caching strategy so `activate` purges
 // every prior cache (this is what evicts already-pinned stale brand assets).
-const CACHE = 'tapescore-v2'
+// v3: only successful responses are cached — a 404 for a script file (asked for
+// while a deploy was landing) used to be stored and served forever.
+const CACHE = 'tapescore-v3'
 
 self.addEventListener('install', () => {
   self.skipWaiting()
@@ -47,8 +49,10 @@ self.addEventListener('fetch', (event) => {
         const cached = await caches.match(req)
         if (cached) return cached
         const res = await fetch(req)
-        const cache = await caches.open(CACHE)
-        cache.put(req, res.clone())
+        if (res.ok) {
+          const cache = await caches.open(CACHE)
+          cache.put(req, res.clone())
+        }
         return res
       })(),
     )
@@ -64,7 +68,7 @@ self.addEventListener('fetch', (event) => {
         const cache = await caches.open(CACHE)
         const cached = await cache.match(req)
         const fetching = fetch(req).then((res) => {
-          cache.put(req, res.clone())
+          if (res.ok) cache.put(req, res.clone())
           return res
         })
         if (cached) {
