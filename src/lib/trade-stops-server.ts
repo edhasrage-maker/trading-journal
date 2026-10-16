@@ -4,7 +4,7 @@
  * importers after their upsert, so a day re-imported with orders included gets
  * stop history on the trades it already had. Server-only (needs a Supabase client).
  */
-import { makeTradeStops } from '@/lib/sc-stops'
+import { makeTradeStops, sameStopHistory } from '@/lib/sc-stops'
 import type { TradeStopOrder, TradeStops } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,7 +42,7 @@ export async function writeTradeStops(db: AnyClient, items: ReadonlyMap<string, 
       if (!orders) continue
       const prev = (r.review_json?.stops ?? null) as TradeStops | null
       const next = makeTradeStops(orders, r)
-      if (prev && prev.v === next.v && prev.src === next.src && JSON.stringify(prev.orders) === JSON.stringify(next.orders)) continue
+      if (sameStopHistory(prev, next)) continue
       // read-merge on the row as it is NOW, so a review part written meanwhile survives
       const { data: fresh, error: re } = await db.from('trades').select('review_json').eq('id', r.id).maybeSingle()
       if (re || !fresh) continue

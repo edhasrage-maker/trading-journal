@@ -10,7 +10,7 @@
  */
 import { parseSierraChartLog } from '../src/lib/sc-importer.ts'
 import { combineSierraLog } from '../src/lib/sc-combine.ts'
-import { readStopOrders, storedStops, makeTradeStops, STOPS_VERSION } from '../src/lib/sc-stops.ts'
+import { readStopOrders, storedStops, makeTradeStops, sameStopHistory, STOPS_VERSION } from '../src/lib/sc-stops.ts'
 import { evaluateRunnerRules, newRunnerRule } from '../src/lib/runner-rules.ts'
 
 let failed = 0
@@ -100,6 +100,11 @@ console.log('untrusted input')
   check('a round trip through JSON survives', JSON.stringify(readStopOrders(JSON.parse(JSON.stringify(so)))) === JSON.stringify(so))
   check('junk is dropped', JSON.stringify(readStopOrders([{ start: { t: 'x', px: 1 } }, { start: { t: '2026-07-01T16:45:07Z', px: 'a' } }, null, 5])) === '[]')
   check('not an array = nothing', readStopOrders({ orders: [] }) === null)
+  const fresh = makeTradeStops(so, { entry_time: '2026-07-01T16:45:07.625Z', entry_price: 30214, direction: 'long', symbol: 'MNQU6.CME' })
+  // what the database hands back: same data, jsonb's own key order
+  const stored = JSON.parse(JSON.stringify({ ...fresh, orders: fresh.orders.map(o => ({ moves: o.moves.map(m => ({ t: m.t, by: m.by, px: m.px })), start: { px: o.start.px, t: o.start.t } })) }))
+  check('a stored history in another key order is the same history', sameStopHistory(stored, fresh))
+  check('a moved stop is not', !sameStopHistory({ ...stored, orders: [{ ...stored.orders[0], start: { ...stored.orders[0].start, px: 1 } }, stored.orders[1]] }, fresh))
   check('a stored history of another version is ignored', storedStops({ v: 'stops-0', orders: [] }) === null && storedStops({ v: STOPS_VERSION, orders: [] })?.orders.length === 0)
 }
 

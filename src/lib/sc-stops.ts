@@ -145,6 +145,17 @@ export function readStopOrders(raw: unknown): TradeStopOrder[] | null {
   return out
 }
 
+/**
+ * Two stop histories hold the same thing. Compared field by field: the database
+ * stores jsonb with its own key order, so the stored JSON never matches a fresh
+ * JSON.stringify of the same orders.
+ */
+export function sameStopHistory(a: TradeStops | null | undefined, b: TradeStops): boolean {
+  if (!a || a.v !== b.v || a.src !== b.src) return false
+  const flat = (os: TradeStopOrder[] | undefined) => JSON.stringify((os ?? []).map(o => [o.start?.t, o.start?.px, (o.moves ?? []).map(m => [m.t, m.px, m.by])]))
+  return flat(a.orders) === flat(b.orders)
+}
+
 /** A trade's stored stop history, or null when there is none to grade from. */
 export function storedStops(raw: unknown): TradeStops | null {
   if (!raw || typeof raw !== 'object') return null

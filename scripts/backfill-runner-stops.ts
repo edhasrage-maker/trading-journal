@@ -29,7 +29,7 @@
  */
 import { existsSync, readFileSync, readdirSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
-import { indexStopRows, stopOrdersFor, makeTradeStops, type ScOrderRow } from '../src/lib/sc-stops.ts'
+import { indexStopRows, stopOrdersFor, makeTradeStops, sameStopHistory, type ScOrderRow } from '../src/lib/sc-stops.ts'
 import { evaluateRunnerRules, newRunnerRule, readRunner, readRunnerRules } from '../src/lib/runner-rules.ts'
 import type { TradeStopOrder, TradeStops } from '../src/lib/supabase/types.ts'
 
@@ -187,7 +187,7 @@ async function main() {
       runnerLines.push(`  ${new Date(t.entry_time!).toLocaleString('en-CA', { timeZone: 'America/Los_Angeles', hour12: false }).slice(0, 17)} ${t.symbol} ${t.direction} · ${res.status.padEnd(7)} ${res.reason}`)
     }
     const prev = (t.review_json?.stops ?? null) as TradeStops | null
-    if (prev && prev.v === next.v && prev.src === next.src && JSON.stringify(prev.orders) === JSON.stringify(next.orders)) { same++; continue }
+    if (sameStopHistory(prev, next)) { same++; continue }
     if (!apply) continue
     // read-merge on the row as it is now
     const { data: fresh, error: re } = await scoped(sb.from('trades').select('review_json').eq('id', t.id)).maybeSingle()
