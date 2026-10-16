@@ -21,8 +21,9 @@
  *
  *   npx tsx scripts/repair-sierra-fill-ms.ts [--apply] [--from=YYYY-MM-DD] [--to=YYYY-MM-DD]
  *        [--user=<uuid>] [--dir=<TradeActivityLogs>] [--envfile=<path>] [--env=local]
+ *        [--backup=<folder>]  (--apply saves every row it will change there first; default scripts/.repair-backups)
  */
-import { existsSync, readFileSync, readdirSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { flowFingerprint } from '../src/lib/orderflow/flow-score-meta.ts'
 import { todayPT } from '../src/lib/pt-time.ts'
@@ -108,6 +109,7 @@ async function main() {
 
   const tally = { trades: rows.length, noSierra: 0, noFile: 0, alreadyRight: 0, toFix: 0, fieldsFixed: 0, fieldsRight: 0, fieldsLeft: 0, ambiguous: 0, idMoves: 0, idTaken: 0, dateChange: 0, rekeyed: 0, written: 0 }
   const samples: string[] = []
+  const plans: { r: Row; upd: Record<string, unknown>; needsRekey: boolean; oldKey: string }[] = []
   const left: string[] = []
   for (const r of rows) {
     const sid = r.sierra_trade_id ?? ''
@@ -159,8 +161,18 @@ async function main() {
     const oldKey = flowFingerprint({ entry_time: r.entry_time, entry_price: r.entry_price, direction: r.direction, symbol: r.symbol } as never)
     const needsRekey = !!entry && (rj.score?.src === oldKey || rj.entry_ctx?.src === oldKey)
     if (needsRekey) tally.rekeyed++
-    if (!apply) continue
+    plans.push({ r, upd, needsRekey, oldKey })
+  }
 
+  if (apply && plans.length) {
+    // every row as it was, before anything is written
+    const dir = (argVal('backup') ?? 'scripts/.repair-backups').replace(/\\/g, '/').replace(/\/?$/, '/')
+    mkdirSync(dir, { recursive: true })
+    const file = `${dir}sierra-fill-ms-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    writeFileSync(file, JSON.stringify({ user: USER_ID, rows: plans.map(p => p.r) }, null, 1))
+    console.log(`backup of ${plans.length} trade(s) before writing: ${file}`)
+  }
+  for (const { r, upd, needsRekey, oldKey } of apply ? plans : []) {
     const { error: ue } = await scoped(sb.from('trades').update(upd).eq('id', r.id))
     if (ue) { console.warn(`  write failed ${r.id}: ${ue.message}`); continue }
     tally.written++
