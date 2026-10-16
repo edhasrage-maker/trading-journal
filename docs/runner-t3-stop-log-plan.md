@@ -115,4 +115,4 @@ Two things stand in the way today:
   - `--apply` has not been run.
 - **Checks:** tsc 0 errors, eslint clean, `npm test` green, with new `scripts/test-sc-stops.ts` and T3 cases in `test-runner-rules.ts`.
 
-**Found along the way (not fixed here):** hosted Sierra imports store fill times late by their own milliseconds. `naiveToUtc` in `src/lib/sc-importer.ts` counts the ms twice when a timezone is given; Sierra's 09:28:15.053 is stored as .106. It's under a second. For T3 it could only misgrade a stop moved within 1 s of the TP1 fill; the closest real case is 4 s.
+**Found along the way, since fixed:** hosted Sierra imports stored fill times late by their own milliseconds (`naiveToUtc` counted the ms twice). Fixed and deployed in 1a605dc; the founder's 263 affected trades were repaired from Sierra's own files on 2026-10-15 (`scripts/repair-sierra-fill-ms.ts`, backup in `scripts/.repair-backups/`).

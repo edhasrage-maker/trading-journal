@@ -41,29 +41,28 @@ const lines = [
   ord('09:45:06.000100', '213937', 'Stop', 'Sell', '30201.00', 'Pending Child-Client', 'Order modified internally. NQU6.CME/MNQU6.CME | User order modification. Requested Price: 30201.00', '213935'),
   ord('09:45:06.000200', '213941', 'Stop', 'Sell', '30199.00', 'Pending Modify', 'NQU6.CME/MNQU6.CME | User order modification. Requested Price: 30201.00', '213938'),
   ord('09:45:06.000300', '213941', 'Stop', 'Sell', '30201.00', 'Pending Child-Client', 'Order modified internally. NQU6.CME/MNQU6.CME | User order modification. Requested Price: 30201.00', '213938'),
-  fill('09:45:07.000000', '213935', 'Limit', 'Buy', '3', '30214.00', 'Open'),
-  fill('09:45:07.000000', '213938', 'Limit', 'Buy', '2', '30214.00', 'Open'),
-  ord('09:45:07.000000', '213937', 'Stop', 'Sell', '30201.00', 'Order Sent', 'Auto-sent child from parent fill', '213935'),
-  ord('09:45:07.000000', '213941', 'Stop', 'Sell', '30201.00', 'Order Sent', 'Auto-sent child from parent fill', '213938'),
+  fill('09:45:07.625000', '213935', 'Limit', 'Buy', '3', '30214.00', 'Open'),
+  fill('09:45:07.625100', '213938', 'Limit', 'Buy', '2', '30214.00', 'Open'),
+  ord('09:45:07.626000', '213937', 'Stop', 'Sell', '30201.00', 'Order Sent', 'Auto-sent child from parent fill', '213935'),
+  ord('09:45:07.626100', '213941', 'Stop', 'Sell', '30201.00', 'Order Sent', 'Auto-sent child from parent fill', '213938'),
   ord('09:45:07.700000', '213941', 'Stop', 'Sell', '30201.00', 'Open', 'Rithmic Direct - DTC (New)', '213938'),
   row({ ActivityType: 'Positions', DateTime: D('09:45:07.700100'), Symbol: SYM, TradeAccount: ACCT, OrderActionSource: 'Position update' }),
   // a refused drag: comes back Open at the old price
   ord('09:46:00.000000', '213941', 'Stop', 'Sell', '30201.00', 'Pending Modify', 'NQU6.CME/MNQU6.CME | User order modification. Requested Price: 30190.00', '213938'),
   ord('09:46:00.090000', '213941', 'Stop', 'Sell', '30201.00', 'Open', 'Order modification failed | Rithmic Direct - DTC (Order cancel/replace reject)', '213938'),
   // TP1 fills; its stop is cancelled with it
-  fill('09:47:31.000000', '213936', 'Limit', 'Sell', '3', '30240.00', 'Close', '213935'),
-  ord('09:47:31.000000', '213937', 'Stop', 'Sell', '30201.00', 'Canceled', 'Rithmic Direct - DTC (Canceled)', '213935'),
+  fill('09:47:31.779000', '213936', 'Limit', 'Sell', '3', '30240.00', 'Close', '213935'),
+  ord('09:47:31.780000', '213937', 'Stop', 'Sell', '30201.00', 'Canceled', 'Rithmic Direct - DTC (Canceled)', '213935'),
   // the runner's stop dragged to breakeven + 1 point
   ord('09:47:39.000000', '213941', 'Stop', 'Sell', '30201.00', 'Pending Modify', 'NQU6.CME/MNQU6.CME | User order modification. Requested Price: 30215.00', '213938'),
-  ord('09:47:39.000000', '213941', 'Stop', 'Sell', '30201.00', 'Pending Modify', 'Rithmic Direct - DTC (Order update)', '213938'),
-  ord('09:47:39.000000', '213941', 'Stop', 'Sell', '30215.00', 'Open', 'Rithmic Direct - DTC (Cancel/Replace complete)', '213938'),
-  ord('09:49:52.000000', '213941', 'Stop', 'Sell', '30215.00', 'Filled', 'Rithmic Direct - DTC (Filled)', '213938'),
-  fill('09:49:52.000000', '213941', 'Stop', 'Sell', '2', '30215.00', 'Close', '213938'),
-  ord('09:49:52.000000', '213940', 'Limit', 'Sell', '30290.00', 'Canceled', 'Rithmic Direct - DTC (Canceled)', '213938'),
+  ord('09:47:39.080000', '213941', 'Stop', 'Sell', '30201.00', 'Pending Modify', 'Rithmic Direct - DTC (Order update)', '213938'),
+  ord('09:47:39.090000', '213941', 'Stop', 'Sell', '30215.00', 'Open', 'Rithmic Direct - DTC (Cancel/Replace complete)', '213938'),
+  ord('09:49:52.467000', '213941', 'Stop', 'Sell', '30215.00', 'Filled', 'Rithmic Direct - DTC (Filled)', '213938'),
+  fill('09:49:52.467100', '213941', 'Stop', 'Sell', '2', '30215.00', 'Close', '213938'),
+  ord('09:49:52.470000', '213940', 'Limit', 'Sell', '30290.00', 'Canceled', 'Rithmic Direct - DTC (Canceled)', '213938'),
 ]
 const text = lines.join('\n')
-// Whole-second times: the stop logic is under test here, not naiveToUtc's
-// sub-second handling (it counts the milliseconds twice when a timezone is given).
+// Real sub-second times, read in the trader's zone as the hosted import does.
 const TZ = 'America/Los_Angeles'
 
 console.log('reading the stops')
@@ -73,15 +72,15 @@ console.log('reading the stops')
   check('order and position rows are not "skipped" warnings', !parseErrors.some(e => /non-Fill/.test(e)), parseErrors)
   const so = rows[0].stop_orders!
   check('both bracket stops found', so?.length === 2, so)
-  check('stops start at the price in force when the entry filled (the pre-fill drag folded in)', so.every(o => o.start.px === 30201 && o.start.t === '2026-07-01T16:45:07.000Z'), so)
+  check('stops start at the price in force when the entry filled (the pre-fill drag folded in)', so.every(o => o.start.px === 30201 && o.start.t === '2026-07-01T16:45:07.625Z'), so)
   check('the cancelled TP1 stop never moved', so[0].moves.length === 0, so[0])
   check('the refused drag is not a move; the breakeven drag is, by you, at Cancel/Replace complete',
-    so[1].moves.length === 1 && so[1].moves[0].px === 30215 && so[1].moves[0].by === 'you' && so[1].moves[0].t === '2026-07-01T16:47:39.000Z', so[1])
+    so[1].moves.length === 1 && so[1].moves[0].px === 30215 && so[1].moves[0].by === 'you' && so[1].moves[0].t === '2026-07-01T16:47:39.090Z', so[1])
   const t3 = evaluateRunnerRules([newRunnerRule('scale_out', 'T1', '2026-01-01', 't1'), newRunnerRule('be_after_tp1', 'T3', '2026-01-01', 't3')], {
     direction: rows[0].direction, symbol: rows[0].symbol, entry_time: rows[0].entry_time_iso, entry_price: rows[0].entry_price, tp1_price: 30240,
     exits_json: rows[0].exits, stops: makeTradeStops(so, { entry_time: rows[0].entry_time_iso, entry_price: rows[0].entry_price, direction: rows[0].direction, symbol: rows[0].symbol }),
   })![1]
-  check('graded end to end: pass, 8 s after TP1', t3.status === 'pass' && t3.reason === 'Stop to breakeven (30,215) at 09:47:39, 8 s after TP1 filled (09:47:31).', t3)
+  check('graded end to end: pass, 7 s after TP1', t3.status === 'pass' && t3.reason === 'Stop to breakeven (30,215) at 09:47:39, 7 s after TP1 filled (09:47:31).', t3)
 }
 console.log('fills-only and other cases')
 {
