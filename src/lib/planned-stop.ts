@@ -13,7 +13,11 @@
  *                 the plan either, so the last price still on the loss side
  *                 counts. Several stop orders (one per entry fill) average.
  *   Moved away    a change the trader made after that minute that put a stop
- *                 further from entry. Tightening never counts; neither does
+ *                 further from entry than ITS planned stop — risking more than
+ *                 the trade was taken with. Tightening never counts, nor does
+ *                 loosening a stop already in profit or re-loosening a
+ *                 tightened one back inside the plan (founder, 2026-10-17: of 9
+ *                 such moves since May only 3 went past the plan), nor
  *                 Sierra's own automation.
  *
  * Every planned-risk number (R, heat and "past stop", Stop respected, Stop
@@ -44,7 +48,7 @@ export interface StopPlan {
   price: number | null
   /** Where it came from. */
   source: 'sierra' | 'logged' | null
-  /** First change by the trader, after the settle minute, that put a stop further from entry. Sierra history only. */
+  /** First change by the trader, after the settle minute, that put a stop further from entry than its planned stop. Sierra history only. */
   movedAway: { t: string; from: number; to: number } | null
   /** Where the stop stood when the trade ended (how it ended: stopped or not). Sierra's last price, else the logged stop. */
   final: number | null
@@ -78,10 +82,16 @@ function fromSierra(raw: unknown, entry: number, sign: 1 | -1): StopPlan | null 
     }
     if (plan != null) planned.push(plan)
     finals.push(pts[pts.length - 1].px)
+    if (plan == null) continue
+    // past this order's own plan, by the trader, after its minute
+    const limit = dist(plan)
     for (let i = 1; i < pts.length; i++) {
       const p = pts[i], prev = pts[i - 1]
       if (!(p.ms > settle) || p.by !== 'you') continue
-      if (dist(p.px) > dist(prev.px) + 1e-9 && (!movedAway || p.ms < Date.parse(movedAway.t))) movedAway = { t: p.t, from: prev.px, to: p.px }
+      if (dist(p.px) > limit + 1e-9 && dist(p.px) > dist(prev.px) + 1e-9) {
+        if (!movedAway || p.ms < Date.parse(movedAway.t)) movedAway = { t: p.t, from: prev.px, to: p.px }
+        break
+      }
     }
   }
   if (!planned.length) return null

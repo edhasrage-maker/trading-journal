@@ -12,10 +12,10 @@ import { plannedStopPrice, stopPlan, type StopSource } from '@/lib/planned-stop'
  *                         target counts in full; any other winner counts for
  *                         the share of its best point it kept.
  *   3  Stop respected     Trades whose planned stop came into play, or whose
- *                         stop the trader moved further from entry after the
+ *                         stop the trader moved past its plan after the
  *                         first minute. Passes when price never traded past
  *                         the planned stop by more than slippage and the stop
- *                         was never moved away (src/lib/planned-stop.ts:
+ *                         was never moved past the plan (src/lib/planned-stop.ts:
  *                         Sierra's stop history where the trade has it, so a
  *                         stop tightened during the trade is judged at each
  *                         moment, not by its last price; founder 2026-10-16).
@@ -192,7 +192,7 @@ export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitT
 }
 
 export interface StopCheck {
-  /** The stop came into play (or was moved away), so Stop respected judges it. */
+  /** The stop came into play (or was moved past its plan), so Stop respected judges it. */
   judged: boolean
   respected: boolean
   /** Price went past the planned stop — what the "past stop" label says. */
@@ -207,8 +207,8 @@ export interface StopCheck {
  * the whole time, so price can only get past the planned stop if one was moved
  * away or pulled: a fill at a working stop at or inside the plan is the stop
  * doing its job, however the tape printed around the fill, and a stop tightened
- * and then hit is a stop respected (founder, 2026-10-16). Moving a stop further
- * from entry after the first minute fails it outright. Without the history, the
+ * and then hit is a stop respected (founder, 2026-10-16). Moving a stop past
+ * its planned stop after the first minute fails it outright (2026-10-17). Without the history, the
  * logged stop exactly as before: judged once price came within 10% of it,
  * respected within slippage, "past" once the heat passed it.
  */

@@ -327,7 +327,7 @@ export function isFreshStats(
 // every day with a scale-out.
 // v14 (2026-10-16): planned risk is Sierra's stop a minute after the fill where
 // the trade has its stop history, else the logged stop (src/lib/planned-stop.ts),
-// and Stop respected fails a stop moved further away after that minute. A stop
+// and Stop respected fails a stop moved past its plan after that minute. A stop
 // tightened during the trade no longer shrinks R or reads as "past stop" — R,
 // Stop respected, Stop size, Loss size and the risk sums move on those days.
 export const STATS_VERSION = 14

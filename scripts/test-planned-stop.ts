@@ -62,6 +62,21 @@ console.log('\nsetting the stop in the first minute')
   const late = { ...t, review_json: { stops: stops([order(['09:00:00', 90], ['09:00:04', 83], ['09:05:00', 80])]) } }
   const q = stopPlan(late)
   check('moved further away after the minute: planned stays 83, "moved away" 83 → 80', q.price === 83 && q.movedAway?.from === 83 && q.movedAway?.to === 80, q)
+  const reloosen = { ...t, review_json: { stops: stops([order(['09:00:00', 83], ['09:03:00', 90], ['09:05:00', 86])]) } }
+  check('tightened, then loosened back inside the plan: not moved away', stopPlan(reloosen).movedAway == null, stopPlan(reloosen))
+  const trail = { ...t, review_json: { stops: stops([order(['09:00:00', 83], ['09:04:00', 120], ['09:06:00', 104])]) } }
+  check('a stop already in profit loosened (still in profit): not moved away', stopPlan(trail).movedAway == null)
+  const trailIntoLoss = { ...t, review_json: { stops: stops([order(['09:00:00', 83], ['09:04:00', 120], ['09:06:00', 95])]) } }
+  check('… loosened back into loss but inside the plan: not moved away', stopPlan(trailIntoLoss).movedAway == null)
+  const pastPlan = { ...t, review_json: { stops: stops([order(['09:00:00', 83], ['09:03:00', 90], ['09:05:00', 81])]) } }
+  check('tightened, then moved past the plan (83 → 81): moved away', stopPlan(pastPlan).movedAway?.to === 81, stopPlan(pastPlan))
+  // 2026-09-29 08:53 long: the first order's plan was 15 pts; after the add both stops went to 22+
+  const sep29 = { direction: 'long', entry_price: 30567, stop_price: 30552, review_json: { stops: stops([
+    order(['08:53:33.5', 30552], ['08:55:28.9', 30545], ['08:55:33.4', 30537]),
+    order(['08:54:44.5', 30557], ['08:54:48.6', 30552], ['08:55:30.9', 30537]),
+  ]) } }
+  const s29 = stopPlan(sep29)
+  check('each order against its OWN plan: the first order widened past its 15 pts = moved away (Sep 29)', s29.movedAway?.from === 30552 && s29.movedAway?.to === 30545, s29)
   const auto = { ...t, review_json: { stops: stops([order(['09:00:00', 90], ['09:05:00', 80, 'auto'])]) } }
   check('Sierra moving it by itself is not the trader moving it away', stopPlan(auto).movedAway == null)
   const tight = { ...t, review_json: { stops: stops([order(['09:00:00', 90], ['09:00:30', 95])]) } }
