@@ -27,7 +27,7 @@ export default function ReviewNav({
   /** True when today's session is still awaiting completion — Today gets a
    *  quiet marker so the trader can see there's something to finish. */
   pending = false,
-  /** Show the Deep Dive tab (decided on the server — see deep-dive-access.ts). */
+  /** Show the Replay Review tab (decided on the server — see deep-dive-access.ts). */
   deepDive = false,
 }: {
   todayDate: string
@@ -70,8 +70,8 @@ export default function ReviewNav({
     // The month scope pages through CLOSED books too. `/review/month` (bare)
     // still redirects to the Dashboard, which owns the running windows.
     { href: `/review/month/${dayHref.slice(0, 7)}`, label: 'Month', match: '/review/month/' },
-    // One trade at a time, exactly as it looked at the fill.
-    ...(deepDive ? [{ href: '/review/deep-dive', label: 'Deep Dive', match: '/review/deep-dive' }] : []),
+    // One trade at a time, exactly as it looked at the fill (was "Deep Dive").
+    ...(deepDive ? [{ href: '/review/replay', label: 'Replay Review', match: '/review/replay' }] : []),
   ]
 
   return (

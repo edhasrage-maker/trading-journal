@@ -244,13 +244,19 @@ export class TimeChartController {
     this.overlay.profile = data.profile
     this.overlay.showPoc = opts.poc
     this.overlay.update()
-    if (resetView) {
-      // blind: the fill bar is the last bar; full review: keep the fill in view with the aftermath to its right
-      const n = A.length, focus = Math.min(n - 1, data.entryIndex + 60), show = Math.min(n, 150)
-      const apply = () => this.chart.timeScale().setVisibleLogicalRange({ from: focus - show + 1, to: focus + 18 })
-      // after the library's own first-frame auto-fit, or it gets clobbered
-      apply(); requestAnimationFrame(() => requestAnimationFrame(apply))
+    if (resetView) this.focusFill()
+  }
+
+  /** The starting view ("Back to the fill"): blind, the fill bar is the last bar; full review, the fill with the aftermath to its right. */
+  focusFill() {
+    const d = this.data; if (!d) return
+    const n = d.agg.length, focus = Math.min(n - 1, d.entryIndex + 60), show = Math.min(n, 150)
+    const apply = () => {
+      this.chart.timeScale().setVisibleLogicalRange({ from: focus - show + 1, to: focus + 18 })
+      this.chart.priceScale('right').applyOptions({ autoScale: true })
     }
+    // after the library's own first-frame auto-fit, or it gets clobbered
+    apply(); requestAnimationFrame(() => requestAnimationFrame(apply))
   }
 
   get bars() { return this.data?.agg ?? [] }

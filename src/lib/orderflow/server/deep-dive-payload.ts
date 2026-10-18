@@ -68,7 +68,7 @@ const AFTER_EXIT_MS = 30 * 60_000
 /** Validate the trade and turn it into a snapshot request (+ exits when not blind). */
 function prepare(row: DeepDiveTradeRow, opts: DeepDiveOptions): { req: SnapshotRequest; exits?: DeepDiveExit[] } {
   const root = row.symbol ? chartSeriesRoot(row.symbol) : ''
-  if (root !== 'NQ' && root !== 'ES') throw new DeepDiveError(`Deep Dive supports NQ/MNQ and ES/MES; this trade is ${row.symbol ?? 'unknown'}`, 422)
+  if (root !== 'NQ' && root !== 'ES') throw new DeepDiveError(`Replay Review supports NQ/MNQ and ES/MES; this trade is ${row.symbol ?? 'unknown'}`, 422)
   const entryUtcMs = row.entry_time ? Date.parse(row.entry_time) : NaN
   const entryPrice = num(row.entry_price)
   if (!Number.isFinite(entryUtcMs) || entryPrice == null || (row.direction !== 'long' && row.direction !== 'short')) {

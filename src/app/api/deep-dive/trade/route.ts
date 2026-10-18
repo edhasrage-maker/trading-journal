@@ -65,7 +65,7 @@ export async function GET(req: Request) {
     if (LOCAL_FEATURES_ENABLED) {
       payload = buildDeepDivePayload(row, opts)
     } else {
-      if (!isServiceConfigured()) return NextResponse.json({ error: 'Deep Dive is not set up on this deployment yet.' }, { status: 503 })
+      if (!isServiceConfigured()) return NextResponse.json({ error: 'Replay Review is not set up on this deployment yet.' }, { status: 503 })
       const { supabaseTapeStore } = await import('@/lib/orderflow/server/tape-store')
       payload = await buildDeepDivePayloadFromTape(row, opts, supabaseTapeStore(createServiceClient()))
     }
@@ -73,6 +73,6 @@ export async function GET(req: Request) {
   } catch (e) {
     if (e instanceof DeepDiveError) return NextResponse.json({ error: e.message }, { status: e.status })
     const msg = e instanceof Error ? e.message : String(e)
-    return NextResponse.json({ error: `could not build the deep dive: ${msg}` }, { status: 500 })
+    return NextResponse.json({ error: `could not build the replay: ${msg}` }, { status: 500 })
   }
 }

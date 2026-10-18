@@ -115,7 +115,7 @@ export interface RecapProps {
    *  still render but saving explains what's missing instead of failing mute. */
   migrationPending: boolean
   /** Week only: the screenshot catalog. */
-  film?: { frames: FilmFrame[]; missing: number; migrationPending: boolean }
+  film?: { frames: FilmFrame[]; missing: number; migrationPending: boolean; replay?: boolean }
 }
 
 const STATE_META: Record<FindingState, { label: string; cls: string }> = {
@@ -346,7 +346,7 @@ export default function PeriodRecapClient(p: RecapProps) {
       {/* Game film — the week's screenshots, your call on each */}
       {p.film && (
         <RecapSection title="Game film" hint="every screenshot this week — flip through, make the call">
-          <GameFilm frames={p.film.frames} missing={p.film.missing} migrationPending={p.film.migrationPending} />
+          <GameFilm frames={p.film.frames} missing={p.film.missing} migrationPending={p.film.migrationPending} replay={p.film.replay} />
         </RecapSection>
       )}
 

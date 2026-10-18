@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { format, parseISO } from 'date-fns'
 import { weekTradingDays, weekEnd, weekLabel, weekStartFor, previousWeekStart, nextWeekStart } from '@/lib/week-dates'
 import { todayPT } from '@/lib/pt-time'
+import { deepDiveAllowed } from '@/lib/deep-dive-access'
 import { displayDayTypes } from '@/lib/day-type-display'
 import { computeCarryover, type Carryover } from '@/lib/prep-carryover'
 import { rMultiple, type TradeWithExcursion } from '@/lib/analytics'
@@ -117,8 +118,10 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
 
   const vs = comparisonRows(prevSummary, summary, 'week')
 
-  // Game film — every screenshot this week, in entry order, signed once.
-  const film = await buildFilm(supabase, days, tradedDayIds)
+  // Game film — every screenshot this week, in entry order, signed once. Each
+  // frame links to its trade in Replay Review for the people who have it.
+  const { data: { user } } = await supabase.auth.getUser()
+  const film = { ...(await buildFilm(supabase, days, tradedDayIds)), replay: deepDiveAllowed(user?.email) }
 
   // Pager: never forward past the current week.
   const currentWeek = weekStartFor(todayPT())

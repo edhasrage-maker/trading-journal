@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { GhostButton } from '@/components/ui/Section'
 import ScreenshotLightbox from '@/components/intraday/ScreenshotLightbox'
@@ -46,6 +47,8 @@ interface Props {
   /** Trades this week that have no screenshot — stated, not hidden. */
   missing: number
   migrationPending: boolean
+  /** Show "Replay this trade" (only for people who have Replay Review — decided on the server). */
+  replay?: boolean
 }
 
 const CALL_META: Record<TradeVerdict['call'], { label: string; cls: string; dot: string }> = {
@@ -57,7 +60,7 @@ const CALL_META: Record<TradeVerdict['call'], { label: string; cls: string; dot:
 const fmtUsd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString()}`
 const fmtR = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}R`
 
-export default function GameFilm({ frames, missing, migrationPending }: Props) {
+export default function GameFilm({ frames, missing, migrationPending, replay = false }: Props) {
   const [idx, setIdx] = useState(0)
   const [verdicts, setVerdicts] = useState<Record<string, TradeVerdict | null>>(
     () => Object.fromEntries(frames.map(f => [f.tradeId, f.verdict])),
@@ -159,6 +162,16 @@ export default function GameFilm({ frames, missing, migrationPending }: Props) {
           {f.r != null && <span className={f.r > 0 ? 'text-green-400' : f.r < 0 ? 'text-red-400' : 'text-gray-400'}>{fmtR(f.r)}</span>}
           {f.capture != null && <span className="text-gray-300">{f.capture}% <span className="text-gray-600">kept</span></span>}
           <span className="text-gray-600">{idx + 1} / {n}</span>
+          {/* The same trade in Replay Review — it opens Blind, chart cut at the fill. */}
+          {replay && (
+            <Link
+              href={`/review/replay?id=${f.tradeId}`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-blue-500 rounded-md text-[13px] font-semibold text-blue-400 hover:text-blue-300"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M7 4l13 8-13 8z" /></svg>
+              Replay this trade
+            </Link>
+          )}
         </div>
       </div>
 

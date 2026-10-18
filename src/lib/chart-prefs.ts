@@ -53,8 +53,11 @@ const DEBOUNCE_MS = 1000                             // 1 s after last change â†
  * LiveChart.tsx (e.g., a future v4 view key).
  */
 function isActiveChartPrefKey(k: string): boolean {
-  return k === 'livechart-prefs-v2' || k.startsWith('livechart-view-v3-')
+  return k === 'livechart-prefs-v2' || k.startsWith('livechart-view-v3-') || k === REPLAY_FP_COLORS_KEY
 }
+
+/** Replay Review's footprint colours ({ light, dark } picks), synced the same way. */
+export const REPLAY_FP_COLORS_KEY = 'replay-footprint-colors-v1'
 
 // Per-key debounce timers so rapid edits to the same key coalesce into one
 // network call, but edits to DIFFERENT keys don't block each other.

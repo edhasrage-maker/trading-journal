@@ -35,6 +35,13 @@ export interface DeepDivePalette {
     colFill: string; partialFill: string; rangeStrip: string
     poc: string
     vpsUp: string; vpsDown: string; deltaUp: string; deltaDown: string
+    /** Cell shading, buying / selling: the colour, faded by the row's share of the bar's biggest delta. */
+    cellBuy: string; cellSell: string
+    /** Side bars for 3+ stacked imbalances. */
+    stackBuy: string; stackSell: string
+    /** Row outlines across the strip, and the entry row's band. */
+    entryLine: string; entryBand: string; stopLine: string; tpLine: string
+    bg: string
   }
 }
 
@@ -60,6 +67,9 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
       colFill: 'rgba(255,255,255,.015)', partialFill: 'rgba(255,159,26,.05)', rangeStrip: 'rgba(180,180,180,.35)',
       poc: '#FFD23F',
       vpsUp: '#4DA3FF', vpsDown: '#FF4D4D', deltaUp: '#3FA9FF', deltaDown: '#FF5A5A',
+      cellBuy: '#0096FF', cellSell: '#FF3232', stackBuy: '#2FD47F', stackSell: '#FF5B5B',
+      entryLine: '#FF9F1A', entryBand: 'rgba(255,159,26,.22)', stopLine: '#EF5350', tpLine: '#26A69A',
+      bg: '#0C0D10',
     },
   },
   light: {
@@ -83,6 +93,63 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
       colFill: 'rgba(0,0,0,.02)', partialFill: 'rgba(255,159,26,.08)', rangeStrip: 'rgba(0,0,0,.2)',
       poc: '#C99700',
       vpsUp: '#1565C0', vpsDown: '#D32F2F', deltaUp: '#1976D2', deltaDown: '#E53935',
+      cellBuy: '#0096FF', cellSell: '#FF3232', stackBuy: '#2FD47F', stackSell: '#FF5B5B',
+      entryLine: '#FF9F1A', entryBand: 'rgba(255,159,26,.22)', stopLine: '#EF5350', tpLine: '#26A69A',
+      bg: '#FFFFFF',
     },
   },
 }
+
+/**
+ * The footprint colours a trader can change (Chart Settings → Footprint
+ * colours). Nine picks; the rest follows from them: Buying / Selling also set
+ * the cell numbers, the delta row and the VPS highlight, a shade darker on a
+ * light chart and lighter on a dark one. Nothing changes until a colour is
+ * picked — the built-in theme stays exactly as it was.
+ */
+export const FP_COLOR_KEYS = ['buy', 'sell', 'sbuy', 'ssell', 'poc', 'entry', 'stop', 'tp', 'bg'] as const
+export type FpColorKey = (typeof FP_COLOR_KEYS)[number]
+export type FpColors = Partial<Record<FpColorKey, string>>
+export const FP_COLOR_LABELS: Record<FpColorKey, string> = {
+  buy: 'Buying', sell: 'Selling', sbuy: 'Stacked buying', ssell: 'Stacked selling',
+  poc: 'Bar POC', entry: 'Entry', stop: 'Stop', tp: 'Target', bg: 'Background',
+}
+
+/** What each picker shows before anything is changed: the theme's own colours. */
+export function fpDefaults(theme: Theme): Record<FpColorKey, string> {
+  const F = PALETTE[theme].footprint
+  return {
+    buy: F.cellBuy, sell: F.cellSell, sbuy: F.stackBuy, ssell: F.stackSell,
+    poc: F.poc, entry: F.entryLine, stop: F.stopLine, tp: F.tpLine, bg: F.bg,
+  }
+}
+
+const rgbOf = (hex: string) => {
+  const n = parseInt(hex.replace('#', ''), 16) || 0
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+const alpha = (hex: string, a: number) => `rgba(${rgbOf(hex).join(',')},${a})`
+/** Text colour from a picked colour: darker on a light chart, lighter on a dark one. */
+const ink = (hex: string, theme: Theme) =>
+  `rgb(${rgbOf(hex).map(c => Math.round(theme === 'light' ? c * 0.7 : c + (255 - c) * 0.35)).join(',')})`
+
+/** The footprint palette with the trader's picks laid over the theme's. */
+export function withFpColors(base: DeepDivePalette['footprint'], o: FpColors, theme: Theme): DeepDivePalette['footprint'] {
+  const F = { ...base }
+  if (o.buy) { F.cellBuy = o.buy; F.up = F.vpsUp = F.deltaUp = ink(o.buy, theme) }
+  if (o.sell) { F.cellSell = o.sell; F.down = F.vpsDown = F.deltaDown = ink(o.sell, theme) }
+  if (o.sbuy) F.stackBuy = o.sbuy
+  if (o.ssell) F.stackSell = o.ssell
+  if (o.poc) F.poc = o.poc
+  if (o.entry) {
+    F.entryLine = o.entry; F.entryBand = alpha(o.entry, 0.22)
+    F.partialFill = alpha(o.entry, theme === 'light' ? 0.08 : 0.05); F.entry = ink(o.entry, theme)
+  }
+  if (o.stop) { F.stopLine = o.stop; F.stop = ink(o.stop, theme) }
+  if (o.tp) { F.tpLine = o.tp; F.tp = ink(o.tp, theme) }
+  if (o.bg) F.bg = o.bg
+  return F
+}
+
+/** Cell shading for one row: the picked colour, faded by size. */
+export const fpShade = (hex: string, a: number) => alpha(hex, a)
