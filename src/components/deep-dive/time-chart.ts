@@ -196,7 +196,13 @@ export class TimeChartController {
       rightPriceScale: { borderColor: c.border },
       timeScale: { borderColor: c.border },
     })
-    this.candles.applyOptions({ upColor: P.candleUp, downColor: P.candleDown, wickUpColor: P.candleUp, wickDownColor: P.candleDown })
+    // Outlines on: a border in the outline colour, and the wicks drawn in it too (as Sierra does)
+    const up = P.candleOutline ? P.outlineUp : P.candleUp, down = P.candleOutline ? P.outlineDown : P.candleDown
+    this.candles.applyOptions({
+      upColor: P.candleUp, downColor: P.candleDown,
+      borderVisible: P.candleOutline, borderUpColor: up, borderDownColor: down,
+      wickUpColor: up, wickDownColor: down,
+    })
     this.lines.vwap.applyOptions({ color: P.vwap }); this.lines.rvwap.applyOptions({ color: P.rvwap })
     this.lines.ema9.applyOptions({ color: P.ema9 }); this.lines.ema20.applyOptions({ color: P.ema20 })
     this.overlay.pocColor = P.barPoc

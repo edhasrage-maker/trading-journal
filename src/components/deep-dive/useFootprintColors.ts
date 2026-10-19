@@ -43,11 +43,17 @@ export function useFootprintColors(theme: Theme) {
 
   /** The picks for this theme (stable between renders, so the footprint only redraws on a change). */
   const mine = stored[theme] ?? NONE
-  return useMemo(() => ({
-    mine,
-    /** What each picker shows: the pick, else the theme's own colour. */
-    values: { ...fpDefaults(theme), ...mine } as Record<FpColorKey, string>,
-    set: (k: FpColorKey, hex: string) => save({ ...stored, [theme]: { ...mine, [k]: hex } }),
-    reset: () => save({ ...stored, [theme]: {} }),
-  }), [mine, stored, theme, save])
+  return useMemo(() => {
+    const { outline, ...picks } = mine
+    return {
+      mine,
+      /** What each picker shows: the pick, else the theme's own colour. */
+      values: { ...fpDefaults(theme), ...picks } as Record<FpColorKey, string>,
+      set: (k: FpColorKey, hex: string) => save({ ...stored, [theme]: { ...mine, [k]: hex } }),
+      /** Candle outlines on / off. */
+      outline: !!outline,
+      setOutline: (on: boolean) => save({ ...stored, [theme]: { ...mine, outline: on } }),
+      reset: () => save({ ...stored, [theme]: {} }),
+    }
+  }, [mine, stored, theme, save])
 }

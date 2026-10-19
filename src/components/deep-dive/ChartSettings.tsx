@@ -8,7 +8,7 @@
  */
 import { cn } from '@/lib/utils'
 import type { OfRoot } from '@/lib/orderflow/ticks'
-import { CANDLE_COLOR_KEYS, FP_COLOR_KEYS, FP_COLOR_LABELS, type FpColorKey } from './palette'
+import { CANDLE_COLOR_KEYS, FP_COLOR_KEYS, FP_COLOR_LABELS, OUTLINE_COLOR_KEYS, type FpColorKey } from './palette'
 import type { ReplaySettings } from './replay-settings'
 
 const SlidersIcon = () => (
@@ -64,7 +64,10 @@ export default function ChartSettingsPanel({
   inst: OfRoot
   /** What bubbles / footprint follow when untouched: the profile's order-flow setting. */
   ofDefault: boolean
-  colors: { values: Record<FpColorKey, string>; set: (k: FpColorKey, hex: string) => void; reset: () => void }
+  colors: {
+    values: Record<FpColorKey, string>; set: (k: FpColorKey, hex: string) => void; reset: () => void
+    outline: boolean; setOutline: (on: boolean) => void
+  }
   onResetAll: () => void
   /** Phone sheet: bigger rows, fewer options. */
   compact?: boolean
@@ -126,6 +129,8 @@ export default function ChartSettingsPanel({
         </div>
       )}
       <div className={compact ? '' : 'grid grid-cols-2 gap-x-2 gap-y-1 py-1'}>{CANDLE_COLOR_KEYS.map(pick)}</div>
+      {sw('Candle outlines', colors.outline, colors.setOutline)}
+      {(compact || colors.outline) && <div className={compact ? '' : 'grid grid-cols-2 gap-x-2 gap-y-1 pt-0.5 pb-1'}>{OUTLINE_COLOR_KEYS.map(pick)}</div>}
 
       <div className={cap}>Bubbles</div>
       {sw('Shift one bar left (as in Sierra)', s.boff, v => update({ boff: v }))}

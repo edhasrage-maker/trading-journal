@@ -17,6 +17,8 @@ export interface DeepDivePalette {
   legend: { bg: string; text: string }
   /** Candle body + wick, up / down. */
   candleUp: string; candleDown: string
+  /** Candle outlines (Sierra-style): off by default; when on they also draw the wicks. */
+  candleOutline: boolean; outlineUp: string; outlineDown: string
   vwap: string; rvwap: string; ema9: string; ema20: string
   barPoc: string
   exitMarker: string
@@ -54,6 +56,7 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
     chart: { bg: '#0C0D10', text: '#969BA3', grid: '#171A21', border: '#282C32' },
     legend: { bg: 'rgba(14,16,20,.72)', text: '#E8EAED' },
     candleUp: '#26A69A', candleDown: '#EF5350',
+    candleOutline: false, outlineUp: '#64B1FF', outlineDown: '#FF5A50',
     vwap: '#E8E8E8', rvwap: 'rgba(200,200,200,.45)', ema9: '#4FC3F7', ema20: '#BA68C8',
     barPoc: '#FFD23F',
     exitMarker: '#C3C7CF',
@@ -82,6 +85,7 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
     chart: { bg: '#FFFFFF', text: '#444444', grid: '#F2F2F2', border: '#DDDDDD' },
     legend: { bg: 'rgba(255,255,255,.85)', text: '#222222' },
     candleUp: '#26A69A', candleDown: '#EF5350',
+    candleOutline: false, outlineUp: '#64B1FF', outlineDown: '#A80000',
     vwap: '#333333', rvwap: 'rgba(60,60,60,.45)', ema9: '#0288D1', ema20: '#8E24AA',
     barPoc: '#C99700',
     exitMarker: '#555555',
@@ -116,16 +120,20 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
  * picked — the built-in theme stays exactly as it was.
  *
  * Plus the candle pair (Chart Settings → Candles): Up / Down candles colour
- * both the candle chart and each footprint column's open-close strip.
+ * both the candle chart and each footprint column's open-close strip; and
+ * Candle outlines (off by default) put a Sierra-style outline on each candle
+ * of the candle chart, drawing the wicks in the outline colour too.
  */
 export const FP_COLOR_KEYS = ['buy', 'sell', 'sbuy', 'ssell', 'poc', 'entry', 'stop', 'tp', 'bg'] as const
 export const CANDLE_COLOR_KEYS = ['cup', 'cdown'] as const
-export type FpColorKey = (typeof FP_COLOR_KEYS)[number] | (typeof CANDLE_COLOR_KEYS)[number]
-export type FpColors = Partial<Record<FpColorKey, string>>
+export const OUTLINE_COLOR_KEYS = ['oup', 'odown'] as const
+export type FpColorKey = (typeof FP_COLOR_KEYS)[number] | (typeof CANDLE_COLOR_KEYS)[number] | (typeof OUTLINE_COLOR_KEYS)[number]
+/** The picks for one theme, plus the outline switch. */
+export type FpColors = Partial<Record<FpColorKey, string>> & { outline?: boolean }
 export const FP_COLOR_LABELS: Record<FpColorKey, string> = {
   buy: 'Buying', sell: 'Selling', sbuy: 'Stacked buying', ssell: 'Stacked selling',
   poc: 'Bar POC', entry: 'Entry', stop: 'Stop', tp: 'Target', bg: 'Background',
-  cup: 'Up candles', cdown: 'Down candles',
+  cup: 'Up candles', cdown: 'Down candles', oup: 'Up outline', odown: 'Down outline',
 }
 
 /** What each picker shows before anything is changed: the theme's own colours. */
@@ -134,14 +142,18 @@ export function fpDefaults(theme: Theme): Record<FpColorKey, string> {
   return {
     buy: F.cellBuy, sell: F.cellSell, sbuy: F.stackBuy, ssell: F.stackSell,
     poc: F.poc, entry: F.entryLine, stop: F.stopLine, tp: F.tpLine, bg: F.bg,
-    cup: P.candleUp, cdown: P.candleDown,
+    cup: P.candleUp, cdown: P.candleDown, oup: P.outlineUp, odown: P.outlineDown,
   }
 }
 
-/** The whole palette with the trader's candle pair laid over the theme's. */
+/** The whole palette with the trader's candle picks laid over the theme's. */
 export function withCandleColors(base: DeepDivePalette, o: FpColors): DeepDivePalette {
-  if (!o.cup && !o.cdown) return base
-  return { ...base, candleUp: o.cup ?? base.candleUp, candleDown: o.cdown ?? base.candleDown }
+  if (!o.cup && !o.cdown && !o.outline) return base
+  return {
+    ...base,
+    candleUp: o.cup ?? base.candleUp, candleDown: o.cdown ?? base.candleDown,
+    candleOutline: !!o.outline, outlineUp: o.oup ?? base.outlineUp, outlineDown: o.odown ?? base.outlineDown,
+  }
 }
 
 const rgbOf = (hex: string) => {
