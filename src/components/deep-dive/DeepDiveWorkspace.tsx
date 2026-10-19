@@ -199,10 +199,38 @@ export default function DeepDiveWorkspace({
     return () => { live = false }
   }, [wantDetails, haveDetails, selectedId])
   const mine = selectedId ? details[selectedId] : undefined
+
+  // A trade whose Entry half was never read (or was read for an older version)
+  // gets it read now — the same POST /api/trades/score the Recap uses — once
+  // per trade per visit, then the panel asks for its Score again.
+  const [scoreRun, setScoreRun] = useState<Record<string, 'done' | 'pending' | 'error'>>({})
+  const askedScore = useRef(new Set<string>())
+  const needsScore = !!mine && !('error' in mine) && mine.needsScore
+  useEffect(() => {
+    if (!wantDetails || !selectedId || !needsScore || askedScore.current.has(selectedId)) return
+    const id = selectedId
+    askedScore.current.add(id)
+    void (async () => {
+      let outcome: 'done' | 'pending' | 'error' = 'done'
+      try {
+        const r = await fetch('/api/trades/score', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [id] }) })
+        const j = await r.json().catch(() => ({}))
+        const s = j?.results?.[id]?.status, c = j?.entry?.[id]?.status
+        outcome = !r.ok || s === 'error' || c === 'error' ? 'error' : s === 'pending' || c === 'pending' ? 'pending' : 'done'
+        const d = await fetch(`/api/deep-dive/details?id=${id}`, { cache: 'no-store' })
+        if (d.ok) { const dj = await d.json() as ReplayDetails; setDetails(m => ({ ...m, [id]: dj })) }
+      } catch { outcome = 'error' }
+      setScoreRun(m => ({ ...m, [id]: outcome }))
+    })()
+  }, [wantDetails, selectedId, needsScore])
+  const ran = selectedId ? scoreRun[selectedId] : undefined
+  const scoring = needsScore && !ran ? 'running' : ran === 'pending' || ran === 'error' ? ran : null
+
   const yoursBody = (big: boolean) => (
     <YourTrade
       details={mine && !('error' in mine) ? mine : null}
       error={mine && 'error' in mine ? mine.error : null}
+      scoring={scoring}
       big={big}
     />
   )

@@ -7,6 +7,7 @@
  * trader's entry rules and the order-flow Score's five reasons under Entry;
  * profit kept, stop respected and their runner rules under Exit.
  */
+import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { TradeGrade } from '@/lib/trade-grade'
 
@@ -50,13 +51,8 @@ function Lines({ lines, wide }: { lines: Line[]; wide?: boolean }) {
 
 const r = (x: number | null) => (x == null ? null : Math.round(x))
 
-/** Every reason behind a trade's Score, under Entry and Exit. */
-export function TradeGradeDetail({ grade: g, neverWent, hasStop }: {
-  grade: TradeGrade
-  /** The trade never got 1×ATR its way (Kept reads N/A). */
-  neverWent: boolean
-  hasStop: boolean
-}) {
+/** Every reason behind a trade's Score, as lines — shared by the Recap's panel and Replay Review's narrow one, so both say the same thing. */
+function gradeLines(g: TradeGrade, neverWent: boolean, hasStop: boolean) {
   const p = g.parts
   const known = (xs: { status: string }[]) => xs.filter(x => x.status !== 'unknown')
   const passed = (xs: { status: string }[]) => xs.filter(x => x.status === 'pass').length
@@ -108,6 +104,17 @@ export function TradeGradeDetail({ grade: g, neverWent, hasStop }: {
   const greyed = er.some(x => !x.counted) || rr.some(x => !x.counted)
   const fmt = (x: number) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(Math.round(x * 10) / 10).toFixed(1)}`
   const tapeNums = g.entryCtx?.tape != null && g.entryCtx?.tape_clock != null ? `${fmt(g.entryCtx.tape)} and ${fmt(g.entryCtx.tape_clock)}` : null
+  return { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, readAt, tapeRule, greyed, tapeNums }
+}
+
+/** Every reason behind a trade's Score, under Entry and Exit. */
+export function TradeGradeDetail({ grade: g, neverWent, hasStop }: {
+  grade: TradeGrade
+  /** The trade never got 1×ATR its way (Kept reads N/A). */
+  neverWent: boolean
+  hasStop: boolean
+}) {
+  const { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, readAt, tapeRule, greyed, tapeNums } = gradeLines(g, neverWent, hasStop)
   return (
     <div className="font-sans text-xs text-gray-300 py-2 max-w-3xl space-y-2.5">
       <p className="text-[13px] font-semibold text-gray-100">
@@ -132,6 +139,77 @@ export function TradeGradeDetail({ grade: g, neverWent, hasStop }: {
           {readAt && <>Entry reads only what printed before your fill at {readAt} PT.</>}
           {readAt && tapeRule && g.flowScore && <> The two Tape Reader numbers{tapeNums ? ` (${tapeNums})` : ''} are two windows of the same study: your rules use the 480 s before the fill (your research); the order-flow Score uses 8 clock minutes (your chart).</>}
           {greyed && <>{readAt ? ' ' : ''}Greyed rules started after this trade, so they don&apos;t count toward its Score.</>}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** One reason per row in a narrow column: dot, label and status, the why underneath. */
+function CompactLines({ lines, big }: { lines: Line[]; big?: boolean }) {
+  return (
+    <>
+      {lines.map(l => (
+        <div key={l.key} className={`grid grid-cols-[10px_minmax(0,1fr)_auto] gap-x-2 gap-y-px items-baseline ${big ? 'py-[5px] text-[13px]' : 'py-1 text-[12px]'} ${l.greyed ? 'opacity-50' : ''}`}>
+          <span className={`w-1.5 h-1.5 rounded-full self-center ${DOT[l.dot]}`} aria-hidden="true" />
+          <span className="font-semibold text-gray-100" title={l.title}>{l.label}</span>
+          <span className={l.statusCls}>{l.status}</span>
+          <span />
+          <span className="col-span-2 text-gray-400">{l.text}</span>
+        </div>
+      ))}
+    </>
+  )
+}
+
+/**
+ * The same Score and reasons as TradeGradeDetail, laid out for a narrow
+ * column (Replay Review's "Your trade" panel, phone tab): the five order-flow
+ * reasons sit behind a toggle so the panel stays short.
+ */
+export function TradeGradeCompact({ grade: g, neverWent, hasStop, note, big = false }: {
+  grade: TradeGrade
+  neverWent: boolean
+  hasStop: boolean
+  /** Replaces the footnote (e.g. why there's no Entry part). */
+  note?: string | null
+  big?: boolean
+}) {
+  const [facts, setFacts] = useState(false)
+  const { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, readAt, greyed } = gradeLines(g, neverWent, hasStop)
+  const head = `font-semibold text-gray-400 ${big ? 'text-[12.5px]' : 'text-[12px]'}`
+  return (
+    <div className="font-sans">
+      <p className={`font-semibold tabular-nums text-gray-100 ${big ? 'text-[16px]' : 'text-[15px]'}`}>
+        Score {g.score ?? '—'} <span className="font-normal text-gray-400">· Entry {g.entry ?? '—'} · Exit {g.exit ?? '—'}</span>
+      </p>
+      {(g.entry != null || ruleLines.length > 0 || factLines.length > 0) && (
+        <div className="mt-2 pl-2.5 border-l-2 border-gray-800">
+          <p className={head}>Entry {g.entry ?? '—'}{entryBits.length ? ` · ${entryBits.join(' · ')}` : ''}</p>
+          <CompactLines lines={ruleLines} big={big} />
+          {factLines.length > 0 && (
+            <>
+              {facts && <CompactLines lines={factLines} big={big} />}
+              <button type="button" onClick={() => setFacts(v => !v)} className={`mt-0.5 text-blue-400 hover:text-blue-300 ${big ? 'text-[13px]' : 'text-[12px]'}`}>
+                {facts ? 'Hide the order-flow reasons' : `Show the ${factLines.length} order-flow reasons`}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {(g.exit != null || runnerLines.length > 0 || exitLines.length > 0) && (
+        <div className="mt-2.5 pl-2.5 border-l-2 border-gray-800">
+          <p className={head}>Exit {g.exit ?? '—'}{exitBits.length ? ` · ${exitBits.join(' · ')}` : ''}</p>
+          <CompactLines lines={exitLines} big={big} />
+          <CompactLines lines={runnerLines} big={big} />
+        </div>
+      )}
+      {(note || readAt || greyed) && (
+        <p className="mt-2 text-[11.5px] text-gray-500">
+          {note ?? <>
+            {readAt && <>Entry reads only what printed before your fill at {readAt} PT.</>}
+            {greyed && <>{readAt ? ' ' : ''}Greyed rules started after this trade, so they don&apos;t count toward its Score.</>}
+          </>}
         </p>
       )}
     </div>
