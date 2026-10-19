@@ -73,7 +73,7 @@ export default function Footprint1m({
       if (c.poc != null) { ctx.strokeStyle = F.poc; ctx.lineWidth = 1.2; ctx.strokeRect(x0 + 9.5, y(c.poc) + 0.5, CW - 19, RH - 1) }
       const oK = Math.floor(Math.round(b.o * 4) / g) * g, cK = Math.floor(Math.round(b.c * 4) / g) * g
       ctx.fillStyle = F.rangeStrip; ctx.fillRect(x0 + 1, y(c.khi), 2, (c.khi - c.klo) / g * RH + RH)
-      ctx.fillStyle = b.c >= b.o ? '#26a69a' : '#ef5350'
+      ctx.fillStyle = b.c >= b.o ? F.barUp : F.barDown
       const yt = y(Math.max(oK, cK)), yb = y(Math.min(oK, cK)) + RH; ctx.fillRect(x0 + 1, yt, 3, yb - yt)
     })
     ctx.strokeStyle = F.entryLine; ctx.lineWidth = 1; ctx.strokeRect(0.5, y(eK) + 0.5, W - 1, RH - 1)

@@ -15,6 +15,8 @@ import type { Theme } from '@/components/ThemeToggle'
 export interface DeepDivePalette {
   chart: { bg: string; text: string; grid: string; border: string }
   legend: { bg: string; text: string }
+  /** Candle body + wick, up / down. */
+  candleUp: string; candleDown: string
   vwap: string; rvwap: string; ema9: string; ema20: string
   barPoc: string
   exitMarker: string
@@ -41,6 +43,8 @@ export interface DeepDivePalette {
     stackBuy: string; stackSell: string
     /** Row outlines across the strip, and the entry row's band. */
     entryLine: string; entryBand: string; stopLine: string; tpLine: string
+    /** Each column's open-close strip, up / down bar. */
+    barUp: string; barDown: string
     bg: string
   }
 }
@@ -49,6 +53,7 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
   dark: {
     chart: { bg: '#0C0D10', text: '#969BA3', grid: '#171A21', border: '#282C32' },
     legend: { bg: 'rgba(14,16,20,.72)', text: '#E8EAED' },
+    candleUp: '#26A69A', candleDown: '#EF5350',
     vwap: '#E8E8E8', rvwap: 'rgba(200,200,200,.45)', ema9: '#4FC3F7', ema20: '#BA68C8',
     barPoc: '#FFD23F',
     exitMarker: '#C3C7CF',
@@ -69,12 +74,14 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
       vpsUp: '#4DA3FF', vpsDown: '#FF4D4D', deltaUp: '#3FA9FF', deltaDown: '#FF5A5A',
       cellBuy: '#0096FF', cellSell: '#FF3232', stackBuy: '#2FD47F', stackSell: '#FF5B5B',
       entryLine: '#FF9F1A', entryBand: 'rgba(255,159,26,.22)', stopLine: '#EF5350', tpLine: '#26A69A',
+      barUp: '#26A69A', barDown: '#EF5350',
       bg: '#0C0D10',
     },
   },
   light: {
     chart: { bg: '#FFFFFF', text: '#444444', grid: '#F2F2F2', border: '#DDDDDD' },
     legend: { bg: 'rgba(255,255,255,.85)', text: '#222222' },
+    candleUp: '#26A69A', candleDown: '#EF5350',
     vwap: '#333333', rvwap: 'rgba(60,60,60,.45)', ema9: '#0288D1', ema20: '#8E24AA',
     barPoc: '#C99700',
     exitMarker: '#555555',
@@ -95,6 +102,7 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
       vpsUp: '#1565C0', vpsDown: '#D32F2F', deltaUp: '#1976D2', deltaDown: '#E53935',
       cellBuy: '#0096FF', cellSell: '#FF3232', stackBuy: '#2FD47F', stackSell: '#FF5B5B',
       entryLine: '#FF9F1A', entryBand: 'rgba(255,159,26,.22)', stopLine: '#EF5350', tpLine: '#26A69A',
+      barUp: '#26A69A', barDown: '#EF5350',
       bg: '#FFFFFF',
     },
   },
@@ -106,22 +114,34 @@ export const PALETTE: Record<Theme, DeepDivePalette> = {
  * the cell numbers, the delta row and the VPS highlight, a shade darker on a
  * light chart and lighter on a dark one. Nothing changes until a colour is
  * picked — the built-in theme stays exactly as it was.
+ *
+ * Plus the candle pair (Chart Settings → Candles): Up / Down candles colour
+ * both the candle chart and each footprint column's open-close strip.
  */
 export const FP_COLOR_KEYS = ['buy', 'sell', 'sbuy', 'ssell', 'poc', 'entry', 'stop', 'tp', 'bg'] as const
-export type FpColorKey = (typeof FP_COLOR_KEYS)[number]
+export const CANDLE_COLOR_KEYS = ['cup', 'cdown'] as const
+export type FpColorKey = (typeof FP_COLOR_KEYS)[number] | (typeof CANDLE_COLOR_KEYS)[number]
 export type FpColors = Partial<Record<FpColorKey, string>>
 export const FP_COLOR_LABELS: Record<FpColorKey, string> = {
   buy: 'Buying', sell: 'Selling', sbuy: 'Stacked buying', ssell: 'Stacked selling',
   poc: 'Bar POC', entry: 'Entry', stop: 'Stop', tp: 'Target', bg: 'Background',
+  cup: 'Up candles', cdown: 'Down candles',
 }
 
 /** What each picker shows before anything is changed: the theme's own colours. */
 export function fpDefaults(theme: Theme): Record<FpColorKey, string> {
-  const F = PALETTE[theme].footprint
+  const P = PALETTE[theme], F = P.footprint
   return {
     buy: F.cellBuy, sell: F.cellSell, sbuy: F.stackBuy, ssell: F.stackSell,
     poc: F.poc, entry: F.entryLine, stop: F.stopLine, tp: F.tpLine, bg: F.bg,
+    cup: P.candleUp, cdown: P.candleDown,
   }
+}
+
+/** The whole palette with the trader's candle pair laid over the theme's. */
+export function withCandleColors(base: DeepDivePalette, o: FpColors): DeepDivePalette {
+  if (!o.cup && !o.cdown) return base
+  return { ...base, candleUp: o.cup ?? base.candleUp, candleDown: o.cdown ?? base.candleDown }
 }
 
 const rgbOf = (hex: string) => {
@@ -148,6 +168,8 @@ export function withFpColors(base: DeepDivePalette['footprint'], o: FpColors, th
   if (o.stop) { F.stopLine = o.stop; F.stop = ink(o.stop, theme) }
   if (o.tp) { F.tpLine = o.tp; F.tp = ink(o.tp, theme) }
   if (o.bg) F.bg = o.bg
+  if (o.cup) F.barUp = o.cup
+  if (o.cdown) F.barDown = o.cdown
   return F
 }
 

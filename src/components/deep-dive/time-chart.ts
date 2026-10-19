@@ -196,6 +196,7 @@ export class TimeChartController {
       rightPriceScale: { borderColor: c.border },
       timeScale: { borderColor: c.border },
     })
+    this.candles.applyOptions({ upColor: P.candleUp, downColor: P.candleDown, wickUpColor: P.candleUp, wickDownColor: P.candleDown })
     this.lines.vwap.applyOptions({ color: P.vwap }); this.lines.rvwap.applyOptions({ color: P.rvwap })
     this.lines.ema9.applyOptions({ color: P.ema9 }); this.lines.ema20.applyOptions({ color: P.ema20 })
     this.overlay.pocColor = P.barPoc

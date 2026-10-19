@@ -8,7 +8,7 @@
  */
 import { cn } from '@/lib/utils'
 import type { OfRoot } from '@/lib/orderflow/ticks'
-import { FP_COLOR_KEYS, FP_COLOR_LABELS, type FpColorKey } from './palette'
+import { CANDLE_COLOR_KEYS, FP_COLOR_KEYS, FP_COLOR_LABELS, type FpColorKey } from './palette'
 import type { ReplaySettings } from './replay-settings'
 
 const SlidersIcon = () => (
@@ -84,6 +84,18 @@ export default function ChartSettingsPanel({
       <span>{label}</span><Track on={on} big={compact} />
     </button>
   )
+  const pick = (k: FpColorKey) => (
+    <label key={k} className={cn('flex items-center cursor-pointer text-gray-100', compact ? 'justify-between h-11 text-[14px] border-b border-gray-800' : 'gap-1.5 text-[12px]')}>
+      {compact && <span>{FP_COLOR_LABELS[k]}</span>}
+      <input
+        type="color"
+        value={colors.values[k]}
+        onChange={e => colors.set(k, e.target.value)}
+        className={cn('flex-none p-0 border border-gray-800 bg-transparent cursor-pointer', compact ? 'w-11 h-7 rounded-md' : 'w-[26px] h-[18px] rounded-[3px]')}
+      />
+      {!compact && FP_COLOR_LABELS[k]}
+    </label>
+  )
   const bubbles = s.bubbles ?? ofDefault, fp = s.fp ?? ofDefault
 
   return (
@@ -113,6 +125,7 @@ export default function ChartSettingsPanel({
           </span>
         </div>
       )}
+      <div className={compact ? '' : 'grid grid-cols-2 gap-x-2 gap-y-1 py-1'}>{CANDLE_COLOR_KEYS.map(pick)}</div>
 
       <div className={cap}>Bubbles</div>
       {sw('Shift one bar left (as in Sierra)', s.boff, v => update({ boff: v }))}
@@ -139,20 +152,7 @@ export default function ChartSettingsPanel({
       )}
 
       {compact ? <div className={cap}>Footprint colours</div> : <div className="mt-3 mb-1 text-[12px] font-semibold text-gray-100">Footprint colours</div>}
-      <div className={compact ? '' : 'grid grid-cols-2 gap-x-2 gap-y-1'}>
-        {FP_COLOR_KEYS.map(k => (
-          <label key={k} className={cn('flex items-center cursor-pointer text-gray-100', compact ? 'justify-between h-11 text-[14px] border-b border-gray-800' : 'gap-1.5 text-[12px]')}>
-            {compact && <span>{FP_COLOR_LABELS[k]}</span>}
-            <input
-              type="color"
-              value={colors.values[k]}
-              onChange={e => colors.set(k, e.target.value)}
-              className={cn('flex-none p-0 border border-gray-800 bg-transparent cursor-pointer', compact ? 'w-11 h-7 rounded-md' : 'w-[26px] h-[18px] rounded-[3px]')}
-            />
-            {!compact && FP_COLOR_LABELS[k]}
-          </label>
-        ))}
-      </div>
+      <div className={compact ? '' : 'grid grid-cols-2 gap-x-2 gap-y-1'}>{FP_COLOR_KEYS.map(pick)}</div>
       {!compact && <button type="button" onClick={colors.reset} className="mt-1.5 text-[12px] text-blue-400 hover:text-blue-300">Reset colours</button>}
 
       <div className={cap}>Extras</div>

@@ -33,7 +33,7 @@ import { TimeChartController, fmtDT, fmtTs, type TimeChartOpts } from './time-ch
 import { BubbleChartController } from './bubble-chart'
 import Footprint1m from './Footprint1m'
 import { BracketBox, LevelsNearEntry, type NearLevel } from './EntryPanels'
-import { PALETTE, withFpColors } from './palette'
+import { PALETTE, withCandleColors, withFpColors } from './palette'
 import { useTheme } from '@/components/ThemeToggle'
 import { useFootprintColors } from './useFootprintColors'
 import { DEFAULTS, SETTINGS_KEY, TFS, isHtf, loadSettings, tfLabel, type ReplaySettings, type Tf } from './replay-settings'
@@ -195,6 +195,8 @@ export default function DeepDiveWorkspace({
   const G = settings.g[inst]
   const htfChart = isHtf(settings.tf)
   const fpPal = useMemo(() => withFpColors(pal.footprint, colors.mine, theme), [pal.footprint, colors.mine, theme])
+  // the candle chart's palette: the theme with the trader's Up / Down candles
+  const candlePal = useMemo(() => withCandleColors(pal, colors.mine), [pal, colors.mine])
 
   // ---- what's on screen ----
   const bubblesOn = settings.bubbles ?? usesOrderFlow
@@ -277,7 +279,7 @@ export default function DeepDiveWorkspace({
     // the container remounts while the next trade loads, or the layout changes: rebuild on the new element
     if (timeCtl.current && timeCtl.current.el !== timeEl.current) { timeCtl.current.destroy(); timeCtl.current = null }
     if (!timeCtl.current) {
-      timeCtl.current = new TimeChartController(timeEl.current, { ...timeOpts, palette: pal })
+      timeCtl.current = new TimeChartController(timeEl.current, { ...timeOpts, palette: candlePal })
       timeCtl.current.onCrosshair = i => setLegendIdx(i)
     }
     const none = agg.map(() => null)
@@ -291,8 +293,8 @@ export default function DeepDiveWorkspace({
       levels: S.levels, bracket: S.bracket,
       entry: { price: S.row.price, direction: S.row.direction, time: S.times.entry, label: `fill ${S.row.time}` },
       exits: P?.exits ?? [], entryIndex,
-    }, { ...timeOpts, palette: pal }, resetView)
-  }, [D, S, P?.exits, agg, fillAt, htfChart, profile, timeOpts, pal, showTime, key, settings.tf, layoutKey])
+    }, { ...timeOpts, palette: candlePal }, resetView)
+  }, [D, S, P?.exits, agg, fillAt, htfChart, profile, timeOpts, candlePal, showTime, key, settings.tf, layoutKey])
 
   useEffect(() => () => { timeCtl.current?.destroy(); timeCtl.current = null }, [showTime])
 
