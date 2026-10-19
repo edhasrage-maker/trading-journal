@@ -441,6 +441,7 @@ export default function DeepDiveWorkspace({
       m1={P?.blind ? D.m1 : D.m1.slice(0, Math.min(D.m1.length, D.fillIdx + 6))}
       vap={D.vap}
       entry={{ price: S.row.price, entrySec: +S.row.time.slice(6, 8) }}
+      fillT={Math.floor(S.times.entry / 60) * 60}
       bracket={{ stop: S.bracket.stop, tp: S.bracket.tp }}
       bars={phone ? Math.min(5, settings.fpN) : settings.fpN} g={G.fp} ratio={settings.fpR} minVol={G.min} palette={fpPal}
     />

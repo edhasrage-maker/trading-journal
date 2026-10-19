@@ -20,11 +20,13 @@ import { fpShade, type DeepDivePalette } from './palette'
 const RH = 15, CW = 80, AX = 68
 
 export default function Footprint1m({
-  m1, vap, entry, bracket, bars, g, ratio, minVol, palette: F,
+  m1, vap, entry, bracket, bars, g, ratio, minVol, palette: F, fillT = null,
 }: {
   m1: Bar1m[]
   vap: VapRow[][]
   entry: { price: number; entrySec: number }
+  /** Start of the fill's minute (PT-clock seconds). Blind ends on it as the partial bar; in Full review it sits mid-strip, so it's labelled "fill" by time. */
+  fillT?: number | null
   bracket: { stop: number | null; tp: number | null }
   bars: number; g: number; ratio: number; minVol: number
   palette: DeepDivePalette['footprint']
@@ -57,7 +59,7 @@ export default function Footprint1m({
     }
     cols.forEach((c, j) => {
       const x0 = AX + j * CW, b = c.bar, get = (k: number) => c.cells.get(k) || [0, 0]
-      ctx.fillStyle = b.partial ? F.partialFill : F.colFill; ctx.fillRect(x0 + 1, 0, CW - 2, Hh)
+      ctx.fillStyle = b.partial || b.t === fillT ? F.partialFill : F.colFill; ctx.fillRect(x0 + 1, 0, CW - 2, Hh)
       ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center'
       for (let k = c.klo; k <= c.khi; k += g) {
         const [bb, aa] = get(k), d = aa - bb, yy = y(k), a = 0.06 + 0.45 * Math.abs(d) / c.maxAbsDelta
@@ -81,7 +83,7 @@ export default function Footprint1m({
     if (tK != null && tK >= kmin && tK <= kmax) { ctx.strokeStyle = F.tpLine; ctx.setLineDash([3, 3]); ctx.strokeRect(0.5, y(tK) + 0.5, W - 1, RH - 1); ctx.setLineDash([]) }
     const sc = scrollRef.current
     if (sc) sc.scrollTop = Math.max(0, y(eK) - sc.clientHeight / 2 + RH / 2)
-  }, [cols, eK, sK, tK, kmin, kmax, g, W, Hh, F])
+  }, [cols, eK, sK, tK, kmin, kmax, g, W, Hh, F, fillT])
 
   const onScroll = () => {
     const sl = scrollRef.current?.scrollLeft ?? 0
@@ -97,9 +99,10 @@ export default function Footprint1m({
           {cols.map(c => {
             const s = c.stats
             const vcol = s.tier ? (s.up ? F.vpsUp : F.vpsDown) : 'var(--ts-mut)'
+            const isFill = c.bar.partial || c.bar.t === fillT
             return (
               <div key={c.i} style={{ width: CW }} className="text-center flex-none">
-                <div style={{ color: c.bar.partial ? F.entry : undefined }}>{fmtT(c.bar.t)}{c.bar.partial ? ' →fill' : ''}</div>
+                <div style={{ color: isFill ? F.entry : undefined }}>{fmtT(c.bar.t)}{c.bar.partial ? ' →fill' : isFill ? ' fill' : ''}</div>
                 <div style={{ color: vcol, fontWeight: [400, 600, 700, 800][s.tier], fontSize: 11 + s.tier * 2 }}>{s.vps.toFixed(2)}</div>
               </div>
             )
