@@ -109,8 +109,11 @@ export class BubbleChartController {
   render(
     B: BubbleChart, opts: BubbleChartOpts, levels: Level[], bracket: PlannedBracket,
     entry: { price: number; direction: 'long' | 'short'; time: number }, live: boolean, resetView: boolean,
-    palette: DeepDivePalette,
+    palette: DeepDivePalette, follow = false,
   ) {
+    // Play forward: keep the newest bubble in view as bubbles come in (or go, scrubbing back)
+    const n0 = this.B?.t.length ?? 0
+    const was = follow && !resetView && n0 ? this.chart.timeScale().getVisibleLogicalRange() : null
     this.B = B
     const c = palette.chart
     this.chart.applyOptions({
@@ -136,6 +139,9 @@ export class BubbleChartController {
       const n = B.t.length, focus = Math.min(n - 1, k + 60)
       const apply = () => this.chart.timeScale().setVisibleLogicalRange({ from: focus - 200, to: focus + 8 })
       apply(); requestAnimationFrame(() => requestAnimationFrame(apply))
+    } else if (was && B.t.length !== n0 && was.to >= n0 - 1) {
+      const d = B.t.length - n0
+      this.chart.timeScale().setVisibleLogicalRange({ from: was.from + d, to: was.to + d })
     }
   }
   destroy() { this.chart.remove() }

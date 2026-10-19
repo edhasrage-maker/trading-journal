@@ -17,13 +17,21 @@
  * dividers to drag. Bubbles and footprint start ON only when the trader's
  * profile uses order flow. On a phone: one chart at a time, the trades and
  * Chart Settings as sheets.
+ *
+ * Play forward ("Play from the fill"): the trader's choice to leave Blind.
+ * The Full review payload is fetched then and revealed up to a moving cursor
+ * on this side (src/lib/orderflow/replay.ts) — a bar once its minute closed, a
+ * bubble once it printed, an exit once it filled. The result (header, week
+ * list, Your trade) stays hidden until the replay reaches the last exit.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import { format, parseISO } from 'date-fns'
 import { cn } from '@/lib/utils'
 import type { DeepDivePayload } from '@/lib/orderflow/server/deep-dive-payload'
+import type { DeepDiveSnapshot } from '@/lib/orderflow/server/snapshot'
 import type { OfRoot } from '@/lib/orderflow/ticks'
+import { barsDone, bubblesDone, cutBars, cutBubbles } from '@/lib/orderflow/replay'
 import type { TradeVerdict } from '@/lib/supabase/types'
 import type { ReplayResult } from '@/app/api/deep-dive/results/route'
 import { toBars1m, vapPerBar, buildAgg, atr1m5m, htfToBars, SESSION_4H_OFFSET, type AggBar, type VapRow } from '@/lib/orderflow/bars'
@@ -41,6 +49,7 @@ import ChartSettingsPanel, { ChartSettingsToggle, SettingsIconButton } from './C
 import WeekTrades, { fmtUsd, rootOf, type WeekNav, type WeekTrade } from './WeekTrades'
 import CallBar from './CallBar'
 import YourTrade from './YourTrade'
+import ReplayControls, { PlayFromFillButton, PlayFromFillPill, type Speed } from './ReplayControls'
 import type { ReplayDetails } from '@/app/api/deep-dive/details/route'
 
 export type PickerTrade = WeekTrade
@@ -96,16 +105,20 @@ function Pane({ title, sub, controls, maxed, onMax, children, style, label }: {
   )
 }
 
-function BlindSwitch({ blind, onChange, big }: { blind: boolean; onChange: (blind: boolean) => void; big?: boolean }) {
+/** Blind / Full review. While replaying neither is pressed; pressing either ends the replay. */
+function BlindSwitch({ value, onChange, big }: { value: 'blind' | 'full' | null; onChange: (blind: boolean) => void; big?: boolean }) {
   const b = (on: boolean) => cn('font-semibold transition-colors', big ? 'h-11 px-3 text-[13px]' : 'px-3.5 py-1.5 text-[12.5px]',
     on ? 'bg-blue-500/15 text-gray-100 shadow-[inset_0_-2px_0_var(--color-blue-500)]' : 'text-gray-400 hover:text-gray-100')
   return (
     <span role="group" aria-label="Blind or full review" className={cn('inline-flex border border-gray-800 overflow-hidden flex-none', big ? 'rounded-lg' : 'rounded-md')}>
-      <button type="button" aria-pressed={blind} onClick={() => onChange(true)} className={b(blind)}>Blind</button>
-      <button type="button" aria-pressed={!blind} onClick={() => onChange(false)} className={cn(b(!blind), 'border-l border-gray-800')} title="Shows what happened after the entry">Full review</button>
+      <button type="button" aria-pressed={value === 'blind'} onClick={() => onChange(true)} className={b(value === 'blind')}>Blind</button>
+      <button type="button" aria-pressed={value === 'full'} onClick={() => onChange(false)} className={cn(b(value === 'full'), 'border-l border-gray-800')} title="Shows what happened after the entry">Full review</button>
     </span>
   )
 }
+
+/** One replay: which trade, seconds after the fill, the furthest it has got, and whether it's running. `n` counts the starts. */
+type Run = { id: string; e: number; far: number; running: boolean; n: number }
 
 export default function DeepDiveWorkspace({
   trades, initialId, usesOrderFlow, week,
@@ -122,7 +135,13 @@ export default function DeepDiveWorkspace({
   const phone = usePhone()
   const colors = useFootprintColors(theme)
   const [selectedId, setSelectedId] = useState<string | null>(initialId)
-  const [blind, setBlind] = useState(true)
+  const [mode, setMode] = useState<'blind' | 'full'>('blind')
+  // Play forward: a replay belongs to one trade; picking another ends it (back to the mode it started from)
+  const [run, setRun] = useState<Run | null>(null)
+  const [speed, setSpeed] = useState<Speed>(5)
+  const replay = run && run.id === selectedId ? run : null
+  // server-cut at the fill only in Blind; a replay works from the Full review data
+  const blind = !replay && mode === 'blind'
   const [settings, setSettings] = useState<ReplaySettings>(DEFAULTS)
   const [result, setResult] = useState<{ key: string; htf: boolean; payload?: Payload; error?: string } | null>(null)
   const [results, setResults] = useState<Record<string, ReplayResult> | null>(null)
@@ -157,35 +176,101 @@ export default function DeepDiveWorkspace({
   const wantHtf = isHtf(settings.tf)
   const have = result?.key === key ? result : null
   const satisfied = !!have && (!wantHtf || have.htf)
+  // the last Blind snapshot: a replay starts from it (its partial fill bar) while the Full review data loads
+  const [keep, setKeep] = useState<{ id: string; snap: DeepDiveSnapshot } | null>(null)
   useEffect(() => {
     if (!selectedId || satisfied) return
     let live = true
-    fetch(`/api/deep-dive/trade?id=${selectedId}&blind=${blind ? 1 : 0}${wantHtf ? '&htf=1' : ''}`, { cache: 'no-store' })
+    const id = selectedId
+    fetch(`/api/deep-dive/trade?id=${id}&blind=${blind ? 1 : 0}${wantHtf ? '&htf=1' : ''}`, { cache: 'no-store' })
       .then(async r => {
         const j = await r.json()
         if (!live) return
         if (!r.ok) setResult({ key, htf: wantHtf, error: j.error ?? `HTTP ${r.status}` })
-        else setResult({ key, htf: wantHtf || !!(j as Payload).snapshot?.htf, payload: j as Payload })
+        else {
+          setResult({ key, htf: wantHtf || !!(j as Payload).snapshot?.htf, payload: j as Payload })
+          if ((j as Payload).blind) setKeep({ id, snap: (j as Payload).snapshot })
+        }
       })
       .catch(e => { if (live) setResult({ key, htf: wantHtf, error: String(e) }) })
     return () => { live = false }
   }, [selectedId, blind, key, wantHtf, satisfied])
 
-  // ---- results: asked for only once the trader leaves Blind ----
+  // ---- Play forward: the Full review data, revealed up to the cursor ----
+  const FP = replay && have?.payload && !have.payload.blind ? have.payload : null
+  const FS = FP?.snapshot ?? null
+  const blindSnap = keep && keep.id === selectedId ? keep.snap : null
+  const endE = FS ? Math.max(0, Math.round((Date.parse(FS.cut.data_end_utc) - Date.parse(FS.cut.fill_utc)) / 1000)) : 0
+  const exitsSorted = useMemo(() => [...(FP?.exits ?? [])].sort((a, b) => a.time - b.time), [FP?.exits])
+  // the result shows once the replay has reached the last exit (the end of the data if none is recorded)
+  const revealE = !FS ? Infinity : exitsSorted.length ? Math.max(0, exitsSorted[exitsSorted.length - 1].time - FS.times.entry) : endE
+  const e = replay && FS ? Math.min(replay.e, endE) : 0
+  const cursorT = FS ? FS.times.entry + e : 0
+  const atEnd = !!FS && e >= endE
+  const nBars = FS ? barsDone(FS, cursorT, atEnd) : 0
+  const nBub = FS ? bubblesDone(FS.bubbles, cursorT) : 0
+  const nExits = exitsSorted.filter(x => x.time <= cursorT).length
+  const cutS = useMemo(() => (FS ? cutBars(FS, nBars, blindSnap) : null), [FS, nBars, blindSnap])
+  const cutB = useMemo(() => (FS ? cutBubbles(FS.bubbles, nBub) : null), [FS, nBub])
+  const cutExits = useMemo(() => exitsSorted.slice(0, nExits), [exitsSorted, nExits])
+  const out = !!replay && !!FS && replay.far >= revealE
+  // results (P&L, R, Score, screenshot, tags, an earlier call) stay hidden in Blind and in a replay until your exit
+  const hide = blind || (!!replay && !out)
+
+  const startReplay = useCallback(() => {
+    if (selectedId) setRun(r => ({ id: selectedId, e: 0, far: 0, running: true, n: (r?.n ?? 0) + 1 }))
+  }, [selectedId])
+  const pickMode = useCallback((b: boolean) => { setRun(null); setMode(b ? 'blind' : 'full') }, [])
+  /** Move the cursor (the slider keeps playing; a step pauses). */
+  const goTo = (to: number, pause = false) => setRun(r => {
+    if (!r) return r
+    const x = clamp(to, 0, endE)
+    return { ...r, e: x, far: Math.max(r.far, x), running: pause ? false : r.running && x < endE }
+  })
+  const togglePlay = () => setRun(r => (!r ? r : r.e >= endE ? { ...r, e: 0, running: true } : { ...r, running: !r.running }))
+  // one bar = one 1-minute bar (the footprint's): back shows one fewer, on shows one more
+  const stepBack = () => {
+    if (!FS) return
+    const t = FS.bars.t, atFill = barsDone(FS, FS.times.entry, false)
+    goTo(nBars <= atFill + 1 ? 0 : t[nBars - 2] + 60 - FS.times.entry, true)
+  }
+  const stepOn = () => {
+    if (!FS) return
+    const t = FS.bars.t
+    goTo(nBars >= t.length ? endE : t[nBars] + 60 - FS.times.entry, true)
+  }
+  // the clock: real time × speed, ten ticks a second; it waits at the fill until the Full review data is in
+  const ticking = !!replay?.running && !!FS
+  useEffect(() => {
+    if (!ticking) return
+    let last = performance.now()
+    const iv = window.setInterval(() => {
+      const now = performance.now(), dt = (now - last) / 1000
+      last = now
+      setRun(r => {
+        if (!r || !r.running) return r
+        const x = Math.min(endE, r.e + dt * speed)
+        return { ...r, e: x, far: Math.max(r.far, x), running: x < endE }
+      })
+    }, 100)
+    return () => window.clearInterval(iv)
+  }, [ticking, speed, endE])
+
+  // ---- results: asked for only once the trader leaves Blind (and, replaying, once out of the trade) ----
   const ids = useMemo(() => trades.map(t => t.id).join(','), [trades])
   useEffect(() => {
-    if (blind || results || !ids) return
+    if (hide || results || !ids) return
     let live = true
     fetch(`/api/deep-dive/results?ids=${ids}`, { cache: 'no-store' })
       .then(r => r.json())
       .then(j => { if (live && j?.results) setResults(j.results as Record<string, ReplayResult>) })
       .catch(() => { /* the list just shows no results */ })
     return () => { live = false }
-  }, [blind, results, ids])
+  }, [hide, results, ids])
 
   // ---- your screenshot + tags: Full review only, fetched per trade as you go ----
   const [details, setDetails] = useState<Record<string, ReplayDetails | { error: string }>>({})
-  const wantDetails = !blind && !!selectedId && (phone || settings.yours)
+  const wantDetails = !hide && !!selectedId && (phone || settings.yours)
   const haveDetails = !!selectedId && !!details[selectedId]
   useEffect(() => {
     if (!wantDetails || haveDetails || !selectedId) return
@@ -237,6 +322,7 @@ export default function DeepDiveWorkspace({
 
   const select = useCallback((id: string) => {
     setSelectedId(id)
+    setRun(null)
     setSheet(null)
     router.replace(`/review/replay?id=${id}`, { scroll: false })
   }, [router])
@@ -246,8 +332,14 @@ export default function DeepDiveWorkspace({
   const nextId = idx >= 0 && idx < trades.length - 1 ? trades[idx + 1].id : null
 
   const P = have?.payload
-  const S = P?.snapshot
-  const inst = (P?.trade.inst ?? 'NQ') as OfRoot
+  // what the charts show: the payload as sent, or in a replay the Full review data cut at the cursor
+  // (Blind's own snapshot, i.e. the moment of the fill, while that data is on its way)
+  const S: DeepDiveSnapshot | undefined = replay ? (cutS ?? blindSnap ?? undefined) : P?.snapshot
+  /** The chart ends at the fill: Blind, or a replay still waiting for its data. */
+  const cutAtFill = replay ? !cutS : !!P?.blind
+  const BUB = replay ? (cutS ? cutB : blindSnap?.bubbles ?? null) : S?.bubbles ?? null
+  const EXITS = replay ? cutExits : P?.exits
+  const inst = (S?.row.inst ?? P?.trade.inst ?? 'NQ') as OfRoot
   const G = settings.g[inst]
   const htfChart = isHtf(settings.tf)
   const fpPal = useMemo(() => withFpColors(pal.footprint, colors.mine, theme), [pal.footprint, colors.mine, theme])
@@ -258,7 +350,7 @@ export default function DeepDiveWorkspace({
   const bubblesOn = settings.bubbles ?? usesOrderFlow
   const fpOn = settings.fp ?? usesOrderFlow
   const candlesOn = settings.candles || !bubblesOn
-  const tabs = ([['candles', candlesOn], ['bubbles', bubblesOn], ['fp', fpOn], ['yours', !blind]] as [PaneKey, boolean][]).filter(([, on]) => on).map(([k]) => k)
+  const tabs = ([['candles', candlesOn], ['bubbles', bubblesOn], ['fp', fpOn], ['yours', !hide]] as [PaneKey, boolean][]).filter(([, on]) => on).map(([k]) => k)
   const tab: PaneKey = tabs.includes(ptab) ? ptab : tabs[0]
   const maxed = max && tabs.includes(max) ? max : null
   const showTime = phone ? tab === 'candles' : candlesOn && (!maxed || maxed === 'candles')
@@ -275,7 +367,7 @@ export default function DeepDiveWorkspace({
     const entry = S.times.entry
     // the last 1m bar the trader could see: the partial bar (blind), or the last completed bar before the fill
     let fillIdx = m1.length - 1
-    if (!P?.blind) { fillIdx = -1; for (let i = 0; i < m1.length && m1[i].t + 60 <= entry; i++) fillIdx = i }
+    if (!cutAtFill) { fillIdx = -1; for (let i = 0; i < m1.length && m1[i].t + 60 <= entry; i++) fillIdx = i }
     const asOf = m1.slice(0, fillIdx + 1)
     return {
       m1, vap, fillIdx, asOf,
@@ -283,7 +375,7 @@ export default function DeepDiveWorkspace({
       vwap: vwap24h(m1), rvwap: vwapRth(m1), ema9: emaOnTf(m1, 9), ema20: emaOnTf(m1, 20),
       atr: atr1m5m(asOf, entry),
     }
-  }, [S, P?.blind])
+  }, [S, cutAtFill])
 
   // 1m / 5m: the 1-minute window. 30m / 4h: the 30-minute history, continued by the window.
   const { agg, fillAt } = useMemo((): { agg: AggBar[]; fillAt: number } => {
@@ -295,6 +387,12 @@ export default function DeepDiveWorkspace({
       fillAt: D.hist.length + D.fillIdx,
     }
   }, [D, settings.tf, htfChart])
+
+  // the footprint's entry and bracket, kept as the same objects while a replay moves on (its model re-reads on change)
+  const ePx = S?.row.price ?? 0, eSec = S ? +S.row.time.slice(6, 8) : 0
+  const fpEntry = useMemo(() => ({ price: ePx, entrySec: eSec }), [ePx, eSec])
+  const bStop = S?.bracket.stop ?? null, bTp = S?.bracket.tp ?? null
+  const fpBracket = useMemo(() => ({ stop: bStop, tp: bTp }), [bStop, bTp])
 
   const profile = useMemo(() => {
     if (!D || !S || settings.prof === 'off') return null
@@ -323,6 +421,9 @@ export default function DeepDiveWorkspace({
   const [legendIdx, setLegendIdx] = useState<number | null>(null)
   const [bubLegendSlot, setBubLegendSlot] = useState<number | null>(null)
   const lastKey = useRef<string>('')
+  // a chart view starts at the fill per trade and mode, and again at each Play from the fill
+  const viewOf = `${selectedId}|${replay ? `play${replay.n}` : blind ? 'blind' : 'full'}`
+  const following = !!replay
 
   // VWAP, the 5m EMAs and bar POC are intraday reads; they don't belong on a 30m / 4h chart
   const timeOpts: Omit<TimeChartOpts, 'palette'> = useMemo(() => ({
@@ -348,44 +449,53 @@ export default function DeepDiveWorkspace({
       return v.map((x, i) => (i === agg.length - 1 || Math.floor(agg[i].t / 300) !== Math.floor(agg[i + 1].t / 300) ? x : null))
     }
     const entryIndex = Math.max(0, agg.findIndex(b => b.mins.includes(Math.max(0, fillAt))))
-    const viewKey = `${key}|${settings.tf}|${D.hist.length}`
+    const viewKey = `${viewOf}|${settings.tf}|${D.hist.length}`
     const resetView = timeCtl.current.bars.length === 0 || lastKey.current !== viewKey
     lastKey.current = viewKey
     timeCtl.current.render({
       agg, vwap: at(D.vwap), rvwap: at(D.rvwap), ema9: ema5(D.ema9), ema20: ema5(D.ema20), profile,
       levels: S.levels, bracket: S.bracket,
       entry: { price: S.row.price, direction: S.row.direction, time: S.times.entry, label: `fill ${S.row.time}` },
-      exits: P?.exits ?? [], entryIndex,
-    }, { ...timeOpts, palette: candlePal }, resetView)
-  }, [D, S, P?.exits, agg, fillAt, htfChart, profile, timeOpts, candlePal, showTime, key, settings.tf, layoutKey])
+      exits: EXITS ?? [], entryIndex,
+    }, { ...timeOpts, palette: candlePal }, resetView, following)
+  }, [D, S, EXITS, agg, fillAt, htfChart, profile, timeOpts, candlePal, showTime, viewOf, following, settings.tf, layoutKey])
 
   useEffect(() => () => { timeCtl.current?.destroy(); timeCtl.current = null }, [showTime])
 
+  // Play forward: the last trade price, drawn as a dashed "now" line
+  const nowPx = replay && BUB && BUB.c.length ? BUB.c[BUB.c.length - 1] : null
+  useEffect(() => {
+    timeCtl.current?.setNow(showTime ? nowPx : null, pal.legend.text)
+  }, [nowPx, showTime, pal.legend.text, D, agg, layoutKey])
+
   const bubKey = useRef('')
   useEffect(() => {
-    if (!showBubbles || !bubEl.current || !S?.bubbles) return
+    if (!showBubbles || !bubEl.current || !S || !BUB) return
     if (bubCtl.current && bubCtl.current.el !== bubEl.current) { bubCtl.current.destroy(); bubCtl.current = null }
     if (!bubCtl.current) {
       bubCtl.current = new BubbleChartController(bubEl.current)
       bubCtl.current.onCrosshair = s => setBubLegendSlot(s)
     }
-    const reset = bubKey.current !== key
-    bubKey.current = key
-    bubCtl.current.render(S.bubbles, { offset: settings.boff, bars40: settings.b40, levels: settings.lv }, S.levels, S.bracket,
-      { price: S.row.price, direction: S.row.direction, time: S.times.entry }, !!P?.blind, reset, pal)
-  }, [S, P?.blind, showBubbles, settings.boff, settings.b40, settings.lv, key, pal, layoutKey])
+    const reset = bubKey.current !== viewOf
+    bubKey.current = viewOf
+    // the forming bubble is previewed only when the chart ends at the fill
+    bubCtl.current.render(BUB, { offset: settings.boff, bars40: settings.b40, levels: settings.lv }, S.levels, S.bracket,
+      { price: S.row.price, direction: S.row.direction, time: S.times.entry }, cutAtFill, reset, pal, following)
+  }, [S, BUB, cutAtFill, showBubbles, settings.boff, settings.b40, settings.lv, viewOf, following, pal, layoutKey])
 
   useEffect(() => () => { bubCtl.current?.destroy(); bubCtl.current = null }, [showBubbles])
 
-  // keyboard: ← → or [ ] previous / next trade · B Blind / Full · 1 / 5 / 3 / 4 timeframe · H Heiken-Ashi
+  // keyboard: ← → or [ ] previous / next trade · B Blind / Full · Space play / pause · 1 / 5 / 3 / 4 timeframe · H Heiken-Ashi
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.ctrlKey || e.altKey || e.metaKey) return
+      const el = e.target as HTMLElement, tag = el?.tagName
+      const onSlider = tag === 'INPUT' && (el as HTMLInputElement).type === 'range'
+      if ((tag === 'INPUT' && !(onSlider && e.key === ' ')) || tag === 'SELECT' || tag === 'TEXTAREA' || e.ctrlKey || e.altKey || e.metaKey) return
       const tfMap: Record<string, Tf> = { '1': 1, '5': 5, '3': 30, '4': 240 }
       if (tfMap[e.key]) update({ tf: tfMap[e.key] })
       else if (e.key === 'h' || e.key === 'H') update({ ha: !settings.ha })
-      else if (e.key === 'b' || e.key === 'B') setBlind(b => !b)
+      else if (e.key === 'b' || e.key === 'B') pickMode(!blind)
+      else if (e.key === ' ' && tag !== 'BUTTON' && selectedId) { e.preventDefault(); if (replay) togglePlay(); else startReplay() }
       else if ((e.key === '[' || e.key === 'ArrowLeft') && prevId) { e.preventDefault(); select(prevId) }
       else if ((e.key === ']' || e.key === 'ArrowRight') && nextId) { e.preventDefault(); select(nextId) }
     }
@@ -426,14 +536,14 @@ export default function DeepDiveWorkspace({
       (htfChart ? `\nΔ ${b.d}  bid ${b.bv}  ask ${b.av}` : `\nΔ ${b.d}  (min ${b.dmin}  max ${b.dmax})  bid ${b.bv}  ask ${b.av}`)
   })()
   const bubLegend = (() => {
-    const B = S?.bubbles; if (!B) return ''
+    const B = BUB; if (!B) return ''
     const n = B.lvl.length
     let x = bubLegendSlot ?? n - 1; if (x < 0 || x >= n) x = n - 1
     const gi = settings.boff ? Math.min(x + 1, n - 1) : x, isLive = gi === n - 1
     const lv = isLive && settings.boff && x === n - 1 ? B.live_lvl : B.lvl[gi]
     return `${fmtTs(B.t[x])}  40T bar  O ${B.o[x].toFixed(2)} H ${B.h[x].toFixed(2)} L ${B.l[x].toFixed(2)} C ${B.c[x].toFixed(2)}\n` +
       `bubble: ${B.dir[gi] > 0 ? 'BUY' : 'SELL'} ${B.vol[gi]} @ ${B.px[gi].toFixed(2)} · ${['small', 'medium', 'large'][lv]}` +
-      (isLive && P?.blind ? `  (forming: ${B.live_trades}/40 trades at the fill)` : '')
+      (isLive && cutAtFill ? `  (forming: ${B.live_trades}/40 trades at the fill)` : '')
   })()
   const showLegend = settings.details || legendIdx != null
   const showBubLegend = settings.details || bubLegendSlot != null
@@ -446,8 +556,15 @@ export default function DeepDiveWorkspace({
   const time = r ? r.time : cur ? ptTime(cur.entryUtc) : ''
   const what = r ? `${r.inst} · ${dirWord(r.direction)} @ ${r.price.toFixed(2)}` : cur ? `${rootOf(cur.symbol)} · ${dirWord(cur.direction)}` : ''
   const rr = B && B.stop != null && B.tp != null && r ? Math.abs(B.tp - r.price) / Math.abs(r.price - B.stop) : null
-  const res = !blind && selectedId ? results?.[selectedId] : undefined
-  const chip = P?.blind
+  const res = !hide && selectedId ? results?.[selectedId] : undefined
+  // the replay's clock: HH:MM:SS PT at the cursor and how long after the fill
+  const sinceSec = Math.floor(e)
+  const since = `${Math.floor(sinceSec / 60)}m ${String(sinceSec % 60).padStart(2, '0')}s`
+  const clock = fmtTs(S ? S.times.entry + sinceSec : 0)
+  // the replay chip is grey on purpose: green or red could be read as how the trade went
+  const chip = replay
+    ? { text: phone ? `Replay · ${clock} · ${since} in` : out ? 'Replay · past your exit' : 'Replay · the result shows at your exit', bg: theme === 'light' ? '#ECEEF3' : 'rgba(160,170,190,.16)', ink: theme === 'light' ? '#3A4257' : '#C9D0DE' }
+    : cutAtFill
     ? { text: phone ? `Blind · stops at ${S?.cutoff_label}` : `Blind · chart stops at ${S?.cutoff_label}, one second before your fill`, bg: theme === 'light' ? '#FFF1DC' : 'rgba(255,159,26,.16)', ink: theme === 'light' ? '#7A4A00' : '#FFC266' }
     : { text: phone ? 'Full review' : 'Full review · runs 30 minutes past your exit', bg: theme === 'light' ? '#E3ECF7' : 'rgba(79,151,206,.18)', ink: theme === 'light' ? '#1F4E7A' : '#9CC8EA' }
   const htfNote = htfChart && !satisfied ? `loading ${tfLabel(settings.tf)} history…` : htfChart && D && D.hist.length === 0 ? 'no earlier history available for this date' : null
@@ -472,11 +589,12 @@ export default function DeepDiveWorkspace({
   )
 
   // ---- the charts, shared by both layouts ----
+  const chipEl = <span className="px-2 py-[3px] rounded-full text-[11.5px] font-medium" style={{ background: chip.bg, color: chip.ink }}>{chip.text}</span>
   const candleBody = (
     <>
       <div ref={timeEl} className="absolute inset-0" />
       <div className="absolute left-2 top-1.5 z-10 pointer-events-none flex flex-col items-start gap-1 max-w-[calc(100%-96px)]">
-        {S && <span className="px-2 py-[3px] rounded-full text-[11.5px] font-medium" style={{ background: chip.bg, color: chip.ink }}>{chip.text}</span>}
+        {S && chipEl}
         {htfNote && <span className="text-[11px]" style={{ color: pal.legend.text }}>{htfNote}</span>}
         {showLegend && legend && (
           <pre className="m-0 px-1.5 py-0.5 rounded-[3px] font-mono text-[12px] leading-snug overflow-hidden" style={{ background: pal.legend.bg, color: pal.legend.text }}>{legend}</pre>
@@ -485,15 +603,16 @@ export default function DeepDiveWorkspace({
     </>
   )
   const bubbleBody = S && (
-    S.bubbles ? (
+    BUB ? (
       <>
         <div ref={bubEl} className="absolute inset-0" />
         {showBubLegend && (
-          <pre className="absolute left-2 top-1.5 z-10 pointer-events-none m-0 px-1.5 py-0.5 rounded-[3px] font-mono text-[12px] leading-snug max-w-[calc(100%-96px)] overflow-hidden" style={{ background: pal.legend.bg, color: pal.legend.text }}>{bubLegend}</pre>
+          <pre className={cn('absolute left-2 z-10 pointer-events-none m-0 px-1.5 py-0.5 rounded-[3px] font-mono text-[12px] leading-snug max-w-[calc(100%-96px)] overflow-hidden', phone && replay ? 'top-8' : 'top-1.5')}
+            style={{ background: pal.legend.bg, color: pal.legend.text }}>{bubLegend}</pre>
         )}
         {settings.details && (
           <div className="absolute left-2 bottom-7 z-10 pointer-events-none font-mono text-[11px]" style={{ color: pal.bubbles.caption }}>
-            40-trade bubbles · lookback {S.bubbles.cfg.lookback} · medium ≥ {S.bubbles.cfg.medium_pct}th pct · large &gt; {S.bubbles.cfg.large_pct}th{S.bubbles.cfg.floor ? ` · ES floor ${S.bubbles.cfg.floor}` : ''} · prints ≥ {S.bubbles.lpt}{settings.boff ? ' · -1 offset' : ''}
+            40-trade bubbles · lookback {BUB.cfg.lookback} · medium ≥ {BUB.cfg.medium_pct}th pct · large &gt; {BUB.cfg.large_pct}th{BUB.cfg.floor ? ` · ES floor ${BUB.cfg.floor}` : ''} · prints ≥ {BUB.lpt}{settings.boff ? ' · -1 offset' : ''}
           </div>
         )}
       </>
@@ -501,23 +620,32 @@ export default function DeepDiveWorkspace({
   )
   const footprintBody = D && S && (
     <Footprint1m
-      m1={P?.blind ? D.m1 : D.m1.slice(0, Math.min(D.m1.length, D.fillIdx + 6))}
+      // Blind and a replay: every bar up to the moment; Full review: the fill and the five bars after it
+      m1={cutAtFill || replay ? D.m1 : D.m1.slice(0, Math.min(D.m1.length, D.fillIdx + 6))}
       vap={D.vap}
-      entry={{ price: S.row.price, entrySec: +S.row.time.slice(6, 8) }}
+      entry={fpEntry}
       fillT={Math.floor(S.times.entry / 60) * 60}
-      bracket={{ stop: S.bracket.stop, tp: S.bracket.tp }}
+      bracket={fpBracket}
       bars={phone ? Math.min(5, settings.fpN) : settings.fpN} g={G.fp} ratio={settings.fpR} minVol={G.min} palette={fpPal}
     />
   )
-  const status = (!have && !!selectedId)
-    ? <p className="p-6 text-[13px] text-gray-400">Building the chart as of the fill…</p>
+  const status = (!S && !!selectedId)
+    ? (have?.error ? <p className="p-6 text-[13px] text-red-400">{have.error}</p> : <p className="p-6 text-[13px] text-gray-400">Building the chart as of the fill…</p>)
     : have?.error ? <p className="p-6 text-[13px] text-red-400">{have.error}</p> : null
 
   const settingsPanel = (compact: boolean) => (
     <ChartSettingsPanel s={settings} update={update} inst={inst} ofDefault={usesOrderFlow} colors={colors} onResetAll={resetAll} compact={compact} />
   )
   const weekList = (big: boolean) => (
-    <WeekTrades trades={trades} selectedId={selectedId} onSelect={select} blind={blind} results={blind ? null : results} calls={callsMap} week={week} onWeek={goWeek} big={big} />
+    <WeekTrades trades={trades} selectedId={selectedId} onSelect={select} blind={hide} results={hide ? null : results} calls={callsMap} week={week} onWeek={goWeek} big={big} />
+  )
+  const callBar = (compact: boolean) => selectedId && (
+    <CallBar key={`${selectedId}|${hide ? 'b' : 'f'}|${results ? 1 : 0}`} tradeId={selectedId} blind={hide}
+      initial={hide ? null : savedCall} onSaved={onSaved} onNext={!compact && nextId ? () => select(nextId) : undefined} compact={compact} />
+  )
+  const controls = (compact: boolean) => replay && (
+    <ReplayControls running={replay.running} ready={!!FS} atStart={e <= 0} atEnd={atEnd} e={e} end={endE} speed={speed}
+      onToggle={togglePlay} onBack={stepBack} onOn={stepOn} onSpeed={setSpeed} onScrub={goTo} clock={clock} since={since} compact={compact} />
   )
 
   // ---------------- phone ----------------
@@ -528,12 +656,12 @@ export default function DeepDiveWorkspace({
           <button type="button" className={cn(iconBtn, 'w-11 h-11 rounded-lg text-gray-100')} aria-label="Previous trade" disabled={!prevId} onClick={() => prevId && select(prevId)}><Chevron left size={16} /></button>
           <div className="flex-1 min-w-0 text-center leading-tight">
             <div className="font-semibold text-[14.5px] tabular-nums text-gray-100 truncate">{day}{time ? ` · ${time}` : ''}</div>
-            <div className="font-mono text-[12px] text-gray-400 truncate">{what}{idx >= 0 ? ` · ${idx + 1} of ${trades.length}` : ''}</div>
+            <div className="font-mono text-[12px] text-gray-400 truncate">{what}{res?.pnl != null ? ` · ${fmtUsd(res.pnl)}` : idx >= 0 ? ` · ${idx + 1} of ${trades.length}` : ''}</div>
           </div>
           <button type="button" className={cn(iconBtn, 'w-11 h-11 rounded-lg text-gray-100')} aria-label="Next trade" disabled={!nextId} onClick={() => nextId && select(nextId)}><Chevron size={16} /></button>
         </div>
         <div className="h-12 flex-none flex items-center gap-2">
-          <BlindSwitch blind={blind} onChange={setBlind} big />
+          <BlindSwitch value={replay ? null : mode} onChange={pickMode} big />
           <button type="button" onClick={() => setSheet('trades')} className="h-11 px-3 border border-gray-800 rounded-lg text-[13px] text-gray-100">Trades</button>
           <span className="ml-auto"><SettingsIconButton onClick={() => setSheet('settings')} /></span>
         </div>
@@ -551,13 +679,16 @@ export default function DeepDiveWorkspace({
           {trades.length === 0 ? <p className="p-4 text-[13px] text-gray-400">No trades this week.</p>
             : tab === 'yours' ? <div className="absolute inset-0 overflow-y-auto p-3">{yoursBody(true)}</div>
             : status ?? (D && S && (
-              tab === 'candles' ? candleBody : tab === 'bubbles' ? bubbleBody : footprintBody
+              tab === 'candles' ? candleBody : tab === 'bubbles' ? bubbleBody
+                // replaying, the clock chip sits over the strip's top: make room for it
+                : replay ? <div className="absolute inset-0 pt-7">{footprintBody}</div> : footprintBody
             ))}
+          {/* replaying: the clock on every chart (the candles carry it already) */}
+          {replay && S && (tab === 'bubbles' || tab === 'fp') && <div className="absolute left-2 top-1.5 z-10 pointer-events-none">{chipEl}</div>}
+          {!replay && D && S && tab !== 'yours' && trades.length > 0 && <PlayFromFillPill onClick={startReplay} />}
         </section>
-        {selectedId && (
-          <CallBar key={`${selectedId}|${blind ? 'b' : 'f'}|${results ? 1 : 0}`} tradeId={selectedId} blind={blind}
-            initial={blind ? null : savedCall} onSaved={onSaved} compact />
-        )}
+        {controls(true)}
+        {callBar(true)}
         {sheet && (
           <div className="fixed inset-0 z-50">
             <button type="button" aria-label="Close" className="absolute inset-0 bg-black/45" onClick={() => setSheet(null)} />
@@ -589,18 +720,20 @@ export default function DeepDiveWorkspace({
       </aside>
 
       <div className="flex-1 min-w-0 flex flex-col pl-3.5">
-        {/* trade header: entry-time facts; the result only in Full review */}
+        {/* trade header: entry-time facts; the result only in Full review, or once a replay reaches your exit */}
         <div className="h-[50px] flex-none flex items-center gap-3.5 border-b min-w-0" style={{ borderColor: 'var(--ts-line)' }}>
           <span className="flex gap-1 flex-none">
             <button type="button" className={iconBtn} aria-label="Previous trade" disabled={!prevId} onClick={() => prevId && select(prevId)}><Chevron left /></button>
             <button type="button" className={iconBtn} aria-label="Next trade" disabled={!nextId} onClick={() => nextId && select(nextId)}><Chevron /></button>
           </span>
-          {day && <span className="text-[15px] font-semibold tabular-nums text-gray-100 whitespace-nowrap truncate">{day} · {time} PT · {what}</span>}
+          {day && <span className="min-w-0 text-[15px] font-semibold tabular-nums text-gray-100 whitespace-nowrap truncate">{day} · {time} PT · {what}</span>}
           {planLine}
           {resultLine}
           <span className="ml-auto text-[12px] text-gray-400 whitespace-nowrap">{idx >= 0 ? `${idx + 1} of ${trades.length}` : ''}</span>
-          <BlindSwitch blind={blind} onChange={setBlind} />
+          <BlindSwitch value={replay ? null : mode} onChange={pickMode} />
+          {selectedId && <PlayFromFillButton on={!!replay} onClick={startReplay} />}
         </div>
+        {controls(false)}
 
         {trades.length === 0 ? (
           <p className="p-6 text-[13px] text-gray-400">No trades this week. Use the arrows by the week to find another.</p>
@@ -657,20 +790,17 @@ export default function DeepDiveWorkspace({
                 </>
               )}
             </div>
-            {selectedId && (
-              <CallBar key={`${selectedId}|${blind ? 'b' : 'f'}|${results ? 1 : 0}`} tradeId={selectedId} blind={blind}
-                initial={blind ? null : savedCall} onSaved={onSaved} onNext={nextId ? () => select(nextId) : undefined} />
-            )}
+            {callBar(false)}
           </>
         )}
       </div>
 
-      {/* Full review only: your screenshot and tags */}
-      {!blind && settings.yours && selectedId && (
+      {/* Full review, or a replay past your exit: your Score, screenshot and tags */}
+      {!hide && settings.yours && selectedId && (
         <aside aria-label="Your trade" className="w-[290px] flex-none border-l overflow-y-auto pl-3.5 py-3 ml-3.5" style={{ borderColor: 'var(--ts-line)' }}>
           <div className="flex items-baseline justify-between mb-3">
             <span className="text-[13.5px] font-semibold text-gray-100">Your trade</span>
-            <span className="text-[11.5px] text-gray-400">Full review only</span>
+            <span className="text-[11.5px] text-gray-400">{replay ? 'shown at your exit' : 'Full review only'}</span>
           </div>
           {yoursBody(false)}
         </aside>

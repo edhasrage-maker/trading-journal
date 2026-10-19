@@ -220,7 +220,13 @@ export class TimeChartController {
     }
   }
 
-  render(data: TimeChartData, opts: TimeChartOpts, resetView: boolean) {
+  /**
+   * `follow` (Play forward): when bars come or go and the newest bar was in
+   * view, the view moves with it, so the replay never runs off the right edge.
+   */
+  render(data: TimeChartData, opts: TimeChartOpts, resetView: boolean, follow = false) {
+    const n0 = this.data?.agg.length ?? 0
+    const was = follow && !resetView && n0 ? this.chart.timeScale().getVisibleLogicalRange() : null
     this.data = data; this.opts = opts
     this.setPanes(opts.deltaVol)
     this.applyPalette(opts.palette)
@@ -252,6 +258,22 @@ export class TimeChartController {
     this.overlay.showPoc = opts.poc
     this.overlay.update()
     if (resetView) this.focusFill()
+    else if (was && A.length !== n0 && was.to >= n0 - 1) {
+      const d = A.length - n0
+      this.chart.timeScale().setVisibleLogicalRange({ from: was.from + d, to: was.to + d })
+    }
+  }
+
+  private nowLine: IPriceLine | null = null
+  /** Play forward: a dashed line at the last trade price (null removes it). */
+  setNow(price: number | null, color: string) {
+    if (price == null) {
+      if (this.nowLine) { this.candles.removePriceLine(this.nowLine); this.nowLine = null }
+      return
+    }
+    const o = { price, color, lineWidth: 1 as const, lineStyle: 2, axisLabelVisible: true, title: 'now' }
+    if (this.nowLine) this.nowLine.applyOptions(o)
+    else this.nowLine = this.candles.createPriceLine(o)
   }
 
   /** The starting view ("Back to the fill"): blind, the fill bar is the last bar; full review, the fill with the aftermath to its right. */

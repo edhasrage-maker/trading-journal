@@ -29,8 +29,9 @@ import { tmpdir } from 'os'
 import { gunzipSync } from 'zlib'
 import { createHash } from 'crypto'
 import { join } from 'path'
-import { pyRound, rint, npPercentileLinear } from '../src/lib/orderflow/pymath.ts'
-import { bubbles40t } from '../src/lib/orderflow/bubbles40t.ts'
+import { pyRound, rint, npPercentileLinear, runningPercentileLinear } from '../src/lib/orderflow/pymath.ts'
+import { bubbles40t, bubblesAsOf } from '../src/lib/orderflow/bubbles40t.ts'
+import { sliceTicks } from '../src/lib/orderflow/ticks.ts'
 import { valueAreaTicks, volumeProfile, profileWindow, type ProfileWindow } from '../src/lib/orderflow/profile.ts'
 import { toBars1m, vapPerBar, buildAgg, atr1m5m } from '../src/lib/orderflow/bars.ts'
 import { footprintModel } from '../src/lib/orderflow/footprint.ts'
@@ -154,6 +155,52 @@ for (const c of SYN.bubbles) {
     v === cs.sum_v && bv === cs.sum_bv && av === cs.sum_av && nt === cs.sum_nt
   check(`${c.inst} seed ${c.seed}: synthetic ticks identical to Python's (${c.n})`, sameTicks)
   same(`${c.inst} seed ${c.seed} n=${c.n} maxb=${c.maxb}: bubble chart`, bubbles40t(f, c.inst as OfRoot, c.maxb), c.expect)
+}
+
+console.log('Play forward: bubbles as of any bubble == the chart built from only the ticks up to it')
+{
+  // running percentile == the per-prefix one, value for value
+  let rbad = 0, rtotal = 0
+  for (const c of SYN.np_percentile as { a: number[]; q: number[] }[]) {
+    for (const q of c.q) {
+      const run = runningPercentileLinear(c.a, q)
+      c.a.forEach((_, i) => { rtotal++; if (run[i] !== npPercentileLinear(c.a.slice(0, i + 1), q)) rbad++ })
+    }
+  }
+  check(`runningPercentileLinear == npPercentileLinear on every prefix (${rtotal})`, rbad === 0, `${rbad} mismatches`)
+  // the smallest tick prefix with exactly n complete bubbles, and the chart built from it
+  const prefixChart = (f: TickFrame, inst: OfRoot, maxb: number, n: number) => {
+    const done = (k: number) => { const b = bubbles40t(sliceTicks(f, 0, k), inst, maxb); return b ? (b.n - 1) * 40 + b.live_trades : 0 }
+    let lo = 0, hi = f.n
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (done(mid) >= n * 40) hi = mid; else lo = mid + 1 }
+    const b = bubbles40t(sliceTicks(f, 0, lo), inst, maxb)
+    return b && b.n === n && b.live_trades === 40 ? b : null
+  }
+  for (const c of SYN.bubbles) {
+    const f = synthTicks(c.seed, c.n, c.base_tk, c.big, c.es_offgrid, SYN.us0)
+    const inst = c.inst as OfRoot
+    const plainB = bubbles40t(f, inst, c.maxb), full = bubbles40t(f, inst, c.maxb, { raw: true })
+    if (!plainB || !full) continue
+    same(`${inst} seed ${c.seed}: the replay data changes nothing else`, { ...full, raw: undefined }, plain(plainB))
+    const total = full.n - (full.live_trades < 40 ? 1 : 0)
+    const ns = [...new Set([1, 2, Math.floor(total / 3), Math.floor(total / 2), total - 1, total].filter(n => n >= full.first + 1 && n <= total))]
+    let bad = 0
+    const msgs: string[] = []
+    for (const n of ns) {
+      const pre = prefixChart(f, inst, c.maxb, n)
+      if (!pre) { bad++; msgs.push(`n=${n}: no prefix with exactly ${n} bubbles`); continue }
+      const got = bubblesAsOf(full, n - full.first)
+      // compare where both charts have bubbles (the prefix trims its own oldest when it hits the cap)
+      const from = Math.max(got.first, pre.first)
+      const pick = (B: typeof got) => ({
+        lvl: B.lvl.slice(from - B.first), vol: B.vol.slice(from - B.first), px: B.px.slice(from - B.first), t: B.t.slice(from - B.first),
+        marks: B.marks.filter(m => m.g >= from - 1),
+      })
+      const d = diff(plain(pick(got)), plain(pick(pre)))
+      if (d.length) { bad++; msgs.push(`n=${n}: ${d[0]}`) }
+    }
+    check(`${inst} seed ${c.seed} maxb=${c.maxb}: as of ${ns.length} moments (${ns.join(', ')})`, bad === 0, msgs.slice(0, 2).join(' | '))
+  }
 }
 
 console.log('valueAreaTicks vs reference value_area()')

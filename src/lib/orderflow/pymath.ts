@@ -79,8 +79,65 @@ export function npPercentileLinear(values: ArrayLike<number>, q: number): number
   if (virt >= n - 1) return a[n - 1]
   if (virt < 0) return a[0]
   const prev = Math.floor(virt)
-  const lo = a[prev], hi = a[prev + 1]
-  const gamma = virt - prev
+  return linearBetween(virt - prev, a[prev], a[prev + 1])
+}
+
+/** numpy's 'linear' step between the two order statistics around the virtual index. */
+function linearBetween(gamma: number, lo: number, hi: number): number {
   const diff = hi - lo
   return gamma >= 0.5 ? hi - diff * (1 - gamma) : lo + diff * gamma
+}
+
+// binary heaps on plain arrays: `less(a, b)` true when a belongs nearer the top
+function heapPush(h: number[], x: number, less: (a: number, b: number) => boolean) {
+  let i = h.push(x) - 1
+  while (i > 0) {
+    const p = (i - 1) >> 1
+    if (!less(h[i], h[p])) break
+    const t = h[i]; h[i] = h[p]; h[p] = t; i = p
+  }
+}
+function heapPop(h: number[], less: (a: number, b: number) => boolean): number {
+  const top = h[0], last = h.pop() as number
+  if (h.length) {
+    h[0] = last
+    let i = 0
+    for (;;) {
+      const l = 2 * i + 1, r = l + 1
+      let m = i
+      if (l < h.length && less(h[l], h[m])) m = l
+      if (r < h.length && less(h[r], h[m])) m = r
+      if (m === i) break
+      const t = h[i]; h[i] = h[m]; h[m] = t; i = m
+    }
+  }
+  return top
+}
+const minFirst = (a: number, b: number) => a < b
+const maxFirst = (a: number, b: number) => a > b
+
+/**
+ * npPercentileLinear over every prefix: out[i - from] = np.percentile(values[0..i], q)
+ * for each i >= from, in O(n log n). Same arithmetic, so the results are
+ * identical to calling npPercentileLinear on each prefix.
+ */
+export function runningPercentileLinear(values: ArrayLike<number>, q: number, from = 0): number[] {
+  const quant = q / 100
+  const low: number[] = []    // max-heap: everything below the order statistic
+  const high: number[] = []   // min-heap: the order statistic and everything above it
+  const out: number[] = []
+  for (let i = 0; i < values.length; i++) {
+    const x = values[i]
+    if (high.length && x > high[0]) heapPush(high, x, minFirst)
+    else heapPush(low, x, maxFirst)
+    const n = i + 1, virt = (n - 1) * quant
+    const prev = virt >= n - 1 ? n - 1 : virt < 0 ? 0 : Math.floor(virt)
+    while (high.length > n - prev) heapPush(low, heapPop(high, minFirst), maxFirst)
+    while (high.length < n - prev) heapPush(high, heapPop(low, maxFirst), minFirst)
+    if (i < from) continue
+    if (virt >= n - 1 || virt < 0) { out.push(high[0]); continue }
+    const next = high.length > 2 ? Math.min(high[1], high[2]) : high[1]
+    out.push(linearBetween(virt - prev, high[0], next))
+  }
+  return out
 }

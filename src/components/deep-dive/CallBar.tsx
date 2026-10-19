@@ -3,8 +3,8 @@
 /**
  * Your call — the same Good / Mistake / Unsure + one line as Game film, saved
  * to the same place (trades.review_json.verdict), so a trade has one call
- * wherever you make it. In Blind the bar starts empty: showing a call you made
- * earlier would tell you how the trade went.
+ * wherever you make it. In Blind (and a replay before your exit) the bar starts
+ * empty: showing a call you made earlier would tell you how the trade went.
  */
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -103,7 +103,7 @@ export default function CallBar({
     <div className="h-[54px] flex-none flex items-center gap-3">
       <span className="text-[12.5px] text-gray-400 whitespace-nowrap">Your call</span>
       {buttons}{input}{saveBtn}{msg}
-      <span className="text-[11.5px] text-gray-500 whitespace-nowrap">← → trades · B Blind / Full</span>
+      <span className="text-[11.5px] text-gray-500 whitespace-nowrap">← → trades · B Blind / Full · Space play / pause</span>
     </div>
   )
 }

@@ -25,7 +25,7 @@
  */
 import type { OfRoot, TickFrame } from './ticks'
 import { TICK } from './ticks'
-import { npPercentileLinear, pyRound, rint } from './pymath'
+import { npPercentileLinear, pyRound, rint, runningPercentileLinear } from './pymath'
 import { utcToPtMs } from './pt-clock'
 import { sierraUsToUtcSecMs } from './ticks'
 
@@ -79,6 +79,24 @@ export interface BubbleChart {
   sizes: number[]
   marks: LargePrintMark[]
   cfg: { lookback: number; medium_pct: number; large_pct: number; floor: number | null }
+  /**
+   * Full review only: what the replay needs to show the chart as it stood
+   * after any bubble. The ES floor and the large-print clusters look at later
+   * bubbles, so the final `lvl` / `marks` can't simply be cut at a moment.
+   */
+  raw?: BubbleRaw
+}
+
+/** A large print that survived the dedupe: [absolute 40T bar, side, volume, price]. */
+export type KeptPrint = [number, number, number, number]
+
+export interface BubbleRaw {
+  /** Levels before the ES floor (the ranking only looks back). */
+  lvl0: number[]
+  /** ES: the floor percentile over every bubble up to and including this one. NQ: null. */
+  floor_at: number[] | null
+  /** Every deduped large print, oldest first (the dedupe only looks back). */
+  kept: KeptPrint[]
 }
 
 /** Sorted multiset with O(L) insert/remove — the rolling ranking window. */
@@ -93,7 +111,49 @@ function removeSorted(a: number[], x: number) {
   a.splice(lo, 1)
 }
 
-export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBBLES): BubbleChart | null {
+/**
+ * Large-print rings from the deduped prints: cluster, then threshold. A
+ * cluster's ring moves to a later, bigger print at the same price.
+ */
+export function clusterMarks(kept: readonly KeptPrint[], lpt: number, a0: number): LargePrintMark[] {
+  const clusters: KeptPrint[] = []
+  for (const [k, sd, vv, pp] of kept) {
+    let cl: KeptPrint | null = null
+    for (let j = clusters.length - 1; j >= 0; j--) {
+      const q = clusters[j]
+      if (q[1] === sd && Math.abs(k - q[0]) <= 24 && Math.abs(pp - q[3]) <= 0.51 * TICK) { cl = q; break }
+    }
+    if (cl === null) clusters.push([k, sd, vv, pp])
+    else if (vv > cl[2]) { cl[0] = k; cl[2] = vv; cl[3] = pp }
+  }
+  const marks: LargePrintMark[] = []
+  for (const q of clusters) {
+    if (q[2] >= lpt && q[0] >= a0 - 1) marks.push({ g: q[0], side: q[1] as 1 | -1, vol: rint(q[2]), px: q[3] })
+  }
+  return marks
+}
+
+/**
+ * The chart as it stood once its first `n` bubbles (counted from `first`) had
+ * printed: arrays cut there, the ES floor and the large-print rings worked out
+ * from those bubbles only. Needs `raw` (Full review payloads).
+ */
+export function bubblesAsOf(B: BubbleChart, n: number): BubbleChart {
+  const N = Math.max(0, Math.min(n, B.t.length))
+  const cut = <T>(a: T[]) => a.slice(0, N)
+  const R = B.raw
+  const abs = B.first + N
+  const fl = R?.floor_at && N > 0 ? R.floor_at[N - 1] : null
+  const lvl = R ? R.lvl0.slice(0, N).map((l, j) => (fl != null && l === 2 && B.vol[j] < fl ? 1 : l)) : cut(B.lvl)
+  const marks = R ? clusterMarks(R.kept.filter(q => q[0] < abs), B.lpt, Math.max(B.first, abs - MAX_BUBBLES)) : B.marks.filter(m => m.g < abs)
+  return {
+    ...B, n: abs, live_trades: TRADES_PER_BUBBLE, live_lvl: R && N ? R.lvl0[N - 1] : lvl[N - 1] ?? 0,
+    o: cut(B.o), h: cut(B.h), l: cut(B.l), c: cut(B.c), t: cut(B.t),
+    vol: cut(B.vol), dir: cut(B.dir), px: cut(B.px), lvl, marks, raw: undefined,
+  }
+}
+
+export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBBLES, opts: { raw?: boolean } = {}): BubbleChart | null {
   const cfg = BUBBLE_CFG[root]
   if (ticks.n === 0) return null
 
@@ -174,14 +234,14 @@ export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBB
     if (win.length > LB) removeSorted(win, vol[i - LB])
   }
   const liveLvl = lvl[nb - 1]
+  const lvl0 = opts.raw ? Array.from(lvl) : null
   if (cfg.floor != null) {
     const fl = npPercentileLinear(vol, cfg.floor)
     for (let i = 0; i < nb; i++) if (lvl[i] === 2 && vol[i] < fl) lvl[i] = 1
   }
 
   // ---- large-print marks: dedupe, then cluster, then threshold ----
-  type Q = [number, number, number, number]   // [bar, side, vol, px]
-  const kept: Q[] = []
+  const kept: KeptPrint[] = []
   let keptFrom = 0                             // kept[] is ascending in bar; dedupe looks back <= 5 bars
   for (let k = 0; k < nb; k++) {
     if (lpSide[k] === 0) continue
@@ -194,22 +254,9 @@ export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBB
     }
     if (!dup) kept.push([k, sd, vv, pp])
   }
-  const clusters: Q[] = []
-  for (const [k, sd, vv, pp] of kept) {
-    let cl: Q | null = null
-    for (let j = clusters.length - 1; j >= 0; j--) {
-      const q = clusters[j]
-      if (q[1] === sd && Math.abs(k - q[0]) <= 24 && Math.abs(pp - q[3]) <= 0.51 * TICK) { cl = q; break }
-    }
-    if (cl === null) clusters.push([k, sd, vv, pp])
-    else if (vv > cl[2]) { cl[0] = k; cl[2] = vv; cl[3] = pp }
-  }
 
   const a0 = Math.max(0, nb - maxBubbles)
-  const marks: LargePrintMark[] = []
-  for (const q of clusters) {
-    if (q[2] >= cfg.lpt && q[0] >= a0 - 1) marks.push({ g: q[0], side: q[1] as 1 | -1, vol: rint(q[2]), px: q[3] })
-  }
+  const marks = clusterMarks(kept, cfg.lpt, a0)
   // Output rounding mirrors the reference's JSON (prices to 0.01, volume whole).
   const sl = (x: ArrayLike<number>, nd: number | null = null) => {
     const out = Array.from(x).slice(a0)
@@ -222,5 +269,12 @@ export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBB
     sizes: [...BUBBLE_SIZES],
     marks,
     cfg: { lookback: LB, medium_pct: pm, large_pct: pl, floor: cfg.floor },
+    ...(lvl0 ? {
+      raw: {
+        lvl0: lvl0.slice(a0),
+        floor_at: cfg.floor != null ? runningPercentileLinear(vol, cfg.floor, a0) : null,
+        kept,
+      },
+    } : {}),
   }
 }
