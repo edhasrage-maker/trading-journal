@@ -312,12 +312,19 @@ export default function DeepDiveWorkspace({
     }
     const none = agg.map(() => null)
     const at = (vals: (number | null)[]) => (htfChart ? none : agg.map(b => vals[b.mins[b.mins.length - 1]] ?? null))
+    // The 5m EMAs on the 1m chart: one point per completed 5m bar (its last minute) plus the newest bar, live —
+    // a smooth line through the 5m closes, not the forming 5m bar re-read every minute (that drew a sawtooth)
+    const ema5 = (vals: (number | null)[]) => {
+      const v = at(vals)
+      if (settings.tf !== 1) return v
+      return v.map((x, i) => (i === agg.length - 1 || Math.floor(agg[i].t / 300) !== Math.floor(agg[i + 1].t / 300) ? x : null))
+    }
     const entryIndex = Math.max(0, agg.findIndex(b => b.mins.includes(Math.max(0, fillAt))))
     const viewKey = `${key}|${settings.tf}|${D.hist.length}`
     const resetView = timeCtl.current.bars.length === 0 || lastKey.current !== viewKey
     lastKey.current = viewKey
     timeCtl.current.render({
-      agg, vwap: at(D.vwap), rvwap: at(D.rvwap), ema9: at(D.ema9), ema20: at(D.ema20), profile,
+      agg, vwap: at(D.vwap), rvwap: at(D.rvwap), ema9: ema5(D.ema9), ema20: ema5(D.ema20), profile,
       levels: S.levels, bracket: S.bracket,
       entry: { price: S.row.price, direction: S.row.direction, time: S.times.entry, label: `fill ${S.row.time}` },
       exits: P?.exits ?? [], entryIndex,
