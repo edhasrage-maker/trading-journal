@@ -40,11 +40,15 @@ import { DEFAULTS, SETTINGS_KEY, TFS, isHtf, loadSettings, tfLabel, type ReplayS
 import ChartSettingsPanel, { ChartSettingsToggle, SettingsIconButton } from './ChartSettings'
 import WeekTrades, { fmtUsd, rootOf, type WeekNav, type WeekTrade } from './WeekTrades'
 import CallBar from './CallBar'
+import YourTrade from './YourTrade'
+import type { ReplayDetails } from '@/app/api/deep-dive/details/route'
 
 export type PickerTrade = WeekTrade
 type Payload = DeepDivePayload & { uses_order_flow: boolean }
 type Call = TradeVerdict['call']
-type PaneKey = 'candles' | 'bubbles' | 'fp'
+/** 'yours' = the phone's "Your trade" tab (Full review only). */
+type PaneKey = 'candles' | 'bubbles' | 'fp' | 'yours'
+const TAB_LABEL: Record<PaneKey, string> = { candles: 'Candles', bubbles: 'Bubbles', fp: 'Footprint', yours: 'Your trade' }
 
 const PHONE_Q = '(max-width: 767px)'
 const subscribePhone = (cb: () => void) => {
@@ -179,6 +183,30 @@ export default function DeepDiveWorkspace({
     return () => { live = false }
   }, [blind, results, ids])
 
+  // ---- your screenshot + tags: Full review only, fetched per trade as you go ----
+  const [details, setDetails] = useState<Record<string, ReplayDetails | { error: string }>>({})
+  const wantDetails = !blind && !!selectedId && (phone || settings.yours)
+  const haveDetails = !!selectedId && !!details[selectedId]
+  useEffect(() => {
+    if (!wantDetails || haveDetails || !selectedId) return
+    let live = true
+    fetch(`/api/deep-dive/details?id=${selectedId}`, { cache: 'no-store' })
+      .then(async r => {
+        const j = await r.json().catch(() => ({}))
+        if (live) setDetails(m => ({ ...m, [selectedId]: r.ok ? j as ReplayDetails : { error: j.error ?? `HTTP ${r.status}` } }))
+      })
+      .catch(e => { if (live) setDetails(m => ({ ...m, [selectedId]: { error: String(e) } })) })
+    return () => { live = false }
+  }, [wantDetails, haveDetails, selectedId])
+  const mine = selectedId ? details[selectedId] : undefined
+  const yoursBody = (big: boolean) => (
+    <YourTrade
+      details={mine && !('error' in mine) ? mine : null}
+      error={mine && 'error' in mine ? mine.error : null}
+      big={big}
+    />
+  )
+
   const select = useCallback((id: string) => {
     setSelectedId(id)
     setSheet(null)
@@ -202,7 +230,7 @@ export default function DeepDiveWorkspace({
   const bubblesOn = settings.bubbles ?? usesOrderFlow
   const fpOn = settings.fp ?? usesOrderFlow
   const candlesOn = settings.candles || !bubblesOn
-  const tabs = ([['candles', candlesOn], ['bubbles', bubblesOn], ['fp', fpOn]] as [PaneKey, boolean][]).filter(([, on]) => on).map(([k]) => k)
+  const tabs = ([['candles', candlesOn], ['bubbles', bubblesOn], ['fp', fpOn], ['yours', !blind]] as [PaneKey, boolean][]).filter(([, on]) => on).map(([k]) => k)
   const tab: PaneKey = tabs.includes(ptab) ? ptab : tabs[0]
   const maxed = max && tabs.includes(max) ? max : null
   const showTime = phone ? tab === 'candles' : candlesOn && (!maxed || maxed === 'candles')
@@ -479,15 +507,17 @@ export default function DeepDiveWorkspace({
             {tabs.map(k => (
               <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setPtab(k)}
                 className={cn('text-[13px]', tab === k ? 'bg-blue-500/15 text-gray-100 font-semibold shadow-[inset_0_-2px_0_var(--color-blue-500)]' : 'text-gray-400')}>
-                {k === 'candles' ? 'Candles' : k === 'bubbles' ? 'Bubbles' : 'Footprint'}
+                {TAB_LABEL[k]}
               </button>
             ))}
           </div>
         )}
-        <section aria-label={tab === 'candles' ? 'Candles' : tab === 'bubbles' ? 'Bubbles' : 'Footprint'} className="flex-1 min-h-0 mt-2 relative border border-gray-800 rounded-md overflow-hidden" style={{ background: pal.chart.bg }}>
-          {trades.length === 0 ? <p className="p-4 text-[13px] text-gray-400">No trades this week.</p> : status ?? (D && S && (
-            tab === 'candles' ? candleBody : tab === 'bubbles' ? bubbleBody : footprintBody
-          ))}
+        <section aria-label={TAB_LABEL[tab]} className="flex-1 min-h-0 mt-2 relative border border-gray-800 rounded-md overflow-hidden" style={{ background: pal.chart.bg }}>
+          {trades.length === 0 ? <p className="p-4 text-[13px] text-gray-400">No trades this week.</p>
+            : tab === 'yours' ? <div className="absolute inset-0 overflow-y-auto p-3">{yoursBody(true)}</div>
+            : status ?? (D && S && (
+              tab === 'candles' ? candleBody : tab === 'bubbles' ? bubbleBody : footprintBody
+            ))}
         </section>
         {selectedId && (
           <CallBar key={`${selectedId}|${blind ? 'b' : 'f'}|${results ? 1 : 0}`} tradeId={selectedId} blind={blind}
@@ -599,6 +629,17 @@ export default function DeepDiveWorkspace({
           </>
         )}
       </div>
+
+      {/* Full review only: your screenshot and tags */}
+      {!blind && settings.yours && selectedId && (
+        <aside aria-label="Your trade" className="w-[290px] flex-none border-l overflow-y-auto pl-3.5 py-3 ml-3.5" style={{ borderColor: 'var(--ts-line)' }}>
+          <div className="flex items-baseline justify-between mb-3">
+            <span className="text-[13.5px] font-semibold text-gray-100">Your trade</span>
+            <span className="text-[11.5px] text-gray-400">Full review only</span>
+          </div>
+          {yoursBody(false)}
+        </aside>
+      )}
 
       {settings.rail && D && S && (
         <aside className="w-[380px] flex-none border-l overflow-y-auto pl-3 py-3 ml-3.5 space-y-4" style={{ borderColor: 'var(--ts-line)' }}>

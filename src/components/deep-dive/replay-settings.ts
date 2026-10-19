@@ -21,6 +21,8 @@ export interface ReplaySettings {
   prof: ProfileWindow | 'off'; lv: boolean; vwap: boolean; ema: boolean; poc: boolean; dv: boolean
   /** Levels near entry panel. */
   rail: boolean
+  /** "Your trade" panel (screenshot + tags) — Full review only. */
+  yours: boolean
   /** Bar details box always on (off = only while hovering). */
   details: boolean
   /** The Chart Settings switch. */
@@ -34,7 +36,7 @@ export interface ReplaySettings {
 export const DEFAULTS: ReplaySettings = {
   tf: 1, ha: false, candles: true, bubbles: null, fp: null, boff: true, b40: true,
   prof: 'session', lv: true, vwap: true, ema: true, poc: true, dv: false,
-  rail: false, details: false, open: false, split: 0.5, fpH: 246, fpN: 10, fpR: 3,
+  rail: false, yours: true, details: false, open: false, split: 0.5, fpH: 246, fpN: 10, fpR: 3,
   g: { NQ: { fp: 4, prof: 4, min: 5 }, ES: { fp: 1, prof: 1, min: 20 } },
 }
 

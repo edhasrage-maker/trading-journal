@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns'
 import { weekTradingDays, weekEnd, weekLabel, weekStartFor, previousWeekStart, nextWeekStart } from '@/lib/week-dates'
 import { todayPT } from '@/lib/pt-time'
 import { deepDiveAllowed } from '@/lib/deep-dive-access'
+import { tradeTagGroups } from '@/lib/trade-tag-groups'
 import { displayDayTypes } from '@/lib/day-type-display'
 import { computeCarryover, type Carryover } from '@/lib/prep-carryover'
 import { rMultiple, type TradeWithExcursion } from '@/lib/analytics'
@@ -167,30 +168,9 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
   )
 }
 
-/** tags_json → the display groups Game film shows over a zoomed screenshot.
- *  Same categories and same order the shared session and the trade table use,
- *  so one trade reads identically wherever you meet it. Mistakes carry `danger`
- *  because they are the one group you want to see before the others. */
-const FILM_TAG_CATS: Array<{ key: string; label: string; danger?: boolean }> = [
-  { key: 'setups', label: 'Setup' },
-  { key: 'confluences', label: 'Confluence' },
-  { key: 'order_flow', label: 'Order flow' },
-  { key: 'entry_model', label: 'Entry' },
-  { key: 'trade_management', label: 'Management' },
-  { key: 'emotions', label: 'Emotion' },
-  { key: 'mistakes', label: 'Mistake', danger: true },
-]
-function filmTags(tags: unknown): FilmFrame['tags'] {
-  if (!tags || typeof tags !== 'object' || Array.isArray(tags)) return []
-  const t = tags as Record<string, unknown>
-  return FILM_TAG_CATS
-    .map(c => ({
-      label: c.label,
-      danger: c.danger,
-      items: Array.isArray(t[c.key]) ? (t[c.key] as unknown[]).filter((v): v is string => typeof v === 'string' && v !== '') : [],
-    }))
-    .filter(g => g.items.length > 0)
-}
+/** tags_json → the display groups Game film shows over a zoomed screenshot
+ *  (shared with Replay Review's "Your trade" panel — src/lib/trade-tag-groups.ts). */
+const filmTags = (tags: unknown): FilmFrame['tags'] => tradeTagGroups(tags)
 /** The week's screenshot catalog. One query for the week's trades (lean
  *  fields + review_json), one batched sign for the storage URLs. Trades
  *  without a screenshot are counted, not shown. */

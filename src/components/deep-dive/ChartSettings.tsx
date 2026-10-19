@@ -161,6 +161,7 @@ export default function ChartSettingsPanel({
       {!compact && <button type="button" onClick={colors.reset} className="mt-1.5 text-[12px] text-blue-400 hover:text-blue-300">Reset colours</button>}
 
       <div className={cap}>Extras</div>
+      {!compact && sw('Screenshot and tags panel', s.yours, v => update({ yours: v }))}
       {!compact && sw('Levels near entry panel', s.rail, v => update({ rail: v }))}
       {sw('Always show bar details', s.details, v => update({ details: v }))}
       {!compact && <button type="button" onClick={onResetAll} className="block mt-2 text-[12px] text-blue-400 hover:text-blue-300">Back to my defaults</button>}
