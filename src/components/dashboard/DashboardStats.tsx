@@ -477,7 +477,7 @@ function TapeScoreHero({ period, periodLabel }: {
       <TapeScoreRing
         score={score}
         band={band}
-        title="TapeScore — one 0-100 score per day: risk, entry and exit, weighted equally. Days that broke the rules or the daily loss limit cap at 49."
+        title="TapeScore — one 0-100 score per day: risk, entry and exit, weighted equally. Days that broke the rules or the daily loss limit cap at 49; 2 or more chase trades (quick re-entries after a loss with no fresh trigger) cap a day at 69."
       />
       <div className="flex-1 min-w-[240px]">
         {score != null ? (

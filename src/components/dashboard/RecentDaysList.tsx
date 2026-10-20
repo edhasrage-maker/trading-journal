@@ -752,6 +752,7 @@ function TapeScorePill({ result, date }: { result: TapeScoreResult | null; date:
         risk != null ? axisTooltip(`Risk ${risk}${result.capped ? ' (capped at 49 — rules broken)' : ''}`, result.parts, 'risk') : null,
         entry != null ? axisTooltip(`Entry ${entry}`, result.parts, 'entry', { checklistItems: false }) : null,
         exit != null ? axisTooltip(`Exit ${exit}`, result.parts, 'exit') : null,
+        result.chaseCapped ? `Capped at 69 (from ${result.uncapped}): ${result.chaseTrades} chase trades, quick re-entries after a loss with no fresh trigger.` : null,
       ].filter(Boolean).join('\n\n')
   return (
     <span

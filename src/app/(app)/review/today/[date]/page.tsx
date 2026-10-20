@@ -164,6 +164,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         includeFlowScore={scoreSettings.includeFlow}
         entryRules={scoreSettings.entryRules}
         runnerRules={scoreSettings.runnerRules}
+        dailyLossLimit={scoreSettings.dailyLossLimit}
       />
     </>
   )

@@ -3,7 +3,10 @@
  * docs/trade-grade-mockup.html, 2026-10-15). It replaces the separate Rules
  * and Runner columns: everything that grades a single trade, in one number.
  *
- *   Score = Entry and Exit averaged (either alone when the other has nothing to judge)
+ *   Score = Entry and Exit averaged (either alone when the other has nothing to judge);
+ *           a quick re-entry after a loss adds a third part, "Waited after a
+ *           loss" (fresh trigger 100, chase trade 0), averaged with them
+ *           (founder, 2026-10-19; docs/chase-score-mockup.html)
  *   Entry = the trader's entry rules · the order-flow Score (if they include it),
  *           weighted as in the day's Entry (30 : 24.5 → 55% / 45%)
  *   Exit  = profit kept · stop respected · runner rules (theirs where one counts,
@@ -21,6 +24,7 @@ import { evaluateRules, tradeRulesScore, type EntryRuleConfig, type RuleResult }
 import { evaluateRunnerRules, tradeRunnerPart, type RunnerResult, type RunnerRuleConfig } from '@/lib/runner-rules'
 import { tradeFlowTotal } from '@/lib/exit-rollup'
 import type { TradeEntryCtx, TradeFlowScore } from '@/lib/supabase/types'
+import type { ReentryRead } from '@/lib/tapescore-day-rules'
 
 export type GradeTrade = ExitTradeInput & {
   id?: string | null
@@ -38,6 +42,9 @@ export interface TradeGradeOptions {
   /** A fresher order-flow Score / entry snapshot than the row carries (just read on this page). */
   flow?: TradeFlowScore | null
   entryCtx?: TradeEntryCtx | null
+  /** The trade's read as a quick re-entry after a loss (`reentryReads` over its
+   *  day's trades); null / absent = not one, and the Score is Entry and Exit only. */
+  reentry?: ReentryRead | null
 }
 
 export interface TradeGrade {
@@ -55,7 +62,11 @@ export interface TradeGrade {
     runner: number | null
     /** The runner part came from the trader's own runner rules. */
     runnerOwn: boolean
+    /** "Waited after a loss": 100 fresh trigger, 0 chase trade; null = not a re-entry after a loss. */
+    waited: number | null
   }
+  /** The re-entry read behind `parts.waited`, for its line. */
+  reentry: ReentryRead | null
   entryResults: RuleResult[]
   runnerResults: RunnerResult[] | null
   flowScore: TradeFlowScore | null
@@ -91,7 +102,12 @@ export function tradeGrade(t: GradeTrade, o: TradeGradeOptions = {}): TradeGrade
   const runner = rp.own ? rp.score : (ex.runner ?? null)
   const exit = blend([[ex.kept, PART_WEIGHTS.kept], [ex.stopRespected, PART_WEIGHTS.stopRespected], [runner, PART_WEIGHTS.runner]])
 
-  const both = entry != null && exit != null ? (entry + exit) / 2 : (entry ?? exit)
+  // Waited after a loss — only on a quick re-entry after a loss
+  const reentry = o.reentry ?? null
+  const waited = reentry ? (reentry.fresh ? 1 : 0) : null
+
+  const known = [entry, exit, waited].filter((x): x is number => x != null)
+  const both = known.length ? known.reduce((a, b) => a + b, 0) / known.length : null
   const pct = (x: number | null | undefined) => (x == null ? null : x * 100)
   return {
     score: both == null ? null : Math.round(both * 100),
@@ -99,8 +115,9 @@ export function tradeGrade(t: GradeTrade, o: TradeGradeOptions = {}): TradeGrade
     exit: exit == null ? null : Math.round(exit * 100),
     parts: {
       entryRules: pct(rulesShare), flow: flowTotal, kept: pct(ex.kept), stopRespected: pct(ex.stopRespected),
-      runner: pct(runner), runnerOwn: rp.own,
+      runner: pct(runner), runnerOwn: rp.own, waited: pct(waited),
     },
+    reentry,
     entryResults,
     runnerResults: runnerRules.length ? evaluateRunnerRules(runnerRules, t) : null,
     flowScore: includeFlow ? flowScore : null,

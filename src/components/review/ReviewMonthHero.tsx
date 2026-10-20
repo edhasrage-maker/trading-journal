@@ -152,7 +152,7 @@ export function ScoreBreakdownInfo({ period }: { period: TapeScorePeriod }) {
           ))}
           {period.scoredDays > 0 && (
             <p className="text-[11px] text-gray-600 mt-2 pt-2 border-t border-gray-800">
-              Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}. A session that breaks the rules or its daily loss limit caps at 49.
+              Across {period.scoredDays} scored session{period.scoredDays === 1 ? '' : 's'}. A session that breaks the rules or its daily loss limit caps at 49; one with 2 or more chase trades caps at 69.
             </p>
           )}
         </div>

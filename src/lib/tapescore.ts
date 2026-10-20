@@ -33,6 +33,9 @@ import { applySizeUp, dailyLossLimitBroken } from '@/lib/tapescore-day-rules'
  * Risk; no analysis execution read → no Entry; no trade to judge → no Exit)
  * drops out and the other axes re-weight. Breach sessions — decided by the
  * RULES alone — are capped at 49 so they can never render green or amber.
+ * A session with 2 or more CHASE TRADES (quick re-entries after a loss with no
+ * fresh trigger, src/lib/tapescore-day-rules.ts) is capped at 69 so it can't
+ * render green (founder, 2026-10-19).
  *
  * AMENDMENT 9 (2026-10-14, founder-directed) — the axes measure what their
  * names say. Risk is actual risk management, not just rule following: loss size
@@ -77,6 +80,13 @@ export interface TapeScoreResult {
   basis: 'v15' | 'legacy'
   /** True when the Breach cap (≤49) lowered the weighted blend. */
   capped: boolean
+  /** The day's chase trades (quick re-entries after a loss with no fresh
+   *  trigger). 0 for a period or a legacy row. */
+  chaseTrades: number
+  /** True when the chase cap (≤69, 2 or more chase trades) lowered the blend. */
+  chaseCapped: boolean
+  /** The weighted blend before either cap. */
+  uncapped: number
   components: {
     /** Risk, 0-100: rules kept 45 / loss size 27 / stop size 18 / re-entries 10. Null without a
      *  rules audit. One of three equal axes (⅓). */
@@ -110,6 +120,15 @@ const W_RISK = 1 / 3
 const W_ENTRY = 1 / 3
 const W_EXIT = 1 / 3
 const BREACH_CAP = 49
+/** 2 or more chase trades and the day can't be green (founder, 2026-10-19). */
+export const CHASE_CAP = 69
+export const CHASE_CAP_MIN_TRADES = 2
+
+/** The day's chase trades from its sums: re-entries after a loss that failed (no fresh trigger). */
+export function chaseCount(sums: TradeSums | null | undefined): number {
+  const r = sums?.reentry
+  return r && r.n > 0 ? Math.max(0, Math.round(r.n - r.sum)) : 0
+}
 
 export function tapeScoreBand(score: number): TapeScoreBand {
   return score >= 70 ? 'high' : score >= 50 ? 'mid' : 'low'
@@ -332,6 +351,9 @@ export function finishTapeScore(
       band: tapeScoreBand(score),
       basis: 'legacy',
       capped: false,
+      chaseTrades: 0,
+      chaseCapped: false,
+      uncapped: score,
       components: { risk: null, entry: null, exit: null, passCount: null, railCount: null, verdict: null },
       parts: null,
     }
@@ -356,7 +378,7 @@ export function finishTapeScore(
   const exit = axes.exit.score
 
   return {
-    ...blendDay(base, risk, entry, exit),
+    ...blendDay(base, risk, entry, exit, chaseCount(sums)),
     parts: {
       risk: axes.risk.parts, entry: axes.entry.parts, exit: axes.exit.parts,
       rulesKept: base.passCount, rulesOf: base.railCount,
@@ -367,7 +389,7 @@ export function finishTapeScore(
 }
 
 function blendDay(
-  base: TapeScoreBase, risk: number | null, entry: number | null, exitIn: number | null,
+  base: TapeScoreBase, risk: number | null, entry: number | null, exitIn: number | null, chase = 0,
 ): Omit<TapeScoreResult, 'parts'> {
   const exit = exitIn != null && Number.isFinite(exitIn) ? clamp(exitIn, 0, 100) : null
   let weighted = 0
@@ -376,6 +398,7 @@ function blendDay(
   if (entry != null) { weighted += W_ENTRY * entry; weightSum += W_ENTRY }
   if (exit != null) { weighted += W_EXIT * exit; weightSum += W_EXIT }
   let score = Math.round(weighted / weightSum)
+  const uncapped = score
 
   // The cap is the RULES' verdict alone — loss size and stop size never cap.
   let capped = false
@@ -383,12 +406,21 @@ function blendDay(
     score = BREACH_CAP
     capped = true
   }
+  // Chasing after losses: 2 or more chase trades and the day can't be green.
+  let chaseCapped = false
+  if (chase >= CHASE_CAP_MIN_TRADES && score > CHASE_CAP) {
+    score = CHASE_CAP
+    chaseCapped = true
+  }
 
   return {
     score,
     band: tapeScoreBand(score),
     basis: 'v15',
     capped,
+    chaseTrades: chase,
+    chaseCapped,
+    uncapped,
     components: {
       risk: risk != null ? Math.round(risk) : null,
       entry: entry != null ? Math.round(entry) : null,

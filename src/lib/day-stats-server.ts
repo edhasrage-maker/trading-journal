@@ -20,7 +20,8 @@ import {
   type DayForStats, type TradeForStats,
 } from './day-stats'
 import { AVG_RISK_WINDOW_TRADES, normalizeAtrStopTarget, type RiskDay } from './exit-rollup'
-import { includeFlowScoreInEntry, resolveRubric, type ScoringProfile } from './scoring-profile'
+import { includeFlowScoreInEntry, resolveRails, resolveRubric, type ScoringProfile } from './scoring-profile'
+import { LOCAL_FEATURES_ENABLED } from './local-features'
 import { readEntryRules, type EntryRuleConfig } from './entry-rules'
 import { readRunnerRules, type RunnerRuleConfig } from './runner-rules'
 import { traderRulesSig } from './exit-rollup'
@@ -48,6 +49,10 @@ export interface TapeScoreSettings {
   runnerRules: RunnerRuleConfig[]
   /** traderRulesSig of both: what a cached day must have been computed with. */
   rulesSig: string
+  /** The daily loss limit in dollars (positive), from the trader's rails (the
+   *  owner's −$500 on the local build); null = not tracked. The Recap card's
+   *  takeaway line reads it. */
+  dailyLossLimit: number | null
 }
 
 /** What the cached day sums are computed with — a cached row made with anything else is stale. */
@@ -60,7 +65,7 @@ export type StatsBake = Pick<TapeScoreSettings, 'atrStopTarget' | 'entryRules' |
  * column (the local owner build) or a missing row is the defaults.
  */
 export async function loadTapeScoreSettings(supabase: AnyClient): Promise<TapeScoreSettings> {
-  const defaults: TapeScoreSettings = { atrStopTarget: 1, includeFlow: includeFlowScoreInEntry(null), entryRules: [], runnerRules: [], rulesSig: '' }
+  const defaults: TapeScoreSettings = { atrStopTarget: 1, includeFlow: includeFlowScoreInEntry(null), entryRules: [], runnerRules: [], rulesSig: '', dailyLossLimit: dllOf(null) }
   try {
     const { data, error } = await supabase
       .from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle()
@@ -71,10 +76,17 @@ export async function loadTapeScoreSettings(supabase: AnyClient): Promise<TapeSc
       atrStopTarget: normalizeAtrStopTarget(resolveRubric(sp).atrStopTarget),
       includeFlow: includeFlowScoreInEntry(sp),
       ...rulesOf(sp),
+      dailyLossLimit: dllOf(sp),
     }
   } catch {
     return defaults
   }
+}
+
+/** The trader's daily loss limit in positive dollars, as the rules audit reads it (resolveRails). */
+function dllOf(sp: ScoringProfile | null): number | null {
+  const dll = resolveRails(sp, LOCAL_FEATURES_ENABLED).dailyLossLimit
+  return dll != null && Number.isFinite(dll) && dll !== 0 ? Math.abs(dll) : null
 }
 
 function rulesOf(sp: ScoringProfile | null): { entryRules: EntryRuleConfig[]; runnerRules: RunnerRuleConfig[]; rulesSig: string } {

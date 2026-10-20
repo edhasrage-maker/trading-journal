@@ -5,7 +5,8 @@
  * founder-approved mockup docs/trade-grade-mockup.html, 2026-10-15). One chip in
  * the Recap's Score column; click it for every reason in one panel: the
  * trader's entry rules and the order-flow Score's five reasons under Entry;
- * profit kept, stop respected and their runner rules under Exit.
+ * profit kept, stop respected and their runner rules under Exit; on a quick
+ * re-entry after a loss, "Waited after a loss" (docs/chase-score-mockup.html).
  */
 import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
@@ -50,6 +51,14 @@ function Lines({ lines, wide }: { lines: Line[]; wide?: boolean }) {
 }
 
 const r = (x: number | null) => (x == null ? null : Math.round(x))
+const ptHms = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'America/Los_Angeles' })
+
+/** The Score's headline: Entry, Exit and (on a re-entry after a loss) Waited. */
+function scoreTail(g: TradeGrade) {
+  return `· Entry ${g.entry ?? '—'} · Exit ${g.exit ?? '—'}${g.parts.waited != null ? ` · Waited ${r(g.parts.waited)}` : ''}`
+}
+
+const WAITED_NOTE = 'A trade entered within 5 minutes of a losing exit gets this third part. With a fresh trigger tagged (an entry model other than "Based on Price") it scores 100; without one, 0.'
 
 /** Every reason behind a trade's Score, as lines — shared by the Recap's panel and Replay Review's narrow one, so both say the same thing. */
 function gradeLines(g: TradeGrade, neverWent: boolean, hasStop: boolean) {
@@ -99,12 +108,25 @@ function gradeLines(g: TradeGrade, neverWent: boolean, hasStop: boolean) {
     key: x.id, dot: x.status, label: x.label, title: x.name, status: x.status, statusCls: WORD[x.status], text: x.reason, greyed: !x.counted,
   }))
 
+  // ── Waited after a loss ──
+  const re = g.reentry
+  const waitedLines: Line[] = []
+  if (re && g.parts.waited != null) {
+    const after = `your ${ptHms(re.afterExit)} ${re.afterStopOut ? 'stop-out' : 'loss'}`
+    const fresh = re.triggers.filter(x => x.trim().toLowerCase() !== 'based on price')
+    waitedLines.push(re.fresh
+      ? { key: 'waited', dot: 'pass', label: 'Waited after a loss', status: 'yes', statusCls: WORD.pass, text: `${re.gapSec} s after ${after}, with a fresh trigger: ${fresh.join(', ')}.` }
+      : { key: 'waited', dot: 'fail', label: 'Waited after a loss', status: 'no', statusCls: WORD.fail, text: re.triggers.length
+          ? `In ${re.gapSec} s after ${after}, with only "Based on Price" as the trigger.`
+          : `In ${re.gapSec} s after ${after}, with no fresh trigger tagged.` })
+  }
+
   const readAt = g.flowScore?.read_at ?? null
   const tapeRule = er.some(x => /Tape Reader/.test(x.reason) && x.status !== 'unknown')
   const greyed = er.some(x => !x.counted) || rr.some(x => !x.counted)
   const fmt = (x: number) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(Math.round(x * 10) / 10).toFixed(1)}`
   const tapeNums = g.entryCtx?.tape != null && g.entryCtx?.tape_clock != null ? `${fmt(g.entryCtx.tape)} and ${fmt(g.entryCtx.tape_clock)}` : null
-  return { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, readAt, tapeRule, greyed, tapeNums }
+  return { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, waitedLines, readAt, tapeRule, greyed, tapeNums }
 }
 
 /** Every reason behind a trade's Score, under Entry and Exit. */
@@ -114,12 +136,18 @@ export function TradeGradeDetail({ grade: g, neverWent, hasStop }: {
   neverWent: boolean
   hasStop: boolean
 }) {
-  const { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, readAt, tapeRule, greyed, tapeNums } = gradeLines(g, neverWent, hasStop)
+  const { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, waitedLines, readAt, tapeRule, greyed, tapeNums } = gradeLines(g, neverWent, hasStop)
   return (
     <div className="font-sans text-xs text-gray-300 py-2 max-w-3xl space-y-2.5">
       <p className="text-[13px] font-semibold text-gray-100">
-        Score {g.score ?? '—'} <span className="font-normal text-gray-400">· Entry {g.entry ?? '—'} · Exit {g.exit ?? '—'}</span>
+        Score {g.score ?? '—'} <span className="font-normal text-gray-400">{scoreTail(g)}</span>
       </p>
+      {waitedLines.length > 0 && (
+        <div className="border-l-2 border-blue-500/60 pl-2.5 space-y-1.5">
+          <p className="text-gray-400 font-semibold">Waited after a loss {r(g.parts.waited)}</p>
+          <Lines lines={waitedLines} />
+        </div>
+      )}
       {(g.entry != null || ruleLines.length > 0 || factLines.length > 0) && (
         <div className="border-l-2 border-gray-800 pl-2.5 space-y-1.5">
           <p className="text-gray-400 font-semibold">Entry {g.entry ?? '—'}{entryBits.length ? ` · ${entryBits.join(' · ')}` : ''}</p>
@@ -134,8 +162,9 @@ export function TradeGradeDetail({ grade: g, neverWent, hasStop }: {
           <Lines lines={runnerLines} wide />
         </div>
       )}
-      {(readAt || greyed) && (
+      {(readAt || greyed || waitedLines.length > 0) && (
         <p className="text-[11px] text-gray-600">
+          {waitedLines.length > 0 && <>{WAITED_NOTE} </>}
           {readAt && <>Entry reads only what printed before your fill at {readAt} PT.</>}
           {readAt && tapeRule && g.flowScore && <> The two Tape Reader numbers{tapeNums ? ` (${tapeNums})` : ''} are two windows of the same study: your rules use the 480 s before the fill (your research); the order-flow Score uses 8 clock minutes (your chart).</>}
           {greyed && <>{readAt ? ' ' : ''}Greyed rules started after this trade, so they don&apos;t count toward its Score.</>}
@@ -176,13 +205,19 @@ export function TradeGradeCompact({ grade: g, neverWent, hasStop, note, big = fa
   big?: boolean
 }) {
   const [facts, setFacts] = useState(false)
-  const { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, readAt, greyed } = gradeLines(g, neverWent, hasStop)
+  const { entryBits, ruleLines, factLines, exitBits, exitLines, runnerLines, waitedLines, readAt, greyed } = gradeLines(g, neverWent, hasStop)
   const head = `font-semibold text-gray-400 ${big ? 'text-[12.5px]' : 'text-[12px]'}`
   return (
     <div className="font-sans">
       <p className={`font-semibold tabular-nums text-gray-100 ${big ? 'text-[16px]' : 'text-[15px]'}`}>
-        Score {g.score ?? '—'} <span className="font-normal text-gray-400">· Entry {g.entry ?? '—'} · Exit {g.exit ?? '—'}</span>
+        Score {g.score ?? '—'} <span className="font-normal text-gray-400">{scoreTail(g)}</span>
       </p>
+      {waitedLines.length > 0 && (
+        <div className="mt-2 pl-2.5 border-l-2 border-blue-500/60">
+          <p className={head}>Waited after a loss {r(g.parts.waited)}</p>
+          <CompactLines lines={waitedLines} big={big} />
+        </div>
+      )}
       {(g.entry != null || ruleLines.length > 0 || factLines.length > 0) && (
         <div className="mt-2 pl-2.5 border-l-2 border-gray-800">
           <p className={head}>Entry {g.entry ?? '—'}{entryBits.length ? ` · ${entryBits.join(' · ')}` : ''}</p>

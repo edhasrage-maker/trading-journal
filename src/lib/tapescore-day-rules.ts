@@ -1,5 +1,6 @@
 import type { EodAiAnalysis, ProcessVerdict, RuleStatus } from '@/lib/supabase/types'
-import { pressingDrawdownIds, type ProxyTrade } from '@/lib/behavioral-proxies'
+import { pressingDrawdownIds, reentryAfterLossIds, type ProxyTrade } from '@/lib/behavioral-proxies'
+import { exitKind } from '@/lib/trade-management'
 import { plannedRiskDollars, type RiskYardstick } from '@/lib/exit-score'
 import type { StopSource } from '@/lib/planned-stop'
 
@@ -222,4 +223,80 @@ export const REENTRY_WINDOW_MIN = 5
 export function hasFreshTrigger(t: RulesTrade): boolean {
   const em: unknown = t.tags_json?.entry_model
   return Array.isArray(em) && em.some(x => typeof x === 'string' && x.trim() !== '' && x.trim().toLowerCase() !== 'based on price')
+}
+
+// ── Chase trades ───────────────────────────────────────────────────────────
+//
+// A CHASE TRADE is a quick re-entry after a loss (within REENTRY_WINDOW_MIN of
+// a losing exit) with no fresh trigger: the trades Risk's "Re-entries" part
+// fails. Founder, 2026-10-19 (approved mockup docs/chase-score-mockup.html):
+// since May they lost $2,914 over 118 trades while the 40 re-entries WITH a
+// fresh trigger made $2,193, so they now also cost the day (2 or more cap its
+// TapeScore at 69, src/lib/tapescore.ts) and each trade (a "Waited after a
+// loss" part in its Score, src/lib/trade-grade.ts).
+
+/** Trades with what "how did the losing trade end" needs (all optional). */
+export type ReentryTrade = RulesTrade & {
+  exit_price?: number | null
+  tp1_price?: number | null
+  high_during_position?: number | null
+  low_during_position?: number | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  exits_json?: any
+}
+
+/** One quick re-entry after a loss, as its trade's Score reads it. */
+export interface ReentryRead {
+  /** It named a fresh trigger (`hasFreshTrigger`): passes. Else it's a chase trade. */
+  fresh: boolean
+  /** Seconds from the losing exit it came off. */
+  gapSec: number
+  /** That losing exit (UTC ISO), and whether the losing trade was stopped out. */
+  afterExit: string
+  afterStopOut: boolean
+  /** Its entry models, as tagged. */
+  triggers: string[]
+}
+
+/**
+ * Every quick re-entry after a loss in one day's trades, by trade id (a trade
+ * without an id gets its position, as `toProxyTrades`). The losing exit read is
+ * the latest one within REENTRY_WINDOW_MIN before the entry — the same window
+ * and the same "any earlier losing trade" rule as Risk's "Re-entries" part.
+ */
+export function reentryReads(trades: readonly ReentryTrade[]): Map<string, ReentryRead> {
+  const proxies = toProxyTrades(trades)
+  const ids = new Set(reentryAfterLossIds(proxies, REENTRY_WINDOW_MIN))
+  const out = new Map<string, ReentryRead>()
+  trades.forEach((t, i) => {
+    const id = proxies[i].id
+    if (!ids.has(id)) return
+    const entry = Date.parse(t.entry_time ?? '')
+    let prior: ReentryTrade | null = null, priorMs = -Infinity
+    for (const u of trades) {
+      if (u === t || !(u.pnl != null && u.pnl < 0) || !u.exit_time) continue
+      const ms = Date.parse(u.exit_time)
+      const gapMin = (entry - ms) / 60_000
+      if (Number.isFinite(gapMin) && gapMin >= 0 && gapMin <= REENTRY_WINDOW_MIN && ms > priorMs) { prior = u; priorMs = ms }
+    }
+    if (!prior) return
+    const em: unknown = t.tags_json?.entry_model
+    out.set(id, {
+      fresh: hasFreshTrigger(t),
+      gapSec: Math.round((entry - priorMs) / 1000),
+      afterExit: prior.exit_time as string,
+      afterStopOut: exitKind(prior as unknown as Parameters<typeof exitKind>[0]) === 'stopped',
+      triggers: Array.isArray(em) ? em.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [],
+    })
+  })
+  return out
+}
+
+/** The day's chase trades (quick re-entries after a loss with no fresh trigger), oldest first. */
+export function chaseTrades<T extends ReentryTrade>(trades: readonly T[]): T[] {
+  const reads = reentryReads(trades)
+  const proxies = toProxyTrades(trades)
+  return trades
+    .filter((_, i) => reads.get(proxies[i].id)?.fresh === false)
+    .sort((a, b) => String(a.entry_time ?? '').localeCompare(String(b.entry_time ?? '')))
 }

@@ -1,0 +1,324 @@
+<title>Chase Trades Mockup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the Recap's TapeScore card (after close, during the session, a quiet day), then the trade table with two open Score panels; TapeScore carbon palette (light = chartbook). */
+:root {
+  color-scheme: dark;
+  --ground: #0C0D10; --panel: #131519; --panel2: #1B1E23; --line: #282C32; --hair: #1C2026;
+  --ink: #E8EAED; --mut: #969BA3; --faint: #5E636B;
+  --accent: #4F97CE; --accent-ink: #79B4E6; --pos: #4FC58E; --neg: #E0685F; --warn: #D6B24E;
+  --warn-soft: rgba(214,178,78,.12); --pos-soft: rgba(79,197,142,.12); --neg-soft: rgba(224,104,95,.12);
+  --bar-mae: #8C352F; --bar-mae-soft: rgba(224,104,95,.35); --bar-mfe: #24704F; --bar-mfe-soft: rgba(79,197,142,.35); --bar-track: #282C32;
+  --display: 'Archivo', 'Hanken Grotesk', system-ui, sans-serif;
+  --body: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+  --warn-soft: rgba(160,122,30,.10); --pos-soft: rgba(31,122,110,.10); --neg-soft: rgba(154,51,64,.10);
+  --bar-mae: #9A3340; --bar-mae-soft: rgba(154,51,64,.30); --bar-mfe: #1F7A6E; --bar-mfe-soft: rgba(31,122,110,.30); --bar-track: #D5D9E6;
+} }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #EDEEF6; --panel: #F7F8FC; --panel2: #EEF0F7; --line: #BFC5D8; --hair: #D5D9E6;
+  --ink: #171C2C; --mut: #545C76; --faint: #6B7490;
+  --accent: #2F6FB0; --accent-ink: #2F6FB0; --pos: #1F7A6E; --neg: #9A3340; --warn: #A07A1E;
+  --warn-soft: rgba(160,122,30,.10); --pos-soft: rgba(31,122,110,.10); --neg-soft: rgba(154,51,64,.10);
+  --bar-mae: #9A3340; --bar-mae-soft: rgba(154,51,64,.30); --bar-mfe: #1F7A6E; --bar-mfe-soft: rgba(31,122,110,.30); --bar-track: #D5D9E6;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.page { max-width: 1080px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; margin: 0 auto; display: grid; gap: 40px; }
+p { margin: 0; }
+.note { font-size: 12.5px; color: var(--mut); border: 1px dashed var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 6px; }
+.note b { color: var(--ink); font-weight: 600; }
+.eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); margin: 0 0 10px; }
+.screen { display: grid; gap: 14px; }
+.mut { color: var(--mut); } .faint { color: var(--faint); } .xs { font-size: 11px; }
+.pos { color: var(--pos); } .neg { color: var(--neg); } .short { color: var(--neg); } .long { color: var(--pos); }
+.new { display: inline-block; font-size: 9.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent-ink); border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: 4px; padding: 0 5px; margin-left: 6px; vertical-align: 2px; font-weight: 600; }
+
+/* ── the Recap card ── */
+.tcard { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; gap: 28px; flex-wrap: wrap; }
+.tleft { flex: 1 1 380px; min-width: 0; display: flex; align-items: center; gap: 20px; }
+.tright { flex: 1.15 1 380px; min-width: 0; border-left: 1px solid var(--line); padding-left: 28px; display: grid; gap: 10px; align-content: center; }
+@media (max-width: 820px) { .tright { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 18px; } }
+.ring { position: relative; width: 104px; height: 104px; flex: none; display: block; }
+.ring svg { transform: rotate(-90deg); display: block; }
+.ring .num { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; line-height: 1; }
+.ring .num b { font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: 28px; font-weight: 800; color: var(--warn); display: block; }
+.ring .num i { font-style: normal; font-size: 8px; letter-spacing: .14em; color: var(--faint); display: block; margin-top: 4px; }
+.ringbtn { padding: 0; border: 0; background: none; cursor: pointer; border-radius: 50%; font: inherit; }
+.ringbtn:hover svg circle:first-child { stroke: var(--line); }
+.ringbtn:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; }
+.breakdown { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; display: grid; gap: 10px; max-width: 760px; }
+.bdhead { font-size: 13.5px; font-weight: 600; }
+.bdhead span { color: var(--mut); font-weight: 400; }
+.bdgrid { display: grid; grid-template-columns: 52px 34px minmax(0, 1fr); gap: 6px 10px; align-items: baseline; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ax { color: var(--mut); }
+.axn { font-weight: 700; } .axn.good { color: var(--pos); } .axn.mid { color: var(--warn); }
+.axw { color: var(--mut); font-size: 12.5px; }
+.bdcap { font-size: 13px; border-top: 1px solid var(--hair); padding-top: 10px; }
+.bdcap b { font-weight: 600; }
+.tbody { flex: 1; min-width: 0; display: grid; gap: 9px; }
+.headline { font-family: var(--display); font-weight: 600; font-size: 17px; line-height: 1.3; color: var(--ink); text-wrap: balance; }
+.headline.ph { color: var(--faint); font-weight: 500; font-style: italic; font-size: 14px; }
+.pnlrow { display: grid; gap: 3px; }
+.pnl { font-family: var(--display); font-weight: 700; font-size: 30px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.takeaway { font-size: 15px; font-weight: 600; color: var(--ink); text-wrap: balance; }
+.takeaway .tk { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-right: 8px; vertical-align: 2px; }
+.nums { font-size: 12.5px; color: var(--mut); font-variant-numeric: tabular-nums; }
+.tm h5 { margin: 0 0 6px; font-size: 12px; font-weight: 500; color: var(--mut); display: flex; justify-content: space-between; }
+.tm .sel { font-size: 11px; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; color: var(--mut); }
+.tmrow { display: grid; gap: 4px; }
+.tmrow .top { display: flex; justify-content: space-between; font-weight: 600; font-size: 13.5px; }
+.tmbar { display: grid; grid-template-columns: 72px minmax(0,1fr) 72px; gap: 8px; align-items: center; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.tmbar .l { text-align: right; color: var(--mut); } .tmbar .l b { color: var(--neg); font-weight: 500; }
+.tmbar .r { color: var(--mut); } .tmbar .r b { color: var(--pos); font-weight: 500; }
+.track { position: relative; height: 10px; background: var(--bar-track); border-radius: 2px; }
+.track span { position: absolute; top: 0; bottom: 0; }
+.track .zero { width: 2px; top: -3px; bottom: -3px; background: var(--ink); }
+.netline { display: flex; justify-content: space-between; border-top: 1px solid var(--hair); padding-top: 8px; font-size: 12.5px; color: var(--mut); }
+.netline b { color: var(--ink); font-weight: 600; }
+.states { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+@media (max-width: 820px) { .states { grid-template-columns: 1fr; } }
+.mini { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; display: grid; gap: 8px; align-content: start; }
+.mini .cap { font-size: 11px; color: var(--faint); }
+.phone { border: 1px solid var(--line); border-radius: 22px; padding: 14px; background: var(--ground); max-width: 360px; display: grid; gap: 10px; }
+.phone .tcard { padding: 16px; gap: 16px; }
+.phone .tleft { flex-basis: 100%; gap: 14px; }
+.phone .ring { width: 84px; height: 84px; }
+.phone .ring svg { width: 84px; height: 84px; }
+.phone .ring .num b { font-size: 23px; }
+.phone .pnl { font-size: 26px; }
+.phone .takeaway { font-size: 14px; }
+
+/* ── trade table + Score panel ── */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 640px; }
+th { text-align: left; font-weight: 400; color: var(--faint); font-size: 12px; padding: 0 14px 8px 0; white-space: nowrap; }
+td { padding: 9px 14px 9px 0; border-top: 1px solid var(--hair); white-space: nowrap; vertical-align: middle; }
+td.r, th.r { text-align: right; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font-family: var(--body); line-height: 1; }
+.chip:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+.chip .car { font-size: 9px; opacity: .6; }
+.chip[aria-expanded="true"] { box-shadow: 0 0 0 1px var(--accent-ink); }
+.was { font-size: 11px; color: var(--faint); margin-left: 6px; }
+.detail-row td { border-top: 0; padding-top: 0; white-space: normal; }
+.detail { max-width: 820px; padding: 6px 0 14px; display: grid; gap: 10px; }
+.gradeline { font-size: 13px; font-weight: 600; }
+.gradeline span { color: var(--mut); font-weight: 400; }
+.sec { display: grid; gap: 6px; border-left: 2px solid var(--line); padding-left: 10px; }
+.sec.waited { border-left-color: color-mix(in srgb, var(--accent) 70%, var(--line)); }
+.sec h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--mut); }
+.lines { display: grid; grid-template-columns: 10px minmax(120px, 200px) 56px minmax(0, 1fr); gap: 5px 10px; align-items: baseline; font-size: 12.5px; }
+.lines.rules { grid-template-columns: 10px minmax(150px, 240px) 56px minmax(0, 1fr); }
+.dot { width: 7px; height: 7px; border-radius: 50%; align-self: center; }
+.dot.pass { background: var(--pos); } .dot.fail { background: var(--neg); } .dot.unk { background: var(--faint); }
+.nm { font-weight: 600; }
+.st { color: var(--mut); } .st.fail { color: var(--neg); } .st.pass { color: var(--pos); }
+.foot { font-size: 11px; color: var(--faint); }
+
+/* ── decisions ── */
+.ask { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: grid; gap: 12px; }
+.ask h3 { margin: 0; font-family: var(--display); font-size: 16px; font-weight: 600; }
+.ask ol { margin: 0; padding-left: 20px; display: grid; gap: 10px; font-size: 13px; }
+.ask li b { font-weight: 600; }
+</style>
+
+<div class="page">
+
+  <div class="note">
+    <p><b>Mockup.</b> Layout and words are what gets built. Every number is <b>your real Mon Oct 19</b> (six MNQ trades, −$252), from your trades with today's settings, plus one real Oct 14 trade to show a pass.</p>
+    <p><b>Chase trade</b> = a trade entered within 5 minutes of a losing exit with no fresh trigger tagged (an entry model other than "Based on Price"). That is the line Risk's "Re-entries" part already draws, and it stays as it is.</p>
+    <p>Two scoring changes: <b>(C)</b> 2 or more chase trades and the day can't be green: TapeScore max 69. <b>(E)</b> a re-entry after a loss gets a third part in its Score, "Waited after a loss": chase = 0, fresh trigger = 100, averaged with Entry and Exit. Other trades keep Entry and Exit averaged, as now.</p>
+  </div>
+
+  <!-- ═══ 1. AFTER CLOSE ═══ -->
+  <section class="screen" aria-labelledby="s1">
+    <p class="eyebrow" id="s1">Recap → the TapeScore card, after the close (Oct 19)</p>
+    <div class="tcard">
+      <div class="tleft">
+        <button class="ring ringbtn" type="button" aria-expanded="true" aria-controls="bd1" title="Click for the breakdown">
+          <svg width="104" height="104" viewBox="0 0 92 92" aria-hidden="true">
+            <circle cx="46" cy="46" r="40" fill="none" stroke="var(--bar-track)" stroke-width="7"/>
+            <circle cx="46" cy="46" r="40" fill="none" stroke="var(--warn)" stroke-width="7" stroke-linecap="round" stroke-dasharray="173.4 251.3"/>
+          </svg>
+          <span class="num"><span><b>69</b><i>TAPESCORE</i></span></span>
+        </button>
+        <div class="tbody">
+          <p class="headline ph">The day's headline from Analyze Session (unchanged)</p>
+          <div class="pnlrow">
+            <span class="pnl neg">−$252</span>
+            <p class="takeaway"><span class="tk" aria-hidden="true"></span>3 chase trades after losses capped the day.<span class="new">new</span></p>
+            <p class="nums">6 trades · 17% win rate</p>
+          </div>
+        </div>
+      </div>
+      <div class="tright tm">
+        <h5>Trade management <span class="sel">$ per trade ▾</span></h5>
+        <div class="tmrow">
+          <div class="top"><span>3 went your way</span><span class="pos">+$36 <span class="mut" style="font-weight:400">· kept 11%</span></span></div>
+          <div class="tmbar"><span class="l">MAE <b>−$99</b></span><span class="track"><span style="left:20%;right:50%;background:var(--bar-mae-soft)"></span><span style="left:50%;right:44%;background:var(--bar-mfe)"></span><span style="left:56%;right:6%;background:var(--bar-mfe-soft)"></span><span class="zero" style="left:50%"></span></span><span class="r"><b>+$318</b> MFE</span></div>
+        </div>
+        <div class="tmrow">
+          <div class="top"><span>3 never got going</span><span class="neg">−$120</span></div>
+          <div class="tmbar"><span class="l">MAE <b>−$129</b></span><span class="track"><span style="left:5%;right:50%;background:var(--bar-mae)"></span><span style="left:50%;right:40%;background:var(--bar-mfe-soft)"></span><span class="zero" style="left:50%"></span></span><span class="r"><b>+$62</b> MFE</span></div>
+        </div>
+        <div class="netline"><span>Net per trade</span><b>−$42</b></div>
+      </div>
+    </div>
+
+    <p class="eyebrow" style="margin-top:6px">Click the score: the breakdown opens under the card (click again to close)</p>
+    <div id="bd1" class="breakdown">
+      <p class="bdhead">TapeScore 69 <span>· Risk, Entry and Exit average 77, capped at 69</span></p>
+      <div class="bdgrid">
+        <span class="ax">Risk</span><span class="axn good">87</span><span class="axw">Rules 4 of 4 kept · loss size 100 · stop size 5 of 6 · re-entries 0 of 3</span>
+        <span class="ax">Entry</span><span class="axn good">79</span><span class="axw">Checklist 83 · your entry rules 90 · order flow 60 · plan 75</span>
+        <span class="ax">Exit</span><span class="axn mid">64</span><span class="axw">Profit kept 100 · stop respected 2 of 3 · runner rules 0</span>
+      </div>
+      <p class="bdcap"><span class="tk" aria-hidden="true"></span><b>Capped at 69.</b> 3 chase trades (09:25, 10:07, 10:11) came within 5 minutes of a losing exit with no fresh trigger. With 2 or more, the day can't be green.<span class="new">new</span></p>
+    </div>
+  </section>
+
+  <!-- ═══ 2. OTHER STATES ═══ -->
+  <section class="screen" aria-labelledby="s2">
+    <p class="eyebrow" id="s2">The same card while the session is live (your screenshot's state), and on a day with nothing to call out</p>
+    <div class="states">
+      <div class="mini">
+        <p class="cap">Oct 19 at 10:12, session still open (no score yet)</p>
+        <span class="pnl neg">−$252</span>
+        <p class="takeaway"><span class="tk" aria-hidden="true"></span>3 chase trades after losses so far.<span class="new">new</span></p>
+        <p class="nums">6 trades · 17% win rate</p>
+        <p class="foot">Trade management stays on the right, as now.</p>
+      </div>
+      <div class="mini">
+        <p class="cap">Fri Oct 16: no line, because nothing qualifies</p>
+        <span class="pnl pos">+$74</span>
+        <p class="nums">2 trades · 50% win rate</p>
+        <p class="foot">The line only appears when one of the rules below fires. An empty line beats an invented lesson.</p>
+      </div>
+    </div>
+    <div>
+      <p class="eyebrow" style="margin-top:6px">Phone</p>
+      <div class="phone">
+        <div class="tcard">
+          <div class="tleft">
+            <span class="ring" title="Tap for the breakdown">
+              <svg width="84" height="84" viewBox="0 0 92 92" aria-hidden="true">
+                <circle cx="46" cy="46" r="40" fill="none" stroke="var(--bar-track)" stroke-width="7"/>
+                <circle cx="46" cy="46" r="40" fill="none" stroke="var(--warn)" stroke-width="7" stroke-linecap="round" stroke-dasharray="173.4 251.3"/>
+              </svg>
+              <span class="num"><span><b>69</b><i>TAPESCORE</i></span></span>
+            </span>
+            <div class="tbody">
+              <span class="pnl neg">−$252</span>
+              <p class="nums">6 trades · 17% win rate</p>
+            </div>
+          </div>
+          <div class="tbody" style="flex-basis:100%">
+            <p class="takeaway"><span class="tk" aria-hidden="true"></span>3 chase trades after losses capped the day.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 3. TRADE TABLE ═══ -->
+  <section class="screen" aria-labelledby="s3">
+    <p class="eyebrow" id="s3">Recap → trade table (Oct 19). Click a Score. Other columns unchanged and left out here</p>
+    <div class="card">
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Time</th><th>Side</th><th class="r">Entry</th><th class="r">Qty</th><th class="r">P&amp;L</th><th class="r">Score</th></tr></thead>
+          <tbody>
+            <tr><td>08:57:29</td><td class="long">Long</td><td class="r">29,943.00</td><td class="r">3</td><td class="r neg">−60.00</td><td class="r"><button class="chip" type="button" aria-expanded="false">82 <span class="car">▾</span></button></td></tr>
+            <tr><td>09:04:10</td><td class="long">Long</td><td class="r">29,880.00</td><td class="r">5</td><td class="r neg">−120.00</td><td class="r"><button class="chip" type="button" aria-expanded="false">40 <span class="car">▾</span></button></td></tr>
+            <tr><td>09:25:15</td><td class="short">Short</td><td class="r">29,869.00</td><td class="r">5</td><td class="r pos">291.00</td><td class="r"><span class="was">was 68</span> <button class="chip" type="button" aria-expanded="false">45 <span class="car">▾</span></button></td></tr>
+            <tr><td>10:05:02</td><td class="long">Long</td><td class="r">29,795.00</td><td class="r">5</td><td class="r neg">−150.00</td><td class="r"><button class="chip" type="button" aria-expanded="false">89 <span class="car">▾</span></button></td></tr>
+            <tr><td>10:07:59</td><td class="long">Long</td><td class="r">29,789.00</td><td class="r">5</td><td class="r neg">−150.00</td><td class="r"><span class="was">was 85</span> <button class="chip" type="button" aria-expanded="true" data-open="d1">57 <span class="car">▴</span></button></td></tr>
+            <tr id="d1" class="detail-row"><td colspan="6">
+              <div class="detail">
+                <p class="gradeline">Score 57 <span>· Entry 71 · Exit 100 · Waited 0</span></p>
+                <div class="sec waited"><h4>Waited after a loss 0<span class="new">new</span></h4>
+                  <div class="lines">
+                    <span class="dot fail"></span><span class="nm">Waited after a loss</span><span class="st fail">no</span><span>In 45 s after your 10:07:14 stop-out, with no fresh trigger tagged.</span>
+                  </div>
+                </div>
+                <div class="sec"><h4>Entry 71 · your entry rules 86 (6 of 7) · order-flow Score 52</h4>
+                  <div class="lines rules">
+                    <span class="dot fail"></span><span class="nm">Last candle my way</span><span class="st fail">fail</span><span>10:06 closed red before your long.</span>
+                  </div>
+                  <p class="foot">The other six rules passed; in the app each gets its line, as now.</p>
+                </div>
+                <div class="sec"><h4>Exit 100 · stop respected 100</h4>
+                  <div class="lines">
+                    <span class="dot pass"></span><span>Stop respected</span><span class="st pass">yes</span><span>Out at your stop, within slippage.</span>
+                    <span class="dot unk"></span><span>Profit kept</span><span class="st">—</span><span class="mut">Never got 1×ATR your way: not an exit to grade.</span>
+                  </div>
+                </div>
+                <p class="foot">A trade entered within 5 minutes of a losing exit gets this third part. With a fresh trigger tagged (an entry model other than "Based on Price") it scores 100; without one, 0. Since May your 118 chase trades lost $2,914; the 40 re-entries with a fresh trigger made $2,193.</p>
+              </div>
+            </td></tr>
+            <tr><td>10:11:29</td><td class="long">Long</td><td class="r">29,777.00</td><td class="r">5</td><td class="r neg">−63.00</td><td class="r"><span class="was">was 78</span> <button class="chip" type="button" aria-expanded="false">39 <span class="car">▾</span></button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="foot" style="margin-top:10px">"was" is mockup-only, to show what moved. Only the three re-entries change: 09:25 (265 s after a loss, trigger "Based on Price"), 10:07:59 (45 s, none) and 10:11:29 (111 s, none). 10:05:02 came 25 minutes after the 09:25 winner, so it isn't a re-entry after a loss.</p>
+    </div>
+
+    <p class="eyebrow" style="margin-top:14px">The same panel when a re-entry has a fresh trigger: Tue Oct 14, 08:19:16 short</p>
+    <div class="card">
+      <div class="detail" style="padding:0">
+        <p class="gradeline">Score 87 <span>· Entry 61 · Exit 100 · Waited 100 &nbsp;(was 81)</span></p>
+        <div class="sec waited"><h4>Waited after a loss 100<span class="new">new</span></h4>
+          <div class="lines">
+            <span class="dot pass"></span><span class="nm">Waited after a loss</span><span class="st pass">yes</span><span>220 s after your 08:15:36 loss, with a fresh trigger: Break of Clusters/Bubbles.</span>
+          </div>
+        </div>
+        <p class="foot">Entry and Exit sections as now.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 4. DECISIONS ═══ -->
+  <section class="ask" aria-labelledby="s4">
+    <h3 id="s4">For you to decide</h3>
+    <ol>
+      <li><b>When the takeaway line appears.</b> First version, first match wins: (1) you broke your daily loss limit: "Hit your $500 daily loss limit." (2) 2 or more chase trades: "3 chase trades after losses capped the day." Otherwise no line. Add more triggers (size-up after a loss, a cooldown break) or keep it to these two?</li>
+      <li><b>No dollars in the line, on purpose.</b> Today's 3 chase trades net +$78: the two longs lost $213, but the 09:25 short won $291. "Chase trades cost $X" would mislead today. OK to keep the line about the behaviour?</li>
+      <li><b>The 09:25 short counts as a chase.</b> It won +$291, but it came 265 s after a loss with only "Based on Price" as its trigger. Since May, chase trades that flipped direction lost more each (−$38) than same-direction ones (−$17). Keep counting both directions?</li>
+      <li><b>How much the new part weighs.</b> As tested, it's a third of the trade's Score (Entry, Exit, Waited averaged). Chase trades since May go from 64 to 39 on average; re-entries with a fresh trigger go from 67 to 79.</li>
+      <li><b>Everything that shows a day's score follows the cap</b>: dashboard, calendar, week and month. The card shows only the ring; clicking it opens Risk, Entry, Exit and why the day was capped.</li>
+    </ol>
+  </section>
+
+</div>
+
+<script>
+// The ring opens and closes the day's breakdown.
+document.querySelectorAll('.ringbtn[aria-controls]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var panel = document.getElementById(b.getAttribute('aria-controls'));
+    var open = b.getAttribute('aria-expanded') === 'true';
+    b.setAttribute('aria-expanded', open ? 'false' : 'true');
+    panel.hidden = open;
+  });
+});
+// Score chips open their panel (only 10:07:59 has one in this mockup).
+document.querySelectorAll('.chip[data-open]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var row = document.getElementById(b.getAttribute('data-open'));
+    var open = b.getAttribute('aria-expanded') === 'true';
+    b.setAttribute('aria-expanded', open ? 'false' : 'true');
+    row.hidden = open;
+    b.querySelector('.car').textContent = open ? '▾' : '▴';
+  });
+});
+</script>

@@ -70,7 +70,7 @@ export function TapeScoreFormulaInfo() {
               <span className="font-mono text-gray-400 shrink-0">⅓</span>
             </li>
           </ul>
-          <p className="text-gray-500">Manage risk → enter well → exit well. Trade-by-trade parts are scored only on the trades they apply to; a part with nothing to judge hands its weight to the others in that axis, and a missing axis re-weights the rest. A session that breaks its daily loss limit, or breaks the rules beyond the one lapse allowed, is capped at 49 (can&apos;t read green or amber). A period score is the mean of its scored days.</p>
+          <p className="text-gray-500">Manage risk → enter well → exit well. Trade-by-trade parts are scored only on the trades they apply to; a part with nothing to judge hands its weight to the others in that axis, and a missing axis re-weights the rest. A session that breaks its daily loss limit, or breaks the rules beyond the one lapse allowed, is capped at 49 (can&apos;t read green or amber). A session with 2 or more chase trades (re-entries within 5 minutes of a losing exit, with no fresh trigger tagged) is capped at 69 (can&apos;t read green). A period score is the mean of its scored days.</p>
         </div>
       )}
     </span>

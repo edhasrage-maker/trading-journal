@@ -89,6 +89,8 @@ interface Props {
   entryRules?: EntryRuleConfig[]
   /** The trader's runner rules — the Runner column and Exit's "Runner rules" part. */
   runnerRules?: RunnerRuleConfig[]
+  /** The trader's daily loss limit in dollars (positive); null = not tracked. The card's takeaway line reads it. */
+  dailyLossLimit?: number | null
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -121,6 +123,7 @@ export default function EodClient({
   includeFlowScore = true,
   entryRules,
   runnerRules,
+  dailyLossLimit = null,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -1022,6 +1025,7 @@ export default function EodClient({
         tradeCount={trades.length}
         winRate={winRate}
         pnl={computedPnl}
+        dailyLossLimit={dailyLossLimit}
         showScore={!sessionStillLive}
         aside={mode === 'pro' && trades.length > 0
           ? <TradeManagementCard totals={mgmt} className="min-w-0" />

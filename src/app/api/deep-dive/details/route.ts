@@ -7,6 +7,7 @@ import { tradeTagGroups, type TagGroup } from '@/lib/trade-tag-groups'
 import { loadTapeScoreSettings } from '@/lib/day-stats-server'
 import { getGiveBackAtr } from '@/lib/atr-config-server'
 import { tradeGrade, type TradeGrade } from '@/lib/trade-grade'
+import { reentryReads } from '@/lib/tapescore-day-rules'
 import { tradeMgmt } from '@/lib/trade-management'
 import { plannedStopPrice } from '@/lib/planned-stop'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
@@ -62,9 +63,17 @@ export async function GET(req: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!row) return NextResponse.json({ error: 'trade not found' }, { status: 404 })
 
+  // A quick re-entry after a loss gets "Waited after a loss": read over its day's trades, as the Recap does.
+  const { data: dayRows } = row.trading_day_id
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the columns reentryReads needs
+    ? await (supabase as any).from('trades')
+      .select('id, entry_time, exit_time, pnl, direction, entry_price, exit_price, stop_price, tp1_price, quantity, symbol, high_during_position, low_during_position, exits_json, tags_json, stops:review_json->stops')
+      .eq('trading_day_id', row.trading_day_id)
+    : { data: null }
   const grade = tradeGrade(row, {
     entryRules: settings.entryRules, runnerRules: settings.runnerRules,
     includeFlow: settings.includeFlow, atrStopTarget: settings.atrStopTarget,
+    reentry: dayRows ? reentryReads(dayRows).get(row.id) ?? null : null,
   })
 
   // Same test the Recap's on-demand scoring uses (use-flow-scores.ts): an NQ / ES

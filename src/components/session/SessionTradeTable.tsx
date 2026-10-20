@@ -33,6 +33,7 @@ import { GradeChip, TradeGradeDetail } from './TradeGrade'
 import type { EntryRuleConfig } from '@/lib/entry-rules'
 import type { RunnerRuleConfig } from '@/lib/runner-rules'
 import { tradeGrade, type TradeGrade } from '@/lib/trade-grade'
+import { reentryReads } from '@/lib/tapescore-day-rules'
 import { useFlowScores, flowScoreFor, entryCtxFor } from '@/lib/use-flow-scores'
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'score' | 'r' | 'mfe' | 'mae'
@@ -270,9 +271,12 @@ export default function SessionTradeTable({
   // Each trade's Score = its grade: Entry (the trader's entry rules + the
   // order-flow Score) and Exit (profit kept, stop respected, runner rules),
   // averaged — src/lib/trade-grade.ts. Review only.
+  // A quick re-entry after a loss adds "Waited after a loss" to its Score: read over the day's trades.
+  const reentries = useMemo(() => reentryReads(trades), [trades])
   const gradeOf = useCallback((t: Trade): TradeGrade | null => (isCapture ? null : tradeGrade(t, {
     entryRules, runnerRules, includeFlow, atrStopTarget, flow: flowScoreFor(t, liveScores), entryCtx: entryCtxFor(t, liveEntry),
-  })), [isCapture, entryRules, runnerRules, includeFlow, atrStopTarget, liveScores, liveEntry])
+    reentry: reentries.get(t.id) ?? null,
+  })), [isCapture, entryRules, runnerRules, includeFlow, atrStopTarget, liveScores, liveEntry, reentries])
   // Row-click action: edit in place when an edit handler is provided (Intraday
   // inline form, or the EOD recap drawer), else open the full log (deep-link).
   const rowAction = onEdit ?? onRowOpen
