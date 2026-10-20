@@ -2,7 +2,6 @@
 
 import { cn } from '@/lib/utils'
 import type { HeatBaseline as Baseline, TodayHeat } from '@/lib/heat-baseline'
-import type { RoundTripStats } from '@/lib/trade-excursion'
 
 /**
  * The line above the trade table that makes the MAE column mean something.
@@ -15,27 +14,29 @@ import type { RoundTripStats } from '@/lib/trade-excursion'
  * It also has a surface now. Rendered flat on the page background it read as
  * filler and got skipped; it uses the same panel treatment as the Prep
  * commitment block, which is the locked precedent for "read this bit".
+ *
+ * Founder, 2026-10-20: the lifetime split is only worth reading under the
+ * day's own line, never on its own ("a broad stat with no applicability to
+ * today"), so a day with no trade measurable against its stop shows nothing.
+ * The "gave it back" line moved out: the Session behavior panel already says it,
+ * with the trade numbers.
  */
 export default function HeatBaseline({
   baseline,
   today,
-  roundTrip,
 }: {
   baseline: Baseline | null
   today: TodayHeat | null
-  roundTrip?: RoundTripStats | null
 }) {
-  const hasGiveBack = !!roundTrip && roundTrip.count > 0
   // Nothing measurable today → nothing to interpret. A baseline on its own is
   // the exact trivia this component is meant not to be.
-  if (!today && !hasGiveBack) return null
+  if (!today) return null
 
-  const lead = today ? todaySentence(today) : null
+  const lead = todaySentence(today)
   // Colour the panel's rule by how the session actually went, so the shape of
   // the day is readable before the words are.
-  const tone = !today ? 'flat'
-    : today.stopped > 0 || today.past > today.inside ? 'warn'
-      : today.inside > 0 ? 'good' : 'flat'
+  const tone = today.stopped > 0 || today.past > today.inside ? 'warn'
+    : today.inside > 0 ? 'good' : 'flat'
 
   return (
     <div
@@ -44,28 +45,15 @@ export default function HeatBaseline({
         tone === 'good' ? 'border-l-green-700' : tone === 'warn' ? 'border-l-yellow-600' : 'border-l-gray-700',
       )}
     >
-      {lead && (
-        <p className="text-[14.5px] text-gray-100 leading-relaxed max-w-[74ch]">{lead}</p>
-      )}
+      <p className="text-[14.5px] text-gray-100 leading-relaxed max-w-[74ch]">{lead}</p>
 
       {baseline && (
-        <p className={cn('text-[13px] text-gray-400 leading-relaxed max-w-[74ch]', lead && 'mt-2')}>
+        <p className="text-[13px] text-gray-400 leading-relaxed max-w-[74ch] mt-2">
           Your winners barely test the stop: inside half you win{' '}
           <b className="font-semibold text-green-400">{baseline.insideWinPct}%</b> of the time, past half{' '}
           <b className="font-semibold text-red-400">{baseline.pastWinPct}%</b>.
           <span className="text-gray-500">
             {' '}From your last {baseline.measuredN} trades with a stop set.
-          </span>
-        </p>
-      )}
-
-      {hasGiveBack && (
-        <p className={cn('flex items-center gap-1.5 text-[12.5px] text-yellow-400/90', (lead || baseline) && 'mt-2.5')}>
-          <span aria-hidden>↺</span>
-          <span>
-            <span className="font-medium">Gave it back</span> · {roundTrip!.count} of {roundTrip!.total} trade
-            {roundTrip!.total === 1 ? '' : 's'} were up ≥{roundTrip!.thresholdAtr}×ATR then closed ≤ BE ·{' '}
-            <span className="tabular-nums">−${Math.round(roundTrip!.giveBackUsd).toLocaleString()}</span>
           </span>
         </p>
       )}

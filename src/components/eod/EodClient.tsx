@@ -1189,7 +1189,7 @@ export default function EodClient({
       {/* The line that makes the table's MAE column mean something: the
           trader's own inside-half vs past-half split. Sits directly above the
           table it interprets — the number itself is already in the MAE cell. */}
-      <HeatBaseline baseline={heatBaseline} today={todayHeat} roundTrip={roundTripStats} />
+      <HeatBaseline baseline={heatBaseline} today={todayHeat} />
 
       <TradeList
         trades={trades}
