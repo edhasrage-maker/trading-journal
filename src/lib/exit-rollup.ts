@@ -3,9 +3,8 @@ import { emptyTradeSums, type FactorSum, type TradeSums } from '@/lib/tapescore-
 import { entryRulesSig, evaluateRules, tradeRulesScore, type EntryRuleConfig } from '@/lib/entry-rules'
 import { runnerRulesSig, tradeRunnerPart, type RunnerRuleConfig } from '@/lib/runner-rules'
 import type { TradeEntryCtx } from '@/lib/supabase/types'
-import { reentryAfterLossIds } from '@/lib/behavioral-proxies'
 import {
-  REENTRY_WINDOW_MIN, hasFreshTrigger, sizeUpFails, sizeUpInputs, toProxyTrades, type SizeUpInputs,
+  reentryReads, sizeUpFails, sizeUpInputs, toProxyTrades, type SizeUpInputs,
 } from '@/lib/tapescore-day-rules'
 
 /**
@@ -130,11 +129,13 @@ export function dayTradeInputs(
   const target = normalizeAtrStopTarget(atrStopTarget)
   const sums = emptyTradeSums()
   const losses: DayTradeInputs['losses'] = []
-  // Re-entries: found on the whole day's sequence, then judged per trade.
+  // Re-entries (and trades tagged revenge): found on the whole day's sequence,
+  // judged per trade — the same reads as each trade's "Waited after a loss".
   const proxies = toProxyTrades(trades)
-  const reentries = new Set(reentryAfterLossIds(proxies, REENTRY_WINDOW_MIN))
-  trades.forEach((t, i) => {
-    if (reentries.has(proxies[i].id)) { sums.reentry.n += 1; sums.reentry.sum += hasFreshTrigger(t) ? 1 : 0 }
+  const reads = reentryReads(trades)
+  trades.forEach((_, i) => {
+    const r = reads.get(proxies[i].id)
+    if (r) { sums.reentry.n += 1; sums.reentry.sum += r.fresh ? 1 : 0 }
   })
   for (const t of trades) {
     // The yardstick is deliberately absent: it belongs to the read.

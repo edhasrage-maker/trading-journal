@@ -58,7 +58,7 @@ function scoreTail(g: TradeGrade) {
   return `· Entry ${g.entry ?? '—'} · Exit ${g.exit ?? '—'}${g.parts.waited != null ? ` · Waited ${r(g.parts.waited)}` : ''}`
 }
 
-const WAITED_NOTE = 'A trade entered within 5 minutes of a losing exit gets this third part. With a fresh trigger tagged (an entry model other than "Based on Price") it scores 100; without one, 0.'
+const WAITED_NOTE = 'A trade entered within 5 minutes of a losing exit, or one you tagged Revenge Trading, gets this third part. With a fresh trigger tagged (an entry model other than "Based on Price") it scores 100; without one, or tagged Revenge Trading, 0.'
 
 /** Every reason behind a trade's Score, as lines — shared by the Recap's panel and Replay Review's narrow one, so both say the same thing. */
 function gradeLines(g: TradeGrade, neverWent: boolean, hasStop: boolean) {
@@ -112,13 +112,15 @@ function gradeLines(g: TradeGrade, neverWent: boolean, hasStop: boolean) {
   const re = g.reentry
   const waitedLines: Line[] = []
   if (re && g.parts.waited != null) {
-    const after = `your ${ptHms(re.afterExit)} ${re.afterStopOut ? 'stop-out' : 'loss'}`
+    const after = re.afterExit ? `your ${ptHms(re.afterExit)} ${re.afterStopOut ? 'stop-out' : 'loss'}` : ''
     const fresh = re.triggers.filter(x => x.trim().toLowerCase() !== 'based on price')
     waitedLines.push(re.fresh
       ? { key: 'waited', dot: 'pass', label: 'Waited after a loss', status: 'yes', statusCls: WORD.pass, text: `${re.gapSec} s after ${after}, with a fresh trigger: ${fresh.join(', ')}.` }
-      : { key: 'waited', dot: 'fail', label: 'Waited after a loss', status: 'no', statusCls: WORD.fail, text: re.triggers.length
-          ? `In ${re.gapSec} s after ${after}, with only "Based on Price" as the trigger.`
-          : `In ${re.gapSec} s after ${after}, with no fresh trigger tagged.` })
+      : { key: 'waited', dot: 'fail', label: 'Waited after a loss', status: 'no', statusCls: WORD.fail, text: re.revenge
+          ? (re.gapSec != null ? `In ${re.gapSec} s after ${after}. You tagged it Revenge Trading.` : 'You tagged it Revenge Trading.')
+          : re.triggers.length
+            ? `In ${re.gapSec} s after ${after}, with only "Based on Price" as the trigger.`
+            : `In ${re.gapSec} s after ${after}, with no fresh trigger tagged.` })
   }
 
   const readAt = g.flowScore?.read_at ?? null

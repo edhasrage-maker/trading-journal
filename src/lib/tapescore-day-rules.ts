@@ -3,6 +3,7 @@ import { pressingDrawdownIds, reentryAfterLossIds, type ProxyTrade } from '@/lib
 import { exitKind } from '@/lib/trade-management'
 import { plannedRiskDollars, type RiskYardstick } from '@/lib/exit-score'
 import type { StopSource } from '@/lib/planned-stop'
+import { tagKey } from '@/lib/tradezella-import'
 
 /**
  * What TapeScore reads from a day's TRADES to correct the stored end-of-day
@@ -62,6 +63,12 @@ export function toProxyTrades(trades: readonly RulesTrade[]): ProxyTrade[] {
     exit_time: t.exit_time ?? null, pnl: t.pnl ?? null, quantity: t.quantity ?? null,
   }))
 }
+
+/** The cooldown rail (P4) counts in "rules kept" but never makes a day a
+ *  Breach on its own or with another rail (founder, 2026-10-20: cooldown on,
+ *  not high weight). Applies to per-user verdicts (`active_rails`); the owner's
+ *  v1.3 rubric is unchanged. */
+export const COOLDOWN_NEVER_BREACH = 'P4'
 
 /** Does the trader track this rail? Rows without `active_rails` grade all five. */
 function tracks(p: ProcessVerdict, id: string): boolean {
@@ -169,7 +176,7 @@ export function applySizeUp(p: ProcessVerdict | null | undefined, fails: number 
   let verdict = p.verdict
   if (changed) {
     if (p.active_rails && p.active_rails.length > 0) {
-      const failed = p.active_rails.filter(id => perRule[id]?.status === 'fail').length
+      const failed = p.active_rails.filter(id => id !== COOLDOWN_NEVER_BREACH && perRule[id]?.status === 'fail').length
       verdict = failed > (p.active_rails.length >= 4 ? 1 : 0) ? 'Breach' : 'Compliant'
     } else {
       const ids = legacyShape ? ['P1', 'P2', 'P3', 'P5', 'P6'] : ['P1', 'P2', 'P3', 'P4', 'P5']
@@ -247,6 +254,16 @@ export function hasFreshTrigger(t: RulesTrade): boolean {
   return Array.isArray(em) && em.some(x => typeof x === 'string' && x.trim() !== '' && x.trim().toLowerCase() !== 'based on price')
 }
 
+/** The mistake tag that marks a trade as revenge, matched by key (any case or
+ *  spacing) — the onboarding mistakes list's "Revenge trading". */
+export const REVENGE_TAG_KEY = tagKey('Revenge Trading')
+
+/** The trader tagged this trade as revenge (a mistake tag "Revenge Trading"). */
+export function revengeTagged(t: RulesTrade): boolean {
+  const m: unknown = t.tags_json?.mistakes
+  return Array.isArray(m) && m.some(x => typeof x === 'string' && tagKey(x) === REVENGE_TAG_KEY)
+}
+
 // ── Chase trades ───────────────────────────────────────────────────────────
 //
 // A CHASE TRADE is a quick re-entry after a loss (within REENTRY_WINDOW_MIN of
@@ -256,6 +273,11 @@ export function hasFreshTrigger(t: RulesTrade): boolean {
 // fresh trigger made $2,193, so they now also cost the day (2 or more cap its
 // TapeScore at 69, src/lib/tapescore.ts) and each trade (a "Waited after a
 // loss" part in its Score, src/lib/trade-grade.ts).
+//
+// A trade the trader TAGGED "Revenge Trading" is a chase trade too, whenever it
+// was entered, fresh trigger or not (founder, 2026-10-20): it reads Waited 0 and
+// counts toward the cap. Since May: 77 such trades, −$4,330, 34 of them more
+// than 5 minutes after a loss, where the re-entry window never saw them.
 
 /** Trades with what "how did the losing trade end" needs (all optional). */
 export type ReentryTrade = RulesTrade & {
@@ -269,22 +291,27 @@ export type ReentryTrade = RulesTrade & {
 
 /** One quick re-entry after a loss, as its trade's Score reads it. */
 export interface ReentryRead {
-  /** It named a fresh trigger (`hasFreshTrigger`): passes. Else it's a chase trade. */
+  /** It named a fresh trigger (`hasFreshTrigger`) and wasn't tagged revenge:
+   *  passes. Else it's a chase trade. */
   fresh: boolean
-  /** Seconds from the losing exit it came off. */
-  gapSec: number
-  /** That losing exit (UTC ISO), and whether the losing trade was stopped out. */
-  afterExit: string
+  /** The trader tagged it "Revenge Trading" (`revengeTagged`). */
+  revenge: boolean
+  /** Seconds from the losing exit it came off; null for a revenge-tagged trade
+   *  that wasn't a quick re-entry after a loss. */
+  gapSec: number | null
+  /** That losing exit (UTC ISO; null as `gapSec`), and whether the losing trade was stopped out. */
+  afterExit: string | null
   afterStopOut: boolean
   /** Its entry models, as tagged. */
   triggers: string[]
 }
 
 /**
- * Every quick re-entry after a loss in one day's trades, by trade id (a trade
- * without an id gets its position, as `toProxyTrades`). The losing exit read is
- * the latest one within REENTRY_WINDOW_MIN before the entry — the same window
- * and the same "any earlier losing trade" rule as Risk's "Re-entries" part.
+ * Every quick re-entry after a loss in one day's trades, plus every trade
+ * tagged "Revenge Trading", by trade id (a trade without an id gets its
+ * position, as `toProxyTrades`). The losing exit read is the latest one within
+ * REENTRY_WINDOW_MIN before the entry — the same window and the same "any
+ * earlier losing trade" rule as Risk's "Re-entries" part.
  */
 export function reentryReads(trades: readonly ReentryTrade[]): Map<string, ReentryRead> {
   const proxies = toProxyTrades(trades)
@@ -292,7 +319,13 @@ export function reentryReads(trades: readonly ReentryTrade[]): Map<string, Reent
   const out = new Map<string, ReentryRead>()
   trades.forEach((t, i) => {
     const id = proxies[i].id
-    if (!ids.has(id)) return
+    const em: unknown = t.tags_json?.entry_model
+    const triggers = Array.isArray(em) ? em.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : []
+    const revenge = revengeTagged(t)
+    if (!ids.has(id)) {
+      if (revenge) out.set(id, { fresh: false, revenge, gapSec: null, afterExit: null, afterStopOut: false, triggers })
+      return
+    }
     const entry = Date.parse(t.entry_time ?? '')
     let prior: ReentryTrade | null = null, priorMs = -Infinity
     for (const u of trades) {
@@ -301,20 +334,23 @@ export function reentryReads(trades: readonly ReentryTrade[]): Map<string, Reent
       const gapMin = (entry - ms) / 60_000
       if (Number.isFinite(gapMin) && gapMin >= 0 && gapMin <= REENTRY_WINDOW_MIN && ms > priorMs) { prior = u; priorMs = ms }
     }
-    if (!prior) return
-    const em: unknown = t.tags_json?.entry_model
+    if (!prior) {
+      if (revenge) out.set(id, { fresh: false, revenge, gapSec: null, afterExit: null, afterStopOut: false, triggers })
+      return
+    }
     out.set(id, {
-      fresh: hasFreshTrigger(t),
+      fresh: hasFreshTrigger(t) && !revenge,
+      revenge,
       gapSec: Math.round((entry - priorMs) / 1000),
       afterExit: prior.exit_time as string,
       afterStopOut: exitKind(prior as unknown as Parameters<typeof exitKind>[0]) === 'stopped',
-      triggers: Array.isArray(em) ? em.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [],
+      triggers,
     })
   })
   return out
 }
 
-/** The day's chase trades (quick re-entries after a loss with no fresh trigger), oldest first. */
+/** The day's chase trades (quick re-entries after a loss with no fresh trigger, and trades tagged revenge), oldest first. */
 export function chaseTrades<T extends ReentryTrade>(trades: readonly T[]): T[] {
   const reads = reentryReads(trades)
   const proxies = toProxyTrades(trades)

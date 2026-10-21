@@ -27,6 +27,7 @@ import {
   OWNER_RAILS, isEmptyScoringProfile, resolveRails, resolveRubric, scoringProfileSummary, activeRailIds, sizeCapFor,
   type RailConfig, type ScoringProfile,
 } from './scoring-profile.ts'
+import { COOLDOWN_NEVER_BREACH, hasFreshTrigger, revengeTagged } from './tapescore-day-rules.ts'
 
 // ─── Ruleset loader ──────────────────────────────────────────────────────────
 
@@ -1155,7 +1156,8 @@ export interface DeterministicRuleResult {
 export function computeDeterministicRules(
   // `symbol` is optional but load-bearing: without it every size cap is
   // instrument-blind and a correctly-sized MES trade breaches an MNQ cap.
-  trades: (Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl'> & { symbol?: string | null })[],
+  // `tags_json` lets a per-user cooldown excuse a re-entry with a fresh trigger.
+  trades: (Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl'> & { symbol?: string | null; tags_json?: Trade['tags_json'] | null })[],
   rc: RailConfig = OWNER_RAILS,
 ): { P1: DeterministicRuleResult; P2?: DeterministicRuleResult; P3: DeterministicRuleResult; P4: DeterministicRuleResult; P5: DeterministicRuleResult } {
   const sorted = [...trades]
@@ -1257,7 +1259,11 @@ export function computeDeterministicRules(
       }
 
       // P4 — gap from the loss closing to this trade opening must be ≥ cooldown.
-      if (p4Active) {
+      // Per-user (founder, 2026-10-20): new information excuses it — a re-entry
+      // with a fresh trigger tagged (and not tagged revenge) passes. The owner's
+      // v1.3 rubric keeps its plain gap rule.
+      const excused = !rc.isOwner && hasFreshTrigger(curr) && !revengeTagged(curr)
+      if (p4Active && !excused) {
         const gapSec = (openMs - lastClosedExitMs) / 1000
         if (Number.isFinite(gapSec) && gapSec < rc.cooldownSec!) {
           p4Breaches.push(`T${i + 1} opened ${gapSec.toFixed(0)}s after the prior loss closed`)
@@ -1348,7 +1354,7 @@ export function recomputeExecutionComposite(e: {
  */
 export function applyDeterministicOverrides(
   parsed: EodAiAnalysis,
-  trades: Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl' | 'entry_price' | 'stop_price' | 'direction' | 'symbol' | 'high_during_position' | 'low_during_position'>[],
+  trades: (Pick<Trade, 'id' | 'entry_time' | 'exit_time' | 'quantity' | 'pnl' | 'entry_price' | 'stop_price' | 'direction' | 'symbol' | 'high_during_position' | 'low_during_position'> & { tags_json?: Trade['tags_json'] | null })[],
   onLog?: (msg: string) => void,
   rc: RailConfig = OWNER_RAILS,
 ): EodAiAnalysis {
@@ -1391,7 +1397,9 @@ export function applyDeterministicOverrides(
         if (parsed.process.verdict !== newVerdict) log(`verdict re-derived ${parsed.process.verdict} → ${newVerdict} (pass_count ${passCount}/5)`)
       } else {
         const active = activeRailIds(rc)
-        const failCount = active.filter(k => parsed.process!.per_rule[k]?.status === 'fail').length
+        // The cooldown weighs lightly (founder, 2026-10-20): it costs its share
+        // of "rules kept" but never makes the day a Breach (COOLDOWN_NEVER_BREACH).
+        const failCount = active.filter(k => k !== COOLDOWN_NEVER_BREACH && parsed.process!.per_rule[k]?.status === 'fail').length
         const tolerate = active.length >= 4 ? 1 : 0
         newVerdict = failCount > tolerate ? 'Breach' : 'Compliant'
         if (parsed.process.verdict !== newVerdict) log(`verdict re-derived ${parsed.process.verdict} → ${newVerdict} (${failCount}/${active.length} active rails failed, tolerate ${tolerate})`)

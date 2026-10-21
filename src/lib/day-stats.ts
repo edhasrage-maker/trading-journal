@@ -334,7 +334,10 @@ export function isFreshStats(
 // ATR (1x by default) its way, then closed at breakeven or worse — counts as
 // profit kept 0 (src/lib/exit-score.ts), so Exit and the kept sums move on every
 // day with one.
-export const STATS_VERSION = 15
+// v16 (2026-10-20): a trade tagged "Revenge Trading" is a chase trade wherever
+// it was entered (src/lib/tapescore-day-rules.ts reentryReads), so the re-entry
+// sums — Risk's "Re-entries" part and the 2-chase cap — move on those days.
+export const STATS_VERSION = 16
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`

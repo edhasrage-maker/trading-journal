@@ -50,6 +50,33 @@ console.log('which trades are chase trades (Oct 19 as it happened)')
   check('after a loss closed by hand it says "loss", not "stop-out"', manual.afterStopOut === false)
 }
 
+console.log('\ntagged "Revenge Trading" = a chase trade (founder 2026-10-20)')
+{
+  const t = (id: string, inAt: string, outAt: string, pnl: number, tags: Record<string, unknown>): ReentryTrade => ({
+    id, entry_time: PT(inAt), exit_time: PT(outAt), direction: 'long', pnl, quantity: 5, symbol: 'MNQZ6.CME',
+    entry_price: 100, stop_price: 90, tp1_price: 130, exit_price: 95, exits_json: [{ qty: 5, price: 95 }],
+    high_during_position: 101, low_during_position: 94, tags_json: tags,
+  })
+  // Oct 20 as it happened: 08:50:34 and 09:05:46 tagged Revenge Trading, 9 and 11.5 min after losses
+  const day = [
+    t('a', '08:31:42', '08:32:20', -45, { entry_model: ['Based on Price'] }),
+    t('b', '08:34:56', '08:41:28', -93, { entry_model: ['Based on Price'] }),
+    t('c', '08:50:34', '08:54:16', -72, { entry_model: ['Waited for Heiken-Ashi to Flip', 'Break of Candle'], mistakes: ['Revenge Trading'] }),
+    t('d', '09:05:46', '09:11:02', -57.5, { entry_model: ['Break of Clusters/Bubbles'], mistakes: ['revenge trading'] }),
+    t('e', '09:21:18', '09:27:40', 342.5, { entry_model: ['1 ATR Entry'] }),
+  ]
+  const reads = reentryReads(day)
+  const c = reads.get('c')!
+  check('a revenge-tagged trade 9 min after a loss reads as one, with no gap', !!c && c.revenge && !c.fresh && c.gapSec === null && c.afterExit === null, c)
+  check('its fresh trigger does not excuse it', reads.get('c')?.fresh === false && reads.get('d')?.fresh === false)
+  check('the tag matches any case or spacing', reads.get('d')?.revenge === true)
+  check('an untagged trade outside the window is still not one', !reads.has('e') && !reads.has('a'))
+  check('chase trades: 08:34:56 (156 s, no trigger) + the 2 revenge-tagged = 3', JSON.stringify(chaseTrades(day).map(x => x.id)) === JSON.stringify(['b', 'c', 'd']))
+  const quick = [t('x', '09:00:00', '09:01:00', -50, {}), t('y', '09:02:00', '09:03:00', 40, { entry_model: ['Break of Candle'], mistakes: ['Revenge Trading'] })]
+  const y = reentryReads(quick).get('y')!
+  check('a quick re-entry tagged revenge keeps its gap but fails, trigger or not', y.revenge && !y.fresh && y.gapSec === 60, y)
+}
+
 // ── the day's cap ──
 const rails = (pass: number): ProcessVerdict => ({
   per_rule: Object.fromEntries(['P1', 'P2', 'P3', 'P4', 'P5'].map((id, i) => [id, { status: i < pass ? 'pass' : 'fail' }])),
@@ -87,6 +114,9 @@ console.log('\nthe day: 2 or more chase trades and it can\'t be green')
   check('a Breach day stays at 49: the chase cap never raises it, and says it did nothing', rb.score === 49 && rb.capped && !rb.chaseCapped && rb.chaseTrades === 2, { score: rb.score, capped: rb.capped, chaseCapped: rb.chaseCapped })
   const later = [trade('08:58:00', '09:00:00', 90), trade('09:06:00', '09:08:00', 120), trade('09:09:00', '09:11:00', 120)]
   check('re-entries past 5 minutes: not chase trades, no cap', score(5, later).chaseTrades === 0)
+  const tagged = later.map((x, i) => i === 0 ? x : { ...x, tags_json: { mistakes: ['Revenge Trading'] } })
+  const rt = score(5, tagged)
+  check('the same day with both re-entries tagged Revenge Trading: 2 chase trades, capped at 69', rt.chaseTrades === 2 && rt.chaseCapped && rt.score === 69, rt)
 }
 
 console.log('\nthe trade\'s Score: "Waited after a loss"')
@@ -94,7 +124,7 @@ console.log('\nthe trade\'s Score: "Waited after a loss"')
   const win = trade('09:01:00', '09:03:00', 120)
   const g0 = tradeGrade(win)
   check('not a re-entry: Entry and Exit only, as before', g0.parts.waited === null && g0.reentry === null && g0.score === 100, { score: g0.score, waited: g0.parts.waited })
-  const chase = { fresh: false, gapSec: 60, afterExit: PT('09:00:00'), afterStopOut: true, triggers: [] }
+  const chase = { fresh: false, revenge: false, gapSec: 60, afterExit: PT('09:00:00'), afterStopOut: true, triggers: [] }
   const g1 = tradeGrade(win, { reentry: chase })
   check('a chase trade: Waited 0, averaged in (Exit 100 → Score 50)', g1.parts.waited === 0 && g1.score === 50, { score: g1.score, exit: g1.exit })
   const g2 = tradeGrade(win, { reentry: { ...chase, fresh: true, triggers: ['Break of Candle'] } })
