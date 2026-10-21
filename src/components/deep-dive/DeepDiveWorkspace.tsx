@@ -49,6 +49,7 @@ import ChartSettingsPanel, { ChartSettingsToggle, SettingsIconButton } from './C
 import WeekTrades, { fmtUsd, rootOf, type WeekNav, type WeekTrade } from './WeekTrades'
 import CallBar from './CallBar'
 import YourTrade from './YourTrade'
+import { useTagEditing } from './useTagEditing'
 import ReplayControls, { PlayFromFillButton, PlayFromFillPill, type Speed } from './ReplayControls'
 import type { ReplayDetails } from '@/app/api/deep-dive/details/route'
 
@@ -311,12 +312,17 @@ export default function DeepDiveWorkspace({
   const ran = selectedId ? scoreRun[selectedId] : undefined
   const scoring = needsScore && !ran ? 'running' : ran === 'pending' || ran === 'error' ? ran : null
 
+  // editing your tags in that panel (it only exists where tags show: never in Blind)
+  const editing = useTagEditing(selectedId, details, setDetails)
+
   const yoursBody = (big: boolean) => (
     <YourTrade
+      key={selectedId ?? ''}
       details={mine && !('error' in mine) ? mine : null}
       error={mine && 'error' in mine ? mine.error : null}
       scoring={scoring}
       big={big}
+      editing={editing}
     />
   )
 

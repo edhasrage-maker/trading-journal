@@ -17,14 +17,18 @@ const TAG_CATS: Array<{ key: string; label: string; danger?: boolean }> = [
   { key: 'mistakes', label: 'Mistake', danger: true },
 ]
 
-export function tradeTagGroups(tags: unknown): TagGroup[] {
+/** The groups in order with their tags_json keys — for the views that edit them (Replay Review's Your trade). */
+export const TRADE_TAG_CATS: ReadonlyArray<{ key: string; label: string; danger?: boolean }> = TAG_CATS
+
+/** One group's tags from tags_json: its strings, empty ones dropped. */
+export function tagsOf(tags: unknown, key: string): string[] {
   if (!tags || typeof tags !== 'object' || Array.isArray(tags)) return []
-  const t = tags as Record<string, unknown>
+  const v = (tags as Record<string, unknown>)[key]
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x !== '') : []
+}
+
+export function tradeTagGroups(tags: unknown): TagGroup[] {
   return TAG_CATS
-    .map(c => ({
-      label: c.label,
-      danger: c.danger,
-      items: Array.isArray(t[c.key]) ? (t[c.key] as unknown[]).filter((v): v is string => typeof v === 'string' && v !== '') : [],
-    }))
+    .map(c => ({ label: c.label, danger: c.danger, items: tagsOf(tags, c.key) }))
     .filter(g => g.items.length > 0)
 }

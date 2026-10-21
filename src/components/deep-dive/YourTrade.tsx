@@ -3,23 +3,36 @@
 /**
  * "Your trade" — the trade's Score (the Recap's, in a narrow layout), its
  * screenshot (click for the same full-screen view as Game film) and your tags,
- * grouped the way every trade view groups them. Full review only: the Exit
- * half is how it went, a live Sierra screenshot shows the open P&L and a
- * Mistake tag says how it went, so none of it is fetched while Blind is on.
+ * grouped the way every trade view groups them, and editable in place
+ * (TagEditor). Full review, or a replay past your exit, only: the Exit half
+ * is how it went, a live Sierra screenshot shows the open P&L and a Mistake
+ * tag says how it went, so none of it is fetched while Blind is on.
  */
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import ScreenshotLightbox from '@/components/intraday/ScreenshotLightbox'
 import { TradeGradeCompact } from '@/components/session/TradeGrade'
 import type { ReplayDetails } from '@/app/api/deep-dive/details/route'
+import TagEditor, { type TagLibraryRow, type TagSaveState } from './TagEditor'
 
-export default function YourTrade({ details, error, scoring = null, big = false }: {
+/** What the tag editor needs from the page: your tag list, and saving. */
+export interface TagEditing {
+  library: TagLibraryRow[] | null
+  onLibrary: () => void
+  onChange: (next: Record<string, unknown>, word: string) => void
+  onCreate: (category: string, label: string) => Promise<string>
+  status: TagSaveState | null
+  onUndo: () => void
+}
+
+export default function YourTrade({ details, error, scoring = null, big = false, editing }: {
   details: ReplayDetails | null
   error?: string | null
   /** The on-demand Entry read for this trade: running now, or why it didn't land. */
   scoring?: 'running' | 'pending' | 'error' | null
   /** Phone tab: a taller screenshot, bigger text. */
   big?: boolean
+  editing: TagEditing
 }) {
   const [zoom, setZoom] = useState(false)
   const cap = cn('font-semibold uppercase tracking-[.8px] text-gray-400', big ? 'text-[11px]' : 'text-[10.5px]')
@@ -55,24 +68,9 @@ export default function YourTrade({ details, error, scoring = null, big = false 
         </button>
       ) : <p className={empty}>No screenshot for this trade.</p>}
 
-      <div className={cn(cap, 'mt-4 mb-1')}>Your tags</div>
-      {details && (details.tags.length === 0 ? <p className={empty}>Nothing tagged yet.</p> : details.tags.map(g => (
-        <div key={g.label} className={cn('flex gap-2 border-b border-gray-800', big ? 'py-[7px] text-[13px]' : 'py-1.5 text-[12px]')}>
-          <span className={cn('flex-none text-gray-400 pt-0.5', big ? 'w-[82px]' : 'w-[74px]')}>{g.label}</span>
-          <span className="flex flex-wrap gap-1">
-            {g.items.map(it => (
-              <span
-                key={it}
-                className={cn(
-                  'px-2 py-0.5 rounded-full border',
-                  big ? 'text-[12.5px]' : 'text-[11.5px]',
-                  g.danger ? 'border-red-800/60 text-red-300 bg-red-950/30' : 'border-gray-700 text-gray-100',
-                )}
-              >{it}</span>
-            ))}
-          </span>
-        </div>
-      )))}
+      {details
+        ? <TagEditor tags={details.tagsJson} ruleTags={details.ruleTags} big={big} {...editing} />
+        : <><div className={cn(cap, 'mt-4 mb-1')}>Your tags</div><p className={empty}>Loading…</p></>}
 
       <ScreenshotLightbox src={zoom && details?.screenshot ? details.screenshot : null} onClose={() => setZoom(false)} />
     </div>

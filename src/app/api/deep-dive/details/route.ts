@@ -3,7 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { deepDiveAllowed } from '@/lib/deep-dive-access'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { resolveScreenshotUrls } from '@/lib/storage-url'
-import { tradeTagGroups, type TagGroup } from '@/lib/trade-tag-groups'
+import { ruleLabel, ruleMistakeTag } from '@/lib/entry-rules'
+import { runnerMistakeTag, runnerRuleLabel } from '@/lib/runner-rules'
 import { loadTapeScoreSettings } from '@/lib/day-stats-server'
 import { getGiveBackAtr } from '@/lib/atr-config-server'
 import { tradeGrade, type TradeGrade } from '@/lib/trade-grade'
@@ -19,7 +20,10 @@ export const dynamic = 'force-dynamic'
 export interface ReplayDetails {
   /** Signed screenshot URL, or null when the trade has none. */
   screenshot: string | null
-  tags: TagGroup[]
+  /** tags_json as stored. The panel edits its groups and sends it back whole, every other key kept (day_type, custom groups). */
+  tagsJson: Record<string, unknown>
+  /** The mistake tags your rules put on (review_json.auto_tags) → the name of the rule ('' if it's no longer on). */
+  ruleTags: Record<string, string>
   /** The trade's Score (Entry + Exit), exactly as the Recap's Score column works it out. */
   grade: TradeGrade
   /** For the Exit lines: the trade never got 1×ATR its way; a stop was logged. */
@@ -88,10 +92,18 @@ export async function GET(req: Request) {
   const missing = !entryCtxIsCurrent(rj.entry_ctx, row) || (settings.includeFlow && !flowScoreIsCurrent(rj.score, row))
   const inTape = LOCAL_FEATURES_ENABLED || Date.now() - at < TAPE_KEEP_DAYS * 86_400_000
 
+  // which rule put each app-added mistake tag on (the rule-tags pass names tags after the rule's fail)
+  const ruleOf = new Map<string, string>()
+  for (const r of settings.entryRules) if (r.on) { const t = ruleMistakeTag(r); if (!ruleOf.has(t)) ruleOf.set(t, ruleLabel(r)) }
+  for (const r of settings.runnerRules) if (r.on) { const t = runnerMistakeTag(r); if (t && !ruleOf.has(t)) ruleOf.set(t, runnerRuleLabel(r)) }
+  const auto = Array.isArray(rj.auto_tags) ? (rj.auto_tags as unknown[]).filter((t): t is string => typeof t === 'string') : []
+  const tj = row.tags_json
+
   const [screenshot] = await resolveScreenshotUrls(supabase, [row.screenshot_url])
   const out: ReplayDetails = {
     screenshot: screenshot ?? null,
-    tags: tradeTagGroups(row.tags_json),
+    tagsJson: tj && typeof tj === 'object' && !Array.isArray(tj) ? tj : {},
+    ruleTags: Object.fromEntries(auto.map(t => [t, ruleOf.get(t) ?? ''])),
     grade,
     neverWent: tradeMgmt(row, { thresholdAtr: giveBackAtr })?.went === false,
     hasStop: plannedStopPrice(row) != null,
