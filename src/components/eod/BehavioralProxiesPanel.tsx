@@ -30,16 +30,20 @@ export default function BehavioralProxiesPanel({
   trades,
   sessionEndedAt,
   roundTrip,
+  pressingIds,
 }: {
   trades: ProxyTrade[]
   sessionEndedAt?: string | null
   /** Excursion-derived give-backs for the same trades. Optional: surfaces that
    *  don't compute excursions simply omit the row. */
   roundTrip?: RoundTripStats | null
+  /** The trades that sized up while red or after a loss, as TapeScore reads it
+   *  (sizeUpTradeIds). Optional: without it the quantity rule decides. */
+  pressingIds?: readonly string[] | null
 }) {
   const { tradeCount, hasSignal, proxies } = useMemo(
-    () => computeBehavioralProxies(trades, sessionEndedAt),
-    [trades, sessionEndedAt],
+    () => computeBehavioralProxies(trades, sessionEndedAt, { pressingIds }),
+    [trades, sessionEndedAt, pressingIds],
   )
 
   // Round-trip ids → 1-indexed session positions, matching how every other row

@@ -1,6 +1,7 @@
 import { exitKind, tradeFacts, type MgmtTradeInput, type TradeFacts } from '@/lib/trade-management'
 import { symbolToMultiplier } from '@/lib/futures-symbols'
 import { plannedStopPrice, stopPlan, type StopSource } from '@/lib/planned-stop'
+import { interpretExcursion } from '@/lib/trade-excursion'
 
 /**
  * The five per-trade factors (founder-directed, 2026-10-13; split across two
@@ -8,9 +9,14 @@ import { plannedStopPrice, stopPlan, type StopSource } from '@/lib/planned-stop'
  * logged prices and fills; nothing is estimated by the AI.
  *
  *   Exit axis (src/lib/tapescore-axes.ts — 42 / 33 / 25):
- *   1  Profit kept        WINNERS only. A winner that reached its planned
- *                         target counts in full; any other winner counts for
- *                         the share of its best point it kept.
+ *   1  Profit kept        WINNERS, and winners given back. A winner that
+ *                         reached its planned target counts in full; any other
+ *                         winner counts for the share of its best point it
+ *                         kept. A trade that ran the trader's "was up" multiple
+ *                         of ATR their way (1x by default) and then closed at
+ *                         breakeven or worse kept nothing: 0 (founder,
+ *                         2026-10-20 — the same round trip the Session behavior
+ *                         panel calls "Gave back a winner", src/lib/trade-excursion.ts).
  *   3  Stop respected     Trades whose planned stop came into play, or whose
  *                         stop the trader moved past its plan after the
  *                         first minute. Passes when price never traded past
@@ -36,8 +42,8 @@ import { plannedStopPrice, stopPlan, type StopSource } from '@/lib/planned-stop'
  *                         (1× the 1-minute ATR-10 by default).
  *
  * Apart from loss size's yardstick (founder, 2026-10-14), definitions and
- * thresholds are unchanged by the move. A trade that never went
- * anywhere is not an exit failure and is not counted against factor 1. How the
+ * thresholds are unchanged by the move. A trade that never got the "was up"
+ * move is not an exit failure and is not counted against factor 1. How the
  * factors are weighted and pooled lives in src/lib/tapescore-axes.ts.
  *
  * NOT MEASURED YET (factor 5): whether the stop was moved to breakeven after
@@ -82,6 +88,9 @@ export interface ExitContext {
   atr?: number | null
   /** The trader's ATR stop setting, in ATRs (scoring profile; default 1). */
   atrStopTarget?: number
+  /** The trader's "was up" multiple for a winner given back, in ATRs
+   *  (Settings → ATR measurement; default 1, as the Session behavior panel). */
+  roundTripAtr?: number
 }
 
 /** One trade's score on each factor that applies to it, 0..1. */
@@ -153,16 +162,26 @@ export function lossSizeInputs(t: ExitTradeInput, ctx: ExitContext = {}): [numbe
   return [Math.abs(t.pnl), ownRiskDollars(f, t.pnl)]
 }
 
+/** The trade ran the "was up" multiple of ATR its way, then closed at breakeven
+ *  or worse — the round trip the Session behavior panel reads (same function,
+ *  same ATR: the live override when given, else the stored entry ATR). */
+export function gaveBackWinner(t: ExitTradeInput, ctx: ExitContext = {}): boolean {
+  const input = { ...t, stop_price: t.stop_price ?? null, ...(ctx.atr != null ? { entry_atr_1m: ctx.atr } : {}) }
+  return interpretExcursion(input, ctx.roundTripAtr).roundTripped
+}
+
 export function exitTradeScores(t: ExitTradeInput, ctx: ExitContext = {}): ExitTradeScores {
   const out: ExitTradeScores = {}
   const f = tradeFacts(t, { atr: ctx.atr })
   if (!f || t.pnl == null) return out
   const mfe = f.mfe.pts as number, res = f.result.pts as number
 
-  // 1 · profit kept — winners only
+  // 1 · profit kept — winners, and a winner given back (kept nothing)
   if (t.pnl > 0) {
     if (exitKind(t) === 'target') out.kept = 1
     else if (mfe > 0) out.kept = clamp01(res / mfe)
+  } else if (gaveBackWinner(t, ctx)) {
+    out.kept = 0
   }
 
   // 2 · loss size — losers only, in dollars against the trader's usual risk

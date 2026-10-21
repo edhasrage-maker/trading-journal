@@ -136,10 +136,16 @@ function fmtPtTime(iso: string): string {
  * for any trade entered after it — the revenge/tilt pattern of trading again
  * after calling it a day. Omit it and the proxy set is unchanged (four proxies),
  * so callers that don't have the timestamp behave exactly as before.
+ *
+ * `pressingIds` names the trades that pressed into drawdown when the caller can
+ * read it the way TapeScore does (planned dollar risk against the trader's usual
+ * spread: sizeUpTradeIds in src/lib/tapescore-day-rules.ts). Omit it and the
+ * quantity rule below decides.
  */
 export function computeBehavioralProxies(
   trades: ProxyTrade[],
   sessionEndedAt?: string | null,
+  opts: { pressingIds?: readonly string[] | null } = {},
 ): BehavioralProxies {
   const rows = buildRows(trades)
   const n = rows.length
@@ -205,11 +211,12 @@ export function computeBehavioralProxies(
     })
   }
 
-  // 4. Pressing into drawdown — sizing up while red on the day or after a loss
-  //    (see pressingRows; TapeScore's "no size-up after a loss" rail reads the
-  //    same definition through pressingDrawdownIds).
+  // 4. Pressing into drawdown — sizing up while red on the day or after a loss:
+  //    the caller's TapeScore reading when given (dollar risk), else the
+  //    quantity rule (pressingRows; TapeScore's fallback with no usual risk yet).
   {
-    const hits = pressingRows(rows)
+    const pressing = opts.pressingIds ? new Set(opts.pressingIds) : null
+    const hits = pressing ? rows.filter(r => pressing.has(r.id)) : pressingRows(rows)
     const count = hits.length
     const severity: ProxySeverity = count >= 2 ? 'flag' : count === 1 ? 'mild' : 'none'
     proxies.push({

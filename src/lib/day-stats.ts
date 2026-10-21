@@ -330,7 +330,11 @@ export function isFreshStats(
 // and Stop respected fails a stop moved past its plan after that minute. A stop
 // tightened during the trade no longer shrinks R or reads as "past stop" — R,
 // Stop respected, Stop size, Loss size and the risk sums move on those days.
-export const STATS_VERSION = 14
+// v15 (2026-10-20): a winner given back — ran the trader's "was up" multiple of
+// ATR (1x by default) its way, then closed at breakeven or worse — counts as
+// profit kept 0 (src/lib/exit-score.ts), so Exit and the kept sums move on every
+// day with one.
+export const STATS_VERSION = 15
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`

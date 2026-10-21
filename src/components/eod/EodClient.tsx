@@ -38,7 +38,7 @@ import { type BarLike } from '@/lib/analytics'
 import { mgmtTotals } from '@/lib/trade-management'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import { buildHighlights } from '@/lib/trade-highlights'
-import { effectiveAnalysis } from '@/lib/tapescore-day-rules'
+import { effectiveAnalysis, sizeUpTradeIds } from '@/lib/tapescore-day-rules'
 import type { RiskYardstick } from '@/lib/exit-score'
 import type {
   TradingDay,
@@ -211,6 +211,9 @@ export default function EodClient({
     () => effectiveAnalysis(aiAnalysis, trades, riskYardstick),
     [aiAnalysis, trades, riskYardstick],
   )
+  // "Pressing into drawdown" read the way the Score's size-up rule reads it
+  // (dollar risk against the trader's usual spread), so the two never disagree.
+  const pressingIds = useMemo(() => sizeUpTradeIds(trades, riskYardstick), [trades, riskYardstick])
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
@@ -1036,7 +1039,7 @@ export default function EodClient({
           item 23) — self-suppressing, so an empty day shows nothing. The heat
           read that used to sit beside it moved down to the trade table, where
           the MAE column it interprets actually lives. */}
-      <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} />
+      <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} />
 
       {/* Chart area — toggle between legacy screenshot+calibration and the
           new live-bars rendering. Screenshot path will be removed in Phase 5

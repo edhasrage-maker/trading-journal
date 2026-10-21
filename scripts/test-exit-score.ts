@@ -57,7 +57,15 @@ console.log('1 · profit kept on winners')
   near('winner short of target = result ÷ best point (10 / 20)', short.kept, 0.5)
   const throughTarget = exitTradeScores(long({ exit: 121, high_during_position: 140 }))
   near('winner filled THROUGH its target still counts in full', throughTarget.kept, 1)
-  absent('a loser is not judged on profit kept', exitTradeScores(long({ exit: 95, low_during_position: 95 })).kept)
+  absent('a loser that never got 1×ATR its way is not judged on profit kept', exitTradeScores(long({ exit: 95, low_during_position: 95, high_during_position: 105 })).kept)
+  // a winner given back (founder 2026-10-20): ran ≥1×ATR (10 pts) its way, closed at breakeven or worse → kept 0
+  near('ran 1.5×ATR its way, then closed red = kept 0', exitTradeScores(long({ exit: 95, low_during_position: 95, high_during_position: 115 })).kept, 0)
+  near('ran exactly 1×ATR its way, then closed at breakeven = kept 0', exitTradeScores(long({ exit: 100, high_during_position: 110 })).kept, 0)
+  absent('ran 0.9×ATR its way, then closed red: not judged', exitTradeScores(long({ exit: 95, low_during_position: 95, high_during_position: 109 })).kept)
+  absent('no entry ATR: the run cannot be measured, not judged', exitTradeScores(long({ exit: 95, low_during_position: 95, high_during_position: 115, entry_atr_1m: null })).kept)
+  near('the trader’s own "was up" multiple (2×ATR): a 1.5×ATR run is not judged…', exitTradeScores(long({ exit: 95, low_during_position: 95, high_during_position: 115 }), { roundTripAtr: 2 }).kept ?? -1, -1)
+  near('…and a 2×ATR run is kept 0', exitTradeScores(long({ exit: 95, low_during_position: 95, high_during_position: 120 }), { roundTripAtr: 2 }).kept, 0)
+  near('a live ATR override is the one measured against (20 → 15 pts is 0.75×ATR: not judged)', exitTradeScores(long({ exit: 95, low_during_position: 95, high_during_position: 115 }), { atr: 20 }).kept ?? -1, -1)
 }
 
 // ── 2 · Loss size on losers ──────────────────────────────────────────────────

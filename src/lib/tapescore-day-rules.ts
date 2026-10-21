@@ -89,23 +89,33 @@ export interface SizeUpInputs {
   qty_hits: number
 }
 
-/** Rule 2's inputs from one day's trades, in entry order. */
-export function sizeUpInputs(trades: readonly RulesTrade[]): SizeUpInputs {
+/** The trades rule 2 reads — entered while the day was red or right after a
+ *  loss — in entry order, each with its id (a trade without one gets its
+ *  position, as `toProxyTrades`). */
+function pressedTrades(trades: readonly RulesTrade[]): Array<{ t: RulesTrade; id: string }> {
   const order = trades.map((t, i) => ({ t, id: t.id ?? `#${i}` })).sort((a, b) => {
     const ta = a.t.entry_time ? Date.parse(a.t.entry_time) : Infinity
     const tb = b.t.entry_time ? Date.parse(b.t.entry_time) : Infinity
     if (ta !== tb) return ta - tb
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
   })
-  const pressed: SizeUpInputs['pressed'] = []
+  const out: Array<{ t: RulesTrade; id: string }> = []
   let running = 0
   let prevLost = false
-  order.forEach(({ t }, k) => {
-    if (k > 0 && (running < 0 || prevLost)) pressed.push(plannedRiskDollars(t))
-    running += t.pnl ?? 0
-    prevLost = t.pnl != null && t.pnl < 0
+  order.forEach((o, k) => {
+    if (k > 0 && (running < 0 || prevLost)) out.push(o)
+    running += o.t.pnl ?? 0
+    prevLost = o.t.pnl != null && o.t.pnl < 0
   })
-  return { pressed, qty_hits: pressingDrawdownIds(toProxyTrades(trades)).length }
+  return out
+}
+
+/** Rule 2's inputs from one day's trades, in entry order. */
+export function sizeUpInputs(trades: readonly RulesTrade[]): SizeUpInputs {
+  return {
+    pressed: pressedTrades(trades).map(({ t }) => plannedRiskDollars(t)),
+    qty_hits: pressingDrawdownIds(toProxyTrades(trades)).length,
+  }
 }
 
 /** Rule 2: how many trades sized up past the trader's usual risk spread
@@ -115,6 +125,18 @@ export function sizeUpFails(inp: SizeUpInputs | null | undefined, yardstick: Ris
   if (!yardstick || !(yardstick.mean > 0)) return inp.qty_hits ?? 0
   const limit = yardstick.mean + SIZE_UP_SDS * yardstick.sd
   return (inp.pressed ?? []).filter(r => r != null && r > limit + 1e-9).length
+}
+
+/** The trades rule 2 fails, by id — the same reading as `sizeUpFails`, for a
+ *  surface that names them (the Session behavior panel's "Pressing into
+ *  drawdown"; founder 2026-10-20: a bigger size at the same dollar risk, for a
+ *  quieter market, is not pressing). Null yardstick = the quantity rule. */
+export function sizeUpTradeIds(trades: readonly RulesTrade[], yardstick: RiskYardstick | null): string[] {
+  if (!yardstick || !(yardstick.mean > 0)) return pressingDrawdownIds(toProxyTrades(trades))
+  const limit = yardstick.mean + SIZE_UP_SDS * yardstick.sd
+  return pressedTrades(trades)
+    .filter(({ t }) => { const r = plannedRiskDollars(t); return r != null && r > limit + 1e-9 })
+    .map(({ id }) => id)
 }
 
 /**

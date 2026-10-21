@@ -23,7 +23,7 @@ import {
 import { includeFlowScoreInEntry } from '../src/lib/scoring-profile'
 import {
   dailyLossLimitBroken, effectiveAnalysis, effectiveProcess, hasFreshTrigger, noMistakesShare, toProxyTrades,
-  sizeUpFails, sizeUpInputs,
+  sizeUpFails, sizeUpInputs, sizeUpTradeIds,
 } from '../src/lib/tapescore-day-rules'
 import { dayTradeInputs, dayTradeSums } from '../src/lib/exit-rollup'
 import { computeBehavioralProxies, pressingDrawdownIds } from '../src/lib/behavioral-proxies'
@@ -257,7 +257,7 @@ console.log('rollup')
   check('the read-time fields are never cached', !('tapescore' in stored) && !('trade_sums' in stored))
   const back = fromStoredStats(JSON.parse(JSON.stringify(stored)), { id: on.id, date: on.date, day_type: null, day_types: null })
   check('a cached row scores identically', JSON.stringify(scoreDayRollups([...prior, back]).at(-1)!.tapescore) === JSON.stringify(on.tapescore))
-  check('STATS_VERSION is 14', STATS_VERSION === 14)
+  check('STATS_VERSION is 15', STATS_VERSION === 15)
   check('fresh at this version + same ATR setting', isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 1, ''))
   check('stale when the ATR setting changed', !isFreshStats({ stats_json: stored, stats_version: STATS_VERSION }, 2, ''))
   check('stale at the old version', !isFreshStats({ stats_json: stored, stats_version: 13 }, 1, ''))
@@ -320,6 +320,13 @@ console.log('read-time rules')
   check('the fallback is the recap proxy, unchanged', JSON.stringify(pressingDrawdownIds(toProxyTrades(sizeUp))) === JSON.stringify([sizeUp[1].id])
     && computeBehavioralProxies(toProxyTrades(sizeUp)).proxies.find(p => p.key === 'pressing_drawdown')?.evidence.join() === '2')
   check('sizeUpFails: yardstick vs fallback', sizeUpFails(sizeUpInputs(bigAfterLoss), usual) === 1 && sizeUpFails({ pressed: [500], qty_hits: 0 }, null) === 0)
+  // The Session behavior panel names the same trades (founder 2026-10-20: more lots at the same risk is not pressing).
+  check('sizeUpTradeIds = the trade sizeUpFails counts', JSON.stringify(sizeUpTradeIds(bigAfterLoss, usual)) === JSON.stringify([bigAfterLoss[1].id]))
+  check('sizeUpTradeIds: more lots at normal risk while red names nothing', sizeUpTradeIds(normalWhileRed, usual).length === 0)
+  check('sizeUpTradeIds: no yardstick -> the quantity rule', JSON.stringify(sizeUpTradeIds(sizeUp, null)) === JSON.stringify([sizeUp[1].id]))
+  check('the panel reads those ids: 1 -> 2 lots at $50 risk while red is not "pressing"',
+    computeBehavioralProxies(toProxyTrades(normalWhileRed), null, { pressingIds: sizeUpTradeIds(normalWhileRed, usual) }).proxies.find(p => p.key === 'pressing_drawdown')?.count === 0
+    && computeBehavioralProxies(toProxyTrades(normalWhileRed)).proxies.find(p => p.key === 'pressing_drawdown')?.count === 1)
   const lapse = p3Of(bigAfterLoss, usual)
   check('one lapse with 4 rails tracked stays Compliant', lapse.verdict === 'Compliant')
   check('a second failed rail makes it a Breach', p3Of(bigAfterLoss, usual, { P2: 'fail' }).verdict === 'Breach')
