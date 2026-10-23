@@ -58,3 +58,27 @@ export function emaOnTf(m1: Bar1m[], length: number, tf = 5): number[] {
     return n === 1 ? b.c : alphaAt(n) * b.c + (1 - alphaAt(n)) * emaPrev
   })
 }
+
+/**
+ * VWAP (24h or RTH) on 15s / 30s bars. Those bars start only two hours before
+ * the fill, so each anchor's sums are seeded with the 1m bars before the first
+ * sub-minute bar, then carried on bar by bar the same way (HLC3 × volume).
+ */
+export function vwapSub(bars: { t: number; h: number; l: number; c: number; v: number }[], m1: Bar1m[], rth: boolean): (number | null)[] {
+  const keyOf = (t: number) => {
+    if (!rth) return tradingDayKey(t)
+    const m = tod(t)
+    return m < 390 || m >= 780 ? null : Math.floor(t / 86400)
+  }
+  let key: number | null = null, pv = 0, v = 0
+  return bars.map(b => {
+    const k = keyOf(b.t)
+    if (k == null) { key = null; return null }
+    if (k !== key) {
+      key = k; pv = 0; v = 0
+      for (const m of m1) if (m.t < b.t && keyOf(m.t) === k) { pv += ((m.h + m.l + m.c) / 3) * m.v; v += m.v }
+    }
+    pv += ((b.h + b.l + b.c) / 3) * b.v; v += b.v
+    return v > 0 ? pv / v : null
+  })
+}

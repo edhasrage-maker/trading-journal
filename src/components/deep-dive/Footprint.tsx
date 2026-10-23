@@ -1,9 +1,10 @@
 'use client'
 
 /**
- * 1-minute delta footprint strip — port of the blind re-tag viewer's
- * renderFootprint(). Always 1-minute, whatever the chart timeframe (the
- * founder executes off the 1m footprint).
+ * Delta footprint strip — port of the blind re-tag viewer's renderFootprint().
+ * 1-minute or 5-minute columns, picked in its own title bar whatever the
+ * candle timeframe; 5-minute columns are the 1m ones added up (bars.ts
+ * footprintBars), with the same stats over 5-minute bars.
  *
  * Cells: delta per row, blue/red by sign, shaded by |delta| vs the bar's max.
  * Yellow box = bar POC. Side bars = 3+ stacked imbalances (green ask, red bid).
@@ -19,21 +20,23 @@ import { fpShade, type DeepDivePalette } from './palette'
 
 const RH = 15, CW = 80, AX = 68
 
-export default function Footprint1m({
-  m1, vap, entry, bracket, bars, g, ratio, minVol, palette: F, fillT = null,
+export default function Footprint({
+  m1, vap, tf = 1, entry, bracket, bars, g, ratio, minVol, palette: F, fillT = null,
 }: {
+  /** The columns: 1m bars, or 5m bars when `tf` is 5. */
   m1: Bar1m[]
   vap: VapRow[][]
+  tf?: 1 | 5
   entry: { price: number; entrySec: number }
-  /** Start of the fill's minute (PT-clock seconds). Blind ends on it as the partial bar; in Full review it sits mid-strip, so it's labelled "fill" by time. */
+  /** Start of the fill's column (PT-clock seconds). Blind ends on it as the partial bar; in Full review it sits mid-strip, so it's labelled "fill" by time. */
   fillT?: number | null
   bracket: { stop: number | null; tp: number | null }
   bars: number; g: number; ratio: number; minVol: number
   palette: DeepDivePalette['footprint']
 }) {
   const model = useMemo(
-    () => footprintModel(m1, vap, { bars, g, ratio, minVol }, entry, bracket),
-    [m1, vap, bars, g, ratio, minVol, entry, bracket],
+    () => footprintModel(m1, vap, { bars, g, ratio, minVol, barSec: tf * 60 }, entry, bracket),
+    [m1, vap, tf, bars, g, ratio, minVol, entry, bracket],
   )
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -95,7 +98,7 @@ export default function Footprint1m({
     <div className="flex flex-col h-full min-h-0 font-mono text-[11px]" style={{ color: 'var(--ts-mut)', background: F.bg }}>
       <div className="overflow-hidden flex-none">
         <div ref={headRef} className="flex whitespace-nowrap py-0.5 leading-[1.35]">
-          <div style={{ width: AX }} className="text-center flex-none"><div>1m</div><div>VPS</div></div>
+          <div style={{ width: AX }} className="text-center flex-none"><div>{tf}m</div><div>VPS</div></div>
           {cols.map(c => {
             const s = c.stats
             const vcol = s.tier ? (s.up ? F.vpsUp : F.vpsDown) : 'var(--ts-mut)'

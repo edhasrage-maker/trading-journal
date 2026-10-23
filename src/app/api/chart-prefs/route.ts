@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { clientError } from '@/lib/api-error'
 import { userConflict } from '@/lib/tenant-conflict'
 import { NextResponse } from 'next/server'
-import { REPLAY_FP_COLORS_KEY } from '@/lib/chart-prefs'
+import { REPLAY_FP_COLORS_KEY, REPLAY_LAYOUT_KEY } from '@/lib/chart-prefs'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -65,11 +65,12 @@ export async function POST(req: Request) {
   // landing in the table and being re-applied to the OTHER PC's localStorage
   // by its migration. Bump both sides together when LiveChart's key version
   // changes.
-  // Replay Review's footprint colours ride the same table (REPLAY_FP_COLORS_KEY).
+  // Replay Review's footprint colours and saved layout ride the same table
+  // (REPLAY_FP_COLORS_KEY, REPLAY_LAYOUT_KEY).
   for (const e of entries) {
     const k = e?.key
-    if (typeof k !== 'string' || (k !== 'livechart-prefs-v2' && !k.startsWith('livechart-view-v3-') && k !== REPLAY_FP_COLORS_KEY)) {
-      return NextResponse.json({ error: `invalid key: ${k} (must be livechart-prefs-v2, livechart-view-v3-* or ${REPLAY_FP_COLORS_KEY})` }, { status: 400 })
+    if (typeof k !== 'string' || (k !== 'livechart-prefs-v2' && !k.startsWith('livechart-view-v3-') && k !== REPLAY_FP_COLORS_KEY && k !== REPLAY_LAYOUT_KEY)) {
+      return NextResponse.json({ error: `invalid key: ${k} (must be livechart-prefs-v2, livechart-view-v3-*, ${REPLAY_FP_COLORS_KEY} or ${REPLAY_LAYOUT_KEY})` }, { status: 400 })
     }
   }
 

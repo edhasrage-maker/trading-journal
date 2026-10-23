@@ -14,9 +14,11 @@
  * Layout: left column = the Chart Settings switch (on opens every option right
  * there) above the week's trades. Then one title bar per chart — Candles,
  * Bubbles, Footprint — each with its own controls and a full-size button, and
- * dividers to drag. Bubbles and footprint start ON only when the trader's
- * profile uses order flow. On a phone: one chart at a time, the trades and
- * Chart Settings as sheets.
+ * dividers to drag. Candles pick 15s to 4h, the footprint 1m or 5m, each in its
+ * own title bar (on a phone, a row above the chart). Bubbles and footprint
+ * start ON only when the trader's profile uses order flow. On a phone: one
+ * chart at a time, the trades and Chart Settings as sheets. "Save layout" in
+ * Chart Settings keeps the setup on the account (useReplayLayout).
  *
  * Play forward ("Play from the fill"): the trader's choice to leave Blind.
  * The Full review payload is fetched then and revealed up to a moving cursor
@@ -30,21 +32,23 @@ import { format, parseISO } from 'date-fns'
 import { cn } from '@/lib/utils'
 import type { DeepDivePayload } from '@/lib/orderflow/server/deep-dive-payload'
 import type { DeepDiveSnapshot } from '@/lib/orderflow/server/snapshot'
+import type { SubMinute } from '@/lib/orderflow/sub-minute'
 import type { OfRoot } from '@/lib/orderflow/ticks'
-import { barsDone, bubblesDone, cutBars, cutBubbles } from '@/lib/orderflow/replay'
+import { barsDone, bubblesDone, cutBars, cutBubbles, cutSubBars, subDone } from '@/lib/orderflow/replay'
 import type { TradeVerdict } from '@/lib/supabase/types'
 import type { ReplayResult } from '@/app/api/deep-dive/results/route'
-import { toBars1m, vapPerBar, buildAgg, atr1m5m, htfToBars, SESSION_4H_OFFSET, type AggBar, type VapRow } from '@/lib/orderflow/bars'
+import { toBars1m, vapPerBar, buildAgg, subToAgg, footprintBars, atr1m5m, htfToBars, SESSION_4H_OFFSET, type AggBar, type VapRow } from '@/lib/orderflow/bars'
 import { volumeProfile, profileWindow } from '@/lib/orderflow/profile'
-import { vwap24h, vwapRth, emaOnTf } from '@/lib/orderflow/indicators'
-import { TimeChartController, fmtDT, fmtTs, type TimeChartOpts } from './time-chart'
+import { vwap24h, vwapRth, vwapSub, emaOnTf } from '@/lib/orderflow/indicators'
+import { TimeChartController, fmtDT, fmtDTs, fmtTs, type TimeChartOpts } from './time-chart'
 import { BubbleChartController } from './bubble-chart'
-import Footprint1m from './Footprint1m'
+import Footprint from './Footprint'
 import { BracketBox, LevelsNearEntry, type NearLevel } from './EntryPanels'
 import { PALETTE, withCandleColors, withFpColors } from './palette'
 import { useTheme } from '@/components/ThemeToggle'
 import { useFootprintColors } from './useFootprintColors'
-import { DEFAULTS, SETTINGS_KEY, TFS, isHtf, loadSettings, tfLabel, type ReplaySettings, type Tf } from './replay-settings'
+import { DEFAULTS, FP_TFS, SETTINGS_KEY, TFS, isHtf, isSub, loadSettings, tfLabel, withLayout, type ReplayLayout, type ReplaySettings, type Tf } from './replay-settings'
+import { useReplayLayout } from './useReplayLayout'
 import ChartSettingsPanel, { ChartSettingsToggle, SettingsIconButton } from './ChartSettings'
 import WeekTrades, { fmtUsd, rootOf, type WeekNav, type WeekTrade } from './WeekTrades'
 import CallBar from './CallBar'
@@ -144,7 +148,7 @@ export default function DeepDiveWorkspace({
   // server-cut at the fill only in Blind; a replay works from the Full review data
   const blind = !replay && mode === 'blind'
   const [settings, setSettings] = useState<ReplaySettings>(DEFAULTS)
-  const [result, setResult] = useState<{ key: string; htf: boolean; payload?: Payload; error?: string } | null>(null)
+  const [result, setResult] = useState<{ key: string; htf: boolean; sub: boolean; payload?: Payload; error?: string } | null>(null)
   const [results, setResults] = useState<Record<string, ReplayResult> | null>(null)
   const [saved, setSaved] = useState<Record<string, { call: Call; note: string }>>({})
   const [max, setMax] = useState<PaneKey | null>(null)
@@ -168,34 +172,46 @@ export default function DeepDiveWorkspace({
     })
   }, [])
   const resetAll = () => update({ ...DEFAULTS, open: true })
+  // the account's saved layout: applied on open when it is newer than this browser's, and by Reset
+  const applyLayout = useCallback((l: Partial<ReplayLayout>) => {
+    setSettings(s => {
+      const next = withLayout(s, l)
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)) } catch { /* not persisted */ }
+      return next
+    })
+  }, [])
+  const layout = useReplayLayout(settings, applyLayout)
 
   // ---- fetch the trade (server-cut when blind) ----
   // The 30m / 4h charts need 30-minute history. The hosted site always sends it;
   // the local build only when asked (it is a longer read), so a switch to 30m /
-  // 4h refetches once if the payload on hand doesn't carry it.
+  // 4h refetches once if the payload on hand doesn't carry it. The 15s / 30s
+  // charts need the sub-minute bars, which are only ever sent when asked for.
   const key = `${selectedId}|${blind ? 1 : 0}`
   const wantHtf = isHtf(settings.tf)
+  const wantSub = isSub(settings.tf)
   const have = result?.key === key ? result : null
-  const satisfied = !!have && (!wantHtf || have.htf)
+  const satisfied = !!have && (!wantHtf || have.htf) && (!wantSub || have.sub)
   // the last Blind snapshot: a replay starts from it (its partial fill bar) while the Full review data loads
   const [keep, setKeep] = useState<{ id: string; snap: DeepDiveSnapshot } | null>(null)
   useEffect(() => {
     if (!selectedId || satisfied) return
     let live = true
     const id = selectedId
-    fetch(`/api/deep-dive/trade?id=${id}&blind=${blind ? 1 : 0}${wantHtf ? '&htf=1' : ''}`, { cache: 'no-store' })
+    fetch(`/api/deep-dive/trade?id=${id}&blind=${blind ? 1 : 0}${wantHtf ? '&htf=1' : ''}${wantSub ? '&sub=1' : ''}`, { cache: 'no-store' })
       .then(async r => {
         const j = await r.json()
         if (!live) return
-        if (!r.ok) setResult({ key, htf: wantHtf, error: j.error ?? `HTTP ${r.status}` })
+        if (!r.ok) setResult({ key, htf: wantHtf, sub: wantSub, error: j.error ?? `HTTP ${r.status}` })
         else {
-          setResult({ key, htf: wantHtf || !!(j as Payload).snapshot?.htf, payload: j as Payload })
-          if ((j as Payload).blind) setKeep({ id, snap: (j as Payload).snapshot })
+          const snap = (j as Payload).snapshot
+          setResult({ key, htf: wantHtf || !!snap?.htf, sub: wantSub || !!snap?.sub, payload: j as Payload })
+          if ((j as Payload).blind) setKeep({ id, snap })
         }
       })
-      .catch(e => { if (live) setResult({ key, htf: wantHtf, error: String(e) }) })
+      .catch(e => { if (live) setResult({ key, htf: wantHtf, sub: wantSub, error: String(e) }) })
     return () => { live = false }
-  }, [selectedId, blind, key, wantHtf, satisfied])
+  }, [selectedId, blind, key, wantHtf, wantSub, satisfied])
 
   // ---- Play forward: the Full review data, revealed up to the cursor ----
   const FP = replay && have?.payload && !have.payload.blind ? have.payload : null
@@ -211,7 +227,14 @@ export default function DeepDiveWorkspace({
   const nBars = FS ? barsDone(FS, cursorT, atEnd) : 0
   const nBub = FS ? bubblesDone(FS.bubbles, cursorT) : 0
   const nExits = exitsSorted.filter(x => x.time <= cursorT).length
+  // 15s / 30s bars move on at their own pace: one shows when its 15 / 30 seconds have closed
+  const n15 = FS ? subDone(FS.sub?.s15, cursorT, atEnd) : 0, n30 = FS ? subDone(FS.sub?.s30, cursorT, atEnd) : 0
   const cutS = useMemo(() => (FS ? cutBars(FS, nBars, blindSnap) : null), [FS, nBars, blindSnap])
+  const cutSub = useMemo((): SubMinute | undefined => {
+    if (!FS?.sub) return undefined
+    const bs = blindSnap?.sub
+    return { from: FS.sub.from, s15: cutSubBars(FS.sub.s15, n15, bs?.s15), s30: cutSubBars(FS.sub.s30, n30, bs?.s30) }
+  }, [FS, blindSnap, n15, n30])
   const cutB = useMemo(() => (FS ? cutBubbles(FS.bubbles, nBub) : null), [FS, nBub])
   const cutExits = useMemo(() => exitsSorted.slice(0, nExits), [exitsSorted, nExits])
   const out = !!replay && !!FS && replay.far >= revealE
@@ -345,9 +368,12 @@ export default function DeepDiveWorkspace({
   const cutAtFill = replay ? !cutS : !!P?.blind
   const BUB = replay ? (cutS ? cutB : blindSnap?.bubbles ?? null) : S?.bubbles ?? null
   const EXITS = replay ? cutExits : P?.exits
+  const SUB = replay ? (cutS ? cutSub : blindSnap?.sub) : P?.snapshot.sub
   const inst = (S?.row.inst ?? P?.trade.inst ?? 'NQ') as OfRoot
   const G = settings.g[inst]
   const htfChart = isHtf(settings.tf)
+  const subChart = isSub(settings.tf)
+  const subBars = subChart && SUB ? (settings.tf === 0.25 ? SUB.s15 : SUB.s30) : null
   const fpPal = useMemo(() => withFpColors(pal.footprint, colors.mine, theme), [pal.footprint, colors.mine, theme])
   // the candle chart's palette: the theme with the trader's Up / Down candles
   const candlePal = useMemo(() => withCandleColors(pal, colors.mine), [pal, colors.mine])
@@ -384,21 +410,63 @@ export default function DeepDiveWorkspace({
   }, [S, cutAtFill])
 
   // 1m / 5m: the 1-minute window. 30m / 4h: the 30-minute history, continued by the window.
-  const { agg, fillAt } = useMemo((): { agg: AggBar[]; fillAt: number } => {
-    if (!D) return { agg: [], fillAt: 0 }
-    if (!htfChart) return { agg: buildAgg(D.m1, D.vap, settings.tf), fillAt: D.fillIdx }
-    const empty: VapRow[][] = D.hist.map(() => [])
-    return {
-      agg: buildAgg([...D.hist, ...D.m1], [...empty, ...D.vap], settings.tf, settings.tf === 240 ? SESSION_4H_OFFSET : 0),
-      fillAt: D.hist.length + D.fillIdx,
+  // 15s / 30s: the sub-minute bars (the 2 hours before the fill, on to the end in Full review).
+  const { agg, entryIndex } = useMemo((): { agg: AggBar[]; entryIndex: number } => {
+    if (!D || !S) return { agg: [], entryIndex: 0 }
+    const at = (a: AggBar[], fillAt: number) => ({ agg: a, entryIndex: Math.max(0, a.findIndex(b => b.mins.includes(Math.max(0, fillAt)))) })
+    if (subChart) {
+      if (!subBars) return { agg: [], entryIndex: 0 }
+      const a = subToAgg(subBars, D.m1)
+      let k = 0
+      while (k + 1 < a.length && a[k + 1].t <= S.times.entry) k++
+      return { agg: a, entryIndex: k }
     }
-  }, [D, settings.tf, htfChart])
+    if (!htfChart) return at(buildAgg(D.m1, D.vap, settings.tf), D.fillIdx)
+    const empty: VapRow[][] = D.hist.map(() => [])
+    return at(buildAgg([...D.hist, ...D.m1], [...empty, ...D.vap], settings.tf, settings.tf === 240 ? SESSION_4H_OFFSET : 0), D.hist.length + D.fillIdx)
+  }, [D, S, settings.tf, htfChart, subChart, subBars])
+
+  // VWAP and the 5m EMAs, one value per chart bar (none on 30m / 4h)
+  const lines = useMemo(() => {
+    const none = agg.map(() => null)
+    if (!D || htfChart) return { vwap: none, rvwap: none, ema9: none, ema20: none }
+    if (subChart) {
+      // the 5m EMAs through the 5m closes, plus the newest bar live (as on the 1m chart)
+      const s = subBars?.s ?? 15
+      const ema = (vals: number[]) => agg.map((b, i) => (b.mins.length && (i === agg.length - 1 || (b.t + s) % 300 === 0) ? vals[b.mins[0]] : null))
+      return { vwap: vwapSub(agg, D.m1, false), rvwap: vwapSub(agg, D.m1, true), ema9: ema(D.ema9), ema20: ema(D.ema20) }
+    }
+    const at = (vals: (number | null)[]) => agg.map(b => vals[b.mins[b.mins.length - 1]] ?? null)
+    // The 5m EMAs on the 1m chart: one point per completed 5m bar (its last minute) plus the newest bar, live —
+    // a smooth line through the 5m closes, not the forming 5m bar re-read every minute (that drew a sawtooth)
+    const ema5 = (vals: (number | null)[]) => {
+      const v = at(vals)
+      if (settings.tf !== 1) return v
+      return v.map((x, i) => (i === agg.length - 1 || Math.floor(agg[i].t / 300) !== Math.floor(agg[i + 1].t / 300) ? x : null))
+    }
+    return { vwap: at(D.vwap), rvwap: at(D.rvwap), ema9: ema5(D.ema9), ema20: ema5(D.ema20) }
+  }, [D, agg, htfChart, subChart, subBars, settings.tf])
 
   // the footprint's entry and bracket, kept as the same objects while a replay moves on (its model re-reads on change)
   const ePx = S?.row.price ?? 0, eSec = S ? +S.row.time.slice(6, 8) : 0
   const fpEntry = useMemo(() => ({ price: ePx, entrySec: eSec }), [ePx, eSec])
   const bStop = S?.bracket.stop ?? null, bTp = S?.bracket.tp ?? null
   const fpBracket = useMemo(() => ({ stop: bStop, tp: bTp }), [bStop, bTp])
+
+  // the footprint's columns: 1m, or 5m added up from them. In Blind and a replay the last one is still
+  // forming (its VPS over the seconds it covers); Full review shows the fill's column and the five after it.
+  const fpTf = settings.fpTf
+  const cut = cutAtFill || !!replay
+  const forming = cutAtFill || (!!replay && !atEnd)
+  const fpCols = useMemo(() => {
+    if (!D || !S) return null
+    const sec = fpTf * 60, fillT = Math.floor(S.times.entry / sec) * sec
+    const { bars, vap } = footprintBars(D.m1, D.vap, fpTf, forming ? { entrySec: eSec } : undefined)
+    if (cut) return { bars, vap, fillT }
+    let fi = 0
+    for (let i = 0; i < bars.length && bars[i].t <= fillT; i++) fi = i
+    return { bars: bars.slice(0, fi + 6), vap, fillT }
+  }, [D, S, fpTf, cut, forming, eSec])
 
   const profile = useMemo(() => {
     if (!D || !S || settings.prof === 'off') return null
@@ -434,8 +502,8 @@ export default function DeepDiveWorkspace({
   // VWAP, the 5m EMAs and bar POC are intraday reads; they don't belong on a 30m / 4h chart
   const timeOpts: Omit<TimeChartOpts, 'palette'> = useMemo(() => ({
     ha: settings.ha, levels: settings.lv, vwap: settings.vwap && !htfChart, ema: settings.ema && !htfChart,
-    poc: settings.poc && !htfChart, deltaVol: settings.dv,
-  }), [settings.ha, settings.lv, settings.vwap, settings.ema, settings.poc, settings.dv, htfChart])
+    poc: settings.poc && !htfChart, deltaVol: settings.dv, seconds: subChart,
+  }), [settings.ha, settings.lv, settings.vwap, settings.ema, settings.poc, settings.dv, htfChart, subChart])
 
   useEffect(() => {
     if (!showTime || !timeEl.current || !D || !S) return
@@ -445,26 +513,16 @@ export default function DeepDiveWorkspace({
       timeCtl.current = new TimeChartController(timeEl.current, { ...timeOpts, palette: candlePal })
       timeCtl.current.onCrosshair = i => setLegendIdx(i)
     }
-    const none = agg.map(() => null)
-    const at = (vals: (number | null)[]) => (htfChart ? none : agg.map(b => vals[b.mins[b.mins.length - 1]] ?? null))
-    // The 5m EMAs on the 1m chart: one point per completed 5m bar (its last minute) plus the newest bar, live —
-    // a smooth line through the 5m closes, not the forming 5m bar re-read every minute (that drew a sawtooth)
-    const ema5 = (vals: (number | null)[]) => {
-      const v = at(vals)
-      if (settings.tf !== 1) return v
-      return v.map((x, i) => (i === agg.length - 1 || Math.floor(agg[i].t / 300) !== Math.floor(agg[i + 1].t / 300) ? x : null))
-    }
-    const entryIndex = Math.max(0, agg.findIndex(b => b.mins.includes(Math.max(0, fillAt))))
     const viewKey = `${viewOf}|${settings.tf}|${D.hist.length}`
     const resetView = timeCtl.current.bars.length === 0 || lastKey.current !== viewKey
     lastKey.current = viewKey
     timeCtl.current.render({
-      agg, vwap: at(D.vwap), rvwap: at(D.rvwap), ema9: ema5(D.ema9), ema20: ema5(D.ema20), profile,
+      agg, vwap: lines.vwap, rvwap: lines.rvwap, ema9: lines.ema9, ema20: lines.ema20, profile,
       levels: S.levels, bracket: S.bracket,
       entry: { price: S.row.price, direction: S.row.direction, time: S.times.entry, label: `fill ${S.row.time}` },
       exits: EXITS ?? [], entryIndex,
     }, { ...timeOpts, palette: candlePal }, resetView, following)
-  }, [D, S, EXITS, agg, fillAt, htfChart, profile, timeOpts, candlePal, showTime, viewOf, following, settings.tf, layoutKey])
+  }, [D, S, EXITS, agg, entryIndex, lines, profile, timeOpts, candlePal, showTime, viewOf, following, settings.tf, layoutKey])
 
   useEffect(() => () => { timeCtl.current?.destroy(); timeCtl.current = null }, [showTime])
 
@@ -538,7 +596,7 @@ export default function DeepDiveWorkspace({
     if (!agg.length) return ''
     const b = legendIdx != null && agg[legendIdx] ? agg[legendIdx] : agg[agg.length - 1]
     const f = (x: number) => x.toFixed(2)
-    return `${fmtDT(b.t)}${b.partial ? `  (partial → fill ${S?.row.time})` : ''}  ${tfLabel(settings.tf)}\nO ${f(b.o)}  H ${f(b.h)}  L ${f(b.l)}  C ${f(b.c)}  V ${b.v}` +
+    return `${(subChart ? fmtDTs : fmtDT)(b.t)}${b.partial ? `  (partial → fill ${S?.row.time})` : ''}  ${tfLabel(settings.tf)}\nO ${f(b.o)}  H ${f(b.h)}  L ${f(b.l)}  C ${f(b.c)}  V ${b.v}` +
       (htfChart ? `\nΔ ${b.d}  bid ${b.bv}  ask ${b.av}` : `\nΔ ${b.d}  (min ${b.dmin}  max ${b.dmax})  bid ${b.bv}  ask ${b.av}`)
   })()
   const bubLegend = (() => {
@@ -573,7 +631,9 @@ export default function DeepDiveWorkspace({
     : cutAtFill
     ? { text: phone ? `Blind · stops at ${S?.cutoff_label}` : `Blind · chart stops at ${S?.cutoff_label}, one second before your fill`, bg: theme === 'light' ? '#FFF1DC' : 'rgba(255,159,26,.16)', ink: theme === 'light' ? '#7A4A00' : '#FFC266' }
     : { text: phone ? 'Full review' : 'Full review · runs 30 minutes past your exit', bg: theme === 'light' ? '#E3ECF7' : 'rgba(79,151,206,.18)', ink: theme === 'light' ? '#1F4E7A' : '#9CC8EA' }
-  const htfNote = htfChart && !satisfied ? `loading ${tfLabel(settings.tf)} history…` : htfChart && D && D.hist.length === 0 ? 'no earlier history available for this date' : null
+  const htfNote = htfChart && !satisfied ? `loading ${tfLabel(settings.tf)} history…` : htfChart && D && D.hist.length === 0 ? 'no earlier history available for this date'
+    : subChart && !subBars ? (satisfied ? `no ${tfLabel(settings.tf)} bars for this trade` : `loading ${tfLabel(settings.tf)} bars…`)
+    : subChart && subBars && !subBars.t.length ? 'no trades in the 2 hours before your fill' : null
   const callsMap = useMemo(() => Object.fromEntries(Object.entries(saved).map(([k, v]) => [k, v.call])), [saved])
   const savedCall = selectedId ? saved[selectedId] ?? (results?.[selectedId] ? { call: results[selectedId].call, note: results[selectedId].note } : null) : null
   const onSaved = (id: string, v: { call: Call; note: string }) => setSaved(m => ({ ...m, [id]: v }))
@@ -624,23 +684,48 @@ export default function DeepDiveWorkspace({
       </>
     ) : <p className="p-4 text-[12.5px] text-gray-400">No bubble data for this trade.</p>
   )
-  const footprintBody = D && S && (
-    <Footprint1m
-      // Blind and a replay: every bar up to the moment; Full review: the fill and the five bars after it
-      m1={cutAtFill || replay ? D.m1 : D.m1.slice(0, Math.min(D.m1.length, D.fillIdx + 6))}
-      vap={D.vap}
+  const fpShown = phone ? Math.min(5, settings.fpN) : settings.fpN
+  const footprintBody = fpCols && (
+    <Footprint
+      m1={fpCols.bars}
+      vap={fpCols.vap}
+      tf={fpTf}
       entry={fpEntry}
-      fillT={Math.floor(S.times.entry / 60) * 60}
+      fillT={fpCols.fillT}
       bracket={fpBracket}
-      bars={phone ? Math.min(5, settings.fpN) : settings.fpN} g={G.fp} ratio={settings.fpR} minVol={G.min} palette={fpPal}
+      bars={fpShown} g={G.fp} ratio={settings.fpR} minVol={G.min} palette={fpPal}
     />
   )
+  // each chart's own timeframe: candles in their title bar, the footprint in its own (a row above the chart on a phone)
+  const tfBtn = (on: boolean) => cn('text-[13px]', on ? 'bg-blue-500/15 text-gray-100 font-semibold shadow-[inset_0_-2px_0_var(--color-blue-500)]' : 'text-gray-400')
+  const candleTfs = (
+    <span role="group" aria-label="Candle timeframe" className="inline-flex gap-0.5">
+      {TFS.map(t => <button key={t} type="button" className={btn(settings.tf === t)} aria-pressed={settings.tf === t} onClick={() => update({ tf: t })}>{tfLabel(t)}</button>)}
+    </span>
+  )
+  const fpTfs = (
+    <span role="group" aria-label="Footprint timeframe" className="inline-flex gap-0.5">
+      {FP_TFS.map(t => <button key={t} type="button" className={btn(fpTf === t)} aria-pressed={fpTf === t} onClick={() => update({ fpTf: t })}>{t}m</button>)}
+    </span>
+  )
+  const phoneTfRow = tab === 'candles' ? (
+    <div role="group" aria-label="Candle timeframe" className="h-11 flex-none grid grid-cols-6 border-b border-gray-800">
+      {TFS.map(t => <button key={t} type="button" aria-pressed={settings.tf === t} onClick={() => update({ tf: t })} className={tfBtn(settings.tf === t)}>{tfLabel(t)}</button>)}
+    </div>
+  ) : tab === 'fp' ? (
+    <div className="h-11 flex-none flex items-stretch border-b border-gray-800">
+      <span role="group" aria-label="Footprint timeframe" className="flex">
+        {FP_TFS.map(t => <button key={t} type="button" aria-pressed={fpTf === t} onClick={() => update({ fpTf: t })} className={cn('w-[58px]', tfBtn(fpTf === t))}>{t}m</button>)}
+      </span>
+      <span className="self-center ml-2.5 text-[12.5px] text-gray-400">last {fpShown} bars</span>
+    </div>
+  ) : null
   const status = (!S && !!selectedId)
     ? (have?.error ? <p className="p-6 text-[13px] text-red-400">{have.error}</p> : <p className="p-6 text-[13px] text-gray-400">Building the chart as of the fill…</p>)
     : have?.error ? <p className="p-6 text-[13px] text-red-400">{have.error}</p> : null
 
   const settingsPanel = (compact: boolean) => (
-    <ChartSettingsPanel s={settings} update={update} inst={inst} ofDefault={usesOrderFlow} colors={colors} onResetAll={resetAll} compact={compact} />
+    <ChartSettingsPanel s={settings} update={update} inst={inst} ofDefault={usesOrderFlow} colors={colors} layout={layout} onResetAll={resetAll} compact={compact} />
   )
   const weekList = (big: boolean) => (
     <WeekTrades trades={trades} selectedId={selectedId} onSelect={select} blind={hide} results={hide ? null : results} calls={callsMap} week={week} onWeek={goWeek} big={big} />
@@ -681,7 +766,9 @@ export default function DeepDiveWorkspace({
             ))}
           </div>
         )}
-        <section aria-label={TAB_LABEL[tab]} className="flex-1 min-h-0 mt-2 relative border border-gray-800 rounded-md overflow-hidden" style={{ background: pal.chart.bg }}>
+        <section aria-label={TAB_LABEL[tab]} className="flex-1 min-h-0 mt-2 flex flex-col border border-gray-800 rounded-md overflow-hidden" style={{ background: pal.chart.bg }}>
+          {trades.length > 0 && D && S && phoneTfRow}
+          <div className="flex-1 min-h-0 relative">
           {trades.length === 0 ? <p className="p-4 text-[13px] text-gray-400">No trades this week.</p>
             : tab === 'yours' ? <div className="absolute inset-0 overflow-y-auto p-3">{yoursBody(true)}</div>
             : status ?? (D && S && (
@@ -692,6 +779,7 @@ export default function DeepDiveWorkspace({
           {/* replaying: the clock on every chart (the candles carry it already) */}
           {replay && S && (tab === 'bubbles' || tab === 'fp') && <div className="absolute left-2 top-1.5 z-10 pointer-events-none">{chipEl}</div>}
           {!replay && D && S && tab !== 'yours' && trades.length > 0 && <PlayFromFillPill onClick={startReplay} />}
+          </div>
         </section>
         {controls(true)}
         {callBar(true)}
@@ -757,9 +845,7 @@ export default function DeepDiveWorkspace({
                           style={{ flex: both ? `0 0 calc(${settings.split * 100}% - 5px)` : '1 1 0', background: pal.chart.bg }}
                           controls={(
                             <>
-                              <span role="group" aria-label="Timeframe" className="inline-flex gap-0.5">
-                                {TFS.map(t => <button key={t} type="button" className={btn(settings.tf === t)} aria-pressed={settings.tf === t} onClick={() => update({ tf: t })}>{tfLabel(t)}</button>)}
-                              </span>
+                              {candleTfs}
                               <button type="button" onClick={() => timeCtl.current?.focusFill()} className="ml-auto px-2 py-[2px] border border-gray-800 rounded-[4px] text-[12px] text-gray-400 hover:text-gray-100">Back to the fill</button>
                             </>
                           )}
@@ -787,7 +873,8 @@ export default function DeepDiveWorkspace({
                           <span className="w-[34px] h-[3px] rounded-sm group-hover:bg-blue-500 group-focus:bg-blue-500" style={{ background: 'var(--ts-line)' }} />
                         </div>
                       )}
-                      <Pane label="Footprint" title="Footprint" sub={`1 minute · last ${settings.fpN} bars`} maxed={maxed === 'fp'} onMax={() => toggleMax('fp')}
+                      <Pane label="Footprint" title="Footprint" maxed={maxed === 'fp'} onMax={() => toggleMax('fp')}
+                        controls={<>{fpTfs}<span className="text-gray-400">last {settings.fpN} bars</span></>}
                         style={(showTime || showBubbles) ? { height: settings.fpH, flex: 'none', background: fpPal.bg } : { flex: '1 1 0', background: fpPal.bg }}>
                         {footprintBody}
                       </Pane>

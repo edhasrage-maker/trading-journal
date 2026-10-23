@@ -11,6 +11,10 @@
  *    partial entry bar); VPS tier 1/2/3 at >= 2x / 3x / 4x the median VPS of
  *    the prior 10 bars (median = sorted[n/2]); delta spike = |delta| >= 2x the
  *    median |delta| of the prior 10 bars.
+ *
+ *  5-minute columns (the 1m bars added up, bars.ts footprintBars) use the same
+ *  rules over the prior 10 five-minute bars, with VPS = volume / 300, or / the
+ *  seconds a still-forming column covers (Bar1m.secs).
  */
 import type { Bar1m, VapRow } from './bars'
 
@@ -24,11 +28,11 @@ export interface FootprintStats {
   dSpike: boolean
 }
 
-/** Stats for bar i. `entrySec` = the fill's seconds-past-the-minute. */
-export function footprintStats(m1: Bar1m[], i: number, entrySec: number): FootprintStats {
-  const vpsOf = (b: Bar1m) => b.v / (b.partial ? Math.max(1, entrySec) : 60)
+/** Stats for bar i. `entrySec` = the fill's seconds-past-the-minute; `barSec` = the bars' length (60 or 300). */
+export function footprintStats(m1: Bar1m[], i: number, entrySec: number, barSec = 60): FootprintStats {
+  const vpsOf = (b: Bar1m) => b.v / (b.secs ?? (b.partial ? Math.max(1, entrySec) : barSec))
   const b = m1[i], vps = vpsOf(b), d = b.d, pv: number[] = [], pd: number[] = []
-  for (let k = 1; k <= 10 && i - k >= 0; k++) { const q = m1[i - k]; pv.push(q.v / 60); pd.push(Math.abs(q.d)) }
+  for (let k = 1; k <= 10 && i - k >= 0; k++) { const q = m1[i - k]; pv.push(q.v / barSec); pd.push(Math.abs(q.d)) }
   pv.sort((x, y) => x - y); pd.sort((x, y) => x - y)
   const mv = pv.length ? pv[Math.floor(pv.length / 2)] : 0, md = pd.length ? pd[Math.floor(pd.length / 2)] : 0
   const r = mv > 0 ? vps / mv : 0, tier = r >= 4 ? 3 : r >= 3 ? 2 : r >= 2 ? 1 : 0
@@ -70,6 +74,8 @@ export interface FootprintOptions {
   /** Imbalance ratio, e.g. 3 = 300%. */
   ratio: number
   minVol: number
+  /** Bar length in seconds: 60 (default) or 300 for the 5-minute footprint. */
+  barSec?: number
 }
 
 const rowOf = (price: number, g: number) => Math.floor(Math.round(price * 4) / g) * g
@@ -103,7 +109,7 @@ export function footprintModel(
       }
     }
     runs(askImb, 'ask'); runs(bidImb, 'bid')
-    cols.push({ i, bar: b, stats: footprintStats(m1, i, entry.entrySec), klo, khi, cells: m, maxAbsDelta: mxd, poc: pk, askImb, bidImb, stacked })
+    cols.push({ i, bar: b, stats: footprintStats(m1, i, entry.entrySec, opts.barSec ?? 60), klo, khi, cells: m, maxAbsDelta: mxd, poc: pk, askImb, bidImb, stacked })
   }
   const eK = rowOf(entry.price, g)
   let kmin = eK, kmax = eK

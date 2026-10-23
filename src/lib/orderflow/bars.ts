@@ -5,6 +5,7 @@
  * / buildAgg() (Heiken-Ashi, per-bar POC, session separators).
  */
 import type { MinuteBars, VapByMinute } from './minute-bars'
+import type { SubBars } from './sub-minute'
 
 export interface Bar1m {
   /** PT-clock epoch seconds. */
@@ -15,6 +16,12 @@ export interface Bar1m {
   pv: number; vv: number
   /** The entry minute, cut at the fill. */
   partial: boolean
+  /**
+   * Seconds a still-forming bar covers (the 5m footprint's last column in
+   * Blind or a replay). Unset: the bar's full length, or on the partial 1m bar
+   * the seconds before the fill.
+   */
+  secs?: number
 }
 
 /** [priceTicks, bidVol, askVol] */
@@ -96,21 +103,15 @@ export function aggregateFrom(src: Bar1m[], tf: number, offsetSec = 0) {
   return out
 }
 
-/** Timeframe bars with Heiken-Ashi, per-bar POC and session separators (viewer buildAgg). */
-export function buildAgg(m1: Bar1m[], vap: VapRow[][], tf: number, offsetSec = 0): AggBar[] {
-  const agg = aggregateFrom(m1, tf, offsetSec) as AggBar[]
+function heikenAshi(agg: AggBar[]) {
   let ho = 0, hc = 0
   agg.forEach((b, k) => {
     const c = (b.o + b.h + b.l + b.c) / 4, o = k === 0 ? (b.o + b.c) / 2 : (ho + hc) / 2
     b.ho = o; b.hc = c; b.hh = Math.max(b.h, o, c); b.hl = Math.min(b.l, o, c); ho = o; hc = c
   })
-  agg.forEach(b => {
-    const m = new Map<number, number>()
-    b.mins.forEach(i => (vap[i] ?? []).forEach(([tk, bb, aa]) => m.set(tk, (m.get(tk) || 0) + bb + aa)))
-    let best = -1, bt: number | null = null
-    m.forEach((v, tk) => { if (v > best) { best = v; bt = tk } })
-    b.poc = bt != null ? bt / 4 : null
-  })
+}
+
+function sessionMarks(agg: AggBar[]) {
   agg.forEach((b, k) => {
     b.mark = null; if (k === 0) return
     const p = agg[k - 1], tp = tod(p.t), tc = tod(b.t)
@@ -119,7 +120,68 @@ export function buildAgg(m1: Bar1m[], vap: VapRow[][], tf: number, offsetSec = 0
     else if ((tp < 780 && !dayChange) && tc >= 780 && tc < 900) b.mark = 'close'
     else if (b.t - p.t > 3600 * 1.5 || (tp < 900 && tc >= 900 && !dayChange)) b.mark = 'eth'
   })
+}
+
+/** Timeframe bars with Heiken-Ashi, per-bar POC and session separators (viewer buildAgg). */
+export function buildAgg(m1: Bar1m[], vap: VapRow[][], tf: number, offsetSec = 0): AggBar[] {
+  const agg = aggregateFrom(m1, tf, offsetSec) as AggBar[]
+  heikenAshi(agg)
+  agg.forEach(b => {
+    const m = new Map<number, number>()
+    b.mins.forEach(i => (vap[i] ?? []).forEach(([tk, bb, aa]) => m.set(tk, (m.get(tk) || 0) + bb + aa)))
+    let best = -1, bt: number | null = null
+    m.forEach((v, tk) => { if (v > best) { best = v; bt = tk } })
+    b.poc = bt != null ? bt / 4 : null
+  })
+  sessionMarks(agg)
   return agg
+}
+
+/**
+ * 15s / 30s bars (payload `sub`) as chart bars: Heiken-Ashi, the server's bar
+ * POC and session separators. `mins` holds the 1m bar each one falls in (empty
+ * when that minute isn't in `m1`), so minute-based reads can find it.
+ */
+export function subToAgg(sb: SubBars, m1: Bar1m[]): AggBar[] {
+  let j = 0
+  const n = sb.t.length
+  const agg: AggBar[] = sb.t.map((t, i) => {
+    while (j + 1 < m1.length && m1[j + 1].t <= t) j++
+    const inMin = m1.length > 0 && m1[j].t <= t && t < m1[j].t + 60
+    return {
+      t, o: sb.o[i], h: sb.h[i], l: sb.l[i], c: sb.c[i], v: sb.v[i], bv: sb.bv[i], av: sb.av[i],
+      d: sb.d[i], dmin: sb.dmin[i], dmax: sb.dmax[i], pv: 0, vv: sb.v[i],
+      mins: inMin ? [j] : [], partial: sb.partial && i === n - 1,
+      ho: 0, hc: 0, hh: 0, hl: 0, poc: sb.poc[i], mark: null,
+    }
+  })
+  heikenAshi(agg)
+  sessionMarks(agg)
+  return agg
+}
+
+/**
+ * Footprint columns at `tf` minutes: the 1m bars and their volume-at-price
+ * added up (rows in ascending price). tf = 1 hands the 1m bars back as they are.
+ *
+ * `live` (Blind, or a replay that hasn't reached the end): the last column is
+ * still forming, so it records the seconds it covers — up to the fill on the
+ * partial minute (`entrySec` past it), else to the end of its last minute.
+ */
+export function footprintBars(m1: Bar1m[], vap: VapRow[][], tf: number, live?: { entrySec: number }): { bars: Bar1m[]; vap: VapRow[][] } {
+  if (tf === 1) return { bars: m1, vap }
+  const agg = aggregateFrom(m1, tf)
+  const bars: Bar1m[] = agg.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, bv: b.bv, av: b.av, d: b.d, dmin: b.dmin, dmax: b.dmax, pv: b.pv, vv: b.vv, partial: b.partial }))
+  const last = bars[bars.length - 1], lm = m1[m1.length - 1]
+  if (live && last && lm) last.secs = Math.max(1, Math.min(tf * 60, lm.t + (lm.partial ? Math.max(1, live.entrySec) : 60) - last.t))
+  return {
+    bars,
+    vap: agg.map(b => {
+      const m = new Map<number, [number, number]>()
+      b.mins.forEach(i => (vap[i] ?? []).forEach(([tk, bb, aa]) => { const e = m.get(tk); if (e) { e[0] += bb; e[1] += aa } else m.set(tk, [bb, aa]) }))
+      return [...m.entries()].sort((x, y) => x[0] - y[0]).map(([tk, [bb, aa]]) => [tk, bb, aa] as VapRow)
+    }),
+  }
 }
 
 /** True range series: first bar's own range, then vs the previous close. */

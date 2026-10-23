@@ -26,6 +26,7 @@ import { bubbles40t, BUBBLE_CFG, type BubbleChart } from '../bubbles40t'
 import { levelsAsOf, weeklyAnchor, type Level } from '../levels'
 import { plannedBracket, atrFallback14, type PlannedBracket } from '../bracket'
 import { pyRound } from '../pymath'
+import { subMinute, SUB_LOOKBACK_MS, type SubMinute } from '../sub-minute'
 
 export interface SnapshotRequest {
   root: OfRoot
@@ -48,6 +49,8 @@ export interface SnapshotRequest {
   displayEndUtcMs?: number
   /** Also return 30-minute history before the window, for the 30m / 4h charts. */
   htf?: boolean
+  /** Also return 15s / 30s bars from 2 hours before the fill, for the sub-minute charts. */
+  sub?: boolean
 }
 
 /** Days of 30-minute history returned before the window (≈ 170 four-hour bars). */
@@ -79,6 +82,12 @@ export interface DeepDiveSnapshot {
    * charts continue from these with the window's own 1-minute bars.
    */
   htf?: HtfBars
+  /**
+   * 15- and 30-second bars from 2 hours before the fill to where the data
+   * ends — built from the same cut ticks, so in blind they stop before the
+   * fill second like everything else.
+   */
+  sub?: SubMinute
   /** Proof of the cut: the fill instant, where the data ends and the newest tick that made it in. */
   cut: { blind: boolean; fill_utc: string; data_end_utc: string; last_tick_utc: string | null; ticks: number; contracts: string[] }
 }
@@ -196,6 +205,10 @@ export function buildSnapshot(req: SnapshotRequest, source?: TickSource): DeepDi
     const shown = blind ? { bars, vap, hasPartial } : windowBars(all.ticks, all.byMinute, NaN)
     const shownTicks = blind ? ticks : all.ticks
     const B = shown.bars
+    // sub-minute bars take the completed 1m bars' order (file order within the minute)
+    const sub = req.sub
+      ? subMinute(blind ? byMinute : all.byMinute, Math.floor((entryPt - SUB_LOOKBACK_MS) / 60_000) * 60_000, blind ? entryPt : null)
+      : undefined
 
     const r2 = (a: number[]) => a.map(v => pyRound(v, 2))
     const r0 = (a: number[]) => a.map(v => pyRound(v, 0))
@@ -224,6 +237,7 @@ export function buildSnapshot(req: SnapshotRequest, source?: TickSource): DeepDi
       // Full review also carries what Play forward needs to show the bubbles as they stood at any moment
       bubbles: bubbles40t(shownTicks, req.root, undefined, { raw: !blind }),
       ...(htf ? { htf } : {}),
+      ...(sub ? { sub } : {}),
       cut: {
         blind,
         fill_utc: new Date(req.entryUtcMs).toISOString(),

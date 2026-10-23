@@ -54,6 +54,8 @@ export interface DeepDiveOptions {
   blind: boolean; atrStopTarget: number; tp1RMultiple: number; nowMs?: number
   /** Include 30-minute history for the 30m / 4h charts (always on from the tape, where it is free). */
   htf?: boolean
+  /** Include 15s / 30s bars (only when one of those charts is picked: they add to the payload). */
+  sub?: boolean
 }
 
 export class DeepDiveError extends Error {
@@ -93,6 +95,7 @@ function prepare(row: DeepDiveTradeRow, opts: DeepDiveOptions): { req: SnapshotR
       recordedStop: num(row.stop_price), recordedTp: num(row.tp1_price), entryAtr: num(row.entry_atr_1m),
       displayEndUtcMs,
       htf: opts.htf,
+      sub: opts.sub,
     },
     exits,
   }

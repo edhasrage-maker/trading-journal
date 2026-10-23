@@ -23,17 +23,24 @@
  *    frame that was encoded, and — real data, local only — a trade rebuilt from a
  *    published tape alone must equal the same trade built from .scid, blind and
  *    full review. One fixture by default; ORDERFLOW_TAPE_ALL=1 runs them all.
+ *
+ * Replay Review's own layouts (no reference to match, so self-consistency): the
+ * 15s / 30s bars add up to the 1m bars minute by minute — in blind that pins
+ * them before the fill second — and asking for them changes nothing else; the
+ * 5m footprint is the 1m footprint added up.
  */
 import { readFileSync, existsSync, readdirSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
-import { gunzipSync } from 'zlib'
+import { gunzipSync, gzipSync } from 'zlib'
 import { createHash } from 'crypto'
 import { join } from 'path'
 import { pyRound, rint, npPercentileLinear, runningPercentileLinear } from '../src/lib/orderflow/pymath.ts'
 import { bubbles40t, bubblesAsOf } from '../src/lib/orderflow/bubbles40t.ts'
-import { sliceTicks } from '../src/lib/orderflow/ticks.ts'
+import { sliceTicks, fillPtMinutes } from '../src/lib/orderflow/ticks.ts'
 import { valueAreaTicks, volumeProfile, profileWindow, type ProfileWindow } from '../src/lib/orderflow/profile.ts'
-import { toBars1m, vapPerBar, buildAgg, atr1m5m } from '../src/lib/orderflow/bars.ts'
+import { toBars1m, vapPerBar, buildAgg, atr1m5m, footprintBars, type Bar1m, type VapRow } from '../src/lib/orderflow/bars.ts'
+import { aggregateMinutes } from '../src/lib/orderflow/minute-bars.ts'
+import { subMinuteBars, type SubBars } from '../src/lib/orderflow/sub-minute.ts'
 import { footprintModel } from '../src/lib/orderflow/footprint.ts'
 import { ptToUtcMs, utcToPtMs, ptDate, ptMidnight } from '../src/lib/orderflow/pt-clock.ts'
 import type { TickFrame, OfRoot } from '../src/lib/orderflow/ticks.ts'
@@ -263,6 +270,69 @@ console.log('viewer-side functions on the synthetic payload')
 checkViewer('synthetic', SYN.payload, SYN.viewer)
 
 // ---------------------------------------------------------------- real trades (local only)
+// ---------------------------------------------------------------- own layouts: 15s / 30s bars, 5m footprint
+/** Sub-minute bars added up per minute (or per `per` seconds): h, l, volumes and delta, plus open / close when asked. */
+function rollUp(sb: SubBars, per: number, oc: boolean) {
+  const out = new Map<number, Record<string, number>>()
+  sb.t.forEach((t, i) => {
+    const k = Math.floor(t / per) * per, e = out.get(k)
+    if (!e) out.set(k, { h: sb.h[i], l: sb.l[i], v: sb.v[i], bv: sb.bv[i], av: sb.av[i], d: sb.d[i], ...(oc ? { o: sb.o[i], c: sb.c[i] } : {}) })
+    else { e.h = Math.max(e.h, sb.h[i]); e.l = Math.min(e.l, sb.l[i]); e.v += sb.v[i]; e.bv += sb.bv[i]; e.av += sb.av[i]; e.d += sb.d[i]; if (oc) e.c = sb.c[i] }
+  })
+  return out
+}
+/** The 1m bars from `from` on, in rollUp's shape. */
+function minutesFrom(b: MinuteBars, from: number, oc: boolean) {
+  const out = new Map<number, Record<string, number>>()
+  b.t.forEach((t, i) => { if (t >= from) out.set(t, { h: b.h[i], l: b.l[i], v: b.v[i], bv: b.bv[i], av: b.av[i], d: b.d[i], ...(oc ? { o: b.o[i], c: b.c[i] } : {}) }) })
+  return out
+}
+const asObj = (m: Map<number, Record<string, number>>) => Object.fromEntries([...m].map(([k, v]) => [k, v]))
+/** 5m footprint columns vs their 1m bars: volumes, delta and every volume-at-price cell added up. */
+function check5m(label: string, m1: Bar1m[], vap: VapRow[][], entrySec = 30) {
+  // a partial fill minute means the last column is still forming, as in Blind
+  const fb = footprintBars(m1, vap, 5, m1[m1.length - 1]?.partial ? { entrySec } : undefined)
+  let bad = 0
+  const msgs: string[] = []
+  fb.bars.forEach((b, k) => {
+    const mins = m1.map((m, i) => [m, i] as const).filter(([m]) => Math.floor(m.t / 300) * 300 === b.t)
+    const sum = (f: 'v' | 'bv' | 'av' | 'd') => mins.reduce((x, [m]) => x + m[f], 0)
+    const cells = new Map<number, [number, number]>()
+    mins.forEach(([, i]) => vap[i].forEach(([tk, bb, aa]) => { const e = cells.get(tk) ?? [0, 0]; e[0] += bb; e[1] += aa; cells.set(tk, e) }))
+    const want = [...cells].sort((x, y) => x[0] - y[0]).map(([tk, [bb, aa]]) => [tk, bb, aa])
+    const d = diff({ v: b.v, bv: b.bv, av: b.av, d: b.d, h: b.h, l: b.l, cells: fb.vap[k] },
+      { v: sum('v'), bv: sum('bv'), av: sum('av'), d: sum('d'), h: Math.max(...mins.map(([m]) => m.h)), l: Math.min(...mins.map(([m]) => m.l)), cells: want })
+    if (d.length) { bad++; msgs.push(`${b.t}: ${d[0]}`) }
+  })
+  check(`${label}: ${fb.bars.length} five-minute columns = their 1m bars and cells added up`, bad === 0 && fb.bars.length > 0, msgs.slice(0, 2).join(' | '))
+  // VPS over 300 s; the tiers over the prior 10 five-minute bars, as on 1m over the prior 10 minutes
+  const model = footprintModel(fb.bars, fb.vap, { bars: 12, g: 4, ratio: 3, minVol: 5, barSec: 300 }, { price: m1[m1.length - 1].c, entrySec })
+  let vbad = 0
+  for (const c of model.cols) {
+    const i = c.i, prior = fb.bars.slice(Math.max(0, i - 10), i).map(q => q.v / 300).sort((x, y) => x - y)
+    const vps = c.bar.v / (c.bar.secs ?? 300)
+    const med = prior.length ? prior[Math.floor(prior.length / 2)] : 0, r = med > 0 ? vps / med : 0
+    if (c.stats.vps !== vps || c.stats.tier !== (r >= 4 ? 3 : r >= 3 ? 2 : r >= 2 ? 1 : 0)) vbad++
+  }
+  check(`${label}: 5m VPS = volume / 300 s (the forming column / its seconds), tiers vs the prior 10 five-minute bars (${model.cols.length} columns)`, vbad === 0)
+  return fb
+}
+
+console.log('\nown layouts: 15s / 30s bars and the 5m footprint on synthetic tick streams')
+for (const c of (SYN.bubbles as { inst: string; seed: number; n: number; base_tk: number; big: number; es_offgrid: boolean }[]).slice(0, 4)) {
+  const f = synthTicks(c.seed, c.n, c.base_tk, c.big, c.es_offgrid, SYN.us0)
+  fillPtMinutes(f.us, f.ptMin, f.n, () => 0)
+  const { bars, vap } = aggregateMinutes(f)
+  const from = bars.t[0] * 1000
+  const s15 = subMinuteBars(f, from, 15, null), s30 = subMinuteBars(f, from, 30, null)
+  const r2 = (a: number[]) => a.map(x => pyRound(x, 2))
+  const rounded = { ...bars, o: r2(bars.o), h: r2(bars.h), l: r2(bars.l), c: r2(bars.c) }
+  same(`${c.inst} seed ${c.seed}: 15s bars add up to the 1m bars (${s15.t.length} bars, ${bars.t.length} minutes)`, asObj(rollUp(s15, 60, true)), asObj(minutesFrom(rounded, bars.t[0], true)))
+  same(`${c.inst} seed ${c.seed}: 30s bars = pairs of 15s bars (${s30.t.length})`, asObj(rollUp(s30, 30, true)), asObj(rollUp(s15, 30, true)))
+  check(`${c.inst} seed ${c.seed}: nothing flagged partial without a cut`, !s15.partial && !s30.partial)
+  check5m(`${c.inst} seed ${c.seed}`, toBars1m(bars, false), vapPerBar(vap, bars.t.length))
+}
+
 const FIX = process.env.ORDERFLOW_FIXTURE_DIR ?? 'D:/Documents/NQ_backtest/deepdive_fixtures'
 const rows = existsSync(FIX) ? readdirSync(FIX).filter(f => /^row-\d+\.json\.gz$/.test(f)).sort((a, b) => parseInt(a.slice(4)) - parseInt(b.slice(4))) : []
 const SCID_OK = existsSync('D:/SierraCharts/Data') || !!process.env.SIERRA_DATA_DIR
@@ -325,6 +395,45 @@ if (!rows.length || !SCID_OK) {
     if (existsSync(vf)) checkViewer('  viewer', P, JSON.parse(gunzipSync(readFileSync(vf)).toString()))
   }
   console.log(`\nbuildSnapshot timings: ${timings.join(' · ')}`)
+
+  console.log('\nown layouts on real trades: 15s / 30s bars (blind and full review) and the 5m footprint')
+  const sizes: string[] = []
+  for (const f of rows) {
+    const P = JSON.parse(gunzipSync(readFileSync(join(FIX, f))).toString()).payload
+    const r = P.row
+    const entryUtcMs = ptToUtcMs(Date.parse(`${r.date}T${r.time}Z`))
+    const req: SnapshotRequest = { root: r.inst, entryUtcMs, direction: r.direction, entryPrice: r.price, atrStopTarget: 1, tp1RMultiple: 2 }
+    const label = `${r.inst} ${r.date} ${r.time}`
+    for (const mode of ['blind', 'full review'] as const) {
+      const q = mode === 'blind' ? req : { ...req, displayEndUtcMs: entryUtcMs + 40 * 60_000 }
+      const t0 = performance.now()
+      const A = buildSnapshot({ ...q, sub: true })
+      const ms = performance.now() - t0
+      const B = buildSnapshot(q)
+      const { sub, ...rest } = A
+      same(`${label} ${mode}: asking for 15s / 30s bars changes nothing else`, plain(rest), plain(B))
+      if (!sub) { check(`${label} ${mode}: sub-minute bars present`, false); continue }
+      const entry = A.times.entry, s15 = sub.s15, s30 = sub.s30
+      check(`${label} ${mode}: they start 2 hours before the fill, on a minute (${s15.t.length} × 15s, ${s30.t.length} × 30s)`,
+        sub.from === Math.floor((entry - 7200) / 60) * 60 && s15.t.length > 0 && s15.t[0] >= sub.from && s15.t.every((t, i) => i === 0 || t > s15.t[i - 1]))
+      // minute by minute == the 1m bars (h, l, volumes, delta), the partial fill minute included: in blind
+      // that is the proof nothing at or after the fill second got in
+      same(`${label} ${mode}: 15s bars add up to the 1m bars, minute by minute`, asObj(rollUp(s15, 60, false)), asObj(minutesFrom(A.bars, sub.from, false)))
+      same(`${label} ${mode}: 30s bars = pairs of 15s bars`, asObj(rollUp(s30, 30, false)), asObj(rollUp(s15, 30, false)))
+      if (mode === 'blind') {
+        const last = s15.t[s15.t.length - 1]
+        check(`${label} blind: the last 15s bar starts before the fill and is flagged partial only if the fill cut it`,
+          last <= entry && s15.partial === (last + 15 > entry) && s30.partial === (s30.t[s30.t.length - 1] + 30 > entry))
+        const m1 = toBars1m(A.bars, A.has_partial), vap = vapPerBar(A.vap, m1.length)
+        const lm = m1[m1.length - 1], fb = footprintBars(m1, vap, 5, { entrySec: entry % 60 }), lb = fb.bars[fb.bars.length - 1]
+        check(`${label} blind: the forming 5m column covers ${lb.secs} s, up to the fill`, lb.secs === Math.min(300, lm.t + (lm.partial ? Math.max(1, entry % 60) : 60) - lb.t) && (!lm.partial || lb.secs === entry - lb.t))
+        check5m(`${label} blind`, m1, vap, entry % 60)
+      }
+      const json = JSON.stringify(sub)
+      sizes.push(`${label} ${mode}: ${(json.length / 1024).toFixed(0)} KB (${(gzipSync(json).length / 1024).toFixed(0)} KB gzip), build ${ms.toFixed(0)} ms`)
+    }
+  }
+  console.log(`\n15s + 30s payload: ${sizes.join(' · ')}`)
 }
 
 // ---------------------------------------------------------------- tick tape (hosted data path)
@@ -376,11 +485,11 @@ async function tapeTests() {
         const q = mode === 'blind' ? req : { ...req, displayEndUtcMs: entryUtcMs + 40 * 60_000 }
         const t1 = performance.now()
         const src = await loadTapeSource(fsTapeStore(dir), r.inst, q.displayEndUtcMs ?? entryUtcMs, idx => snapshotWindow(idx, entryUtcMs)?.startPt ?? null)
-        const fromTape = buildSnapshot({ ...q, htf: true }, src)
+        const fromTape = buildSnapshot({ ...q, htf: true, sub: true }, src)
         const ms = performance.now() - t1
-        const fromScid = buildSnapshot({ ...q, htf: true })
+        const fromScid = buildSnapshot({ ...q, htf: true, sub: true })
         const norm = (x: ReturnType<typeof buildSnapshot>) => ({ ...plain(x), htf: null, cut: { ...x.cut, contracts: [] } })
-        same(`${r.inst} ${r.date} ${r.time} ${mode}: snapshot from the tape == snapshot from .scid (load + build ${ms.toFixed(0)} ms)`, norm(fromTape), norm(fromScid))
+        same(`${r.inst} ${r.date} ${r.time} ${mode}: snapshot from the tape == snapshot from .scid, 15s / 30s bars included (load + build ${ms.toFixed(0)} ms)`, norm(fromTape), norm(fromScid))
         if (mode === 'blind') {
           // 30m history: the test tape only holds the days published above, so compare from its first day on
           const t0 = ptMidnight(first) / 1000

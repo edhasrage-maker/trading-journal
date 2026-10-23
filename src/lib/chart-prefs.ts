@@ -33,6 +33,8 @@
  * Keys handled here:
  *   - `livechart-prefs-v2` — the 13-field ChartPrefs appearance object.
  *   - `livechart-view-v3-{symbol}-{date}` — per-day zoom (logical range).
+ *   - `replay-footprint-colors-v1` / `replay-layout-v1` — Replay Review's
+ *     colours and its saved layout.
  *
  * Other localStorage entries (recording-commentary cache, trade-summary
  * cache, SC folder watcher state, prep autosave) are intentionally per-PC
@@ -53,11 +55,16 @@ const DEBOUNCE_MS = 1000                             // 1 s after last change �
  * LiveChart.tsx (e.g., a future v4 view key).
  */
 function isActiveChartPrefKey(k: string): boolean {
-  return k === 'livechart-prefs-v2' || k.startsWith('livechart-view-v3-') || k === REPLAY_FP_COLORS_KEY
+  return k === 'livechart-prefs-v2' || k.startsWith('livechart-view-v3-') || k === REPLAY_FP_COLORS_KEY || k === REPLAY_LAYOUT_KEY
 }
 
 /** Replay Review's footprint colours ({ light, dark } picks), synced the same way. */
 export const REPLAY_FP_COLORS_KEY = 'replay-footprint-colors-v1'
+/**
+ * Replay Review's saved layout ({ v, savedAt, layout }) — written only by its
+ * "Save layout" button (saveChartPref), never on every change.
+ */
+export const REPLAY_LAYOUT_KEY = 'replay-layout-v1'
 
 // Per-key debounce timers so rapid edits to the same key coalesce into one
 // network call, but edits to DIFFERENT keys don't block each other.
@@ -180,6 +187,27 @@ export function schedulePushChartPref(key: string, value: unknown): void {
     }).catch(() => { /* silent — localStorage already holds the truth */ })
   }, DEBOUNCE_MS)
   pendingTimers.set(key, t)
+}
+
+/**
+ * Write one (key, value) pair now, for an explicit save button: resolves true
+ * once the account has it. The pull cache learns the new value, so a pull a
+ * moment later doesn't hand back the old one.
+ */
+export async function saveChartPref(key: string, value: unknown): Promise<boolean> {
+  if (typeof window === 'undefined' || !isActiveChartPrefKey(key)) return false
+  try {
+    const r = await fetch('/api/chart-prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: [{ key, value }] }),
+    })
+    if (!r.ok) return false
+    pullCache.set(key, { value, at: typeof performance !== 'undefined' ? performance.now() : 0 })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Test/diagnostic helper: clear the migration flag so the next page load

@@ -22,6 +22,10 @@ export const maxDuration = 30
  * blind=0: the non-blind deep chart review — data runs on past the last exit,
  * with the exit fills for the markers.
  *
+ * htf=1 adds the 30-minute history (30m / 4h charts); sub=1 adds 15s / 30s bars
+ * from 2 hours before the fill (sub-minute charts). Both are asked for only
+ * when the trader picks one of those timeframes.
+ *
  * ACCESS. A private beta on the hosted site: only the emails in
  * DEEP_DIVE_BETA_EMAILS (deep-dive-access.ts). Everyone else gets a 404, the
  * same as a route that doesn't exist. The trade itself is read through the
@@ -57,8 +61,12 @@ export async function GET(req: Request) {
   const sp = (profRow?.scoring_profile_json && typeof profRow.scoring_profile_json === 'object'
     ? profRow.scoring_profile_json : null) as ScoringProfile | null
   const rubric = resolveRubric(sp)
-  // 30m / 4h history: free from the tape; from .scid it is a longer read, so only when the chart asks
-  const opts = { blind, atrStopTarget: rubric.atrStopTarget, tp1RMultiple: rubric.tp1RMultiple, htf: searchParams.get('htf') === '1' }
+  // 30m / 4h history: free from the tape; from .scid it is a longer read, so only when the chart asks.
+  // 15s / 30s bars: only when the chart asks (sub=1); cut at the fill like the rest when blind.
+  const opts = {
+    blind, atrStopTarget: rubric.atrStopTarget, tp1RMultiple: rubric.tp1RMultiple,
+    htf: searchParams.get('htf') === '1', sub: searchParams.get('sub') === '1',
+  }
 
   try {
     let payload

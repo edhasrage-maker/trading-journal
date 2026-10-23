@@ -9,6 +9,7 @@
 import type { DeepDiveSnapshot } from './server/snapshot'
 import type { MinuteBars, VapByMinute } from './minute-bars'
 import { bubblesAsOf, type BubbleChart } from './bubbles40t'
+import type { SubBars } from './sub-minute'
 
 /** How many of the ascending values in `a` are <= x. */
 export function countUpTo(a: ArrayLike<number>, x: number): number {
@@ -50,3 +51,24 @@ export function cutBars(S: DeepDiveSnapshot, n: number, blindS?: DeepDiveSnapsho
 
 /** The bubble chart once its first `n` bubbles had printed (ES floor and large-print rings as of then). */
 export const cutBubbles = (B: BubbleChart | null, n: number): BubbleChart | null => (B && n > 0 ? bubblesAsOf(B, n) : null)
+
+const SUB_FIELDS = ['t', 'o', 'h', 'l', 'c', 'v', 'bv', 'av', 'd', 'dmin', 'dmax', 'poc'] as const
+
+/** 15s / 30s bars closed by `at` (every bar once the data has run out). */
+export const subDone = (sb: SubBars | undefined, at: number, end: boolean) => (!sb ? 0 : end ? sb.t.length : countUpTo(sb.t, at - sb.s))
+
+/**
+ * The first `n` sub-minute bars, plus Blind's partial fill bar while its bar
+ * is still open — the sub-minute counterpart of cutBars.
+ */
+export function cutSubBars(sb: SubBars, n: number, blindSb?: SubBars | null): SubBars {
+  const out = Object.fromEntries(SUB_FIELDS.map(f => [f, sb[f].slice(0, n)])) as unknown as SubBars
+  out.s = sb.s
+  out.partial = false
+  const k = blindSb ? blindSb.t.length - 1 : -1
+  if (blindSb?.partial && k >= 0 && blindSb.s === sb.s && (n === 0 || out.t[n - 1] < blindSb.t[k])) {
+    for (const f of SUB_FIELDS) (out[f] as (number | null)[]).push(blindSb[f][k])
+    out.partial = true
+  }
+  return out
+}

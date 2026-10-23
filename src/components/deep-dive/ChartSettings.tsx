@@ -4,12 +4,14 @@
  * Chart Settings — one on/off switch at the top of Replay Review's left
  * column; on opens every chart option right there, in plain groups, and the
  * charts change as you go. On the phone the same groups open as a sheet
- * (compact: the options that matter on a small screen).
+ * (compact: the options that matter on a small screen). "Your layout" on top
+ * saves the setup to the account, or goes back to the saved one.
  */
 import { cn } from '@/lib/utils'
 import type { OfRoot } from '@/lib/orderflow/ticks'
 import { CANDLE_COLOR_KEYS, FP_COLOR_KEYS, FP_COLOR_LABELS, OUTLINE_COLOR_KEYS, type FpColorKey } from './palette'
 import type { ReplaySettings } from './replay-settings'
+import type { LayoutState } from './useReplayLayout'
 
 const SlidersIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
@@ -56,8 +58,35 @@ export function SettingsIconButton({ onClick }: { onClick: () => void }) {
 
 const sel = 'bg-transparent border border-gray-800 rounded-[4px] px-1 py-[2px] text-[12px] text-gray-100'
 
+/** Save layout / Reset, with a line saying where the layout stands. */
+function YourLayout({ layout: L, compact, cap }: { layout: LayoutState; compact: boolean; cap: string }) {
+  const changed = L.status === 'changed'
+  const line = L.saving ? 'Saving…'
+    : changed ? (L.error ? 'Couldn’t save. Try again.' : `Changed on this ${compact ? 'phone' : 'computer'}. Not saved yet.`)
+    : L.status === 'saved' ? `Saved to your account. ${compact ? 'Your computers open' : 'Your other computer and your phone open'} the same way.`
+    : L.status === 'defaults' ? 'TapeScore’s defaults. Save layout keeps your own.'
+    : ''
+  const b = cn('transition-colors disabled:cursor-default', compact ? 'h-11 rounded-lg text-[14px]' : 'px-3 py-[5px] rounded-[4px] text-[12.5px]')
+  return (
+    <>
+      <div className={cap}>Your layout</div>
+      <p className={cn('m-0 leading-snug', compact ? 'text-[13.5px]' : 'text-[12px]', changed ? 'text-amber-400' : 'text-gray-400')} aria-live="polite">{line}</p>
+      <div className={compact ? 'grid grid-cols-2 gap-2 mt-2' : 'flex gap-1.5 mt-[7px]'}>
+        <button type="button" onClick={L.save} disabled={!changed || L.saving}
+          className={cn(b, 'font-semibold border', changed ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-800 text-gray-500')}>
+          Save layout
+        </button>
+        <button type="button" onClick={L.reset} disabled={!changed || L.saving} title="Back to your saved layout"
+          className={cn(b, 'border border-gray-800', changed ? 'text-gray-100 hover:border-gray-600' : 'text-gray-500')}>
+          Reset
+        </button>
+      </div>
+    </>
+  )
+}
+
 export default function ChartSettingsPanel({
-  s, update, inst, ofDefault, colors, onResetAll, compact = false,
+  s, update, inst, ofDefault, colors, layout, onResetAll, compact = false,
 }: {
   s: ReplaySettings
   update: (patch: Partial<ReplaySettings>) => void
@@ -68,6 +97,7 @@ export default function ChartSettingsPanel({
     values: Record<FpColorKey, string>; set: (k: FpColorKey, hex: string) => void; reset: () => void
     outline: boolean; setOutline: (on: boolean) => void
   }
+  layout: LayoutState
   onResetAll: () => void
   /** Phone sheet: bigger rows, fewer options. */
   compact?: boolean
@@ -103,6 +133,8 @@ export default function ChartSettingsPanel({
 
   return (
     <div className={compact ? '' : 'pt-0.5 pb-2.5 border-b'} style={compact ? undefined : { borderColor: 'var(--ts-line)' }}>
+      <YourLayout layout={layout} compact={compact} cap={cap} />
+
       <div className={cap}>Charts shown</div>
       {sw('Candles', s.candles, v => update({ candles: v }))}
       {sw('Bubbles', bubbles, v => update({ bubbles: v }))}
@@ -164,7 +196,7 @@ export default function ChartSettingsPanel({
       {!compact && sw('Screenshot and tags panel', s.yours, v => update({ yours: v }))}
       {!compact && sw('Levels near entry panel', s.rail, v => update({ rail: v }))}
       {sw('Always show bar details', s.details, v => update({ details: v }))}
-      {!compact && <button type="button" onClick={onResetAll} className="block mt-2 text-[12px] text-blue-400 hover:text-blue-300">Back to my defaults</button>}
+      <button type="button" onClick={onResetAll} className={cn('block text-blue-400 hover:text-blue-300', compact ? 'mt-3.5 h-11 text-[14px]' : 'mt-2 text-[12px]')}>Back to TapeScore’s defaults</button>
     </div>
   )
 }

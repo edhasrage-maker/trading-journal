@@ -1,7 +1,7 @@
 /**
  * Deep Dive time chart — lightweight-charts v5, imperative. Port of the blind
  * re-tag viewer's chart (buildChart / setSeries / makeLines / Overlay):
- * candles or Heiken-Ashi on 1/2/3/5/15m, TapeScore VWAP + 9/20 EMA, levels as
+ * candles or Heiken-Ashi from 15s to 4h, TapeScore VWAP + 9/20 EMA, levels as
  * of the fill, the planned bracket, a session / overnight / prior-RTH volume
  * profile on the right edge, per-bar POC ticks and session separators.
  *
@@ -26,6 +26,8 @@ export const fmtT = (t: number) => { const d = new Date(t * 1000); return `${pad
 export const fmtTs = (t: number) => { const d = new Date(t * 1000); return `${fmtT(t)}:${pad(d.getUTCSeconds())}` }
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 export const fmtDT = (t: number) => { const d = new Date(t * 1000); return `${DOW[d.getUTCDay()]} ${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())} ${fmtT(t)}` }
+/** fmtDT with seconds, for the 15s / 30s charts. */
+export const fmtDTs = (t: number) => `${fmtDT(t)}:${pad(new Date(t * 1000).getUTCSeconds())}`
 
 export const LEVEL_COLORS: Record<string, { dark: string; light: string }> = {
   pd: { dark: '#5c9cff', light: '#2f6fd6' }, on: { dark: '#b39ddb', light: '#7e57c2' },
@@ -144,6 +146,8 @@ export interface TimeChartData {
 
 export interface TimeChartOpts {
   ha: boolean; levels: boolean; vwap: boolean; ema: boolean; poc: boolean; deltaVol: boolean
+  /** 15s / 30s bars: the time axis and crosshair show seconds. */
+  seconds: boolean
   palette: DeepDivePalette
 }
 
@@ -230,6 +234,10 @@ export class TimeChartController {
     this.data = data; this.opts = opts
     this.setPanes(opts.deltaVol)
     this.applyPalette(opts.palette)
+    this.chart.applyOptions({
+      timeScale: { secondsVisible: opts.seconds },
+      localization: { timeFormatter: (t: Time) => (opts.seconds ? fmtDTs : fmtDT)(t as number) },
+    })
     const A = data.agg, ts = (t: number) => t as UTCTimestamp
     this.candles.setData(A.map(b => (opts.ha
       ? { time: ts(b.t), open: b.ho, high: b.hh, low: b.hl, close: b.hc }
