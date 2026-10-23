@@ -103,8 +103,9 @@ export default function TapeScoreHeader({
   const rCls = r.totalR == null ? '' : r.totalR > 0 ? 'text-green-400' : r.totalR < 0 ? 'text-red-400' : 'text-gray-400'
   const rTitle = r.totalR == null ? undefined
     : `Each trade's P&L divided by what it risked to its planned stop, added up${r.withStop < r.trades ? ` (${r.withStop} of ${r.trades} trades had a stop)` : ''}.`
-  const winLoss = r.avgWinR != null && r.avgLossR != null && r.ratio != null
-    ? `avg win ${r.avgWinR.toFixed(1)}R vs loss ${r.avgLossR.toFixed(1)}R (${r.ratio.toFixed(1)} : 1)`
+  // Founder 2026-10-23: no "(x : 1)" on this card.
+  const winLoss = r.avgWinR != null && r.avgLossR != null
+    ? `avg win ${r.avgWinR.toFixed(1)}R vs loss ${r.avgLossR.toFixed(1)}R`
     : null
   const takeaway = takeawayLine({ pnl, dailyLossLimit, chase: chase.length, live, chaseCapped: scored && result.chaseCapped })
   const takeawayEl = takeaway && (
