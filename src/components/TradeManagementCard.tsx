@@ -7,7 +7,7 @@ import {
   type MgmtTotals, type MgmtGroupView,
 } from '@/lib/trade-management'
 import { formatPfDelta, type LiftDragFactor, type LiftDragView } from '@/lib/lift-drag'
-import { fmtR, fmtUsd, type PerTrade } from '@/lib/trade-r'
+import { fmtR, fmtUsd, USUAL_SESSIONS, type PerTrade } from '@/lib/trade-r'
 
 /**
  * The trade-management card — one component for the dashboard (a period) and
@@ -27,7 +27,7 @@ import { fmtR, fmtUsd, type PerTrade } from '@/lib/trade-r'
 interface Props {
   totals: MgmtTotals
   /** Recap only: the day's Net $ / R / Risk per trade, each with the trader's
-   *  usual over their last 20 sessions (src/lib/trade-r.ts; founder 2026-10-22,
+   *  usual over their last USUAL_SESSIONS sessions (src/lib/trade-r.ts; founder 2026-10-22,
    *  mockup https://claude.ai/artifact/5QWKdATNpTntCQ6Ar9neZn). Replaces the
    *  "Net per trade" line. Absent (the dashboard) = that line, unchanged. */
   perTrade?: { day: PerTrade; usual: PerTrade | null } | null
@@ -134,7 +134,7 @@ export default function TradeManagementCard({ totals, className, profitFactor, p
 }
 
 /** The Recap's per-trade lines: Net $, R and Risk per trade, each "(usual …)"
- *  over the trader's last 20 sessions. A line without a number is left out. */
+ *  over the trader's last USUAL_SESSIONS sessions. A line without a number is left out. */
 function PerTradeLines({ day, usual }: { day: PerTrade; usual: PerTrade | null }) {
   const lines: { label: string; value: string; usual: string | null; title: string }[] = []
   if (day.netPerTrade != null) lines.push({
@@ -155,7 +155,7 @@ function PerTradeLines({ day, usual }: { day: PerTrade; usual: PerTrade | null }
   return (
     <div className="mt-2.5 pt-2 border-t border-gray-800 space-y-1 text-[13px]">
       {lines.map(l => (
-        <div key={l.label} className="flex items-baseline justify-between gap-2" title={`${l.title}${l.usual ? ' Usual = your last 20 sessions before this day.' : ''}`}>
+        <div key={l.label} className="flex items-baseline justify-between gap-2" title={`${l.title}${l.usual ? ` Usual = your last ${USUAL_SESSIONS} sessions before this day.` : ''}`}>
           <span className="text-gray-500">{l.label}</span>
           <span className="whitespace-nowrap">
             <span className="font-bold text-gray-200">{l.value}</span>

@@ -52,7 +52,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
     // use — so this day shows one TapeScore everywhere.
     loadTapeScoreSettings(supabase),
     loadRiskHistory(supabase, date),
-    // Trade management's "(usual …)": the last 20 sessions before this day.
+    // Trade management's "(usual …)": the last 10 sessions before this day (USUAL_SESSIONS).
     loadUsualPerTrade(supabase, date),
   ])
   const riskYardstick = riskYardstickBefore(date, riskHistory)

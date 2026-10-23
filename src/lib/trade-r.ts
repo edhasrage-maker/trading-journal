@@ -13,8 +13,11 @@ import type { StopSource } from '@/lib/planned-stop'
  * https://claude.ai/artifact/5QWKdATNpTntCQ6Ar9neZn. Pure and client-safe.
  */
 
-/** The "usual" is the trader's last this-many sessions with trades (founder, 2026-10-22). */
-export const USUAL_SESSIONS = 20
+/** The "usual" is the trader's last this-many sessions with trades. Founder
+ *  picked 20 (2026-10-22), then 10 (2026-10-23) to react faster: on their days
+ *  since Aug, 10 sessions (~38 trades) moved ~0.10R a day vs 0.05R for 20 and
+ *  0.23R for 5 (~18 trades, mostly noise). */
+export const USUAL_SESSIONS = 10
 
 export type RTrade = StopSource & {
   pnl: number | null

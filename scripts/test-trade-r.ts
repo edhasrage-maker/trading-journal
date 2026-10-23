@@ -1,6 +1,6 @@
 /**
  * Tests for results in R (src/lib/trade-r.ts): the Recap card's Net $ / R /
- * Risk per trade with the usual over the last 20 sessions, and the header's
+ * Risk per trade with the usual over the last 10 sessions, and the header's
  * day in R. Pure: no network, no database.
  *
  *   npx tsx scripts/test-trade-r.ts   (also wired into `npm test`)
@@ -50,14 +50,15 @@ console.log('the day in R (Oct 22 as it happened)')
   check('no stops at all → no day R', dayR([mnq(100, 5, null)]).totalR === null)
 }
 
-console.log('the usual: last 20 sessions')
+console.log('the usual: last 10 sessions')
 {
   const byDate = new Map<string, RTrade[]>()
   for (let d = 1; d <= 25; d++) byDate.set(`2026-09-${String(d).padStart(2, '0')}`, [mnq(d, 1, 10)])
   byDate.set('2026-09-26', [mnq(null, 1, 10)]) // a day with only an open trade is not a session
   const pooled = lastSessions(byDate)
-  check(`USUAL_SESSIONS is 20`, USUAL_SESSIONS === 20)
-  check('takes the 20 newest sessions with trades (Sep 6–25)', pooled.length === 20 && pooled.every(t => (t.pnl as number) >= 6), pooled.map(t => t.pnl))
+  check(`USUAL_SESSIONS is 10`, USUAL_SESSIONS === 10)
+  check('takes the 10 newest sessions with trades (Sep 16–25)', pooled.length === 10 && pooled.every(t => (t.pnl as number) >= 16), pooled.map(t => t.pnl))
+  check('the window is a parameter (20 → Sep 6–25)', lastSessions(byDate, 20).length === 20)
   check('fewer sessions → all of them', lastSessions(new Map([['2026-09-01', [mnq(5, 1, 10)]]])).length === 1)
 }
 

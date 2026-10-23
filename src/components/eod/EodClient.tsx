@@ -92,7 +92,7 @@ interface Props {
   runnerRules?: RunnerRuleConfig[]
   /** The trader's daily loss limit in dollars (positive); null = not tracked. The card's takeaway line reads it. */
   dailyLossLimit?: number | null
-  /** Their usual Net $ / R / risk per trade over the last 20 sessions before this day (src/lib/trade-r.ts); null = none. */
+  /** Their usual Net $ / R / risk per trade over the last 10 sessions before this day (src/lib/trade-r.ts); null = none. */
   usualPerTrade?: PerTrade | null
 }
 
