@@ -978,19 +978,18 @@ export default function EodClient({
             the card and its boxes already printed. */}
       </div>
 
-      {/* Time-aware seam (Pt 13 step 3): before the close the score hero is
-          premature, so its slot shows a "session still live" state that points
-          back to Intraday. Judgment (scores, verdicts, AI) stays out of sight
-          until the market closes or the trader ends by choice. */}
+      {/* Time-aware seam (Pt 13 step 3): before the close a "session still
+          live" note points back to Intraday. The score itself shows whenever
+          the day has been analysed, live or not (founder, 2026-10-23). */}
       {sessionStillLive && (
         <div className="rounded-xl border border-amber-800/50 bg-amber-950/20 px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
           <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-amber-300 shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" /> LIVE
           </span>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-white">Session still live — your recap unlocks at the close.</p>
+            <p className="text-sm font-semibold text-white">Session still live.</p>
             <p className="text-[13px] text-gray-400 mt-0.5">
-              Scores, verdicts, and the AI read stay out of sight while the market is open. Keep logging on Trade; end early with &ldquo;I&rsquo;m done&rdquo; when you&rsquo;re finished.
+              Keep logging on Trade; end early with &ldquo;I&rsquo;m done&rdquo; when you&rsquo;re finished.
             </p>
           </div>
           {/* The two ways trades get in, side by side and equally weighted:
@@ -1035,7 +1034,7 @@ export default function EodClient({
         winRate={winRate}
         pnl={computedPnl}
         dailyLossLimit={dailyLossLimit}
-        showScore={!sessionStillLive}
+        live={sessionStillLive}
         aside={mode === 'pro' && trades.length > 0
           ? <TradeManagementCard totals={mgmt} className="min-w-0" perTrade={{ day: dayPerTrade, usual: usualPerTrade }} />
           : undefined}

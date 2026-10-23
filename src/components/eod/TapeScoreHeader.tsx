@@ -24,9 +24,10 @@ import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
  *   right — whatever the page passes as `aside`: the Trade management read
  *           in Detailed Tape, nothing in Highlights
  *
- * While the session is still live the score stays out of sight (`showScore`
- * false) and the card carries only the numbers, the takeaway ("so far") and
- * Trade management. Before the day is analysed it says so in place of the ring.
+ * The score shows whenever the day has been analysed, live session or not
+ * (founder, 2026-10-23: "score should show no matter what"); while the session
+ * is live (`live`) the takeaway reads "so far". Before the day is analysed it
+ * says so in place of the ring. `showScore` false hides it (no caller does now).
  */
 export default function TapeScoreHeader({
   analysis,
@@ -42,6 +43,7 @@ export default function TapeScoreHeader({
   pnl,
   dailyLossLimit = null,
   showScore = true,
+  live = false,
   aside,
 }: {
   analysis: EodAiAnalysis | null
@@ -68,8 +70,10 @@ export default function TapeScoreHeader({
   pnl: number
   /** The trader's daily loss limit in dollars (positive); null = not tracked. */
   dailyLossLimit?: number | null
-  /** False while the session is still live: no ring or verdict. */
+  /** False hides the ring and verdict. */
   showScore?: boolean
+  /** The session is still live: the takeaway reads "so far". */
+  live?: boolean
   /** The card's right half (Trade management). */
   aside?: ReactNode
 }) {
@@ -102,7 +106,7 @@ export default function TapeScoreHeader({
   const winLoss = r.avgWinR != null && r.avgLossR != null && r.ratio != null
     ? `avg win ${r.avgWinR.toFixed(1)}R vs loss ${r.avgLossR.toFixed(1)}R (${r.ratio.toFixed(1)} : 1)`
     : null
-  const takeaway = takeawayLine({ pnl, dailyLossLimit, chase: chase.length, live: !showScore, chaseCapped: scored && result.chaseCapped })
+  const takeaway = takeawayLine({ pnl, dailyLossLimit, chase: chase.length, live, chaseCapped: scored && result.chaseCapped })
   const takeawayEl = takeaway && (
     <p className="text-[15px] font-semibold text-gray-100 leading-snug" style={{ textWrap: 'balance' }}>
       <span className="inline-block w-[7px] h-[7px] rounded-full bg-amber-400 mr-2 align-[2px]" aria-hidden="true" />
