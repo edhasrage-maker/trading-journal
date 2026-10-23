@@ -8,6 +8,7 @@ import type { EntryRuleConfig } from '@/lib/entry-rules'
 import type { RunnerRuleConfig } from '@/lib/runner-rules'
 import type { RiskYardstick } from '@/lib/exit-score'
 import { chaseTrades, type ReentryTrade } from '@/lib/tapescore-day-rules'
+import { dayR, fmtR, type RTrade } from '@/lib/trade-r'
 import type { Axis, PartKey, PartView, TapeScoreParts } from '@/lib/tapescore-axes'
 import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
 
@@ -92,6 +93,15 @@ export default function TapeScoreHeader({
 
   const pnlCls = pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'
   const pnlText = `${pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(pnl)).toLocaleString()}`
+  // The day in R beside the P&L, and its average win vs average loss
+  // (src/lib/trade-r.ts; founder 2026-10-22, mockup https://claude.ai/artifact/5QWKdATNpTntCQ6Ar9neZn).
+  const r = dayR(trades as RTrade[])
+  const rCls = r.totalR == null ? '' : r.totalR > 0 ? 'text-green-400' : r.totalR < 0 ? 'text-red-400' : 'text-gray-400'
+  const rTitle = r.totalR == null ? undefined
+    : `Each trade's P&L divided by what it risked to its planned stop, added up${r.withStop < r.trades ? ` (${r.withStop} of ${r.trades} trades had a stop)` : ''}.`
+  const winLoss = r.avgWinR != null && r.avgLossR != null && r.ratio != null
+    ? `avg win ${r.avgWinR.toFixed(1)}R vs loss ${r.avgLossR.toFixed(1)}R (${r.ratio.toFixed(1)} : 1)`
+    : null
   const takeaway = takeawayLine({ pnl, dailyLossLimit, chase: chase.length, live: !showScore, chaseCapped: scored && result.chaseCapped })
   const takeawayEl = takeaway && (
     <p className="text-[15px] font-semibold text-gray-100 leading-snug" style={{ textWrap: 'balance' }}>
@@ -119,14 +129,21 @@ export default function TapeScoreHeader({
                 </div>
               )}
               <div className="space-y-1">
-                <span className={`block text-[28px] leading-tight font-bold tabular-nums ${pnlCls}`} style={{ fontFamily: 'var(--font-display)' }}>
-                  {pnlText}
+                <span className="flex items-baseline gap-3">
+                  <span className={`text-[28px] leading-tight font-bold tabular-nums ${pnlCls}`} style={{ fontFamily: 'var(--font-display)' }}>
+                    {pnlText}
+                  </span>
+                  {r.totalR != null && (
+                    <span className={`text-[19px] leading-tight font-bold tabular-nums ${rCls}`} style={{ fontFamily: 'var(--font-display)' }} title={rTitle}>
+                      {fmtR(r.totalR, 1)}
+                    </span>
+                  )}
                 </span>
                 {/* Beside the ring there's room for it; on a phone it runs full width below. */}
                 {takeawayEl && <div className="hidden sm:block">{takeawayEl}</div>}
                 {tradeCount > 0 && (
                   <p className="text-[13px] text-gray-400 tabular-nums">
-                    {tradeCount} trade{tradeCount === 1 ? '' : 's'} · {Math.round(winRate)}% win rate
+                    {tradeCount} trade{tradeCount === 1 ? '' : 's'} · {Math.round(winRate)}% win rate{winLoss ? ` · ${winLoss}` : ''}
                   </p>
                 )}
               </div>

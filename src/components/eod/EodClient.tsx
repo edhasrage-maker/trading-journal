@@ -39,6 +39,7 @@ import { mgmtTotals } from '@/lib/trade-management'
 import { aggregateRoundTrips } from '@/lib/trade-excursion'
 import { buildHighlights } from '@/lib/trade-highlights'
 import { effectiveAnalysis, sizeUpTradeIds } from '@/lib/tapescore-day-rules'
+import { perTrade, type PerTrade } from '@/lib/trade-r'
 import type { RiskYardstick } from '@/lib/exit-score'
 import type {
   TradingDay,
@@ -91,6 +92,8 @@ interface Props {
   runnerRules?: RunnerRuleConfig[]
   /** The trader's daily loss limit in dollars (positive); null = not tracked. The card's takeaway line reads it. */
   dailyLossLimit?: number | null
+  /** Their usual Net $ / R / risk per trade over the last 20 sessions before this day (src/lib/trade-r.ts); null = none. */
+  usualPerTrade?: PerTrade | null
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
@@ -124,6 +127,7 @@ export default function EodClient({
   entryRules,
   runnerRules,
   dailyLossLimit = null,
+  usualPerTrade = null,
 }: Props) {
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
@@ -214,6 +218,8 @@ export default function EodClient({
   // "Pressing into drawdown" read the way the Score's size-up rule reads it
   // (dollar risk against the trader's usual spread), so the two never disagree.
   const pressingIds = useMemo(() => sizeUpTradeIds(trades, riskYardstick), [trades, riskYardstick])
+  // Trade management's Net $ / R / Risk per trade for the day (src/lib/trade-r.ts).
+  const dayPerTrade = useMemo(() => perTrade(trades), [trades])
   const imageContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
@@ -1031,7 +1037,7 @@ export default function EodClient({
         dailyLossLimit={dailyLossLimit}
         showScore={!sessionStillLive}
         aside={mode === 'pro' && trades.length > 0
-          ? <TradeManagementCard totals={mgmt} className="min-w-0" />
+          ? <TradeManagementCard totals={mgmt} className="min-w-0" perTrade={{ day: dayPerTrade, usual: usualPerTrade }} />
           : undefined}
       />
 

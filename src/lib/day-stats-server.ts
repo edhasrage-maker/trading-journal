@@ -26,6 +26,7 @@ import { readEntryRules, type EntryRuleConfig } from './entry-rules'
 import { readRunnerRules, type RunnerRuleConfig } from './runner-rules'
 import { traderRulesSig } from './exit-rollup'
 import { pickMarketContext } from './market-context-select'
+import { USUAL_SESSIONS, lastSessions, perTrade, type PerTrade, type RTrade } from './trade-r'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -255,5 +256,41 @@ export async function recomputeDayStatsByDate(supabase: AnyClient, date: string)
   } catch (e) {
     console.error('[day-stats] recomputeDayStatsByDate failed:', e)
     return false
+  }
+}
+
+/** Sessions read to find the last USUAL_SESSIONS with trades (days without trades are skipped). */
+const USUAL_LOOKBACK_DAYS = 60
+
+/**
+ * The trader's usual Net $ / R / risk per trade going INTO `beforeDate`: their
+ * last USUAL_SESSIONS sessions with trades, pooled (src/lib/trade-r.ts). Null
+ * with no earlier trades, or on any read failure — the card then shows the
+ * day's numbers without "(usual …)".
+ */
+export async function loadUsualPerTrade(supabase: AnyClient, beforeDate: string): Promise<PerTrade | null> {
+  try {
+    const { data: days, error } = await supabase
+      .from('trading_days').select('id, date').lt('date', beforeDate)
+      .order('date', { ascending: false }).limit(USUAL_LOOKBACK_DAYS)
+    if (error || !days?.length) return null
+    const dateOf = new Map<string, string>((days as { id: string; date: string }[]).map(d => [d.id, d.date]))
+    const { data: rows, error: tErr } = await supabase
+      .from('trades')
+      .select('trading_day_id, pnl, entry_price, stop_price, quantity, direction, symbol, stops:review_json->stops')
+      .in('trading_day_id', [...dateOf.keys()])
+      .limit(1000)
+    if (tErr || !rows) return null
+    const byDate = new Map<string, RTrade[]>()
+    for (const r of rows as (RTrade & { trading_day_id: string })[]) {
+      const d = dateOf.get(r.trading_day_id)
+      if (!d) continue
+      if (!byDate.has(d)) byDate.set(d, [])
+      byDate.get(d)!.push(r)
+    }
+    const pooled = lastSessions(byDate, USUAL_SESSIONS)
+    return pooled.length ? perTrade(pooled) : null
+  } catch {
+    return null
   }
 }

@@ -7,6 +7,7 @@ import {
   type MgmtTotals, type MgmtGroupView,
 } from '@/lib/trade-management'
 import { formatPfDelta, type LiftDragFactor, type LiftDragView } from '@/lib/lift-drag'
+import { fmtR, fmtUsd, type PerTrade } from '@/lib/trade-r'
 
 /**
  * The trade-management card — one component for the dashboard (a period) and
@@ -25,6 +26,11 @@ import { formatPfDelta, type LiftDragFactor, type LiftDragView } from '@/lib/lif
 
 interface Props {
   totals: MgmtTotals
+  /** Recap only: the day's Net $ / R / Risk per trade, each with the trader's
+   *  usual over their last 20 sessions (src/lib/trade-r.ts; founder 2026-10-22,
+   *  mockup https://claude.ai/artifact/5QWKdATNpTntCQ6Ar9neZn). Replaces the
+   *  "Net per trade" line. Absent (the dashboard) = that line, unchanged. */
+  perTrade?: { day: PerTrade; usual: PerTrade | null } | null
   /** Outer class. Defaults to the dashboard's blend-in stat tile. */
   className?: string
   /** Dashboard only: the profit factor, with the one thing lifting it and the
@@ -41,7 +47,7 @@ const UNIT_OPTIONS: { value: MfeUnit; label: string }[] = [
 
 const plural = (n: number) => (n === 1 ? '' : 's')
 
-export default function TradeManagementCard({ totals, className, profitFactor }: Props) {
+export default function TradeManagementCard({ totals, className, profitFactor, perTrade }: Props) {
   const [unit, setUnit] = useMfeUnit()
   const v = mgmtView(totals, unit)
   const scale = {
@@ -104,6 +110,7 @@ export default function TradeManagementCard({ totals, className, profitFactor }:
               divided by how many there are. It is NOT the two rows above
               subtracted (+$117 − $103 ≠ +$5) — each row is the average of its
               own group — so the tooltip spells the sum out for anyone who tries. */}
+          {perTrade ? <PerTradeLines day={perTrade.day} usual={perTrade.usual} /> : (
           <div
             className="mt-2.5 pt-2 border-t border-gray-800 flex items-baseline justify-between gap-2 text-[13px]"
             title={v.netCount > 1
@@ -113,6 +120,7 @@ export default function TradeManagementCard({ totals, className, profitFactor }:
             <span className="text-gray-500">Net per trade</span>
             <span className="font-bold text-gray-200 whitespace-nowrap">{fmt(v.net)}</span>
           </div>
+          )}
           {v.unclassified > 0 && (
             <p className="mt-1 text-[10px] text-gray-600">
               {v.unclassified} trade{plural(v.unclassified)} without price data not shown
@@ -121,6 +129,40 @@ export default function TradeManagementCard({ totals, className, profitFactor }:
         </>
       )}
       {profitFactor && <ProfitFactorSection view={profitFactor.view} windowLabel={profitFactor.window} />}
+    </div>
+  )
+}
+
+/** The Recap's per-trade lines: Net $, R and Risk per trade, each "(usual …)"
+ *  over the trader's last 20 sessions. A line without a number is left out. */
+function PerTradeLines({ day, usual }: { day: PerTrade; usual: PerTrade | null }) {
+  const lines: { label: string; value: string; usual: string | null; title: string }[] = []
+  if (day.netPerTrade != null) lines.push({
+    label: 'Net $ per trade', value: fmtUsd(day.netPerTrade),
+    usual: usual?.netPerTrade != null ? fmtUsd(usual.netPerTrade) : null,
+    title: `The day's P&L divided by its ${day.trades} trade${plural(day.trades)}.`,
+  })
+  if (day.rPerTrade != null) lines.push({
+    label: 'R per trade', value: fmtR(day.rPerTrade),
+    usual: usual?.rPerTrade != null ? fmtR(usual.rPerTrade) : null,
+    title: `Each trade's P&L divided by what it risked to its planned stop, averaged${day.withStop < day.trades ? ` (${day.withStop} of ${day.trades} trades had a stop)` : ''}. Position size doesn't change it.`,
+  })
+  if (day.riskPerTrade != null) lines.push({
+    label: 'Risk per trade', value: `$${Math.round(day.riskPerTrade).toLocaleString()}`,
+    usual: usual?.riskPerTrade != null ? `$${Math.round(usual.riskPerTrade).toLocaleString()}` : null,
+    title: 'What a trade stood to lose at its planned stop, averaged.',
+  })
+  return (
+    <div className="mt-2.5 pt-2 border-t border-gray-800 space-y-1 text-[13px]">
+      {lines.map(l => (
+        <div key={l.label} className="flex items-baseline justify-between gap-2" title={`${l.title}${l.usual ? ' Usual = your last 20 sessions before this day.' : ''}`}>
+          <span className="text-gray-500">{l.label}</span>
+          <span className="whitespace-nowrap">
+            <span className="font-bold text-gray-200">{l.value}</span>
+            {l.usual && <span className="text-gray-500 text-[12px]"> (usual {l.usual})</span>}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }

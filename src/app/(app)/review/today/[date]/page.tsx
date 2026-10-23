@@ -12,7 +12,7 @@ import { getAtrConfig, getGiveBackAtr } from '@/lib/atr-config-server'
 import { signTradeScreenshots, signDayScreenshots } from '@/lib/storage-url'
 import { achievementCounts } from '@/lib/achievements'
 import { pickMarketContext } from '@/lib/market-context-select'
-import { loadTapeScoreSettings, loadRiskHistory } from '@/lib/day-stats-server'
+import { loadTapeScoreSettings, loadRiskHistory, loadUsualPerTrade } from '@/lib/day-stats-server'
 import { riskYardstickBefore } from '@/lib/exit-rollup'
 import type { TradingDay, Trade, TradeTag, MarketContext } from '@/lib/supabase/types'
 
@@ -28,7 +28,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
   // atrCfg = the trader's chosen ATR measurement (drives the ATR@ column);
   // giveBackAtr = their "was up" multiple; tags = the tag library; pnlHistory +
   // achievements are all-days rollups. All independent → one round-trip stage.
-  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes, heatRes, scoreSettings, riskHistory] = await Promise.all([
+  const [atrCfg, giveBackAtr, dayRes, tagsRes, dayPnlRes, achRes, heatRes, scoreSettings, riskHistory, usualPerTrade] = await Promise.all([
     getAtrConfig(supabase),
     getGiveBackAtr(supabase),
     supabase.from('trading_days').select('*').eq('date', date).maybeSingle(),
@@ -52,6 +52,8 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
     // use — so this day shows one TapeScore everywhere.
     loadTapeScoreSettings(supabase),
     loadRiskHistory(supabase, date),
+    // Trade management's "(usual …)": the last 20 sessions before this day.
+    loadUsualPerTrade(supabase, date),
   ])
   const riskYardstick = riskYardstickBefore(date, riskHistory)
   const day = dayRes.data as TradingDay | null
@@ -165,6 +167,7 @@ export default async function EodPage({ params }: { params: Promise<{ date: stri
         entryRules={scoreSettings.entryRules}
         runnerRules={scoreSettings.runnerRules}
         dailyLossLimit={scoreSettings.dailyLossLimit}
+        usualPerTrade={usualPerTrade}
       />
     </>
   )
