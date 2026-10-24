@@ -161,6 +161,19 @@ export function subToAgg(sb: SubBars, m1: Bar1m[]): AggBar[] {
 }
 
 /**
+ * The chart bar the fill marker sits on: the one whose time span holds the
+ * fill second (`entry`, PT-clock seconds), on any timeframe — 15s to 4h. Bars
+ * are stamped with their start, so that is the last bar starting at or before
+ * the fill. When the fill's own bar isn't on the chart (Blind, a fill on :00
+ * with no trade yet in its bar) it is the last bar before the fill.
+ */
+export function fillBarIndex(agg: readonly { t: number }[], entry: number): number {
+  let k = 0
+  while (k + 1 < agg.length && agg[k + 1].t <= entry) k++
+  return k
+}
+
+/**
  * Footprint columns at `tf` minutes: the 1m bars and their volume-at-price
  * added up (rows in ascending price). tf = 1 hands the 1m bars back as they are.
  *

@@ -22,9 +22,10 @@
  *
  * Play forward ("Play from the fill"): the trader's choice to leave Blind.
  * The Full review payload is fetched then and revealed up to a moving cursor
- * on this side (src/lib/orderflow/replay.ts) — a bar once its minute closed, a
- * bubble once it printed, an exit once it filled. The result (header, week
- * list, Your trade) stays hidden until the replay reaches the last exit.
+ * on this side (src/lib/orderflow/replay.ts) — a bar once its minute closed, the
+ * bubbles trade by trade (what a Blind cut at that second shows), an exit once
+ * it filled. The result (header, week list, Your trade) stays hidden until the
+ * replay reaches the last exit.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
@@ -34,10 +35,10 @@ import type { DeepDivePayload } from '@/lib/orderflow/server/deep-dive-payload'
 import type { DeepDiveSnapshot } from '@/lib/orderflow/server/snapshot'
 import type { SubMinute } from '@/lib/orderflow/sub-minute'
 import type { OfRoot } from '@/lib/orderflow/ticks'
-import { barsDone, bubblesDone, cutBars, cutBubbles, cutSubBars, subDone } from '@/lib/orderflow/replay'
+import { barsDone, cutBars, cutBubbles, cutSubBars, subDone, tradesDone } from '@/lib/orderflow/replay'
 import type { TradeVerdict } from '@/lib/supabase/types'
 import type { ReplayResult } from '@/app/api/deep-dive/results/route'
-import { toBars1m, vapPerBar, buildAgg, subToAgg, footprintBars, atr1m5m, htfToBars, SESSION_4H_OFFSET, type AggBar, type VapRow } from '@/lib/orderflow/bars'
+import { toBars1m, vapPerBar, buildAgg, subToAgg, footprintBars, atr1m5m, htfToBars, fillBarIndex, SESSION_4H_OFFSET, type AggBar, type VapRow } from '@/lib/orderflow/bars'
 import { volumeProfile, profileWindow } from '@/lib/orderflow/profile'
 import { vwap24h, vwapRth, vwapSub, emaOnTf } from '@/lib/orderflow/indicators'
 import { TimeChartController, fmtDT, fmtDTs, fmtTs, type TimeChartOpts } from './time-chart'
@@ -225,7 +226,7 @@ export default function DeepDiveWorkspace({
   const cursorT = FS ? FS.times.entry + e : 0
   const atEnd = !!FS && e >= endE
   const nBars = FS ? barsDone(FS, cursorT, atEnd) : 0
-  const nBub = FS ? bubblesDone(FS.bubbles, cursorT) : 0
+  const nTrades = FS ? tradesDone(FS.bubbles, cursorT) : 0
   const nExits = exitsSorted.filter(x => x.time <= cursorT).length
   // 15s / 30s bars move on at their own pace: one shows when its 15 / 30 seconds have closed
   const n15 = FS ? subDone(FS.sub?.s15, cursorT, atEnd) : 0, n30 = FS ? subDone(FS.sub?.s30, cursorT, atEnd) : 0
@@ -235,7 +236,7 @@ export default function DeepDiveWorkspace({
     const bs = blindSnap?.sub
     return { from: FS.sub.from, s15: cutSubBars(FS.sub.s15, n15, bs?.s15), s30: cutSubBars(FS.sub.s30, n30, bs?.s30) }
   }, [FS, blindSnap, n15, n30])
-  const cutB = useMemo(() => (FS ? cutBubbles(FS.bubbles, nBub) : null), [FS, nBub])
+  const cutB = useMemo(() => (FS ? cutBubbles(FS.bubbles, nTrades) : null), [FS, nTrades])
   const cutExits = useMemo(() => exitsSorted.slice(0, nExits), [exitsSorted, nExits])
   const out = !!replay && !!FS && replay.far >= revealE
   // results (P&L, R, Score, screenshot, tags, an earlier call) stay hidden in Blind and in a replay until your exit
@@ -411,19 +412,14 @@ export default function DeepDiveWorkspace({
 
   // 1m / 5m: the 1-minute window. 30m / 4h: the 30-minute history, continued by the window.
   // 15s / 30s: the sub-minute bars (the 2 hours before the fill, on to the end in Full review).
+  // The fill marker goes on the bar holding the fill second (not D.fillIdx, the last bar closed before it).
   const { agg, entryIndex } = useMemo((): { agg: AggBar[]; entryIndex: number } => {
     if (!D || !S) return { agg: [], entryIndex: 0 }
-    const at = (a: AggBar[], fillAt: number) => ({ agg: a, entryIndex: Math.max(0, a.findIndex(b => b.mins.includes(Math.max(0, fillAt)))) })
-    if (subChart) {
-      if (!subBars) return { agg: [], entryIndex: 0 }
-      const a = subToAgg(subBars, D.m1)
-      let k = 0
-      while (k + 1 < a.length && a[k + 1].t <= S.times.entry) k++
-      return { agg: a, entryIndex: k }
-    }
-    if (!htfChart) return at(buildAgg(D.m1, D.vap, settings.tf), D.fillIdx)
+    const at = (a: AggBar[]) => ({ agg: a, entryIndex: fillBarIndex(a, S.times.entry) })
+    if (subChart) return subBars ? at(subToAgg(subBars, D.m1)) : { agg: [], entryIndex: 0 }
+    if (!htfChart) return at(buildAgg(D.m1, D.vap, settings.tf))
     const empty: VapRow[][] = D.hist.map(() => [])
-    return at(buildAgg([...D.hist, ...D.m1], [...empty, ...D.vap], settings.tf, settings.tf === 240 ? SESSION_4H_OFFSET : 0), D.hist.length + D.fillIdx)
+    return at(buildAgg([...D.hist, ...D.m1], [...empty, ...D.vap], settings.tf, settings.tf === 240 ? SESSION_4H_OFFSET : 0))
   }, [D, S, settings.tf, htfChart, subChart, subBars])
 
   // VWAP and the 5m EMAs, one value per chart bar (none on 30m / 4h)
@@ -542,9 +538,9 @@ export default function DeepDiveWorkspace({
     }
     const reset = bubKey.current !== viewOf
     bubKey.current = viewOf
-    // the forming bubble is previewed only when the chart ends at the fill
+    // the forming bubble is previewed where the chart is cut: Blind, and a replay (as a Blind cut there would)
     bubCtl.current.render(BUB, { offset: settings.boff, bars40: settings.b40, levels: settings.lv }, S.levels, S.bracket,
-      { price: S.row.price, direction: S.row.direction, time: S.times.entry }, cutAtFill, reset, pal, following)
+      { price: S.row.price, direction: S.row.direction, time: S.times.entry }, cutAtFill || following, reset, pal, following)
   }, [S, BUB, cutAtFill, showBubbles, settings.boff, settings.b40, settings.lv, viewOf, following, pal, layoutKey])
 
   useEffect(() => () => { bubCtl.current?.destroy(); bubCtl.current = null }, [showBubbles])
@@ -607,7 +603,7 @@ export default function DeepDiveWorkspace({
     const lv = isLive && settings.boff && x === n - 1 ? B.live_lvl : B.lvl[gi]
     return `${fmtTs(B.t[x])}  40T bar  O ${B.o[x].toFixed(2)} H ${B.h[x].toFixed(2)} L ${B.l[x].toFixed(2)} C ${B.c[x].toFixed(2)}\n` +
       `bubble: ${B.dir[gi] > 0 ? 'BUY' : 'SELL'} ${B.vol[gi]} @ ${B.px[gi].toFixed(2)} · ${['small', 'medium', 'large'][lv]}` +
-      (isLive && cutAtFill ? `  (forming: ${B.live_trades}/40 trades at the fill)` : '')
+      (isLive && cutAtFill ? `  (forming: ${B.live_trades}/40 trades at the fill)` : isLive && replay && B.live_trades < 40 ? `  (forming: ${B.live_trades}/40 trades)` : '')
   })()
   const showLegend = settings.details || legendIdx != null
   const showBubLegend = settings.details || bubLegendSlot != null

@@ -234,8 +234,8 @@ export function buildSnapshot(req: SnapshotRequest, source?: TickSource): DeepDi
       levels,
       lpt: BUBBLE_CFG[req.root].lpt,
       bracket,
-      // Full review also carries what Play forward needs to show the bubbles as they stood at any moment
-      bubbles: bubbles40t(shownTicks, req.root, undefined, { raw: !blind }),
+      // Full review also carries what Play forward needs to show the bubbles as a Blind cut at any later second would
+      bubbles: bubbles40t(shownTicks, req.root, undefined, blind ? {} : { replayFromUs: cutoffUs }),
       ...(htf ? { htf } : {}),
       ...(sub ? { sub } : {}),
       cut: {

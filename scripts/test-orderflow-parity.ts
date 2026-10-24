@@ -28,17 +28,25 @@
  * 15s / 30s bars add up to the 1m bars minute by minute — in blind that pins
  * them before the fill second — and asking for them changes nothing else; the
  * 5m footprint is the 1m footprint added up.
+ *
+ * Play forward (self-consistency against the blind cut, EXACT): pressing Play
+ * starts from exactly Blind's chart — bars, 15s / 30s bars and bubbles — and at
+ * any later second the bubbles (the one still forming, levels, ES floor,
+ * large-print rings, the trim) are what a Blind cut at that second builds.
+ * Synthetic streams check every second; real trades the fill and three later
+ * moments. The fill marker sits on the bar holding the fill on every timeframe.
  */
 import { readFileSync, existsSync, readdirSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { gunzipSync, gzipSync } from 'zlib'
 import { createHash } from 'crypto'
 import { join } from 'path'
-import { pyRound, rint, npPercentileLinear, runningPercentileLinear } from '../src/lib/orderflow/pymath.ts'
-import { bubbles40t, bubblesAsOf } from '../src/lib/orderflow/bubbles40t.ts'
-import { sliceTicks, fillPtMinutes } from '../src/lib/orderflow/ticks.ts'
+import { pyRound, rint, npPercentileLinear, npPercentileLinearTop } from '../src/lib/orderflow/pymath.ts'
+import { bubbles40t, bubblesAsOf, tradesBefore } from '../src/lib/orderflow/bubbles40t.ts'
+import { fillPtMinutes, asOf, utcMsToSierraUs, sierraUsToUtcSecMs } from '../src/lib/orderflow/ticks.ts'
 import { valueAreaTicks, volumeProfile, profileWindow, type ProfileWindow } from '../src/lib/orderflow/profile.ts'
-import { toBars1m, vapPerBar, buildAgg, atr1m5m, footprintBars, type Bar1m, type VapRow } from '../src/lib/orderflow/bars.ts'
+import { toBars1m, vapPerBar, buildAgg, atr1m5m, footprintBars, fillBarIndex, subToAgg, htfToBars, SESSION_4H_OFFSET, type Bar1m, type VapRow } from '../src/lib/orderflow/bars.ts'
+import { barsDone, cutBars, cutBubbles, cutSubBars, subDone, tradesDone } from '../src/lib/orderflow/replay.ts'
 import { aggregateMinutes } from '../src/lib/orderflow/minute-bars.ts'
 import { subMinuteBars, type SubBars } from '../src/lib/orderflow/sub-minute.ts'
 import { footprintModel } from '../src/lib/orderflow/footprint.ts'
@@ -164,50 +172,67 @@ for (const c of SYN.bubbles) {
   same(`${c.inst} seed ${c.seed} n=${c.n} maxb=${c.maxb}: bubble chart`, bubbles40t(f, c.inst as OfRoot, c.maxb), c.expect)
 }
 
-console.log('Play forward: bubbles as of any bubble == the chart built from only the ticks up to it')
+console.log('Play forward: at every second after the fill the bubbles == a Blind cut at that second')
 {
-  // running percentile == the per-prefix one, value for value
+  // the ES floor from only the largest values == from all of them (prefixes of every fixture, plus vol-like samples full of ties)
+  const rnd = xs(7)
+  const samples: { a: number[]; q: number[] }[] = (SYN.np_percentile as { a: number[]; q: number[] }[]).map(c => ({ a: c.a, q: c.q }))
+  for (let s = 0; s < 6; s++) samples.push({ a: Array.from({ length: 300 + 150 * s }, () => 40 + rnd() % (s % 2 ? 9 : 300)), q: [99.5, 99.9, 80, 50] })
   let rbad = 0, rtotal = 0
-  for (const c of SYN.np_percentile as { a: number[]; q: number[] }[]) {
+  for (const c of samples) {
     for (const q of c.q) {
-      const run = runningPercentileLinear(c.a, q)
-      c.a.forEach((_, i) => { rtotal++; if (run[i] !== npPercentileLinear(c.a.slice(0, i + 1), q)) rbad++ })
+      for (let n = 1; n <= c.a.length; n++) {
+        const a = c.a.slice(0, n), desc = [...a].sort((x, y) => y - x), need = n - Math.floor((n - 1) * (q / 100))
+        // the values it must have, and a random handful of the others
+        const vals = desc.slice(0, need).concat(desc.slice(need).filter(() => rnd() % 4 === 0))
+        rtotal++
+        if (npPercentileLinearTop(vals, n, q) !== npPercentileLinear(a, q)) rbad++
+      }
     }
   }
-  check(`runningPercentileLinear == npPercentileLinear on every prefix (${rtotal})`, rbad === 0, `${rbad} mismatches`)
-  // the smallest tick prefix with exactly n complete bubbles, and the chart built from it
-  const prefixChart = (f: TickFrame, inst: OfRoot, maxb: number, n: number) => {
-    const done = (k: number) => { const b = bubbles40t(sliceTicks(f, 0, k), inst, maxb); return b ? (b.n - 1) * 40 + b.live_trades : 0 }
-    let lo = 0, hi = f.n
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (done(mid) >= n * 40) hi = mid; else lo = mid + 1 }
-    const b = bubbles40t(sliceTicks(f, 0, lo), inst, maxb)
-    return b && b.n === n && b.live_trades === 40 ? b : null
-  }
+  check(`npPercentileLinearTop (only the largest values) == npPercentileLinear on ${rtotal} samples`, rbad === 0, `${rbad} mismatches`)
+
+  const ptSecOf = (us: number) => utcToPtMs(sierraUsToUtcSecMs(us)) / 1000
+  const usAtPtSec = (sec: number) => utcMsToSierraUs(ptToUtcMs(sec * 1000))
   for (const c of SYN.bubbles) {
     const f = synthTicks(c.seed, c.n, c.base_tk, c.big, c.es_offgrid, SYN.us0)
     const inst = c.inst as OfRoot
-    const plainB = bubbles40t(f, inst, c.maxb), full = bubbles40t(f, inst, c.maxb, { raw: true })
-    if (!plainB || !full) continue
-    same(`${inst} seed ${c.seed}: the replay data changes nothing else`, { ...full, raw: undefined }, plain(plainB))
-    const total = full.n - (full.live_trades < 40 ? 1 : 0)
-    const ns = [...new Set([1, 2, Math.floor(total / 3), Math.floor(total / 2), total - 1, total].filter(n => n >= full.first + 1 && n <= total))]
-    let bad = 0
+    const plainB = bubbles40t(f, inst, c.maxb)
+    if (!plainB) continue
+    const s0 = ptSecOf(f.us[0]), s1 = ptSecOf(f.us[f.n - 1])
+    const fill = Math.floor(s0 + (s1 - s0) / 3)
+    const full = bubbles40t(f, inst, c.maxb, { replayFromUs: usAtPtSec(fill) })!
+    // the replay data changes nothing else: from where the plain chart starts, every field is the same
+    const j = plainB.first - full.first
+    const keys = ['o', 'h', 'l', 'c', 't', 'vol', 'dir', 'px', 'lvl'] as const
+    same(`${inst} seed ${c.seed}: Full review's replay data changes nothing else (it keeps ${j} older bubbles for the cut at the fill)`, {
+      ...Object.fromEntries(keys.map(k => [k, full[k].slice(j)])), n: full.n, live_trades: full.live_trades, live_lvl: full.live_lvl,
+      marks: full.marks.filter(m => m.g >= plainB.first - 1), cfg: full.cfg, lpt: full.lpt,
+    }, plain({ ...Object.fromEntries(keys.map(k => [k, plainB[k]])), n: plainB.n, live_trades: plainB.live_trades, live_lvl: plainB.live_lvl, marks: plainB.marks, cfg: plainB.cfg, lpt: plainB.lpt }))
+    // every second from the fill to one past the end of the data
+    let bad = 0, forming = 0, total = 0
     const msgs: string[] = []
-    for (const n of ns) {
-      const pre = prefixChart(f, inst, c.maxb, n)
-      if (!pre) { bad++; msgs.push(`n=${n}: no prefix with exactly ${n} bubbles`); continue }
-      const got = bubblesAsOf(full, n - full.first)
-      // compare where both charts have bubbles (the prefix trims its own oldest when it hits the cap)
-      const from = Math.max(got.first, pre.first)
-      const pick = (B: typeof got) => ({
-        lvl: B.lvl.slice(from - B.first), vol: B.vol.slice(from - B.first), px: B.px.slice(from - B.first), t: B.t.slice(from - B.first),
-        marks: B.marks.filter(m => m.g >= from - 1),
-      })
-      const d = diff(plain(pick(got)), plain(pick(pre)))
-      if (d.length) { bad++; msgs.push(`n=${n}: ${d[0]}`) }
+    for (let T = fill; T <= s1 + 1; T++) {
+      const want = bubbles40t(asOf(f, usAtPtSec(T)), inst, c.maxb)
+      const got = bubblesAsOf(full, tradesBefore(full, T), c.maxb)
+      total++
+      if (want && want.live_trades < 40) forming++
+      const d = diff(plain(got), plain(want))
+      if (d.length) { bad++; msgs.push(`T=fill+${T - fill}s: ${d[0]}`) }
     }
-    check(`${inst} seed ${c.seed} maxb=${c.maxb}: as of ${ns.length} moments (${ns.join(', ')})`, bad === 0, msgs.slice(0, 2).join(' | '))
+    check(`${inst} seed ${c.seed} maxb=${c.maxb}: ${total} seconds from the fill, ${forming} with a bubble still forming — all exact`, bad === 0, msgs.slice(0, 2).join(' | '))
   }
+
+  // the fill marker sits on the bar holding the fill second, on any timeframe; with no such bar yet, on the last one
+  const bars = (ts: number[]) => ts.map(t => ({ t }))
+  const fb = (ts: number[], entry: number) => fillBarIndex(bars(ts), entry)
+  // PT-clock seconds of day: 31440 = 08:44:00, 31500 = 08:45:00
+  check('fill marker: 1m, fill mid-minute (08:45:10) -> the 08:45 bar, not 08:44', fb([31440, 31500, 31560], 31510) === 1)
+  check('fill marker: 1m, fill on :00 (08:45:00) -> the 08:45 bar', fb([31440, 31500, 31560], 31500) === 1)
+  check('fill marker: Blind, fill on :00 with no trade yet in its bar -> the last bar', fb([31380, 31440], 31500) === 1)
+  check('fill marker: 5m, fill 08:45:10 -> the 08:45 bar; 08:47:59 -> the 08:45 bar', fb([31200, 31500, 31800], 31510) === 1 && fb([31200, 31500, 31800], 31679) === 1)
+  check('fill marker: 15s, fill 08:45:10 -> the 08:45:00 bar; 08:45:15 -> the 08:45:15 bar', fb([31485, 31500, 31515], 31510) === 1 && fb([31485, 31500, 31515], 31515) === 2)
+  check('fill marker: no bar before the fill -> the first bar', fb([31560, 31620], 31500) === 0)
 }
 
 console.log('valueAreaTicks vs reference value_area()')
@@ -434,6 +459,57 @@ if (!rows.length || !SCID_OK) {
     }
   }
   console.log(`\n15s + 30s payload: ${sizes.join(' · ')}`)
+
+  console.log('\nPlay forward on real trades: Play starts from exactly Blind\'s chart, the bubbles at later seconds == a Blind cut there, the fill marker sits on the fill\'s bar')
+  const rsizes: string[] = []
+  for (const f of rows) {
+    const P = JSON.parse(gunzipSync(readFileSync(join(FIX, f))).toString()).payload
+    const r = P.row
+    const entryUtcMs = ptToUtcMs(Date.parse(`${r.date}T${r.time}Z`))
+    const req: SnapshotRequest = { root: r.inst, entryUtcMs, direction: r.direction, entryPrice: r.price, atrStopTarget: 1, tp1RMultiple: 2 }
+    const label = `${r.inst} ${r.date} ${r.time}`
+    const blindS = buildSnapshot({ ...req, htf: true, sub: true })
+    const fullS = buildSnapshot({ ...req, displayEndUtcMs: entryUtcMs + 40 * 60_000, htf: true, sub: true })
+    const entry = fullS.times.entry, FB = fullS.bubbles!
+    // Play pressed: the cursor at the fill (replay.ts, the workspace's own path)
+    const bubAtFill = cutBubbles(FB, tradesDone(FB, entry))
+    same(`${label}: at the fill the bubbles == Blind's exactly (${blindS.bubbles?.t.length} bubbles; the one forming has ${blindS.bubbles?.live_trades}/40 trades)`, bubAtFill, plain(blindS.bubbles))
+    const barsAtFill = cutBars(fullS, barsDone(fullS, entry, false), blindS)
+    same(`${label}: at the fill the 1m bars == Blind's (${blindS.bars.t.length}, partial fill bar ${blindS.has_partial ? 'on' : 'none: the fill is on :00'})`,
+      { bars: barsAtFill.bars, vap: barsAtFill.vap, has_partial: barsAtFill.has_partial }, plain({ bars: blindS.bars, vap: blindS.vap, has_partial: blindS.has_partial }))
+    for (const k of ['s15', 's30'] as const) {
+      const sb = fullS.sub![k], cut = cutSubBars(sb, subDone(sb, entry, false), blindS.sub![k])
+      same(`${label}: at the fill the ${k.slice(1)}s bars == Blind's`, cut, plain(blindS.sub![k]))
+    }
+    // later cursors (the clock moves in tenths of a second): a genuine Blind cut at that second, built the server's way
+    for (const dt of [7.4, 95.6, 1200.2]) {
+      const at = entry + dt, T = Math.floor(at)
+      const want = bubbles40t(snapshotTicksForTest({ ...req, entryUtcMs: ptToUtcMs(T * 1000) }), r.inst)
+      same(`${label}: ${dt}s after the fill == a Blind cut at that second (forming bubble ${want?.live_trades}/40)`, cutBubbles(FB, tradesDone(FB, at)), plain(want))
+    }
+    // the fill marker on every timeframe: Full review on the bar holding the fill second, Blind on the last bar
+    for (const [mode, S] of [['blind', blindS], ['full review', fullS]] as const) {
+      const m1 = toBars1m(S.bars, S.has_partial), vap = vapPerBar(S.vap, m1.length), hist = htfToBars(S.htf!)
+      const empty: VapRow[][] = hist.map(() => [])
+      const charts: [string, { t: number }[], number][] = [
+        ['15s', subToAgg(S.sub!.s15, m1), 15], ['30s', subToAgg(S.sub!.s30, m1), 30],
+        ['1m', buildAgg(m1, vap, 1), 60], ['5m', buildAgg(m1, vap, 5), 300],
+        ['30m', buildAgg([...hist, ...m1], [...empty, ...vap], 30), 1800], ['4h', buildAgg([...hist, ...m1], [...empty, ...vap], 240, SESSION_4H_OFFSET), 14400],
+      ]
+      const wrong = charts.filter(([, a, len]) => {
+        const k = fillBarIndex(a, entry)
+        return mode === 'blind' ? k !== a.length - 1 : !(a[k].t <= entry && entry < a[k].t + len)
+      }).map(([n]) => n)
+      check(`${label} ${mode}: the fill marker ${mode === 'blind' ? 'is on the last bar' : 'is on the bar holding the fill'} on 15s, 30s, 1m, 5m, 30m and 4h`, wrong.length === 0, `wrong on ${wrong.join(', ')}`)
+      if (mode === 'full review') {
+        const fpOk = [1, 5].every(tf => footprintBars(m1, vap, tf).bars.some(b => b.t === Math.floor(entry / (tf * 60)) * tf * 60))
+        check(`${label} full review: the footprint has the fill's own column, 1m and 5m`, fpOk)
+      }
+    }
+    const raw = JSON.stringify(FB.raw)
+    rsizes.push(`${label}: ${FB.raw!.trades.s.length} trades, ${(raw.length / 1024).toFixed(0)} KB (${(gzipSync(raw).length / 1024).toFixed(0)} KB gzip)`)
+  }
+  console.log(`\nPlay forward bubble data in Full review: ${rsizes.join(' · ')}`)
 }
 
 // ---------------------------------------------------------------- tick tape (hosted data path)

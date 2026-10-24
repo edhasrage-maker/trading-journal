@@ -1,14 +1,15 @@
 /**
  * Play forward: a Full review snapshot as it stood at a moment after the fill.
  * Nothing here is rebuilt from ticks — it only cuts what Full review already
- * carries. A 1-minute bar shows once its minute has closed, a 40-trade bubble
- * once its 40th trade printed, an exit once it filled. Until the fill's own
- * minute closes, Blind's partial bar stands in for it, so pressing Play starts
- * from exactly the chart Blind showed.
+ * carries. A 1-minute bar shows once its minute has closed, an exit once it
+ * filled. Until the fill's own minute closes, Blind's partial bar stands in for
+ * it, so pressing Play starts from exactly the chart Blind showed. The bubbles
+ * move on trade by trade: at any second they are what a Blind cut at that
+ * second shows, the bubble still forming included (bubblesAsOf).
  */
 import type { DeepDiveSnapshot } from './server/snapshot'
 import type { MinuteBars, VapByMinute } from './minute-bars'
-import { bubblesAsOf, type BubbleChart } from './bubbles40t'
+import { bubblesAsOf, tradesBefore, type BubbleChart } from './bubbles40t'
 import type { SubBars } from './sub-minute'
 
 /** How many of the ascending values in `a` are <= x. */
@@ -21,8 +22,8 @@ export function countUpTo(a: ArrayLike<number>, x: number): number {
 /** 1-minute bars closed by `at` (PT-clock seconds); every bar once the data has run out. */
 export const barsDone = (S: DeepDiveSnapshot, at: number, end: boolean) => (end ? S.bars.t.length : countUpTo(S.bars.t, at - 60))
 
-/** 40-trade bubbles whose last trade had printed by `at`. */
-export const bubblesDone = (B: BubbleChart | null, at: number) => (B ? countUpTo(B.t, at) : 0)
+/** Trades the bubbles had taken in by `at`: every one stamped before the second on the clock, as a Blind cut there takes. */
+export const tradesDone = (B: BubbleChart | null, at: number) => (B ? tradesBefore(B, Math.floor(at)) : 0)
 
 const FIELDS = ['t', 'o', 'h', 'l', 'c', 'v', 'bv', 'av', 'd', 'dmin', 'dmax', 'pv', 'vv'] as const
 
@@ -49,8 +50,8 @@ export function cutBars(S: DeepDiveSnapshot, n: number, blindS?: DeepDiveSnapsho
   return { ...S, bars, vap, has_partial: partial }
 }
 
-/** The bubble chart once its first `n` bubbles had printed (ES floor and large-print rings as of then). */
-export const cutBubbles = (B: BubbleChart | null, n: number): BubbleChart | null => (B && n > 0 ? bubblesAsOf(B, n) : null)
+/** The bubble chart once `trades` trades had printed: the forming bubble, ES floor and large-print rings as of then. */
+export const cutBubbles = (B: BubbleChart | null, trades: number): BubbleChart | null => (B ? bubblesAsOf(B, trades) : null)
 
 const SUB_FIELDS = ['t', 'o', 'h', 'l', 'c', 'v', 'bv', 'av', 'd', 'dmin', 'dmax', 'poc'] as const
 

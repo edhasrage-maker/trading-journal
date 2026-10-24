@@ -111,9 +111,10 @@ export class BubbleChartController {
     entry: { price: number; direction: 'long' | 'short'; time: number }, live: boolean, resetView: boolean,
     palette: DeepDivePalette, follow = false,
   ) {
-    // Play forward: keep the newest bubble in view as bubbles come in (or go, scrubbing back)
-    const n0 = this.B?.t.length ?? 0
-    const was = follow && !resetView && n0 ? this.chart.timeScale().getVisibleLogicalRange() : null
+    // Play forward: keep the newest bubble in view as bubbles come in (or go, scrubbing back). The oldest
+    // drop off the front at the 4000 cap (as in Blind), which moves every bubble one slot left.
+    const prev = this.B
+    const was = follow && !resetView && prev?.t.length ? this.chart.timeScale().getVisibleLogicalRange() : null
     this.B = B
     const c = palette.chart
     this.chart.applyOptions({
@@ -139,8 +140,10 @@ export class BubbleChartController {
       const n = B.t.length, focus = Math.min(n - 1, k + 60)
       const apply = () => this.chart.timeScale().setVisibleLogicalRange({ from: focus - 200, to: focus + 8 })
       apply(); requestAnimationFrame(() => requestAnimationFrame(apply))
-    } else if (was && B.t.length !== n0 && was.to >= n0 - 1) {
-      const d = B.t.length - n0
+    } else if (was && prev) {
+      // at the right edge: move on with the new bubbles; scrolled back: stay on the same bubbles
+      const trimmed = B.first - prev.first, added = B.first + B.t.length - (prev.first + prev.t.length)
+      const d = (was.to >= prev.t.length - 1 ? added : 0) - trimmed
       this.chart.timeScale().setVisibleLogicalRange({ from: was.from + d, to: was.to + d })
     }
   }

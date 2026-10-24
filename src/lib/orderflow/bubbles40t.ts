@@ -22,10 +22,14 @@
  *
  *  Large-print rings: at most one per bar (the print chosen for the price),
  *  deduped, clustered, thresholded — see `marks` below.
+ *
+ *  Play forward rebuilds the chart as of any second after the fill from a Full
+ *  review payload (bubblesAsOf), by these same rules: what it shows is what a
+ *  Blind cut at that second shows.
  */
 import type { OfRoot, TickFrame } from './ticks'
 import { TICK } from './ticks'
-import { npPercentileLinear, pyRound, rint, runningPercentileLinear } from './pymath'
+import { npPercentileLinear, npPercentileLinearTop, pyRound, rint } from './pymath'
 import { utcToPtMs } from './pt-clock'
 import { sierraUsToUtcSecMs } from './ticks'
 
@@ -80,9 +84,10 @@ export interface BubbleChart {
   marks: LargePrintMark[]
   cfg: { lookback: number; medium_pct: number; large_pct: number; floor: number | null }
   /**
-   * Full review only: what the replay needs to show the chart as it stood
-   * after any bubble. The ES floor and the large-print clusters look at later
-   * bubbles, so the final `lvl` / `marks` can't simply be cut at a moment.
+   * Full review only: what Play forward needs to show the chart exactly as a
+   * Blind cut at any second after the fill would (bubblesAsOf). The bubble
+   * still forming, the ES floor and the large-print clusters all depend on
+   * where the cut falls, so the final arrays can't simply be sliced.
    */
   raw?: BubbleRaw
 }
@@ -93,10 +98,17 @@ export type KeptPrint = [number, number, number, number]
 export interface BubbleRaw {
   /** Levels before the ES floor (the ranking only looks back). */
   lvl0: number[]
-  /** ES: the floor percentile over every bubble up to and including this one. NQ: null. */
-  floor_at: number[] | null
+  /** ES: the largest volumes of the bubbles before `first`, enough for the floor at any cut. NQ: null. */
+  vol_top: number[] | null
   /** Every deduped large print, oldest first (the dedupe only looks back). */
   kept: KeptPrint[]
+  /**
+   * Every accepted trade from the start of the bubble forming at the fill to
+   * the end of the data: trade `from + i` (from is a multiple of 40), stamped
+   * PT-clock second `s0 + s[i]`, at price `px[i]` as the study takes it, volume
+   * `v[i]` signed + buy / − sell.
+   */
+  trades: { from: number; s0: number; s: number[]; px: number[]; v: number[] }
 }
 
 /** Sorted multiset with O(L) insert/remove — the rolling ranking window. */
@@ -109,6 +121,55 @@ function removeSorted(a: number[], x: number) {
   let lo = 0, hi = a.length
   while (lo < hi) { const mid = (lo + hi) >> 1; if (a[mid] < x) lo = mid + 1; else hi = mid }
   a.splice(lo, 1)
+}
+
+/** One 40T bar as the study builds it from accepted trades s..e. */
+interface Bar40 { o: number; h: number; l: number; c: number; vol: number; dir: 1 | -1; px: number; lpSide: 1 | -1 | 0; lpVol: number }
+
+/** The bar of accepted trades s..e (prices as accepted, volume signed + buy / − sell). */
+function bar40(apx: ArrayLike<number>, asv: ArrayLike<number>, s: number, e: number, lpt: number): Bar40 {
+  let hi = -Infinity, lo = Infinity, buy = 0, sell = 0
+  // largest print per side; ties -> newest (later index wins on >=)
+  let bigBuyV = 0, bigBuyP = NaN, bigSellV = 0, bigSellP = NaN
+  let hasBuy = false, hasSell = false
+  for (let k = s; k <= e; k++) {
+    const p = apx[k], x = asv[k]
+    if (p > hi) hi = p
+    if (p < lo) lo = p
+    if (x > 0) {
+      buy += x
+      if (!hasBuy || x >= bigBuyV) { bigBuyV = x; bigBuyP = p; hasBuy = true }
+    } else {
+      sell -= x
+      if (!hasSell || -x >= bigSellV) { bigSellV = -x; bigSellP = p; hasSell = true }
+    }
+  }
+  const dm = buy >= sell ? 1 : -1
+  const b: Bar40 = { o: apx[s], h: hi, l: lo, c: apx[e], vol: dm > 0 ? buy : sell, dir: dm, px: apx[e], lpSide: 0, lpVol: 0 }
+  const hb = bigBuyV >= lpt, hs = bigSellV >= lpt
+  const useBuy = (dm > 0 && hb) || (!(dm < 0 && hs) && (hb || hs) && bigBuyV >= bigSellV && hb)
+  const useSell = !useBuy && (hb || hs)
+  if (useBuy) { b.px = rint(bigBuyP / TICK) * TICK; b.lpSide = 1; b.lpVol = bigBuyV }
+  else if (useSell) { b.px = rint(bigSellP / TICK) * TICK; b.lpSide = -1; b.lpVol = bigSellV }
+  return b
+}
+
+/** Level 0/1/2 of a bubble of volume x against the previous bubbles' volumes `win` (ascending). */
+function rankLevel(win: readonly number[], x: number, pm: number, pl: number): number {
+  const cnt = win.length
+  if (cnt <= 1) return 0
+  const mi = Math.min(Math.max(Math.ceil((pm / 100.0) * (cnt - 1)), 0), cnt - 1)
+  const li = Math.min(Math.max(Math.ceil((pl / 100.0) * (cnt - 1)), 0), cnt - 1)
+  return x > win[li] ? 2 : x >= win[mi] ? 1 : 0
+}
+
+/** The dedupe: a print repeating one kept within 5 bars (same side and size, within 2 ticks) is dropped. */
+function isRepeat(kept: readonly KeptPrint[], from: number, k: number, sd: number, vv: number, pp: number): boolean {
+  for (let j = from; j < kept.length; j++) {
+    const q = kept[j]
+    if (q[1] === sd && rint(q[2]) === rint(vv) && Math.abs(q[0] - k) <= 5 && Math.abs(q[3] - pp) <= 2 * TICK) return true
+  }
+  return false
 }
 
 /**
@@ -133,33 +194,75 @@ export function clusterMarks(kept: readonly KeptPrint[], lpt: number, a0: number
   return marks
 }
 
+const ptSec = (us: number) => utcToPtMs(sierraUsToUtcSecMs(us)) / 1000
+const bubbleCount = (trades: number) => (trades > 0 ? Math.floor((trades - 1) / TRADES_PER_BUBBLE) + 1 : 0)
+
+/** Accepted trades stamped before PT-clock second `sec`: exactly the ones a Blind cut there takes. From the fill on. */
+export function tradesBefore(B: BubbleChart, sec: number): number {
+  const T = B.raw?.trades
+  if (!T) return 0
+  let lo = 0, hi = T.s.length
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (T.s0 + T.s[mid] < sec) lo = mid + 1; else hi = mid }
+  return T.from + lo
+}
+
 /**
- * The chart as it stood once its first `n` bubbles (counted from `first`) had
- * printed: arrays cut there, the ES floor and the large-print rings worked out
- * from those bubbles only. Needs `raw` (Full review payloads).
+ * Play forward: the chart exactly as a Blind cut would have built it once the
+ * first `trades` accepted trades had printed — the bubble still forming
+ * included, ranked against the bubbles before it; the ES floor over every
+ * bubble up to it; the large-print rings clustered from the prints up to it;
+ * the oldest trimmed at the same cap. Needs `raw` (Full review payloads);
+ * `trades` is held between the fill and the end of the data.
  */
-export function bubblesAsOf(B: BubbleChart, n: number): BubbleChart {
-  const N = Math.max(0, Math.min(n, B.t.length))
-  const cut = <T>(a: T[]) => a.slice(0, N)
+export function bubblesAsOf(B: BubbleChart, trades: number, maxBubbles = MAX_BUBBLES): BubbleChart | null {
   const R = B.raw
-  const abs = B.first + N
-  const fl = R?.floor_at && N > 0 ? R.floor_at[N - 1] : null
-  const lvl = R ? R.lvl0.slice(0, N).map((l, j) => (fl != null && l === 2 && B.vol[j] < fl ? 1 : l)) : cut(B.lvl)
-  const marks = R ? clusterMarks(R.kept.filter(q => q[0] < abs), B.lpt, Math.max(B.first, abs - MAX_BUBBLES)) : B.marks.filter(m => m.g < abs)
+  if (!R) return null
+  const T = R.trades, TPB = TRADES_PER_BUBBLE
+  const nT = Math.max(T.from, Math.min(trades, T.from + T.s.length))
+  const nb = bubbleCount(nT), last = nb - 1
+  if (nb === 0) return null
+  // the payload keeps every bubble the fill's cut showed, so a0 >= B.first
+  const a0 = Math.max(0, nb - maxBubbles), j0 = a0 - B.first, jl = last - B.first
+  const take = <X>(a: X[]) => a.slice(j0, jl + 1)
+  const o = take(B.o), h = take(B.h), l = take(B.l), c = take(B.c), t = take(B.t)
+  const vol = take(B.vol), dir = take(B.dir), px = take(B.px), lvl0 = take(R.lvl0)
+  const k = last - a0
+  let kept = R.kept.filter(q => q[0] <= last)
+  const live = nT - last * TPB
+  if (live < TPB) {
+    // the bubble still forming: its trades so far
+    const s = last * TPB - T.from, e = nT - 1 - T.from
+    const b = bar40(T.px, T.v, s, e, B.lpt)
+    o[k] = pyRound(b.o, 2); h[k] = pyRound(b.h, 2); l[k] = pyRound(b.l, 2); c[k] = pyRound(b.c, 2)
+    t[k] = T.s0 + T.s[e]; vol[k] = pyRound(b.vol, 0); dir[k] = b.dir; px[k] = pyRound(b.px, 2)
+    const win = B.vol.slice(Math.max(0, last - B.cfg.lookback) - B.first, jl).sort((x, y) => x - y)
+    lvl0[k] = rankLevel(win, b.vol, B.cfg.medium_pct, B.cfg.large_pct)
+    kept = kept.filter(q => q[0] < last)
+    if (b.lpSide !== 0 && !isRepeat(kept, 0, last, b.lpSide, b.lpVol, b.px)) kept.push([last, b.lpSide, b.lpVol, b.px])
+  }
+  const fl = B.cfg.floor != null && R.vol_top ? npPercentileLinearTop([...R.vol_top, ...B.vol.slice(0, jl), vol[k]], nb, B.cfg.floor) : null
   return {
-    ...B, n: abs, live_trades: TRADES_PER_BUBBLE, live_lvl: R && N ? R.lvl0[N - 1] : lvl[N - 1] ?? 0,
-    o: cut(B.o), h: cut(B.h), l: cut(B.l), c: cut(B.c), t: cut(B.t),
-    vol: cut(B.vol), dir: cut(B.dir), px: cut(B.px), lvl, marks, raw: undefined,
+    first: a0, n: nb, live_trades: live, live_lvl: lvl0[k], lpt: B.lpt,
+    o, h, l, c, t, vol, dir, px,
+    lvl: lvl0.map((lv, i) => (fl != null && lv === 2 && vol[i] < fl ? 1 : lv)),
+    sizes: B.sizes,
+    marks: clusterMarks(kept, B.lpt, a0),
+    cfg: B.cfg,
   }
 }
 
-export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBBLES, opts: { raw?: boolean } = {}): BubbleChart | null {
+/**
+ * `replayFromUs` (Full review: the fill, Sierra µs): also return `raw` for
+ * Play forward, and trim the oldest bubbles from where a Blind cut at the fill
+ * would, so every later cut can be rebuilt from this one chart.
+ */
+export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBBLES, opts: { replayFromUs?: number } = {}): BubbleChart | null {
   const cfg = BUBBLE_CFG[root]
   if (ticks.n === 0) return null
 
   // ---- accept records (DeltaBubbleScidRecordToTrade) ----
   const N = ticks.n
-  const apx = new Float64Array(N), av = new Float64Array(N), ad = new Int8Array(N), aus = new Float64Array(N)
+  const apx = new Float64Array(N), asv = new Float64Array(N), aus = new Float64Array(N)
   let n = 0
   for (let i = 0; i < N; i++) {
     const raw = ticks.px[i], v = ticks.v[i], b = ticks.bv[i], a = ticks.av[i]
@@ -170,48 +273,23 @@ export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBB
     }
     if (!(raw > 0 && v > 0 && b + a > 0 && d !== 0)) continue
     apx[n] = root === 'ES' ? rint(raw / TICK) * TICK : raw
-    av[n] = v; ad[n] = d; aus[n] = ticks.us[i]
+    asv[n] = d * v; aus[n] = ticks.us[i]
     n++
   }
   if (n === 0) return null
 
   const TPB = TRADES_PER_BUBBLE
-  const nb = Math.floor((n - 1) / TPB) + 1
+  const nb = bubbleCount(n)
   const o = new Float64Array(nb), h = new Float64Array(nb), l = new Float64Array(nb), c = new Float64Array(nb)
   const vol = new Float64Array(nb), dom = new Int8Array(nb), bpx = new Float64Array(nb)
   const lpSide = new Int8Array(nb), lpVol = new Float64Array(nb), tEnd = new Float64Array(nb)
 
   for (let g = 0; g < nb; g++) {
     const s = g * TPB, e = Math.min(s + TPB, n) - 1
-    o[g] = apx[s]; c[g] = apx[e]
-    let hi = -Infinity, lo = Infinity, buy = 0, sell = 0
-    // largest print per side; ties -> newest (later index wins on >=)
-    let bigBuyV = 0, bigBuyP = NaN, bigSellV = 0, bigSellP = NaN
-    let hasBuy = false, hasSell = false
-    for (let k = s; k <= e; k++) {
-      const p = apx[k]
-      if (p > hi) hi = p
-      if (p < lo) lo = p
-      if (ad[k] > 0) {
-        buy += av[k]
-        if (!hasBuy || av[k] >= bigBuyV) { bigBuyV = av[k]; bigBuyP = p; hasBuy = true }
-      } else {
-        sell += av[k]
-        if (!hasSell || av[k] >= bigSellV) { bigSellV = av[k]; bigSellP = p; hasSell = true }
-      }
-    }
-    h[g] = hi; l[g] = lo
-    const dm = buy >= sell ? 1 : -1
-    dom[g] = dm
-    vol[g] = dm > 0 ? buy : sell
-    const L = cfg.lpt
-    const hb = bigBuyV >= L, hs = bigSellV >= L
-    const useBuy = (dm > 0 && hb) || (!(dm < 0 && hs) && (hb || hs) && bigBuyV >= bigSellV && hb)
-    const useSell = !useBuy && (hb || hs)
-    if (useBuy) { bpx[g] = rint(bigBuyP / TICK) * TICK; lpSide[g] = 1; lpVol[g] = bigBuyV }
-    else if (useSell) { bpx[g] = rint(bigSellP / TICK) * TICK; lpSide[g] = -1; lpVol[g] = bigSellV }
-    else { bpx[g] = c[g]; lpSide[g] = 0; lpVol[g] = 0 }
-    tEnd[g] = utcToPtMs(sierraUsToUtcSecMs(aus[e])) / 1000
+    const b = bar40(apx, asv, s, e, cfg.lpt)
+    o[g] = b.o; h[g] = b.h; l[g] = b.l; c[g] = b.c
+    vol[g] = b.vol; dom[g] = b.dir; bpx[g] = b.px; lpSide[g] = b.lpSide; lpVol[g] = b.lpVol
+    tEnd[g] = ptSec(aus[e])
   }
 
   // ---- size/colour level: rank vs the previous L bubbles ----
@@ -221,20 +299,13 @@ export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBB
   const lvl = new Int8Array(nb)
   const win: number[] = []
   for (let i = 0; i < nb; i++) {
-    if (i >= 1) {
-      const cnt = win.length
-      if (cnt > 1) {
-        const mi = Math.min(Math.max(Math.ceil((pm / 100.0) * (cnt - 1)), 0), cnt - 1)
-        const li = Math.min(Math.max(Math.ceil((pl / 100.0) * (cnt - 1)), 0), cnt - 1)
-        const x = vol[i]
-        lvl[i] = x > win[li] ? 2 : x >= win[mi] ? 1 : 0
-      }
-    }
+    lvl[i] = rankLevel(win, vol[i], pm, pl)
     insertSorted(win, vol[i])
     if (win.length > LB) removeSorted(win, vol[i - LB])
   }
   const liveLvl = lvl[nb - 1]
-  const lvl0 = opts.raw ? Array.from(lvl) : null
+  const replayFrom = opts.replayFromUs
+  const lvl0 = replayFrom != null ? Array.from(lvl) : null
   if (cfg.floor != null) {
     const fl = npPercentileLinear(vol, cfg.floor)
     for (let i = 0; i < nb; i++) if (lvl[i] === 2 && vol[i] < fl) lvl[i] = 1
@@ -245,22 +316,32 @@ export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBB
   let keptFrom = 0                             // kept[] is ascending in bar; dedupe looks back <= 5 bars
   for (let k = 0; k < nb; k++) {
     if (lpSide[k] === 0) continue
-    const sd = lpSide[k], vv = lpVol[k], pp = bpx[k]
     while (keptFrom < kept.length && kept[keptFrom][0] < k - 5) keptFrom++
-    let dup = false
-    for (let j = keptFrom; j < kept.length; j++) {
-      const q = kept[j]
-      if (q[1] === sd && rint(q[2]) === rint(vv) && Math.abs(q[0] - k) <= 5 && Math.abs(q[3] - pp) <= 2 * TICK) { dup = true; break }
-    }
-    if (!dup) kept.push([k, sd, vv, pp])
+    if (!isRepeat(kept, keptFrom, k, lpSide[k], lpVol[k], bpx[k])) kept.push([k, lpSide[k], lpVol[k], bpx[k]])
   }
 
-  const a0 = Math.max(0, nb - maxBubbles)
+  // the trim counts back from the newest bubble, or (Play forward) from the one forming at the fill,
+  // keeping at least the lookback before it so a forming bubble can be ranked
+  let atFill = n
+  if (replayFrom != null) { atFill = 0; while (atFill < n && aus[atFill] < replayFrom) atFill++ }
+  const a0 = Math.max(0, bubbleCount(atFill) - (replayFrom != null ? Math.max(maxBubbles, LB + 1) : maxBubbles))
   const marks = clusterMarks(kept, cfg.lpt, a0)
   // Output rounding mirrors the reference's JSON (prices to 0.01, volume whole).
   const sl = (x: ArrayLike<number>, nd: number | null = null) => {
     const out = Array.from(x).slice(a0)
     return nd == null ? out : out.map(v => pyRound(v, nd))
+  }
+  let raw: BubbleRaw | null = null
+  if (lvl0) {
+    const from = Math.max(0, bubbleCount(atFill) - 1) * TPB, s0 = from < n ? ptSec(aus[from]) : 0
+    const s: number[] = []
+    for (let i = from; i < n; i++) s.push(ptSec(aus[i]) - s0)
+    raw = {
+      lvl0: lvl0.slice(a0),
+      vol_top: cfg.floor != null ? topVolumes(vol, a0, nb, cfg.floor) : null,
+      kept,
+      trades: { from, s0, s, px: Array.from(apx.subarray(from, n)), v: Array.from(asv.subarray(from, n)) },
+    }
   }
   return {
     first: a0, n: nb, live_trades: n - (nb - 1) * TPB, live_lvl: liveLvl, lpt: cfg.lpt,
@@ -269,12 +350,16 @@ export function bubbles40t(ticks: TickFrame, root: OfRoot, maxBubbles = MAX_BUBB
     sizes: [...BUBBLE_SIZES],
     marks,
     cfg: { lookback: LB, medium_pct: pm, large_pct: pl, floor: cfg.floor },
-    ...(lvl0 ? {
-      raw: {
-        lvl0: lvl0.slice(a0),
-        floor_at: cfg.floor != null ? runningPercentileLinear(vol, cfg.floor, a0) : null,
-        kept,
-      },
-    } : {}),
+    ...(raw ? { raw } : {}),
   }
+}
+
+/**
+ * The volumes the ES floor can reach among the bubbles before `a0`: at a cut
+ * of n bubbles the percentile reads only the n − ⌊(n − 1)·q/100⌋ largest
+ * (npPercentileLinearTop), and that only grows with n, up to `nb`.
+ */
+function topVolumes(vol: Float64Array, a0: number, nb: number, q: number): number[] {
+  const k = Math.min(a0, nb - Math.floor((nb - 1) * (q / 100)) + 1)
+  return Array.from(vol.subarray(0, a0)).sort((x, y) => y - x).slice(0, k)
 }
