@@ -6,7 +6,7 @@
  * wherever you make it. In Blind (and a replay before your exit) the bar starts
  * empty: showing a call you made earlier would tell you how the trade went.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { TradeVerdict } from '@/lib/supabase/types'
 
@@ -18,7 +18,7 @@ const CALLS: { k: Call; label: string; cls: string }[] = [
 ]
 
 export default function CallBar({
-  tradeId, blind, initial, onSaved, onNext, compact = false,
+  tradeId, blind, initial, onSaved, onNext, onDraft, compact = false,
 }: {
   tradeId: string
   blind: boolean
@@ -26,6 +26,8 @@ export default function CallBar({
   initial: { call: Call | null; note: string } | null
   onSaved: (id: string, v: { call: Call; note: string }) => void
   onNext?: () => void
+  /** The pick as it stands (not saved yet): Coach Review's "Save my call and ask" saves it. */
+  onDraft?: (id: string, call: Call | null, note: string) => void
   /** Phone: two rows, bigger targets. */
   compact?: boolean
 }) {
@@ -33,6 +35,7 @@ export default function CallBar({
   const [note, setNote] = useState(blind ? '' : initial?.note ?? '')
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  useEffect(() => { onDraft?.(tradeId, call, note) }, [onDraft, tradeId, call, note])
 
   const save = async () => {
     if (!call || saving) return

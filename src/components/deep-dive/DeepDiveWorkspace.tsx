@@ -54,6 +54,7 @@ import ChartSettingsPanel, { ChartSettingsToggle, SettingsIconButton } from './C
 import WeekTrades, { fmtUsd, rootOf, type WeekNav, type WeekTrade } from './WeekTrades'
 import CallBar from './CallBar'
 import YourTrade from './YourTrade'
+import CoachReview from './CoachReview'
 import { useTagEditing } from './useTagEditing'
 import ReplayControls, { PlayFromFillButton, PlayFromFillPill, type Speed } from './ReplayControls'
 import type { ReplayDetails } from '@/app/api/deep-dive/details/route'
@@ -61,9 +62,9 @@ import type { ReplayDetails } from '@/app/api/deep-dive/details/route'
 export type PickerTrade = WeekTrade
 type Payload = DeepDivePayload & { uses_order_flow: boolean }
 type Call = TradeVerdict['call']
-/** 'yours' = the phone's "Your trade" tab (Full review only). */
-type PaneKey = 'candles' | 'bubbles' | 'fp' | 'yours'
-const TAB_LABEL: Record<PaneKey, string> = { candles: 'Candles', bubbles: 'Bubbles', fp: 'Footprint', yours: 'Your trade' }
+/** 'yours' = the phone's "Your trade" tab (Full review only); 'coach' = its Coach Review tab. */
+type PaneKey = 'candles' | 'bubbles' | 'fp' | 'yours' | 'coach'
+const TAB_LABEL: Record<PaneKey, string> = { candles: 'Candles', bubbles: 'Bubbles', fp: 'Footprint', yours: 'Your trade', coach: 'Coach' }
 
 const PHONE_Q = '(max-width: 767px)'
 const subscribePhone = (cb: () => void) => {
@@ -152,6 +153,10 @@ export default function DeepDiveWorkspace({
   const [result, setResult] = useState<{ key: string; htf: boolean; sub: boolean; payload?: Payload; error?: string } | null>(null)
   const [results, setResults] = useState<Record<string, ReplayResult> | null>(null)
   const [saved, setSaved] = useState<Record<string, { call: Call; note: string }>>({})
+  // Coach Review: the call bar's pick as it stands, and the trades called on this visit (what opens it in Blind)
+  const [draft, setDraft] = useState<{ id: string; call: Call | null; note: string } | null>(null)
+  const [calledHere, setCalledHere] = useState<Set<string>>(() => new Set())
+  const [rtab, setRtab] = useState<'coach' | 'yours'>('coach')
   const [max, setMax] = useState<PaneKey | null>(null)
   const [ptab, setPtab] = useState<PaneKey>('candles')
   const [sheet, setSheet] = useState<'trades' | 'settings' | null>(null)
@@ -383,7 +388,7 @@ export default function DeepDiveWorkspace({
   const bubblesOn = settings.bubbles ?? usesOrderFlow
   const fpOn = settings.fp ?? usesOrderFlow
   const candlesOn = settings.candles || !bubblesOn
-  const tabs = ([['candles', candlesOn], ['bubbles', bubblesOn], ['fp', fpOn], ['yours', !hide]] as [PaneKey, boolean][]).filter(([, on]) => on).map(([k]) => k)
+  const tabs = ([['candles', candlesOn], ['bubbles', bubblesOn], ['fp', fpOn], ['yours', !hide], ['coach', true]] as [PaneKey, boolean][]).filter(([, on]) => on).map(([k]) => k)
   const tab: PaneKey = tabs.includes(ptab) ? ptab : tabs[0]
   const maxed = max && tabs.includes(max) ? max : null
   const showTime = phone ? tab === 'candles' : candlesOn && (!maxed || maxed === 'candles')
@@ -632,7 +637,31 @@ export default function DeepDiveWorkspace({
     : subChart && subBars && !subBars.t.length ? 'no trades in the 2 hours before your fill' : null
   const callsMap = useMemo(() => Object.fromEntries(Object.entries(saved).map(([k, v]) => [k, v.call])), [saved])
   const savedCall = selectedId ? saved[selectedId] ?? (results?.[selectedId] ? { call: results[selectedId].call, note: results[selectedId].note } : null) : null
-  const onSaved = (id: string, v: { call: Call; note: string }) => setSaved(m => ({ ...m, [id]: v }))
+  const onSaved = useCallback((id: string, v: { call: Call; note: string }) => {
+    setSaved(m => ({ ...m, [id]: v }))
+    setCalledHere(s => (s.has(id) ? s : new Set(s).add(id)))
+  }, [])
+  const onDraft = useCallback((id: string, call: Call | null, note: string) => setDraft({ id, call, note }), [])
+
+  // ---- Coach Review: opens once your call is saved (in Blind, a call made on this visit) ----
+  const myDraft = draft && draft.id === selectedId ? draft : null
+  const coachUnlocked = !!selectedId && (hide ? calledHere.has(selectedId) : !!savedCall?.call)
+  const coachCall = selectedId ? (hide ? saved[selectedId] ?? null : savedCall?.call ? { call: savedCall.call, note: savedCall.note ?? '' } : null) : null
+  /** "Save my call and ask": the call bar's pick, saved exactly as its own Save does. */
+  const saveCall = useCallback(async () => {
+    if (!selectedId || !myDraft?.call) return false
+    const v = { call: myDraft.call, note: myDraft.note.trim() }
+    const res = await fetch(`/api/trades/${selectedId}/review`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ verdict: v }),
+    })
+    if (!res.ok) return false
+    onSaved(selectedId, v)
+    return true
+  }, [selectedId, myDraft, onSaved])
+  const coachBody = (big: boolean) => selectedId && (
+    <CoachReview key={selectedId} tradeId={selectedId} unlocked={coachUnlocked} full={!hide} draft={myDraft} myCall={coachCall}
+      onSaveCall={saveCall} orderFlow={usesOrderFlow} big={big} />
+  )
 
   const planLine = B && (B.stop != null || B.tp != null) && (
     <span className="font-mono text-[12px] tabular-nums text-gray-400 whitespace-nowrap">
@@ -728,7 +757,7 @@ export default function DeepDiveWorkspace({
   )
   const callBar = (compact: boolean) => selectedId && (
     <CallBar key={`${selectedId}|${hide ? 'b' : 'f'}|${results ? 1 : 0}`} tradeId={selectedId} blind={hide}
-      initial={hide ? null : savedCall} onSaved={onSaved} onNext={!compact && nextId ? () => select(nextId) : undefined} compact={compact} />
+      initial={hide ? null : savedCall} onSaved={onSaved} onNext={!compact && nextId ? () => select(nextId) : undefined} onDraft={onDraft} compact={compact} />
   )
   const controls = (compact: boolean) => replay && (
     <ReplayControls running={replay.running} ready={!!FS} atStart={e <= 0} atEnd={atEnd} e={e} end={endE} speed={speed}
@@ -767,6 +796,7 @@ export default function DeepDiveWorkspace({
           <div className="flex-1 min-h-0 relative">
           {trades.length === 0 ? <p className="p-4 text-[13px] text-gray-400">No trades this week.</p>
             : tab === 'yours' ? <div className="absolute inset-0 overflow-y-auto p-3">{yoursBody(true)}</div>
+            : tab === 'coach' ? <div className="absolute inset-0 overflow-y-auto p-3">{coachBody(true)}</div>
             : status ?? (D && S && (
               tab === 'candles' ? candleBody : tab === 'bubbles' ? bubbleBody
                 // replaying, the clock chip sits over the strip's top: make room for it
@@ -774,7 +804,7 @@ export default function DeepDiveWorkspace({
             ))}
           {/* replaying: the clock on every chart (the candles carry it already) */}
           {replay && S && (tab === 'bubbles' || tab === 'fp') && <div className="absolute left-2 top-1.5 z-10 pointer-events-none">{chipEl}</div>}
-          {!replay && D && S && tab !== 'yours' && trades.length > 0 && <PlayFromFillPill onClick={startReplay} />}
+          {!replay && D && S && tab !== 'yours' && tab !== 'coach' && trades.length > 0 && <PlayFromFillPill onClick={startReplay} />}
           </div>
         </section>
         {controls(true)}
@@ -800,6 +830,8 @@ export default function DeepDiveWorkspace({
 
   // ---------------- desktop ----------------
   const both = showTime && showBubbles
+  const coachOn = settings.coach, yoursOn = !hide && settings.yours
+  const showCoach = coachOn && (!yoursOn || rtab === 'coach')
   return (
     <div className="flex -mt-2" style={{ height: 'calc(100vh - 150px)', minHeight: 640 }}>
       {/* left column: Chart Settings on top, then the week's trades */}
@@ -884,14 +916,28 @@ export default function DeepDiveWorkspace({
         )}
       </div>
 
-      {/* Full review, or a replay past your exit: your Score, screenshot and tags */}
-      {!hide && settings.yours && selectedId && (
-        <aside aria-label="Your trade" className="w-[290px] flex-none border-l overflow-y-auto pl-3.5 py-3 ml-3.5" style={{ borderColor: 'var(--ts-line)' }}>
-          <div className="flex items-baseline justify-between mb-3">
-            <span className="text-[13.5px] font-semibold text-gray-100">Your trade</span>
-            <span className="text-[11.5px] text-gray-400">{replay ? 'shown at your exit' : 'Full review only'}</span>
-          </div>
-          {yoursBody(false)}
+      {/* Coach Review (every mode), and in Full review or a replay past your exit your Score, screenshot and tags: tabs when both are on */}
+      {selectedId && (coachOn || yoursOn) && (
+        <aside aria-label={showCoach ? 'Coach Review' : 'Your trade'} className="w-[290px] flex-none border-l overflow-y-auto pl-3.5 py-3 ml-3.5" style={{ borderColor: 'var(--ts-line)' }}>
+          {coachOn && yoursOn && (
+            <div role="tablist" aria-label="Right panel" className="grid grid-cols-2 mb-3 border border-gray-800 rounded-md overflow-hidden">
+              {(['yours', 'coach'] as const).map(k => (
+                <button key={k} type="button" role="tab" aria-selected={rtab === k} onClick={() => setRtab(k)}
+                  className={cn('py-[7px] text-[12.5px] border-l border-gray-800 first:border-l-0', rtab === k ? 'bg-blue-500/15 text-gray-100 font-semibold shadow-[inset_0_-2px_0_var(--color-blue-500)]' : 'text-gray-400 hover:text-gray-100')}>
+                  {k === 'yours' ? 'Your trade' : 'Coach Review'}
+                </button>
+              ))}
+            </div>
+          )}
+          {showCoach ? coachBody(false) : (
+            <>
+              <div className="flex items-baseline justify-between mb-3">
+                <span className="text-[13.5px] font-semibold text-gray-100">Your trade</span>
+                <span className="text-[11.5px] text-gray-400">{replay ? 'shown at your exit' : 'Full review only'}</span>
+              </div>
+              {yoursBody(false)}
+            </>
+          )}
         </aside>
       )}
 

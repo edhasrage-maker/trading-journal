@@ -50,6 +50,11 @@ export const AI_LIMITS: Record<string, number> = {
   // in a single multimodal call (vision-heavy, Opus for tiered users). 15/day
   // covers re-runs across a normal review session while bounding spend.
   recap_commentary: 15,
+  // Replay Review's Coach Review — one ask reads one trade at the fill. Saved
+  // on the trade, so reopening it never counts; only a new ask (or "Ask again"
+  // after the trade's stop, rules or profile changed) does. The founder set 10
+  // a day (2026-10-24).
+  coach_review: 10,
   profile_synth: 6,
   analyze_eod: 15,
   analyze_prep: 15,

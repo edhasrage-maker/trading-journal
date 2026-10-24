@@ -410,6 +410,35 @@ export interface TradeReview {
    *  "breakeven only after TP1" (src/lib/sc-stops.ts). Written read-merge by the
    *  Sierra importers when the log carries order rows. */
   stops?: TradeStops
+  /** Replay Review's Coach Review: Claude's read of the trade at the fill, from
+   *  the Blind cut only (src/lib/coach-review.ts). Written read-merge by
+   *  POST /api/deep-dive/coach-review, only after `verdict` exists. */
+  coach_review?: TradeCoachReview
+}
+
+/** One Coach Review point: what supports the trade, what argues against it, or what to look at. */
+export interface CoachReviewItem {
+  kind: 'for' | 'against' | 'look'
+  text: string
+}
+
+/** trades.review_json.coach_review — saved so reopening it costs nothing. */
+export interface TradeCoachReview {
+  /** Prompt / input version (COACH_REVIEW_VERSION). */
+  v: string
+  /** Fingerprints of what it was made from; a changed one offers "Ask again". */
+  key: { trade: string; rules: string; profile: string }
+  model: string
+  /** When it was asked (UTC ISO). */
+  at: string
+  /** HH:MM:SS PT of the fill, and of the last second the data covers. */
+  fill: string
+  cutoff: string
+  items: CoachReviewItem[]
+  /** What it couldn't see, in plain words ("news", "your prep notes" …). */
+  unseen: string[]
+  /** Read with order flow (the trader's profile uses it). */
+  of: boolean
 }
 
 /** trades.review_json.stops — every price the trade's stop orders worked at. */

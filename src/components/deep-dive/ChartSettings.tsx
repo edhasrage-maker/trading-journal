@@ -194,6 +194,7 @@ export default function ChartSettingsPanel({
 
       <div className={cap}>Extras</div>
       {!compact && sw('Screenshot and tags panel', s.yours, v => update({ yours: v }))}
+      {!compact && sw('Coach Review panel', s.coach, v => update({ coach: v }))}
       {!compact && sw('Levels near entry panel', s.rail, v => update({ rail: v }))}
       {sw('Always show bar details', s.details, v => update({ details: v }))}
       <button type="button" onClick={onResetAll} className={cn('block text-blue-400 hover:text-blue-300', compact ? 'mt-3.5 h-11 text-[14px]' : 'mt-2 text-[12px]')}>Back to TapeScore’s defaults</button>
