@@ -337,7 +337,10 @@ export function isFreshStats(
 // v16 (2026-10-20): a trade tagged "Revenge Trading" is a chase trade wherever
 // it was entered (src/lib/tapescore-day-rules.ts reentryReads), so the re-entry
 // sums — Risk's "Re-entries" part and the 2-chase cap — move on those days.
-export const STATS_VERSION = 16
+// v17 (2026-10-25): the order-flow Score is flow-5 (the 5-minute 9 EMA counts
+// as a key level), and the founder's trades are re-scored, so Entry's
+// order-flow sums move on those days.
+export const STATS_VERSION = 17
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`

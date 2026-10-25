@@ -1,5 +1,5 @@
 /**
- * The trade Score ("five facts", version flow-4) — order flow at the fill.
+ * The trade Score ("five facts", version flow-5) — order flow at the fill.
  *
  * A line-for-line port of the frozen research scorer
  * (NQ_backtest/xy_playbook/xy_grade_v3.py: ticks → bars → day_ctx → grade() →
@@ -709,6 +709,13 @@ export function gradeFlow(x: FlowTrade, day: FlowTicks, ctx: FlowDayContext): Fl
   // The trader's own 5m supply/demand zones count as key levels too: an unbroken zone on the
   // right side (supply for a short, demand for a long), built only from 5m bars closed before the fill.
   const all5 = mergeOhlc5(ctx.priorB5, { t: b5.t.slice(0, nDone5), o: b5.o.slice(0, nDone5), h: b5.h.slice(0, nDone5), l: b5.l.slice(0, nDone5), c: b5.c.slice(0, nDone5) })
+  // The 5-minute 9 EMA counts as a key level too (founder, 2026-10-25: "it should technically be
+  // a level"): its value on the last 5m bar closed before the fill, on the same 5m bars as the
+  // zones. Checked only when no fixed level is near; a zone still wins. (xy_grade_v3.py, flow-5.)
+  if (!ref && all5.t.length) {
+    const ema9 = ewmLast(all5.c, 9)
+    if ([ext, x.px].some(p => Math.abs(ema9 - p) <= tol)) ref = '5m 9 EMA'
+  }
   let zone: FlowZone | null = null
   for (const z of findZones(all5)) {
     if (z.type !== (long ? 'demand' : 'supply') || z.confirmed > e) continue
@@ -849,6 +856,20 @@ export function gradeFlow(x: FlowTrade, day: FlowTicks, ctx: FlowDayContext): Fl
 }
 
 /** pd.concat([prior, today]) → drop duplicate times keeping the last → sort by time. */
+/** pandas `Series.ewm(span=span, adjust=False).mean().iloc[-1]`, operation for operation
+ *  (pandas' ewma loop with no missing values), so it lands on the same float as the Python. */
+function ewmLast(v: readonly number[], span: number): number {
+  const com = (span - 1) / 2.0
+  const alpha = 1.0 / (1.0 + com)
+  const oldWtFactor = 1.0 - alpha
+  let w = v[0]
+  for (let i = 1; i < v.length; i++) {
+    const cur = v[i]
+    if (w !== cur) w = ((oldWtFactor * w) + (alpha * cur)) / (oldWtFactor + alpha)
+  }
+  return w
+}
+
 function mergeOhlc5(prior: Ohlc5 | null, today: Ohlc5): Ohlc5 {
   if (!prior) return today
   const sortedNoDup = (a: number[], b: number[]) => {
@@ -874,4 +895,5 @@ const NICE: Record<string, string> = {
   'prior day low': "yesterday's low", 'week open': "this week's open", 'prior-week high': "last week's high",
   'prior-week low': "last week's low", 'prior-week close': "last week's close", 'prior-week POC': "last week's point of control",
   'prior-week VAH': "last week's value area high", 'prior-week VAL': "last week's value area low",
+  '5m 9 EMA': 'the 5-minute 9 EMA',
 }

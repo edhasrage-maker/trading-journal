@@ -21,7 +21,7 @@ const BUDGET_MS = 40_000
  * src/lib/orderflow/entry-context.ts), read from the same ticks under the same
  * write rules (entry-context-run.ts) — in any session, not just 06:30–13:00.
  *
- * The trade Score (five order-flow facts at the fill, version flow-4) computed
+ * The trade Score (five order-flow facts at the fill, version flow-5) computed
  * on the site from the tick tape — the same read the local Python scorer makes
  * from Sierra files (src/lib/orderflow/flow-score.ts is its port).
  *

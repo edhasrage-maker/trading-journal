@@ -11,7 +11,7 @@
  */
 import type { TradeEntryCtx, TradeFlowScore } from '@/lib/supabase/types'
 
-export const FLOW_VERSION = 'flow-4'
+export const FLOW_VERSION = 'flow-5'
 
 /** Python's str(float(x)) for a price: an integral value keeps its ".0". */
 function pyFloatStr(x: number): string {
