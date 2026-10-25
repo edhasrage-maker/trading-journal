@@ -36,7 +36,8 @@ export default function Landing({ authError }: { authError?: string | null }) {
       {/* Hero */}
       <section className="max-w-6xl mx-auto px-6 pt-10 pb-16 grid lg:grid-cols-2 gap-12 items-center">
         <div>
-          <p className="text-xs font-mono uppercase tracking-widest text-blue-500">Game film for traders</p>
+          {/* Says who it's for — the logo above already carries the tagline. */}
+          <p className="text-xs font-mono uppercase tracking-widest text-blue-500">For futures day traders</p>
           <h1 className="mt-4 text-4xl sm:text-5xl font-bold text-white leading-tight" style={DISPLAY}>
             We grade your decisions, not your P&amp;L.
           </h1>
@@ -75,17 +76,17 @@ export default function Landing({ authError }: { authError?: string | null }) {
               <ClipboardPaste className="w-5 h-5 text-amber-400" />
             </div>
             <h3 className="mt-3 text-sm font-semibold text-white">Paste your chart — TapeScore reads the trade</h3>
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1 text-xs text-gray-400">
               <kbd className="font-mono bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5">Ctrl</kbd> + <kbd className="font-mono bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5">V</kbd> a screenshot, or drop an image.
             </p>
             <div className="mt-5 rounded-lg border border-gray-800 bg-gray-950 p-3 text-left">
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="inline-flex items-center gap-1 rounded-full border border-red-500/40 bg-red-500/10 text-red-300 font-semibold px-2.5 py-0.5">NQ · SHORT</span>
                 <span className="font-mono text-gray-300">3 @ 29,754</span>
-                <span className="font-mono text-gray-500">stop 29,772</span>
-                <span className="font-mono text-gray-500">target 29,700</span>
+                <span className="font-mono text-gray-400">stop 29,772</span>
+                <span className="font-mono text-gray-400">target 29,700</span>
               </div>
-              <p className="mt-2 text-[11px] text-gray-600">Read from your bracket orders — target and stop identified by P&amp;L sign, not color.</p>
+              <p className="mt-2 text-[11px] text-gray-400">Read from your bracket orders — target and stop identified by P&amp;L sign, not color.</p>
             </div>
           </div>
         </div>
@@ -126,14 +127,14 @@ export default function Landing({ authError }: { authError?: string | null }) {
                 { label: 'Net P&L', value: '+$4,182', tone: 'text-green-400' },
               ].map(s => (
                 <div key={s.label} className="rounded-xl border border-gray-800 bg-gray-950 p-4">
-                  <div className="text-[11px] text-gray-500 uppercase tracking-wide">{s.label}</div>
+                  <div className="text-[11px] text-gray-400 uppercase tracking-wide">{s.label}</div>
                   <div className={`mt-1 text-xl font-semibold font-mono ${s.tone}`}>{s.value}</div>
                 </div>
               ))}
             </div>
             {/* Mock equity curve */}
             <div className="mt-5 rounded-xl border border-gray-800 bg-gray-950 p-4">
-              <div className="text-[11px] text-gray-500 uppercase tracking-wide mb-2">Equity curve</div>
+              <div className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">Equity curve</div>
               <svg viewBox="0 0 600 120" className="w-full h-28" preserveAspectRatio="none">
                 <polyline
                   points="0,110 60,98 120,102 180,80 240,86 300,64 360,70 420,44 480,50 540,26 600,18"
@@ -145,7 +146,7 @@ export default function Landing({ authError }: { authError?: string | null }) {
                 />
               </svg>
             </div>
-            <p className="text-[11px] text-gray-600 mt-3">Illustrative — your real numbers appear as soon as you import.</p>
+            <p className="text-[11px] text-gray-400 mt-3">Illustrative — your real numbers appear as soon as you import.</p>
           </div>
         </div>
       </section>
@@ -176,10 +177,11 @@ export default function Landing({ authError }: { authError?: string | null }) {
         <div className="max-w-6xl mx-auto px-6 py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
           {/* eslint-disable-next-line @next/next/no-img-element -- static brand SVG */}
           <img src="/brand/tapescore-mark.svg" alt="TapeScore" className="h-8 w-8" />
-          <p className="text-xs text-gray-600 order-last sm:order-none">TapeScore — game film for traders · early testing build, free while in beta.</p>
+          <p className="text-xs text-gray-400 order-last sm:order-none">TapeScore — game film for traders · early testing build, free while in beta.</p>
           <div className="flex items-center gap-5 text-xs">
-            <a href="/privacy" className="text-gray-500 hover:text-gray-300">Privacy</a>
-            <a href="/terms" className="text-gray-500 hover:text-gray-300">Terms</a>
+            <a href="mailto:support@tapescore.app" className="text-gray-400 hover:text-gray-300">support@tapescore.app</a>
+            <a href="/privacy" className="text-gray-400 hover:text-gray-300">Privacy</a>
+            <a href="/terms" className="text-gray-400 hover:text-gray-300">Terms</a>
           </div>
         </div>
       </footer>

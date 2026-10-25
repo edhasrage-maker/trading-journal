@@ -111,11 +111,11 @@ export default function AuthCard({ authError }: { authError?: string | null }) {
         {/* The two things that actually go wrong, said before they happen —
             opening the link on a phone when it was requested on a desktop is
             the single most common reason a sign-in fails. */}
-        <p className="text-gray-500 text-xs mt-3 leading-relaxed">
+        <p className="text-gray-400 text-xs mt-3 leading-relaxed">
           Open it <span className="text-gray-300">in this browser</span>, on this device — a link opened
           somewhere else can&apos;t sign you in. It works once and lasts about an hour.
         </p>
-        <p className="text-gray-600 text-xs mt-2">Nothing after a minute? Check your spam folder.</p>
+        <p className="text-gray-400 text-xs mt-2">Nothing after a minute? Check your spam folder.</p>
       </div>
     )
   }
@@ -147,7 +147,7 @@ export default function AuthCard({ authError }: { authError?: string | null }) {
           </button>
           <div className="flex items-center gap-3 my-4">
             <div className="h-px flex-1 bg-gray-800" />
-            <span className="text-[11px] uppercase tracking-wide text-gray-600">or sign up</span>
+            <span className="text-[11px] uppercase tracking-wide text-gray-400">or sign up</span>
             <div className="h-px flex-1 bg-gray-800" />
           </div>
         </>
@@ -165,7 +165,7 @@ export default function AuthCard({ authError }: { authError?: string | null }) {
 
       <div className="flex items-center gap-3 my-4">
         <div className="h-px flex-1 bg-gray-800" />
-        <span className="text-[11px] uppercase tracking-wide text-gray-600">or with email</span>
+        <span className="text-[11px] uppercase tracking-wide text-gray-400">or with email</span>
         <div className="h-px flex-1 bg-gray-800" />
       </div>
 
@@ -192,13 +192,14 @@ export default function AuthCard({ authError }: { authError?: string | null }) {
       <form onSubmit={submit} className="space-y-3">
         <input
           type="email" value={email} onChange={e => setEmail(e.target.value)}
-          placeholder="you@example.com" required autoComplete="email"
+          placeholder="you@example.com" required autoComplete="email" aria-label="Email address"
           className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2.5 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
         />
         {mode !== 'magic' && (
           <input
             type="password" value={password} onChange={e => setPassword(e.target.value)}
             placeholder={mode === 'signup' ? 'Create a password (min 6 chars)' : 'Password'}
+            aria-label={mode === 'signup' ? 'Create a password' : 'Password'}
             required minLength={6} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
             className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2.5 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
           />
@@ -214,22 +215,22 @@ export default function AuthCard({ authError }: { authError?: string | null }) {
       </form>
 
       {mode === 'password' && (
-        <p className="text-xs text-gray-500 mt-3 text-center">
+        <p className="text-xs text-gray-400 mt-3 text-center">
           New here? <button type="button" onClick={() => { setMode('signup'); setError(null) }} className="text-blue-400 hover:underline">Create an account</button>
         </p>
       )}
       {mode === 'signup' && (
-        <p className="text-xs text-gray-500 mt-3 text-center">
+        <p className="text-xs text-gray-400 mt-3 text-center">
           Already have an account? <button type="button" onClick={() => { setMode('password'); setError(null) }} className="text-blue-400 hover:underline">Sign in</button>
         </p>
       )}
 
-      <p className="text-[11px] text-gray-600 text-center mt-4">
+      <p className="text-[11px] text-gray-400 text-center mt-4">
         By continuing you agree to our{' '}
-        <a href="/terms" className="text-gray-500 hover:text-gray-300 underline">Terms</a> and{' '}
-        <a href="/privacy" className="text-gray-500 hover:text-gray-300 underline">Privacy Policy</a>.
+        <a href="/terms" className="text-gray-400 hover:text-gray-300 underline">Terms</a> and{' '}
+        <a href="/privacy" className="text-gray-400 hover:text-gray-300 underline">Privacy Policy</a>.
       </p>
-      <p className="text-[11px] text-gray-600 text-center mt-1">Early testing build · free while in beta</p>
+      <p className="text-[11px] text-gray-400 text-center mt-1">Early testing build · free while in beta</p>
     </div>
   )
 }

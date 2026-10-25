@@ -19,6 +19,23 @@ function safeSubPath(input: string): string {
     .join('/')
 }
 
+/** Hosted uploads are trade and chart screenshots — images only, under the
+ *  platform's ~4.5 MB request cap, into the one screenshots bucket. */
+const HOSTED_UPLOAD_BUCKET = 'screenshots'
+const HOSTED_UPLOAD_MAX_BYTES = 4_500_000
+
+/** The image type the bytes actually are (PNG / JPEG / GIF / WebP), or null.
+ *  The stored Content-Type comes from this check, never from the client's
+ *  claim — a file labelled image/png must really start like one. */
+function sniffImageType(bytes: Uint8Array): string | null {
+  const at = (i: number, ...sig: number[]) => sig.every((b, k) => bytes[i + k] === b)
+  if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png'
+  if (at(0, 0xff, 0xd8, 0xff)) return 'image/jpeg'
+  if (at(0, 0x47, 0x49, 0x46, 0x38)) return 'image/gif'
+  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'image/webp'
+  return null
+}
+
 export async function POST(req: Request) {
   const supabase = await createClient()
   const formData = await req.formData()
@@ -53,13 +70,24 @@ export async function POST(req: Request) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
+  if (bucket !== HOSTED_UPLOAD_BUCKET) {
+    return NextResponse.json({ error: 'Unknown upload destination.' }, { status: 400 })
+  }
+  if (buffer.byteLength > HOSTED_UPLOAD_MAX_BYTES) {
+    return NextResponse.json({ error: 'That image is over 4.5 MB — try a smaller screenshot.' }, { status: 413 })
+  }
+  const contentType = sniffImageType(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 16)))
+  if (!contentType) {
+    return NextResponse.json({ error: 'Only PNG, JPEG, GIF or WebP images can be uploaded.' }, { status: 415 })
+  }
+
   const sub = safeSubPath(clientPath)
   if (!sub) return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
   const path = `${user.id}/${sub}`
 
   const { error } = await supabase.storage
     .from(bucket)
-    .upload(path, buffer, { contentType: file.type, upsert: true })
+    .upload(path, buffer, { contentType, upsert: true })
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
 
   // Persist the bare PATH (`data.path`); the read boundary signs it on the way

@@ -44,6 +44,7 @@ export default function PrivacyPage() {
         <li><strong>Vercel</strong> — application hosting and delivery.</li>
         <li><strong>Anthropic</strong> — powers the AI analysis and coaching features (see §4).</li>
         <li><strong>Google / Discord</strong> — only if you choose to sign in with them.</li>
+        <li><strong>Cloudflare</strong> — Turnstile, the check on our sign-in form that keeps bots out. It sees your IP address and basic browser details while you sign in.</li>
       </ul>
 
       <h2>4. AI processing</h2>
