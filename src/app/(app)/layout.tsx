@@ -10,6 +10,7 @@ import { UiModeProvider } from '@/lib/ui-mode'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { isDemoEmail } from '@/lib/demo'
 import { dayStatsRequest, warmDayStats } from '@/lib/day-stats-batch'
+import { recordAppVisit } from '@/lib/funnel'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -34,6 +35,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       if (!statsRequest.rebuiltByPage) await warmDayStats(supabase, user.id)
     })
   }
+  // Launch funnel (hosted): the sign-up milestone, and "came back" from the
+  // next day on. Skips the demo, the admin and the local build by itself.
+  after(() => recordAppVisit(supabase, user))
 
   return (
     <UiModeProvider>

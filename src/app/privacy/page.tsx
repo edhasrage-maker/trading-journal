@@ -10,7 +10,7 @@ const SUPPORT_EMAIL = 'support@tapescore.app'
 
 export default function PrivacyPage() {
   return (
-    <LegalShell title="Privacy Policy" lastUpdated="July 5, 2026">
+    <LegalShell title="Privacy Policy" lastUpdated="October 25, 2026">
       <p>
         This Privacy Policy explains how TapeScore (&ldquo;TapeScore,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;)
         collects, uses, and protects information when you use our trading-journal application at{' '}
@@ -24,6 +24,7 @@ export default function PrivacyPage() {
         <li><strong>Trading data you provide</strong> — the trades, notes, prep, tags, and journal entries you import (via CSV or Sierra Chart logs) or enter by hand.</li>
         <li><strong>Uploads</strong> — chart screenshots and images you attach to trades or days.</li>
         <li><strong>Derived data</strong> — analytics, metrics, and AI-generated summaries we compute from the data above.</li>
+        <li><strong>Setup milestones</strong> — when your account first added trades, got its first TapeScore, and came back on a later day, so we can see where new traders get stuck. We also count visits to our home page per day, without recording anything about the visitor. This stays in our own database; no third-party analytics are involved.</li>
         <li><strong>Technical data</strong> — IP address, browser type, and cookies strictly necessary to keep you signed in. We do not use advertising or third-party tracking cookies.</li>
       </ul>
 

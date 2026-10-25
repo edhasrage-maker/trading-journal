@@ -3,7 +3,8 @@ import { clientError } from '@/lib/api-error'
 import { userConflict } from '@/lib/tenant-conflict'
 import { signTradeScreenshots, signTradeScreenshot, normalizeStoredScreenshot } from '@/lib/storage-url'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
-import { NextResponse } from 'next/server'
+import { recordFunnelEvent } from '@/lib/funnel'
+import { NextResponse, after } from 'next/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -48,6 +49,13 @@ export async function POST(req: Request) {
     .select().single()
 
   if (error) return NextResponse.json({ error: clientError(error) }, { status: 500 })
+  // Launch funnel (hosted): a trade logged by hand counts as the first trades too.
+  if (!LOCAL_FEATURES_ENABLED) {
+    after(async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      await recordFunnelEvent(supabase, user, 'first_trades')
+    })
+  }
   await signTradeScreenshot(supabase, trade)
   return NextResponse.json(trade)
 }

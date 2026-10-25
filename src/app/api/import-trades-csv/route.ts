@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { parseTradeCsv } from '@/lib/csv-trade-import'
+import { recordFunnelEvent } from '@/lib/funnel'
 import { parseSierraChartLog } from '@/lib/sc-importer'
 import { isNinjaTraderGrid, parseNinjaTraderGrid } from '@/lib/ninjatrader-import'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
@@ -517,6 +518,9 @@ export async function POST(req: Request) {
     console.error('[import-trades-csv] structure fill skipped:', e instanceof Error ? e.message : 'unknown')
     warnings.push('Could not fill 5m structure from market data (import still completed).')
   }
+
+  // Launch funnel: the account's first trades are in.
+  if ((inserted?.length ?? 0) > 0) after(() => recordFunnelEvent(supabase, user, 'first_trades'))
 
   return NextResponse.json({
     imported: inserted?.length ?? 0,

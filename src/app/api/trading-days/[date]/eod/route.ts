@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
+import { recordFunnelEvent } from '@/lib/funnel'
 import { resilientUpsert } from '@/lib/resilient-upsert'
 import { userConflict } from '@/lib/tenant-conflict'
 import type { TradingDay, EodAiAnalysis } from '@/lib/supabase/types'
@@ -63,6 +64,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     // mutations rely on the trigger + dashboard read-through instead of an
     // explicit warm here, since their cache-null already fires from the trigger.
     await recomputeDayStats(supabase, (day as TradingDay).id)
+  }
+
+  // Launch funnel (hosted): a stored end-of-day read is what puts a TapeScore
+  // on the session, so the first one is the account's first score.
+  if (!LOCAL_FEATURES_ENABLED && body.eod_ai_analysis_json && day) {
+    after(async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      await recordFunnelEvent(supabase, user, 'first_score')
+    })
   }
 
   await signDayScreenshots(supabase, day)

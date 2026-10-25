@@ -678,3 +678,46 @@ create policy "Shared read" on public.session_volume_profile
   for select to anon, authenticated using (true);
 
 grant select on public.session_volume_profile to anon, authenticated;
+
+-- ── Launch funnel ───────────────────────────────────────────────────────────
+-- See migrations/20261025_launch_funnel.public.sql: one row per account per
+-- milestone (written by src/lib/funnel.ts), a bare per-day count of signed-out
+-- landing visits, and the weekly read (select * from public.funnel_by_week).
+create table if not exists public.funnel_events (
+  user_id    uuid        not null references auth.users(id) on delete cascade default auth.uid(),
+  event      text        not null check (event in ('signed_up', 'first_trades', 'first_score', 'came_back')),
+  created_at timestamptz not null default now(),
+  primary key (user_id, event)
+);
+
+alter table public.funnel_events enable row level security;
+
+drop policy if exists "funnel_events_owner_insert" on public.funnel_events;
+create policy "funnel_events_owner_insert" on public.funnel_events
+  for insert to authenticated with check (auth.uid() = user_id);
+
+drop policy if exists "funnel_events_owner_read" on public.funnel_events;
+create policy "funnel_events_owner_read" on public.funnel_events
+  for select to authenticated using (auth.uid() = user_id);
+
+create table if not exists public.landing_visits_daily (
+  day    date    primary key,
+  visits integer not null default 0
+);
+
+alter table public.landing_visits_daily enable row level security;
+
+create or replace function public.record_landing_visit()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.landing_visits_daily (day, visits)
+  values ((now() at time zone 'America/Los_Angeles')::date, 1)
+  on conflict (day) do update set visits = landing_visits_daily.visits + 1;
+$$;
+
+revoke all on function public.record_landing_visit() from public;
+grant execute on function public.record_landing_visit() to anon, authenticated;
+-- (view public.funnel_by_week: see the migration)
