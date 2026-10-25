@@ -20,6 +20,10 @@ import { entryTimeField, entryTimeForSave } from '@/lib/trade-entry-time'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { suggestTagsFromText, mergeTradeTags } from '@/lib/suggest-tags'
 import { downscaleForVision } from '@/lib/downscale-image'
+import {
+  DISCARD_TRADE_EDITS_MESSAGE, clearTradeDraft, draftSignature, pickDraftFields, readTradeDraft,
+  restoreDraft, tradeDraftKey, writeTradeDraft, type DraftFields,
+} from '@/lib/trade-draft'
 
 interface Props {
   date: string
@@ -48,6 +52,9 @@ interface Props {
   compact?: boolean
   onSave: (trade: Trade) => void
   onCancel: () => void
+  /** Told whenever the form gains or loses unsaved edits, so a host that can
+   *  close the form itself (the recap drawer's Esc / backdrop) can ask first. */
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 interface FormState {
@@ -119,7 +126,7 @@ function rMultiple(s: FormState, symbol: string | null | undefined): string | nu
   return null
 }
 
-export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, compact = false, onSave, onCancel }: Props) {
+export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, compact = false, onSave, onCancel, onDirtyChange }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
@@ -196,6 +203,73 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       setForm(f => ({ ...f, tags: mergeTradeTags(f.tags, additions as TradeTags) }))
     }
   }, [notesSuggestions])
+
+  // ── Unsaved edits ─────────────────────────────────────────────────────────
+  // What's saved, as form fields — INCLUDING the tags the matcher above adds
+  // for notes already on the trade, or every trade whose notes match a tag
+  // would open looking edited. Moves forward on each successful save.
+  const [savedFields, setSavedFields] = useState<DraftFields>(() => pickDraftFields({
+    ...form, tags: mergeTradeTags(form.tags, suggestTagsFromText(form.notes, allTags)),
+  }))
+  const dirty = draftSignature(pickDraftFields(form)) !== draftSignature(savedFields)
+  const draftKey = tradeDraftKey(trade?.id, date)
+  const [restoredAt, setRestoredAt] = useState<string | null>(null)
+
+  // Bring back unsaved edits from an earlier visit (Esc, a page change, a
+  // closed tab): only the fields the trader changed, laid over the trade as it
+  // is now. Runs after the matcher above so the draft's own tag picks win —
+  // its notes' matches are marked as already offered, so a tag the trader
+  // removed stays removed.
+  useEffect(() => {
+    const draft = readTradeDraft(draftKey)
+    if (!draft) return
+    const restored = restoreDraft(draft, savedFields)
+    if (!restored) {
+      clearTradeDraft(draftKey)
+      return
+    }
+    for (const [cat, labels] of Object.entries(suggestTagsFromText(restored.notes, allTags))) {
+      for (const label of normalizeTagArray(labels)) autoAddedRef.current.add(`${cat}|${label}`)
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot restore from localStorage after mount; reading it during render would break SSR hydration
+    setForm(f => ({ ...f, ...restored }))
+    setRestoredAt(draft.savedAt)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot on mount
+  }, [])
+
+  // Keep the draft in step with the form: written while there are unsaved
+  // edits, removed once the form matches what's saved. Skips the first commit,
+  // which still holds the pre-restore form.
+  const draftReadyRef = useRef(false)
+  useEffect(() => {
+    if (!draftReadyRef.current) { draftReadyRef.current = true; return }
+    if (dirty) writeTradeDraft(draftKey, savedFields, pickDraftFields(form))
+    else clearTradeDraft(draftKey)
+  }, [form, dirty, draftKey, savedFields])
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+
+  // Warn before browser close / refresh when there are unsaved edits.
+  useEffect(() => {
+    if (!dirty) return
+    const handle = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', handle)
+    return () => window.removeEventListener('beforeunload', handle)
+  }, [dirty])
+
+  /** Cancel / close: ask before throwing unsaved edits away, then drop the draft. */
+  const requestCancel = () => {
+    if (dirty && !window.confirm(DISCARD_TRADE_EDITS_MESSAGE)) return
+    clearTradeDraft(draftKey)
+    onCancel()
+  }
+
+  /** "Discard them" on the restored-draft line: back to the saved trade. */
+  const discardRestored = () => {
+    clearTradeDraft(draftKey)
+    setForm(f => ({ ...f, ...savedFields }))
+    setRestoredAt(null)
+  }
 
   // AI semantic tag suggestion from the notes text. Complements the live
   // keyword matcher above: that one auto-adds literal word matches; this reads
@@ -473,6 +547,9 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
         void deleteBlob(savedScreenshotUrl)
       }
       setSavedScreenshotUrl(screenshotUrl)
+      clearTradeDraft(draftKey)
+      setSavedFields(pickDraftFields(form))
+      setRestoredAt(null)
       onSave(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error')
@@ -519,13 +596,23 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       {!compact && (
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
           <h3 className="font-semibold text-white">{trade ? 'Edit Trade' : 'Log Trade'}</h3>
-          <button type="button" onClick={onCancel} className="text-gray-500 hover:text-gray-300 transition-colors">
+          <button type="button" onClick={requestCancel} className="text-gray-500 hover:text-gray-300 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
       <div className={compact ? 'space-y-4' : 'p-5 space-y-6'}>
+
+        {restoredAt && dirty && (
+          <p className="text-[12px] text-gray-400">
+            Restored your unsaved changes from{' '}
+            {new Date(restoredAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.{' '}
+            <button type="button" onClick={discardRestored} className="text-blue-400 hover:text-blue-300 transition-colors">
+              Discard them
+            </button>
+          </p>
+        )}
 
         {/* Direction — hidden in the quick-edit drawer (flipping direction is a
             full-log operation; it re-derives stop/TP1 sides). */}
@@ -784,7 +871,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? 'Saving...' : compact ? 'Save changes' : 'Save Trade'}
           </button>
-          <button type="button" onClick={onCancel}
+          <button type="button" onClick={requestCancel}
             className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 transition-colors">
             Cancel
           </button>

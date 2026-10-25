@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { X, ExternalLink } from 'lucide-react'
 import { format } from 'date-fns'
 import TradeForm from '@/components/intraday/TradeForm'
 import type { Trade, TradeTag } from '@/lib/supabase/types'
+import { DISCARD_TRADE_EDITS_MESSAGE, clearTradeDraft, tradeDraftKey } from '@/lib/trade-draft'
 
 /**
  * Edit-in-place drawer for the EOD recap (Session-merge Pt 13, step 2). Slides in
@@ -32,6 +33,18 @@ interface Props {
 export default function TradeEditDrawer({
   trade, date, allTags, defaultSymbol, onSave, onClose, onOpenFullLog, onTagCreated,
 }: Props) {
+  // Unsaved edits in the form below. Esc, the backdrop and the X ask before
+  // closing over them (the form's own Cancel asks for itself).
+  const dirtyRef = useRef(false)
+  const onDirtyChange = useCallback((dirty: boolean) => { dirtyRef.current = dirty }, [])
+  const requestClose = useCallback(() => {
+    if (dirtyRef.current) {
+      if (!window.confirm(DISCARD_TRADE_EDITS_MESSAGE)) return
+      clearTradeDraft(tradeDraftKey(trade.id, date))
+    }
+    onClose()
+  }, [onClose, trade.id, date])
+
   // Esc closes the drawer (matches the app's other overlays).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -40,18 +53,18 @@ export default function TradeEditDrawer({
       // on Escape. While it's open the key belongs to it — otherwise one Esc
       // would collapse the zoom and the drawer together.
       if (document.querySelector('[aria-label="Trade screenshot zoom"]')) return
-      onClose()
+      requestClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [requestClose])
 
   const timeLabel = trade.entry_time ? format(new Date(trade.entry_time), 'HH:mm:ss') : '--:--:--'
 
   return (
     <div className="fixed inset-0 z-50 flex">
       {/* Backdrop — click to dismiss. */}
-      <div className="flex-1 bg-black/50" onClick={onClose} aria-hidden="true" />
+      <div className="flex-1 bg-black/50" onClick={requestClose} aria-hidden="true" />
 
       {/* Right panel. */}
       <div
@@ -69,7 +82,7 @@ export default function TradeEditDrawer({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="text-gray-500 hover:text-gray-200 transition-colors -mt-0.5"
             aria-label="Close"
           >
@@ -87,6 +100,7 @@ export default function TradeEditDrawer({
             onTagCreated={onTagCreated}
             onSave={onSave}
             onCancel={onClose}
+            onDirtyChange={onDirtyChange}
           />
         </div>
 

@@ -1277,9 +1277,9 @@ export default function EodClient({
         initialNotes={day?.eod_notes ?? ''}
         initialPnl={day?.eod_pnl ?? null}
         computedPnl={computedPnl}
-        onSaved={(notes, pnl) => {
+        onSaved={(notes, pnl, auto) => {
           setDay(prev => prev ? { ...prev, eod_notes: notes, eod_pnl: pnl } : prev)
-          showToast('EOD recap saved', 'success')
+          if (!auto) showToast('EOD recap saved', 'success')
         }}
         onError={msg => showToast(msg, 'error')}
       />

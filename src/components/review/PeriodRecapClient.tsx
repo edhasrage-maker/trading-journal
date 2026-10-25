@@ -2,7 +2,7 @@
 
 import { useMfeUnit } from '@/lib/mfe-unit'
 import { mgmtView, formatKept, type MgmtTotals } from '@/lib/trade-management'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { GhostButton } from '@/components/ui/Section'
@@ -602,21 +602,25 @@ function RecapNotes({ scope, periodKey, initial, migrationPending }: {
   migrationPending: boolean
 }) {
   const [notes, setNotes] = useState(initial)
-  const [dirty, setDirty] = useState(false)
+  // What the server holds — text typed during an in-flight save stays unsaved.
+  const [savedNotes, setSavedNotes] = useState(initial)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const dirty = notes !== savedNotes
+  const url = scope === 'week' ? `/api/weekly-recap/${periodKey}` : `/api/monthly-recap/${periodKey}`
 
   const save = async () => {
+    const sent = notes
     setSaving(true)
     setStatus(null)
     try {
-      const res = await fetch(scope === 'week' ? `/api/weekly-recap/${periodKey}` : `/api/monthly-recap/${periodKey}`, {
+      const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes_md: notes }),
+        body: JSON.stringify({ notes_md: sent }),
       })
       const data = await res.json()
-      if (!res.ok) { setStatus(data.error ?? `Save failed (${res.status})`) } else { setDirty(false); setStatus('Saved') }
+      if (!res.ok) { setStatus(data.error ?? `Save failed (${res.status})`) } else { setSavedNotes(sent); setStatus('Saved') }
     } catch (e) {
       setStatus(e instanceof Error ? e.message : 'network error')
     } finally {
@@ -624,11 +628,44 @@ function RecapNotes({ scope, periodKey, initial, migrationPending }: {
     }
   }
 
+  // Save as you type, 1.5 s after the last keystroke (one save at a time),
+  // unless the recap table is missing on this database. After a failed save it
+  // waits for the next edit (typing clears the status) instead of looping.
+  const saveRef = useRef(save)
+  useEffect(() => { saveRef.current = save })
+  const failed = status != null && status !== 'Saved'
+  useEffect(() => {
+    if (!dirty || saving || migrationPending || failed) return
+    const timer = setTimeout(() => { void saveRef.current() }, 1500)
+    return () => clearTimeout(timer)
+  }, [notes, dirty, saving, migrationPending, failed])
+
+  // Leaving the page inside that window still sends what was typed.
+  const pendingRef = useRef<string | null>(null)
+  useEffect(() => { pendingRef.current = dirty && !migrationPending ? notes : null }, [dirty, migrationPending, notes])
+  useEffect(() => () => {
+    if (pendingRef.current == null) return
+    void fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes_md: pendingRef.current }),
+      keepalive: true,
+    }).catch(() => {})
+  }, [url])
+
+  // Warn before browser close / refresh while something is unsaved.
+  useEffect(() => {
+    if (!dirty && !saving) return
+    const handle = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', handle)
+    return () => window.removeEventListener('beforeunload', handle)
+  }, [dirty, saving])
+
   return (
     <RecapSection title="Your notes">
       <textarea
         value={notes}
-        onChange={e => { setNotes(e.target.value); setDirty(true); setStatus(null) }}
+        onChange={e => { setNotes(e.target.value); setStatus(null) }}
         placeholder={scope === 'week'
           ? 'Your own takeaways for the week. What are you carrying into next week?'
           : 'Your own takeaways for the month. What are you carrying into next month?'}
@@ -636,8 +673,8 @@ function RecapNotes({ scope, periodKey, initial, migrationPending }: {
         className="w-full max-w-[720px] bg-gray-900 border border-gray-800 text-gray-200 rounded px-3.5 py-2.5 text-[13.5px] leading-relaxed placeholder-gray-600 focus:outline-none focus:border-gray-600 resize-vertical"
       />
       <div className="flex items-center gap-3 mt-2">
-        <GhostButton onClick={save} disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save notes'}</GhostButton>
-        {dirty && !status && <span className="text-[12px] text-gray-500">Unsaved</span>}
+        <GhostButton onClick={() => { void save() }} disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save notes'}</GhostButton>
+        {dirty && !status && <span className="text-[12px] text-gray-500">Not saved yet</span>}
         {status && <span className={cn('text-[12px]', status === 'Saved' ? 'text-green-400' : 'text-red-400')}>{status}</span>}
         {migrationPending && <span className="text-[12px] text-gray-600">Recap table missing on this DB — apply the monthly_recap migration to save.</span>}
       </div>
