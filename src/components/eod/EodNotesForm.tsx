@@ -49,6 +49,9 @@ export default function EodNotesForm({
   const [saved, setSaved] = useState({ notes: initialNotes, pnl: initialPnlText })
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<'idle' | 'saved' | 'failed'>('idle')
+  // The server's reason when it refused a save (e.g. the read-only demo);
+  // null means the request itself didn't get through.
+  const [failReason, setFailReason] = useState<string | null>(null)
   const dirty = notes !== saved.notes || pnl !== saved.pnl
 
   /** Append a finished spoken phrase, spaced off whatever is already there. */
@@ -75,6 +78,7 @@ export default function EodNotesForm({
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         setStatus('failed')
+        setFailReason(typeof err.error === 'string' ? err.error : null)
         if (!auto) onError?.(`Save failed: ${err.error ?? 'unknown error'}`)
         return
       }
@@ -83,6 +87,7 @@ export default function EodNotesForm({
       onSaved?.(sent.notes, parsePnl(sent.pnl) ?? null, auto)
     } catch (e) {
       setStatus('failed')
+      setFailReason(null)
       if (!auto) onError?.(`Save failed: ${e instanceof Error ? e.message : 'unknown'}`)
     } finally {
       setSaving(false)
@@ -135,7 +140,7 @@ export default function EodNotesForm({
           {saving ? (
             <span className="text-xs text-gray-500">Saving…</span>
           ) : dirty && status === 'failed' ? (
-            <span className="text-xs text-red-400 font-medium">Not saved — check your connection</span>
+            <span className="text-xs text-red-400 font-medium text-right">Not saved — {failReason ?? 'check your connection'}</span>
           ) : dirty ? (
             <span className="text-xs text-gray-500">Not saved yet</span>
           ) : status === 'saved' ? (
