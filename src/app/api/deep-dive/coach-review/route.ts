@@ -5,8 +5,8 @@ import { createServiceClient, isServiceConfigured } from '@/lib/supabase/service
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { deepDiveAllowed } from '@/lib/deep-dive-access'
 import { resolveRubric, type ScoringProfile } from '@/lib/scoring-profile'
-import { consumeAiUsage, peekAiUsage, type UsageResult } from '@/lib/ai-usage'
-import { resolveAiModel } from '@/lib/ai-model'
+import { aiLimitForTier, consumeAiUsage, peekAiUsage, type UsageResult } from '@/lib/ai-usage'
+import { isAdminUser, resolveAiModel } from '@/lib/ai-model'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { evaluateRules, readEntryRules } from '@/lib/entry-rules'
 import { entryCtxIsCurrent, flowScoreIsCurrent } from '@/lib/orderflow/flow-score-meta'
@@ -105,7 +105,7 @@ export async function GET(req: Request) {
   const id = searchParams.get('id') ?? ''
   if (!UUID.test(id)) return NextResponse.json({ error: 'id=<trade uuid> required' }, { status: 400 })
 
-  const usage = usageOf(await peekAiUsage(supabase, ACTION))
+  const usage = usageOf(await peekAiUsage(supabase, ACTION, aiLimitForTier(ACTION, isAdminUser(user))))
   if (searchParams.get('open') !== '1') return reply({ usage })
   const L = await load(supabase, id)
   if ('error' in L) return reply({ usage, error: L.error }, L.status)
@@ -132,7 +132,7 @@ export async function POST(req: Request) {
   if (!UUID.test(id)) return NextResponse.json({ error: 'id (trade uuid) required' }, { status: 400 })
 
   const L = await load(supabase, id)
-  const peek = async () => usageOf(await peekAiUsage(supabase, ACTION))
+  const peek = async () => usageOf(await peekAiUsage(supabase, ACTION, aiLimitForTier(ACTION, isAdminUser(user))))
   if ('error' in L) return reply({ usage: await peek(), error: L.error }, L.status)
   const { row } = L
   if (!row.verdict?.call) return reply({ usage: await peek(), error: 'Make your call first.', locked: true }, 403)
@@ -166,7 +166,7 @@ export async function POST(req: Request) {
   input.labels.push(...timeLabelsIn(trader))
 
   // one ask = one unit of the day's limit, spent before the model call
-  const gate = await consumeAiUsage(supabase, ACTION)
+  const gate = await consumeAiUsage(supabase, ACTION, aiLimitForTier(ACTION, isAdminUser(user)))
   if (!gate.allowed) return reply({ usage: usageOf(gate), error: gate.message }, 429)
   const usage = usageOf(gate)
   const model = await resolveAiModel(supabase, user)

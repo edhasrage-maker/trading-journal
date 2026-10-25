@@ -72,6 +72,19 @@ export function aiLimitFor(action: string): number {
   return AI_LIMITS[action] ?? 3
 }
 
+/** Higher daily limits for the paid "more reviews" tier planned for later.
+ *  Today only the app admin gets them (isAdminUser in ./ai-model); a paying
+ *  user will once billing exists. The founder set Coach Review's at 25
+ *  (2026-10-25). */
+export const AI_LIMITS_PLUS: Record<string, number> = {
+  coach_review: 25,
+}
+
+/** An action's daily limit for this user: the plus tier's where it has one. */
+export function aiLimitForTier(action: string, plus: boolean): number {
+  return plus && AI_LIMITS_PLUS[action] != null ? AI_LIMITS_PLUS[action] : aiLimitFor(action)
+}
+
 /** YYYY-MM-DD for the given instant in America/Los_Angeles (matches the RPC). */
 export function ptDay(now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(now)

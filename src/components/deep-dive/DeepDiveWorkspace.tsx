@@ -757,7 +757,7 @@ export default function DeepDiveWorkspace({
   )
   const callBar = (compact: boolean) => selectedId && (
     <CallBar key={`${selectedId}|${hide ? 'b' : 'f'}|${results ? 1 : 0}`} tradeId={selectedId} blind={hide}
-      initial={hide ? null : savedCall} onSaved={onSaved} onNext={!compact && nextId ? () => select(nextId) : undefined} onDraft={onDraft} compact={compact} />
+      initial={hide ? null : savedCall} onSaved={onSaved} onDraft={onDraft} compact={compact} />
   )
   const controls = (compact: boolean) => replay && (
     <ReplayControls running={replay.running} ready={!!FS} atStart={e <= 0} atEnd={atEnd} e={e} end={endE} speed={speed}
