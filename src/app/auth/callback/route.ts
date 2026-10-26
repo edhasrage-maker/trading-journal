@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import type { EmailOtpType } from '@supabase/supabase-js'
+import { safeNextPath } from '@/lib/safe-redirect'
 
 /**
  * Magic-link / signup callback. Supabase sends users here after they click the
@@ -27,8 +28,9 @@ export async function GET(request: Request) {
   const tokenHash = searchParams.get('token_hash')
   const type = searchParams.get('type') as EmailOtpType | null
   // Land in the app on success (not the landing, which would just bounce
-  // authenticated users onward anyway).
-  const next = searchParams.get('next') ?? '/dashboard'
+  // authenticated users onward anyway). `next` comes from the link, so only a
+  // path on this site is honoured — never a redirect off it.
+  const next = safeNextPath(searchParams.get('next'))
 
   const fail = (reason: AuthErrorReason) =>
     NextResponse.redirect(`${origin}/?auth_error=${reason}`)
