@@ -374,13 +374,13 @@ export default function AnalyticsClient({ trades, dayStats, activeRange, windowS
         />
         <StatCard
           label="Total P&L"
-          value={`${overall.total_pnl >= 0 ? '+' : ''}$${overall.total_pnl.toFixed(0)}`}
+          value={`${overall.total_pnl >= 0 ? '+' : '-'}$${Math.abs(overall.total_pnl).toFixed(0)}`}
           positive={overall.total_pnl >= 0}
         />
         {mode === 'pro' && (
           <StatCard
             label="Expectancy"
-            value={`${overall.expectancy >= 0 ? '+' : ''}$${overall.expectancy.toFixed(2)}`}
+            value={`${overall.expectancy >= 0 ? '+' : '-'}$${Math.abs(overall.expectancy).toFixed(2)}`}
             positive={overall.expectancy >= 0}
           />
         )}

@@ -133,7 +133,7 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
             ? (day.tapescore == null ? '—' : String(day.tapescore))
             : shortMoney(day.pnl)
 
-          const tip = `${format(d, 'EEE, MMM d, yyyy')} · ${day.trade_count} trade${day.trade_count === 1 ? '' : 's'} · TapeScore ${day.tapescore ?? '—'} · ${day.pnl >= 0 ? '+' : '-'}${Math.abs(day.pnl).toFixed(2)}${day.breach ? ' · rule breach' : ''}${day.day_type ? ` · ${day.day_type}` : ''}`
+          const tip = `${format(d, 'EEE, MMM d, yyyy')} · ${day.trade_count} trade${day.trade_count === 1 ? '' : 's'} · TapeScore ${day.tapescore ?? '—'} · ${day.pnl >= 0 ? '+' : '-'}$${Math.abs(day.pnl).toFixed(2)}${day.breach ? ' · rule breach' : ''}${day.day_type ? ` · ${day.day_type}` : ''}`
 
           return (
             <Link

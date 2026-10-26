@@ -657,7 +657,7 @@ function ConditionsHighlight({ match, showEv = false, baselineEv, baseline }: { 
             return (
               <div
                 className={`text-[10px] mt-1 ${cls} ${weight}`}
-                title={`Your overall baseline EV is ${baselineEv >= 0 ? '+' : ''}$${baselineEv.toFixed(2)}/trade. ${sigAbove ? 'This environment is statistically ABOVE it — a favorable regime for you.' : sigBelow ? 'Statistically BELOW it — you underperform your average here.' : 'Within range of your average — no clear edge either way.'}`}
+                title={`Your overall baseline EV is ${baselineEv >= 0 ? '+' : '-'}$${Math.abs(baselineEv).toFixed(2)}/trade. ${sigAbove ? 'This environment is statistically ABOVE it — a favorable regime for you.' : sigBelow ? 'Statistically BELOW it — you underperform your average here.' : 'Within range of your average — no clear edge either way.'}`}
               >
                 {Math.round(Math.abs(delta)) === 0
                   ? '≈ your average day'

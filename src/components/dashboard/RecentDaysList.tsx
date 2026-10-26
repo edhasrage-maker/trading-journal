@@ -272,7 +272,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
 
     const proceed = confirm(
       `Delete ${selected.length} day${selected.length === 1 ? '' : 's'}?\n\n` +
-        selected.map(d => `  • ${d.date}${d.eod_pnl != null ? ` (PnL ${d.eod_pnl >= 0 ? '+' : ''}$${d.eod_pnl})` : ''}`).join('\n') +
+        selected.map(d => `  • ${d.date}${d.eod_pnl != null ? ` (PnL ${d.eod_pnl >= 0 ? '+' : '-'}$${Math.abs(d.eod_pnl)})` : ''}`).join('\n') +
         `\n\nThis permanently removes all trades, prep, screenshots, calibration, and EOD data ` +
         `for each selected day. Cannot be undone.`,
     )
@@ -685,7 +685,7 @@ function DayRowItem({
           ),
           pnl: (
             <td key="pnl" className={`py-2 pr-3 text-center font-mono font-medium text-xs ${pnlColor} ${cellBg}`}>
-              {pnl === null ? '—' : `${pnl >= 0 ? '+' : '-'}${Math.abs(Math.round(pnl)).toLocaleString('en-US')}`}
+              {pnl === null ? '—' : `${pnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(pnl)).toLocaleString('en-US')}`}
             </td>
           ),
         }

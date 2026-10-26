@@ -205,7 +205,7 @@ export default function SharedDayView({ day, trades, chartPrefs, annotations }: 
                         <td className="px-3 py-2 font-mono">{t.exit_price ?? '—'}</td>
                         <td className="px-3 py-2 font-mono">{t.quantity ?? '—'}</td>
                         <td className={`px-3 py-2 font-mono text-right whitespace-nowrap ${(t.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}` : '—'}
+                          {t.pnl != null ? `${t.pnl >= 0 ? '+' : '-'}$${Math.abs(t.pnl).toFixed(2)}` : '—'}
                         </td>
                       </tr>
                       {isOpen && (
