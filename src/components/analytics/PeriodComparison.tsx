@@ -389,7 +389,7 @@ export default function PeriodComparison({ trades, dayStats }: Props) {
                     </td>
                     <td className={`text-right py-2 pr-3 font-medium ${pnlColor} whitespace-nowrap`}>
                       <div className="flex items-center justify-end gap-1.5">
-                        {`${b.pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(b.pnl)).toLocaleString()}`}
+                        {`${b.pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(b.pnl)).toLocaleString('en-US')}`}
                         <Delta curr={b.pnl} prev={prev?.pnl ?? null} unit="" goodIsHigher fractionDigits={0} />
                       </div>
                     </td>

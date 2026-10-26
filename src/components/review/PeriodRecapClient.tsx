@@ -125,7 +125,7 @@ const STATE_META: Record<FindingState, { label: string; cls: string }> = {
   none: { label: 'No clear read', cls: 'text-gray-500' },
 }
 
-const fmtUsd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString()}`
+const fmtUsd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString('en-US')}`
 const fmtR = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}R`
 const pnlCls = (v: number | null) => (v == null ? 'text-gray-600' : v > 0 ? 'text-green-400' : v < 0 ? 'text-red-400' : 'text-gray-400')
 
@@ -367,7 +367,7 @@ export default function PeriodRecapClient(p: RecapProps) {
               </div>
               <p className="text-[13.5px] text-gray-300 mt-1.5 leading-relaxed">
                 {p.quarter.read.overrideGapByPeriod
-                  .map(u => `${u.label} ${u.pnl >= 0 ? '+' : '−'}$${Math.abs(u.pnl).toLocaleString()} over ${u.days} day${u.days === 1 ? '' : 's'}`)
+                  .map(u => `${u.label} ${u.pnl >= 0 ? '+' : '−'}$${Math.abs(u.pnl).toLocaleString('en-US')} over ${u.days} day${u.days === 1 ? '' : 's'}`)
                   .join(', ')}
                 {' '}typed a day P&amp;L that disagrees with the trades logged that day. Where the two disagree, the
                 P&amp;L row is day level and the per-trade rows are trade level, so they will not reconcile.

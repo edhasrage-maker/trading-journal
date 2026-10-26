@@ -121,7 +121,7 @@ export default function TradeListModal({ open, trades, onClose }: Props) {
                 )}
               </span>
               <span className={totalPnl > 0 ? 'text-green-400' : totalPnl < 0 ? 'text-red-400' : 'text-gray-500'}>
-                {totalPnl >= 0 ? '+' : '-'}${Math.abs(Math.round(totalPnl)).toLocaleString()}
+                {totalPnl >= 0 ? '+' : '-'}${Math.abs(Math.round(totalPnl)).toLocaleString('en-US')}
               </span>
               {winRate != null && (
                 <span className="text-gray-400">{(winRate * 100).toFixed(0)}% win</span>
@@ -220,7 +220,7 @@ function TradeRow({ t }: { t: TradeWithContext }) {
       </td>
       <td className="py-1.5 pr-3 text-right text-gray-400">{t.quantity ?? '—'}</td>
       <td className="py-1.5 pr-3 text-right text-gray-300">
-        {t.entry_price != null ? t.entry_price.toLocaleString() : '—'}
+        {t.entry_price != null ? t.entry_price.toLocaleString('en-US') : '—'}
       </td>
       <td
         className={`py-1.5 pr-3 text-right ${
@@ -234,7 +234,7 @@ function TradeRow({ t }: { t: TradeWithContext }) {
         {r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`}
       </td>
       <td className={`py-1.5 pr-3 text-right ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-500'}`}>
-        {pnl >= 0 ? '+' : '-'}${Math.abs(Math.round(pnl)).toLocaleString()}
+        {pnl >= 0 ? '+' : '-'}${Math.abs(Math.round(pnl)).toLocaleString('en-US')}
       </td>
       <td
         className={`py-1.5 pr-3 text-right whitespace-nowrap ${

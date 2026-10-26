@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Loader2, Save, AlertCircle, CheckCircle2, DollarSign } from 'lucide-react'
+import { ptDateTime } from '@/lib/pt-time'
 
 interface SettingsResp {
   commission_per_side?: number
@@ -107,7 +108,7 @@ export default function CommissionSettingsClient() {
           <DollarSign className="w-4 h-4 text-emerald-400" />
           <span className="font-medium text-white">Commission per contract, per side</span>
           {updatedAt && (
-            <span className="text-xs text-gray-500 ml-auto">Last saved: {new Date(updatedAt).toLocaleString()}</span>
+            <span className="text-xs text-gray-500 ml-auto">Last saved: {ptDateTime(updatedAt)}</span>
           )}
         </div>
 

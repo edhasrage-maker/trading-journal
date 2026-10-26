@@ -501,12 +501,12 @@ export interface RecapVsRow {
  *  trading — an empty "before" column would imply a comparison that isn't one. */
 export function comparisonRows(prior: PeriodSummary, now: PeriodSummary, scope: 'week' | 'month'): { title: string; rows: RecapVsRow[] } | null {
   if (prior.tradedDays === 0) return null
-  const usd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString()}`
+  const usd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString('en-US')}`
   const rows: RecapVsRow[] = []
   const dPnl = now.pnl - prior.pnl
   rows.push({
     dim: 'P&L', prior: usd(prior.pnl), now: usd(now.pnl),
-    delta: `${dPnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(dPnl)).toLocaleString()}`,
+    delta: `${dPnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(dPnl)).toLocaleString('en-US')}`,
     tone: dPnl > 0 ? 'pos' : dPnl < 0 ? 'neg' : 'flat',
   })
   if (prior.railsDays > 0 && now.railsDays > 0) {
@@ -629,7 +629,7 @@ export function quarterRead(periods: Array<{ label: string; summary: PeriodSumma
     const change = first.avgRisk != null && last.avgRisk != null ? pct(first.avgRisk, last.avgRisk) : null
     rows.push({
       driver: 'Risk per trade',
-      values: s.map(x => dash(x.avgRisk != null ? `$${x.avgRisk.toLocaleString()}` : null)),
+      values: s.map(x => dash(x.avgRisk != null ? `$${x.avgRisk.toLocaleString('en-US')}` : null)),
       trend: change != null && Math.abs(change) >= 5
         ? `${change < 0 ? 'Down' : 'Up'} ${Math.abs(change)}% across the period.`
         : 'Broadly flat.',
@@ -706,7 +706,7 @@ export function quarterRead(periods: Array<{ label: string; summary: PeriodSumma
   const riskChange = first.avgRisk != null && last.avgRisk != null ? pct(first.avgRisk, last.avgRisk) : null
   rows.push({
     driver: 'P&L',
-    values: s.map(x => `${x.pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(x.pnl)).toLocaleString()}`),
+    values: s.map(x => `${x.pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(x.pnl)).toLocaleString('en-US')}`),
     // P&L falling alongside risk is de-risking, not decay. Saying only the first
     // half of that would read as a verdict on the trading.
     trend: pnlChange != null && riskChange != null && pnlChange < 0 && riskChange < 0

@@ -57,7 +57,7 @@ const CALL_META: Record<TradeVerdict['call'], { label: string; cls: string; dot:
   unsure: { label: 'Unsure', cls: 'text-gray-400', dot: 'bg-gray-500' },
 }
 
-const fmtUsd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString()}`
+const fmtUsd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString('en-US')}`
 const fmtR = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}R`
 
 export default function GameFilm({ frames, missing, migrationPending, replay = false }: Props) {

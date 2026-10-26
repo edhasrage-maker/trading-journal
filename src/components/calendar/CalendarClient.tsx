@@ -22,7 +22,7 @@ const RANGE_OPTIONS: { label: string; months: number }[] = [
 ]
 
 function money(n: number): string {
-  return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString()}`
+  return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`
 }
 
 /**

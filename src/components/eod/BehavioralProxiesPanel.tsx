@@ -106,7 +106,7 @@ export default function BehavioralProxiesPanel({
                   {giveBack.count} of {giveBack.measurable} evaluable trade
                   {giveBack.measurable === 1 ? '' : 's'} ran ≥{giveBack.thresholdAtr}×ATR in your favour,
                   then closed at breakeven or worse — handed back $
-                  {Math.round(giveBack.giveBackUsd).toLocaleString()} from peak
+                  {Math.round(giveBack.giveBackUsd).toLocaleString('en-US')} from peak
                 </div>
               </div>
             </div>

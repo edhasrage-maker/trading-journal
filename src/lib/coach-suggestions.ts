@@ -13,7 +13,7 @@ import { followFade, type Regime } from '@/lib/market-structure'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
 
-const fmt$ = (n: number) => (n >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(n)).toLocaleString()
+const fmt$ = (n: number) => (n >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US')
 const pct = (n: number) => `${Math.round(n)}%`
 /** Strip a leading ordinal like "1. " that Tradezella day-types/mistakes carry. */
 const stripNumPrefix = (s: string) => s.replace(/^\s*\d+\.\s*/, '').trim()

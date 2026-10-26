@@ -6,6 +6,7 @@ import { Loader2, AlertTriangle } from 'lucide-react'
 import { type LookupOutcome, type MatchResult } from '@/lib/condition-lookup'
 import { MIN_SAMPLE, tooFewToJudge } from '@/lib/sample-size'
 import type { ConditionMetric, DailyPrep } from '@/lib/supabase/types'
+import { ptDateTime } from '@/lib/pt-time'
 
 /**
  * Morning prep condition filter — input 5 metrics, get a verdict, save the snapshot.
@@ -320,7 +321,7 @@ export default function ConditionFilterPanel({ date, marketContext, beginner = f
           </span>
         )}
         {lastSavedAt && saveStatus === 'saved' && (
-          <span className="text-gray-500" title={new Date(lastSavedAt).toLocaleString()}>
+          <span className="text-gray-500" title={ptDateTime(lastSavedAt)}>
             · snapshot saved
           </span>
         )}

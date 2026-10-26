@@ -84,5 +84,5 @@ export interface Investigation<Input> {
 }
 
 export const fmtUsd = (n: number): string =>
-  (n >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(n)).toLocaleString()
+  (n >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US')
 export const fmtPct = (n: number): string => `${Math.round(n)}%`

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Loader2, Save, AlertCircle, CheckCircle2, Brain, Lightbulb, Target, Info } from 'lucide-react'
+import { ptDateTime } from '@/lib/pt-time'
 
 const FOCUS_PLACEHOLDER = `A short, high-priority list of what the coach should weight MOST right now. This is injected last — right before your question — so it gets the most attention. Keep it to a few sharp bullets:
 
@@ -142,7 +143,7 @@ export default function CoachingPreferencesClient() {
           autoCorrect="on"
           className="w-full h-44 bg-gray-950 border border-amber-800/40 text-gray-200 rounded-lg px-3 py-2 text-sm font-mono leading-relaxed placeholder-gray-600 focus:outline-none focus:border-amber-500 resize-vertical"
         />
-        <p className="text-xs text-gray-500">{focus.length.toLocaleString()} chars · keep it short — a few sharp bullets beat paragraphs here.</p>
+        <p className="text-xs text-gray-500">{focus.length.toLocaleString('en-US')} chars · keep it short — a few sharp bullets beat paragraphs here.</p>
       </div>
 
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
@@ -159,7 +160,7 @@ export default function CoachingPreferencesClient() {
           </span>
           {profile?.updated_at && (
             <span className="text-xs text-gray-500 ml-auto">
-              Last saved: {new Date(profile.updated_at).toLocaleString()}
+              Last saved: {ptDateTime(profile.updated_at)}
             </span>
           )}
         </div>
@@ -192,7 +193,7 @@ export default function CoachingPreferencesClient() {
             </span>
           )}
           <span className="text-xs text-gray-500 ml-auto">
-            {text.length.toLocaleString()} chars
+            {text.length.toLocaleString('en-US')} chars
           </span>
         </div>
       </div>

@@ -685,7 +685,7 @@ function DayRowItem({
           ),
           pnl: (
             <td key="pnl" className={`py-2 pr-3 text-center font-mono font-medium text-xs ${pnlColor} ${cellBg}`}>
-              {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}`}
+              {pnl === null ? '—' : `${pnl >= 0 ? '+' : '-'}${Math.abs(Math.round(pnl)).toLocaleString('en-US')}`}
             </td>
           ),
         }

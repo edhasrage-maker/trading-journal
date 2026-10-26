@@ -148,8 +148,8 @@ function PerTradeLines({ day, usual }: { day: PerTrade; usual: PerTrade | null }
     title: `Each trade's P&L divided by what it risked to its planned stop, averaged${day.withStop < day.trades ? ` (${day.withStop} of ${day.trades} trades had a stop)` : ''}. Position size doesn't change it.`,
   })
   if (day.riskPerTrade != null) lines.push({
-    label: 'Risk per trade', value: `$${Math.round(day.riskPerTrade).toLocaleString()}`,
-    usual: usual?.riskPerTrade != null ? `$${Math.round(usual.riskPerTrade).toLocaleString()}` : null,
+    label: 'Risk per trade', value: `$${Math.round(day.riskPerTrade).toLocaleString('en-US')}`,
+    usual: usual?.riskPerTrade != null ? `$${Math.round(usual.riskPerTrade).toLocaleString('en-US')}` : null,
     title: 'What a trade stood to lose at its planned stop, averaged.',
   })
   return (

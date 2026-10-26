@@ -306,7 +306,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
         // Sign before the dollar: "+$1,395" / "-$1,395" / "$0".
         // Previously was "$+1,395" — the sign-after-currency reads as
         // a typo on first scan.
-        const abs = Math.abs(stats.pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })
+        const abs = Math.abs(stats.pnl).toLocaleString('en-US', { maximumFractionDigits: 0 })
         if (stats.pnl > 0) return `+$${abs}`
         if (stats.pnl < 0) return `-$${abs}`
         return '$0'

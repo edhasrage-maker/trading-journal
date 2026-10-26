@@ -71,7 +71,7 @@ function periodBounds(period: Period): { start: string; end: string } {
  *  numbers ("$1,500" / "-$420" / "$0") so the axis reads uniformly. */
 function fmtMoney(v: number, opts?: { signed?: boolean }): string {
   const r = Math.round(v)
-  const abs = Math.abs(r).toLocaleString()
+  const abs = Math.abs(r).toLocaleString('en-US')
   if (r < 0) return `-$${abs}`
   return opts?.signed ? `+$${abs}` : `$${abs}`
 }

@@ -42,7 +42,7 @@ export interface CoachContextOptions {
   recentTradesLimit?: number
 }
 
-const fmt = (n: number) => (n >= 0 ? '+' : '') + '$' + Math.round(n).toLocaleString()
+const fmt = (n: number) => (n >= 0 ? '+' : '') + '$' + Math.round(n).toLocaleString('en-US')
 const sortByCount = <T extends { count: number }>(map: Map<string, T>, n = 10) =>
   Array.from(map.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, n)
 const sortByPnl = <T extends { pnl: number }>(map: Map<string, T>, n = 10) =>
@@ -958,7 +958,7 @@ THIS WEEK vs PRIOR WEEK:
   const dl = exitEff.dollar
   const rb = exitEff.r
   const pct = (num: number, den: number) => den > 0 ? Math.round((num / den) * 100) : 0
-  const usd = (n: number) => '$' + Math.round(n).toLocaleString()
+  const usd = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
   const avgAtr = (a: { n: number; sum: number }) => a.n > 0 ? (a.sum / a.n).toFixed(2) : '—'
   // Trade management — the SAME sort and the SAME sums the app's card, tables
   // and recaps show (src/lib/trade-management.ts), so the coach and the screen

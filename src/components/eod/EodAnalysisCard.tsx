@@ -5,6 +5,7 @@ import { Brain, Loader2, ShieldCheck, ShieldX, Activity, RefreshCw } from 'lucid
 import type { EodAiAnalysis, ProcessVerdict, ExecutionScore, RuleId, RuleStatus } from '@/lib/supabase/types'
 import { useUiMode } from '@/lib/ui-mode'
 import AiDisclaimer from '@/components/AiDisclaimer'
+import { ptDateTime } from '@/lib/pt-time'
 
 interface Props {
   analysis: EodAiAnalysis | null
@@ -111,7 +112,7 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
           {isStale && (
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-amber-700/60 bg-amber-950/40 text-amber-300"
-              title={`Trades were modified after this analysis ran (${analysis?.analyzed_at ? new Date(analysis.analyzed_at).toLocaleString() : '—'}). Per-rule reasons may cite fields you've since backfilled. Re-run Analyze Session for an accurate verdict.`}
+              title={`Trades were modified after this analysis ran (${analysis?.analyzed_at ? ptDateTime(analysis.analyzed_at) : '—'}). Per-rule reasons may cite fields you've since backfilled. Re-run Analyze Session for an accurate verdict.`}
             >
               <RefreshCw className="w-3 h-3" />
               Stale — re-run

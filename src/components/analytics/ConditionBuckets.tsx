@@ -243,7 +243,7 @@ function ConditionCard(
           hint: `${b.stats.count} · ${(b.stats.win_rate * 100).toFixed(0)}%`,
         }))}
         height={140}
-        formatValue={v => `${v >= 0 ? '+' : ''}$${v.toFixed(0)}`}
+        formatValue={v => `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(0)}`}
       />
 
       <BucketTable buckets={visible} />

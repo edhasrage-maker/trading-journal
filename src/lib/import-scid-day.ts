@@ -110,7 +110,7 @@ export async function importScidDay(
       date_range_end: opts.date,
       rows_inserted: upserted,
       rows_updated: null,
-      source_filename: `${safeName} (SCID, ${tickCount.toLocaleString()} ticks)`,
+      source_filename: `${safeName} (SCID, ${tickCount.toLocaleString('en-US')} ticks)`,
     })
   }
 

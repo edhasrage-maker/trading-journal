@@ -133,7 +133,7 @@ function keptCell(m: TradeMgmt | null): { text: string; cls: string; title: stri
 /** One excursion magnitude in the active unit, unsigned — the bar's end caps. */
 function magLabel(v: number | null | undefined, unit: MfeUnit): string {
   if (v == null) return '—'
-  if (unit === 'dollars') return '$' + Math.round(v).toLocaleString()
+  if (unit === 'dollars') return '$' + Math.round(v).toLocaleString('en-US')
   if (unit === 'atr') return `${v.toFixed(1)}×`
   return v.toFixed(1)
 }
@@ -601,7 +601,7 @@ export default function SessionTradeTable({
                     <GradeChip grade={grade} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                   )}
                   <span className={`text-sm font-semibold ${(pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString()}`}
+                    {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString('en-US')}`}
                   </span>
                 </div>
                 {grade && openScoreId === t.id && <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { thresholdAtr: giveBackAtr })?.went === false} hasStop={plannedStopPrice(t) != null} />}
@@ -741,7 +741,7 @@ export default function SessionTradeTable({
           const atrRef = liveAtr ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m
           const maeAtr = (maePts != null && atrRef != null && atrRef > 0) ? maePts / atrRef : null
           const maeMag = maePts == null ? '—'
-            : mfeUnit === 'dollars' ? '$' + Math.round(maePts * (t.quantity ?? 1) * symbolToMultiplier(t.symbol ?? '')).toLocaleString()
+            : mfeUnit === 'dollars' ? '$' + Math.round(maePts * (t.quantity ?? 1) * symbolToMultiplier(t.symbol ?? '')).toLocaleString('en-US')
             : mfeUnit === 'atr' ? (maeAtr == null ? '—' : `${maeAtr.toFixed(1)}×`)
             : maePts.toFixed(1)
           const winnerHeat = (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1
@@ -785,7 +785,7 @@ export default function SessionTradeTable({
                     <GradeChip grade={grade} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                   )}
                   <span className={`text-base font-semibold ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString()}
+                    {pnl >= 0 ? '+' : '−'}${Math.abs(Math.round(pnl)).toLocaleString('en-US')}
                   </span>
                 </span>
               </div>
@@ -1166,7 +1166,7 @@ export default function SessionTradeTable({
                     const atrRef = liveAtr ?? (t as { entry_atr_1m?: number | null }).entry_atr_1m
                     const maeAtr = (maePts != null && atrRef != null && atrRef > 0) ? maePts / atrRef : null
                     const maeMag = maePts == null ? '—'
-                      : mfeUnit === 'dollars' ? '$' + Math.round(maePts * (t.quantity ?? 1) * symbolToMultiplier(t.symbol ?? '')).toLocaleString()
+                      : mfeUnit === 'dollars' ? '$' + Math.round(maePts * (t.quantity ?? 1) * symbolToMultiplier(t.symbol ?? '')).toLocaleString('en-US')
                       : mfeUnit === 'atr' ? (maeAtr == null ? '—' : `${maeAtr.toFixed(1)}×`)
                       : maePts.toFixed(1)
                     const winnerHeat = (t.pnl ?? 0) > 0 && maeAtr != null && maeAtr >= 1

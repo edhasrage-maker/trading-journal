@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Radio, Loader2 } from 'lucide-react'
+import { ptTime } from '@/lib/pt-time'
 
 /**
  * Background bar auto-importer (the "bars watcher").
@@ -66,8 +67,8 @@ export default function BarWatcher({ activeDate, onRefresh }: Props) {
       setStatus('ok')
       setLastInfo(
         total > 0
-          ? `${total.toLocaleString()} bars · ${syms.join(', ')} · ${new Date().toLocaleTimeString()}`
-          : `Up to date · ${new Date().toLocaleTimeString()}`,
+          ? `${total.toLocaleString('en-US')} bars · ${syms.join(', ')} · ${ptTime(Date.now())}`
+          : `Up to date · ${ptTime(Date.now())}`,
       )
       // Refresh the open chart if today's poll covered the day being viewed.
       if (data.date === activeDateRef.current && total > 0) onRefreshRef.current?.()

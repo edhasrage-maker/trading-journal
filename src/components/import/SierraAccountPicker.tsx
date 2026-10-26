@@ -148,7 +148,7 @@ export default function SierraAccountPicker({ accounts, busy, onCancel, onConfir
             >
               <input type="checkbox" checked={on} onChange={() => toggle(a.account)} className="accent-blue-500 w-3.5 h-3.5 shrink-0" />
               <span className="font-mono text-[12px] text-gray-200 truncate flex-1">{a.account}</span>
-              <span className="font-mono text-[11px] text-gray-500 tabular-nums shrink-0">{a.fills.toLocaleString()} fills</span>
+              <span className="font-mono text-[11px] text-gray-500 tabular-nums shrink-0">{a.fills.toLocaleString('en-US')} fills</span>
             </label>
           )
         })}
@@ -156,7 +156,7 @@ export default function SierraAccountPicker({ accounts, busy, onCancel, onConfir
 
       <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
         <span className="text-[11px] text-gray-500">
-          {selected.size} account{selected.size === 1 ? '' : 's'} · {totalFills.toLocaleString()} fills selected
+          {selected.size} account{selected.size === 1 ? '' : 's'} · {totalFills.toLocaleString('en-US')} fills selected
           {selected.size > 1 && <span className="text-amber-400/90"> — importing several accounts duplicates the shared trades</span>}
         </span>
         <div className="flex items-center gap-2">

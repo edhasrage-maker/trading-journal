@@ -104,7 +104,7 @@ export function postExitVerdict(t: VerdictTrade, ext: PostExitData | null | unde
     if (contMat && cont >= against) {
       const mult = symbolToMultiplier(t.symbol ?? '')
       const usd = (t.quantity != null && mult > 0) ? Math.round(cont * t.quantity * mult) : null
-      const dollars = usd != null && usd > 0 ? ` (~$${usd.toLocaleString()})` : ''
+      const dollars = usd != null && usd > 0 ? ` (~$${usd.toLocaleString('en-US')})` : ''
       return {
         glyph: '◐', tone: 'left',
         label: `early — left ${mag(cont)}${dollars}`,

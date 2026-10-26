@@ -7,7 +7,7 @@ import { resolveBarVol } from '@/lib/condition-verdicts'
 import { ibTimingValue, IB_BREAK_DEFAULT, type IbTiming } from '@/lib/ib-break-timing'
 import { useRouter } from 'next/navigation'
 import { format, formatDistanceToNowStrict } from 'date-fns'
-import { todayPT } from '@/lib/pt-time'
+import { ptDateTime, todayPT } from '@/lib/pt-time'
 import { Loader2, Check, AlertTriangle } from 'lucide-react'
 import ScreenshotUpload from './ScreenshotUpload'
 import ConditionFilterPanel from '@/components/condition/ConditionFilterPanel'
@@ -1598,7 +1598,7 @@ function SaveStatus({
   }
   if (lastSavedAt) {
     return (
-      <span className="flex items-center gap-1.5 text-xs text-gray-500 font-medium" title={new Date(lastSavedAt).toLocaleString()}>
+      <span className="flex items-center gap-1.5 text-xs text-gray-500 font-medium" title={ptDateTime(lastSavedAt)}>
         <Check className="w-3 h-3 text-green-500" />
         {mounted ? `Saved ${formatDistanceToNowStrict(new Date(lastSavedAt))} ago` : 'Saved'}
       </span>
@@ -1667,7 +1667,7 @@ function PrepTiming({
     <p
       className="text-xs text-gray-500 font-mono"
       title={mounted
-        ? `Started ${start.toLocaleString()}${completedAt ? ` · last edit ${new Date(completedAt).toLocaleString()}` : ''}`
+        ? `Started ${ptDateTime(start)}${completedAt ? ` · last edit ${ptDateTime(completedAt)}` : ''}`
         : undefined}
     >
       {mounted

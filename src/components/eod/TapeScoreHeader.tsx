@@ -96,7 +96,7 @@ export default function TapeScoreHeader({
   if (!scored && tradeCount === 0 && pnl === 0 && !aside) return null
 
   const pnlCls = pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-400'
-  const pnlText = `${pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(pnl)).toLocaleString()}`
+  const pnlText = `${pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(pnl)).toLocaleString('en-US')}`
   // The day in R beside the P&L, and its average win vs average loss
   // (src/lib/trade-r.ts; founder 2026-10-22, mockup https://claude.ai/artifact/5QWKdATNpTntCQ6Ar9neZn).
   const r = dayR(trades as RTrade[])
@@ -175,7 +175,7 @@ function takeawayLine({ pnl, dailyLossLimit, chase, live, chaseCapped }: {
   pnl: number; dailyLossLimit: number | null; chase: number; live: boolean; chaseCapped: boolean
 }): string | null {
   if (dailyLossLimit != null && dailyLossLimit > 0 && pnl <= -dailyLossLimit) {
-    return `Hit your $${Math.round(dailyLossLimit).toLocaleString()} daily loss limit.`
+    return `Hit your $${Math.round(dailyLossLimit).toLocaleString('en-US')} daily loss limit.`
   }
   if (chase >= 2) {
     if (live) return `${chase} chase trades after losses so far.`

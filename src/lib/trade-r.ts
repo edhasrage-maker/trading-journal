@@ -105,6 +105,6 @@ export function lastSessions<T extends RTrade>(byDate: ReadonlyMap<string, reado
 }
 
 /** "+$118" / "−$45". */
-export const fmtUsd = (x: number) => `${x >= 0 ? '+' : '−'}$${Math.abs(Math.round(x)).toLocaleString()}`
+export const fmtUsd = (x: number) => `${x >= 0 ? '+' : '−'}$${Math.abs(Math.round(x)).toLocaleString('en-US')}`
 /** "+0.31R" / "−0.20R". */
 export const fmtR = (x: number, digits = 2) => `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(digits)}R`

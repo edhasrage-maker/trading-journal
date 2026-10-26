@@ -234,7 +234,7 @@ export function computeTraderBaselines(
 }
 
 const fmtRow = (r: BaselineRow) =>
-  `  ${r.label}: n=${r.n}, avg ${r.avgR >= 0 ? '+' : ''}${r.avgR.toFixed(2)}R, win ${r.winPct}%, net ${r.netUsd >= 0 ? '+' : '-'}$${Math.abs(r.netUsd).toLocaleString()}`
+  `  ${r.label}: n=${r.n}, avg ${r.avgR >= 0 ? '+' : ''}${r.avgR.toFixed(2)}R, win ${r.winPct}%, net ${r.netUsd >= 0 ? '+' : '-'}$${Math.abs(r.netUsd).toLocaleString('en-US')}`
 
 /**
  * Render the baselines for the prompt. Returns '' when there isn't enough

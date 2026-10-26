@@ -83,7 +83,7 @@ export default function RollingPerformance({ trades }: Props) {
           xLabels={xLabels}
           series={[{ label: 'Cumulative PnL', color: '#22c55e', values: equityValues }]}
           height={200}
-          formatY={v => `$${v.toFixed(0)}`}
+          formatY={v => `${v < 0 ? '-' : ''}${Math.abs(v).toFixed(0)}`}
           zeroLine
           showLegend={false}
         />
@@ -133,7 +133,7 @@ export default function RollingPerformance({ trades }: Props) {
           xLabels={xLabels}
           series={expectancySeries}
           height={180}
-          formatY={v => `$${v.toFixed(1)}`}
+          formatY={v => `${v < 0 ? '-' : ''}${Math.abs(v).toFixed(1)}`}
           zeroLine
         />
       </div>

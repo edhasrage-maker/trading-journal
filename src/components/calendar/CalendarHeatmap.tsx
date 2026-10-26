@@ -96,7 +96,7 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
         <div className="text-xs tabular-nums">
           {avgScore != null && <span className="text-gray-400">TapeScore {avgScore}</span>}
           <span className={`ml-3 ${monthPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {monthPnl >= 0 ? '+' : ''}${Math.round(monthPnl).toLocaleString()}
+            {monthPnl >= 0 ? '+' : '-'}${Math.abs(Math.round(monthPnl)).toLocaleString('en-US')}
           </span>
         </div>
       </div>
@@ -133,7 +133,7 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
             ? (day.tapescore == null ? '—' : String(day.tapescore))
             : shortMoney(day.pnl)
 
-          const tip = `${format(d, 'EEE, MMM d, yyyy')} · ${day.trade_count} trade${day.trade_count === 1 ? '' : 's'} · TapeScore ${day.tapescore ?? '—'} · ${day.pnl >= 0 ? '+' : ''}$${day.pnl.toFixed(2)}${day.breach ? ' · rule breach' : ''}${day.day_type ? ` · ${day.day_type}` : ''}`
+          const tip = `${format(d, 'EEE, MMM d, yyyy')} · ${day.trade_count} trade${day.trade_count === 1 ? '' : 's'} · TapeScore ${day.tapescore ?? '—'} · ${day.pnl >= 0 ? '+' : '-'}${Math.abs(day.pnl).toFixed(2)}${day.breach ? ' · rule breach' : ''}${day.day_type ? ` · ${day.day_type}` : ''}`
 
           return (
             <Link

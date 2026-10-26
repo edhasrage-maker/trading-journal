@@ -28,7 +28,7 @@ export interface WeekNav { title: string; range: string; prev: string; next: str
 
 const hhmm = (iso: string) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour12: false, hour: '2-digit', minute: '2-digit' }).format(new Date(iso))
 export const rootOf = (symbol: string) => (/^M?NQ/i.test(symbol) ? 'NQ' : /^M?ES/i.test(symbol) ? 'ES' : symbol.slice(0, 3))
-export const fmtUsd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString()}`
+export const fmtUsd = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(Math.round(v)).toLocaleString('en-US')}`
 
 const CALL: Record<TradeVerdict['call'], { label: string; cls: string }> = {
   good: { label: 'Good', cls: 'text-green-400' },

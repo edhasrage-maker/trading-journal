@@ -60,7 +60,7 @@ type Props = {
 
 function money(n: number | null): string {
   if (n == null) return '—'
-  return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString()}`
+  return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`
 }
 
 /** "2026-07-24" → "Fri, Jul 24". Rendered at noon so the timezone can never

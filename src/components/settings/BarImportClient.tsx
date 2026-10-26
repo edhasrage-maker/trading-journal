@@ -229,10 +229,10 @@ export default function BarImportClient({ initialImports }: Props) {
               <div className="bg-green-950/40 border border-green-800/60 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 <div>
-                  Imported <strong>{scidResult.data.upserted.toLocaleString()}</strong> 1m bars
+                  Imported <strong>{scidResult.data.upserted.toLocaleString('en-US')}</strong> 1m bars
                   for <span className="font-mono">{scidResult.data.symbol}</span> on {scidResult.data.date}
                   {' '}from <span className="font-mono">{scidResult.data.scidFile}</span>
-                  {' '}(aggregated {scidResult.data.tickCount.toLocaleString()} ticks).
+                  {' '}(aggregated {scidResult.data.tickCount.toLocaleString('en-US')} ticks).
                 </div>
               </div>
             )}
@@ -337,7 +337,7 @@ export default function BarImportClient({ initialImports }: Props) {
           <div className="bg-green-950/40 border border-green-800/60 rounded-lg p-3 text-sm text-green-200 flex items-start gap-2">
             <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
             <div>
-              Imported <strong>{result.data.upserted.toLocaleString()}</strong> {result.data.granularity} bars
+              Imported <strong>{result.data.upserted.toLocaleString('en-US')}</strong> {result.data.granularity} bars
               for <span className="font-mono">{result.data.symbol}</span>
               {result.data.dateRangeStart && result.data.dateRangeEnd && (
                 <> — {result.data.dateRangeStart} → {result.data.dateRangeEnd}</>
@@ -399,7 +399,7 @@ export default function BarImportClient({ initialImports }: Props) {
                     <td className="py-2 pr-3 font-mono text-gray-400">
                       {imp.date_range_start} → {imp.date_range_end}
                     </td>
-                    <td className="py-2 pr-3 text-right font-mono">{imp.rows_inserted?.toLocaleString() ?? '—'}</td>
+                    <td className="py-2 pr-3 text-right font-mono">{imp.rows_inserted?.toLocaleString('en-US') ?? '—'}</td>
                     <td className="py-2 font-mono text-gray-500 truncate max-w-xs">{imp.source_filename ?? '—'}</td>
                   </tr>
                 ))}

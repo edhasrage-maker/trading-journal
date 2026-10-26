@@ -30,6 +30,21 @@ export function todayPT(date: Date = new Date()): string {
   return `${m.year}-${m.month}-${m.day}`
 }
 
+/**
+ * A timestamp for display — "10/25/2026, 8:30:12 PM" — in Pacific, the app's
+ * display convention, and in US format. A bare toLocaleString() uses the
+ * reader's own clock and language, so the server (UTC) and the browser drew
+ * different text and React threw away the server HTML (minified error #418).
+ */
+export function ptDateTime(at: string | number | Date): string {
+  return new Date(at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })
+}
+
+/** The clock time alone — "8:30:12 PM" — in Pacific; see ptDateTime. */
+export function ptTime(at: string | number | Date): string {
+  return new Date(at).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles' })
+}
+
 /** Convert "HH:MM:SS PT on YYYY-MM-DD" to UTC milliseconds. Tries both UTC-7
  *  (PDT) and UTC-8 (PST) and picks the one whose round-trip through Intl
  *  matches the requested PT date + seconds-of-day. Falls back to PDT on the

@@ -77,7 +77,7 @@ export function useMfeUnit(): [MfeUnit, (u: MfeUnit) => void] {
 export function formatMfeMae(value: number | null, unit: MfeUnit): string {
   if (value == null) return '—'
   if (unit === 'dollars') {
-    const abs = Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 0 })
+    const abs = Math.abs(value).toLocaleString('en-US', { maximumFractionDigits: 0 })
     return (value >= 0 ? '+$' : '-$') + abs
   }
   if (unit === 'atr') return (value >= 0 ? '+' : '') + value.toFixed(2) + '×'

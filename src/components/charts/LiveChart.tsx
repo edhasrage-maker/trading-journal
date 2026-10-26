@@ -2041,7 +2041,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             <span className="font-mono">{symbol ? chartSeriesRoot(symbol) : '—'}</span>
           )}
           {displayBars && displayBars.length > 0 && (
-            <span className="text-gray-600">· {displayBars.length.toLocaleString()} bars</span>
+            <span className="text-gray-600">· {displayBars.length.toLocaleString('en-US')} bars</span>
           )}
           {/* Timeframe selector. Aggregates the stored 1-min bars client-side
               into the chosen TF. VWAP/EMA hide above 1m because their values
