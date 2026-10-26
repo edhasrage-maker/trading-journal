@@ -1,7 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { after } from 'next/server'
+import { Suspense } from 'react'
 import Masthead from '@/components/Masthead'
+import NavProgress from '@/components/NavProgress'
 import AppMain from '@/components/AppMain'
 import CoachChat from '@/components/CoachChat'
 import OnboardingGate from '@/components/onboarding/OnboardingGate'
@@ -42,6 +44,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <UiModeProvider>
       <div className="flex flex-col min-h-screen">
+        {/* Suspense: NavProgress reads the search params. */}
+        <Suspense fallback={null}><NavProgress /></Suspense>
         <Masthead isAdmin={isAdmin} />
         <AppMain>
           {isDemo && <DemoBanner />}
