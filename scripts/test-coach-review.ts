@@ -14,7 +14,7 @@
  *
  *   npx tsx scripts/test-coach-review.ts
  */
-import { buildCoachReviewInput, checkLine, finishCoachReview, parseCoachReview, timeLabelsIn, COACH_REVIEW_EXTRA, CoachReviewInputError, type CoachReviewData } from '../src/lib/coach-review.ts'
+import { buildCoachReviewInput, checkLine, finishCoachReview, parseCoachReview, timeLabelsIn, COACH_REVIEW_EXTRA, CoachReviewInputError, type CoachReviewData, type CoachReviewInput } from '../src/lib/coach-review.ts'
 import { buildSnapshot, type SnapshotRequest } from '../src/lib/orderflow/server/snapshot.ts'
 import type { TickSource, HtfBars } from '../src/lib/orderflow/server/tick-source.ts'
 import { BLIND_TRADE_COLUMNS, type DeepDivePayload } from '../src/lib/orderflow/server/deep-dive-payload.ts'
@@ -37,6 +37,7 @@ const T: TickFrame = {
   ll: new Float64Array(n), v: new Uint32Array(n), bv: new Uint32Array(n), av: new Uint32Array(n), nt: new Uint32Array(n),
 }
 const ptMs = new Float64Array(n)
+const UTC = new Float64Array(n)
 let tk = 84000 // 21000.00 in ticks
 let preHi = -Infinity, preLo = Infinity, rallyFrom = 0
 for (let i = 0; i < n; i++) {
@@ -49,6 +50,7 @@ for (let i = 0; i < n; i++) {
   }
   const buy = rnd() < 0.5, v = 1 + Math.floor(rnd() * (rnd() < 0.03 ? 120 : 8))
   T.us[i] = utcMsToSierraUs(utc)
+  UTC[i] = utc
   ptMs[i] = utcToPtMs(utc)
   T.ptMin[i] = Math.floor(ptMs[i] / 60_000) * 60_000
   T.hh[i] = (tk + 1) / 4; T.ll[i] = tk / 4
@@ -95,13 +97,17 @@ const payload = (blind: boolean): DeepDivePayload => {
 }
 const blindPayload = payload(true)
 const entrySec = blindPayload.snapshot.times.entry
+const fillPtMs = utcToPtMs(FILL_UTC)
+/** A Blind payload for a fill at any instant (to the millisecond). */
+const blindAt = (entryUtcMs: number): DeepDivePayload =>
+  ({ trade: { id: 't', symbol: 'MNQZ6', inst: 'NQ' }, blind: true, snapshot: buildSnapshot({ ...req, entryUtcMs }, new MemSource()), build_ms: 0 })
 const rules = evaluateRules(FOUNDER_ENTRY_RULES, null, { direction: 'short', symbol: 'MNQZ6', entry_time: new Date(FILL_UTC).toISOString() })
 const data = (p: DeepDivePayload): CoachReviewData => ({ payload: p, usesOrderFlow: true, rules, entryCtx: null, flow: null })
 
 console.log('the input, built from the Blind cut')
 const input = buildCoachReviewInput(data(blindPayload))
 check('it has bars and bubbles to read', input.times.length > 300 && /40-TRADE BUBBLES/.test(input.text) && /FOOTPRINT/.test(input.text), input.times.length)
-check('every bar and bubble time is before the fill', input.times.every(t => t < entrySec), input.times.filter(t => t >= entrySec).slice(0, 3).map(t => ptClock(t * 1000)))
+check('every bar and bubble time is before the fill', input.times.every(t => t * 1000 < fillPtMs), input.times.filter(t => t * 1000 >= fillPtMs).slice(0, 3).map(t => ptClock(t * 1000)))
 check('the fill is 08:41:04 and the data stops at 08:41:03', input.fill === '08:41:04' && input.cutoff === '08:41:03', [input.fill, input.cutoff])
 const fillTod = '08:41:04'
 const laterTimes = timeLabelsIn(input.text).filter(t => (t.length === 8 ? t : `${t}:00`) > fillTod && !t.startsWith('13:'))
@@ -133,6 +139,26 @@ check('a Full review payload', throws(() => buildCoachReviewInput(data(payload(f
   const c = structuredClone(blindPayload)
   if (c.snapshot.bubbles) c.snapshot.bubbles.t[c.snapshot.bubbles.t.length - 1] = entrySec + 5
   check('a Blind payload with a bubble after the fill', throws(() => buildCoachReviewInput(data(c))))
+}
+
+console.log('\na fill a fraction of a second after a trade in the same second (fills are stored to the millisecond)')
+{
+  // a trade at hh:mm:ss.xxx, then the fill 300 ms later in that same second: the forming bubble's last
+  // trade is that trade, so the bubble is stamped with the fill's own second — and it is before the fill
+  const i = UTC.findIndex(u => u >= FILL_UTC - 1800_000 && u % 1000 < 700)
+  const fill = UTC[i] + 300, fillMs = utcToPtMs(fill)
+  const p = blindAt(fill)
+  const B = p.snapshot.bubbles
+  const last = B ? B.t[B.t.length - 1] : null
+  check('the case is real: the last bubble carries the fill\'s own second', last === p.snapshot.times.entry && fill % 1000 > 0,
+    { last: last != null ? ptClock(last * 1000) : null, fill: new Date(fillMs).toISOString().slice(11, 23) })
+  let built: CoachReviewInput | null = null
+  try { built = buildCoachReviewInput(data(p)) } catch (e) { console.log(`       threw: ${(e as Error).message}`) }
+  check('it builds: that bubble is before the fill', !!built)
+  check('every time in it is before the exact fill', !!built && built.times.every(t => t * 1000 < fillMs))
+  const q = structuredClone(blindPayload)
+  if (q.snapshot.bubbles) q.snapshot.bubbles.t[q.snapshot.bubbles.t.length - 1] = entrySec
+  check('with the fill exactly on the second, a bubble stamped with that second is refused', throws(() => buildCoachReviewInput(data(q))))
 }
 
 console.log('\nwhat the route reads')

@@ -31,7 +31,7 @@ import { aggregateFrom, atr1m5m, toBars1m, vapPerBar, type Bar1m, type VapRow } 
 import { emaOnTf, vwap24h, vwapRth } from '@/lib/orderflow/indicators'
 import { volumeProfile } from '@/lib/orderflow/profile'
 import { footprintStats } from '@/lib/orderflow/footprint'
-import { ptClock, ptDate } from '@/lib/orderflow/pt-clock'
+import { ptClock, ptDate, utcToPtMs } from '@/lib/orderflow/pt-clock'
 
 /** Prompt and input version. A saved review made under another one offers "Ask again". */
 export const COACH_REVIEW_VERSION = 'cr-1'
@@ -100,10 +100,14 @@ export function buildCoachReviewInput(d: CoachReviewData): CoachReviewInput {
   }
   const m1 = toBars1m(S.bars, S.has_partial)
   if (!m1.length) throw new CoachReviewInputError('no bars before the fill')
-  // the fill's own minute may only be there as the partial bar, cut before the fill second
+  // the fill's own minute may only be there as the partial bar, cut before the fill
   for (const b of m1) if (b.partial ? b.t > entry : b.t + 60 > entry) throw new CoachReviewInputError(`the ${ptClock(b.t * 1000)} bar is not before the fill`)
+  // A bubble is stamped with the whole second of its last trade, the fill to the millisecond: a bubble that
+  // finished earlier in the fill's own second (09:04:10.2 before a fill at 09:04:10.6) is stamped 09:04:10 and
+  // is before the fill. Compare against the exact fill instant, not its second.
+  const fillPtMs = utcToPtMs(fillUtc)
   const BB = S.bubbles
-  if (BB) for (const t of BB.t) if (t >= entry) throw new CoachReviewInputError(`a bubble at ${ptClock(t * 1000)} is not before the fill`)
+  if (BB) for (const t of BB.t) if (t * 1000 >= fillPtMs) throw new CoachReviewInputError(`a bubble at ${ptClock(t * 1000)} is not before the fill`)
 
   const inst = S.row.inst, px = S.row.price, of = d.usesOrderFlow
   const fill = S.row.time, cutoff = S.cutoff_label, fillDate = S.row.date
@@ -130,7 +134,7 @@ export function buildCoachReviewInput(d: CoachReviewData): CoachReviewInput {
   // ---- the trade ----
   L.push('THE TRADE AT THE FILL')
   L.push(`${inst}, ${S.row.direction} at ${f2(px)}, filled ${fill} PT on ${S.row.weekday} ${fillDate}.`)
-  L.push(`The data stops at ${cutoff} PT, one second before the fill. Nothing after it is known.`)
+  L.push(`The data stops at the fill: everything below printed before ${fill} PT. Nothing from the fill on is known.`)
   if (S.times.in_rth) {
     labels.add('06:30'); labels.add('07:30')
     L.push(`Regular session (opened 06:30 PT); the fill is ${Math.round((entry - S.times.rth_open) / 60)} minutes after the open.`
@@ -240,7 +244,7 @@ export function buildCoachReviewInput(d: CoachReviewData): CoachReviewInput {
   else if (B.tp_src === 'assumed') unseen.push('a target you recorded (it used an assumed one)')
   if (d.rules && d.rules.length && !d.entryCtx) unseen.push('your entry rules at this fill')
   if (of && !d.flow) unseen.push('an order-flow Score for this fill')
-  L.push('', `NOT IN THE DATA (never guess these): ${unseen.join('; ')}; anything after ${cutoff}; how the trade went; the trader's size, other trades, tags, notes and their own call.`)
+  L.push('', `NOT IN THE DATA (never guess these): ${unseen.join('; ')}; anything from the fill on; how the trade went; the trader's size, other trades, tags, notes and their own call.`)
 
   return { text: L.join('\n'), times, labels: [...labels], lo, hi, entryPrice: px, fill, cutoff, unseen, of }
 }
