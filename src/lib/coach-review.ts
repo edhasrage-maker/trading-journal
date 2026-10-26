@@ -34,7 +34,7 @@ import { footprintStats } from '@/lib/orderflow/footprint'
 import { ptClock, ptDate, utcToPtMs } from '@/lib/orderflow/pt-clock'
 
 /** Prompt and input version. A saved review made under another one offers "Ask again". */
-export const COACH_REVIEW_VERSION = 'cr-1'
+export const COACH_REVIEW_VERSION = 'cr-2'
 
 /**
  * What the route reads from review_json beside the Blind trade columns: the
@@ -65,7 +65,20 @@ export interface CoachReviewData {
   entryCtx: TradeEntryCtx | null
   /** The order-flow Score read at this fill (flowScoreIsCurrent), else null. */
   flow: TradeFlowScore | null
+  /** The trader's stop rule in × ATR (stopBandOf), or null when they have none in ATR. */
+  stopBand: [number, number] | null
 }
+
+/**
+ * The trader's stop rule as the Score judges it: 0.5× to 1.5× their ATR stop
+ * setting (coach-score.ts stop_in_atr_band). The owner's empty profile is the
+ * 1× default, so 0.5–1.5× ATR. Null when they set no ATR stop (points, or none).
+ */
+export function stopBandOf(sp: ScoringProfile | null, atrStopTarget: number): [number, number] | null {
+  const atrRule = isEmptyScoringProfile(sp) || (sp?.stop?.mode?.toLowerCase() === 'atr' && typeof sp.stop.value === 'number' && sp.stop.value > 0)
+  return atrRule ? [0.5 * atrStopTarget, 1.5 * atrStopTarget] : null
+}
+const bandWords = (b: [number, number]) => `${+b[0].toFixed(2)} to ${+b[1].toFixed(2)} x the 1m ATR`
 
 export interface CoachReviewInput {
   /** The data block sent to the model. */
@@ -148,8 +161,12 @@ export function buildCoachReviewInput(d: CoachReviewData): CoachReviewInput {
   L.push('', 'THE PLAN AT THE FILL')
   const src = (s: 'recorded' | 'assumed') => (s === 'recorded' ? 'recorded by the trader' : 'not recorded: an assumed one')
   if (B.stop != null) {
-    const dist = Math.abs(px - B.stop)
-    L.push(`Stop ${f2(B.stop)} (${src(B.stop_src)}), ${f2(dist)} points from entry${atr ? `, ${(dist / atr).toFixed(2)} x the 1m ATR` : ''}.`)
+    const dist = Math.abs(px - B.stop), k = atr ? dist / atr : null, band = d.stopBand
+    // where the stop sits against the trader's own stop rule, said here so it is never judged against the bare setting
+    const rule = k != null && band
+      ? `: ${k < band[0] ? 'tighter than' : k > band[1] ? 'wider than' : 'inside'} their stop rule (${bandWords(band)})`
+      : ''
+    L.push(`Stop ${f2(B.stop)} (${src(B.stop_src)}), ${f2(dist)} points from entry${k != null ? `, ${k.toFixed(2)} x the 1m ATR${rule}` : ''}.`)
   } else L.push('Stop: none recorded, and no ATR to assume one.')
   if (B.tp != null) {
     const dist = Math.abs(B.tp - px), risk = B.stop != null ? Math.abs(px - B.stop) : null
@@ -264,9 +281,9 @@ export function traderBlock(x: { profileBlock: string; sp: ScoringProfile | null
   const owner = isEmptyScoringProfile(x.sp)
   const L = ['THE TRADER']
   L.push(x.profileBlock.trim() || 'They have not written a profile: judge on price action, structure, levels and their plan.')
-  const st = x.sp?.stop
-  if (owner) L.push(`Their stop setting: about ${x.atrStopTarget} x the 1m ATR.`)
-  else if (st?.value != null) L.push(`Their stop setting: ${st.value} ${st.mode === 'pts' ? 'points' : 'x the 1m ATR'}.`)
+  const st = x.sp?.stop, band = stopBandOf(x.sp, x.atrStopTarget)
+  if (band) L.push(`Their stop rule: anywhere from ${bandWords(band)} is on their rule (they aim for about ${x.atrStopTarget} x).`)
+  else if (st?.value != null) L.push(`Their stop setting: ${st.value} points. They have no rule for how far off it is too far: give the size, never call it tight or wide.`)
   else L.push('They have no stop setting: give a stop\'s size, never call it tight or wide.')
   if (owner) L.push(`Their target setting: TP1 at ${x.tp1RMultiple}R.`)
   else if (x.sp?.tp) L.push(`Their target setting: ${x.sp.tp}.`)
@@ -294,7 +311,7 @@ Rules:
 2. Judge in the trader's own framework (THE TRADER). Use their rules and settings. Never add a rule, a threshold or a method they don't have.
 3. Always in scope: price action, structure (higher or lower highs and lows on 1m and 5m), location against the levels, VWAP and EMAs, and the stop and target against those.
 4. Order flow only when the data has an ORDER FLOW section. Without one, never mention order flow, delta, bubbles, the footprint or the tape.
-5. The stop: say where it sits against swings and levels, and its size in points and x ATR. Call it tight or wide only against the trader's stop setting, and only when one is given.
+5. The stop: say where it sits against swings and levels, and its size in points and x ATR. Call it tight or wide only when the plan says it is outside their stop rule. Inside their rule it is on their rule: never call it tight, wide, or tighter or wider than their aim.
 6. Never say or hint: whether the trade worked, would have worked, or got stopped; anything after the fill, including how they managed, scaled or exited it; tilt, revenge, chasing, FOMO or their state of mind; their position size; their plan or bias for the day; news, other markets, the DOM or resting orders; a day type (trend day, range day). Say what price had done so far instead.
 7. Never call their read right or wrong, and don't grade the trade. Lay out what supports it and what argues against it.
 8. Talk to the trader as "you". Plain words, few of them: one or two short sentences, under 30 words, per observation. No headings, no filler, no hedging words.

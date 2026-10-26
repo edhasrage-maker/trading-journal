@@ -14,7 +14,7 @@ import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { TAPE_KEEP_DAYS } from '@/lib/orderflow/tape'
 import {
   COACH_REVIEW_EXTRA, COACH_REVIEW_SCHEMA, COACH_REVIEW_SYSTEM, CoachReviewInputError,
-  buildCoachReviewInput, coachReviewKey, finishCoachReview, parseCoachReview, staleReason, timeLabelsIn, traderBlock,
+  buildCoachReviewInput, coachReviewKey, finishCoachReview, parseCoachReview, staleReason, stopBandOf, timeLabelsIn, traderBlock,
 } from '@/lib/coach-review'
 import type { DeepDiveTradeRow } from '@/lib/orderflow/server/deep-dive-payload'
 import type { TradeCoachReview, TradeEntryCtx, TradeFlowScore, TradeReview, TradeVerdict } from '@/lib/supabase/types'
@@ -156,7 +156,7 @@ export async function POST(req: Request) {
     const rules = L.rules.length
       ? evaluateRules(L.rules, L.entryCtx, { direction: row.direction, symbol: row.symbol, entry_time: row.entry_time }).filter(r => r.counted)
       : null
-    input = buildCoachReviewInput({ payload, usesOrderFlow: L.of, rules, entryCtx: L.entryCtx, flow: L.flow })
+    input = buildCoachReviewInput({ payload, usesOrderFlow: L.of, rules, entryCtx: L.entryCtx, flow: L.flow, stopBand: stopBandOf(L.sp, L.rubric.atrStopTarget) })
   } catch (e) {
     if (e instanceof DeepDiveError) return reply({ usage: await peek(), error: e.status === 404 ? 'The tick data at your fill isn\'t on the site.' : e.message, tooOld: e.status === 404 }, e.status)
     if (e instanceof CoachReviewInputError) return reply({ usage: await peek(), error: `Couldn't read the chart at your fill: ${e.message}.` }, 422)

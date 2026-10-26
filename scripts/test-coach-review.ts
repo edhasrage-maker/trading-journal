@@ -14,7 +14,7 @@
  *
  *   npx tsx scripts/test-coach-review.ts
  */
-import { buildCoachReviewInput, checkLine, finishCoachReview, parseCoachReview, timeLabelsIn, COACH_REVIEW_EXTRA, CoachReviewInputError, type CoachReviewData, type CoachReviewInput } from '../src/lib/coach-review.ts'
+import { buildCoachReviewInput, checkLine, finishCoachReview, parseCoachReview, timeLabelsIn, COACH_REVIEW_EXTRA, CoachReviewInputError, stopBandOf, traderBlock, type CoachReviewData, type CoachReviewInput } from '../src/lib/coach-review.ts'
 import { buildSnapshot, type SnapshotRequest } from '../src/lib/orderflow/server/snapshot.ts'
 import type { TickSource, HtfBars } from '../src/lib/orderflow/server/tick-source.ts'
 import { BLIND_TRADE_COLUMNS, type DeepDivePayload } from '../src/lib/orderflow/server/deep-dive-payload.ts'
@@ -102,7 +102,7 @@ const fillPtMs = utcToPtMs(FILL_UTC)
 const blindAt = (entryUtcMs: number): DeepDivePayload =>
   ({ trade: { id: 't', symbol: 'MNQZ6', inst: 'NQ' }, blind: true, snapshot: buildSnapshot({ ...req, entryUtcMs }, new MemSource()), build_ms: 0 })
 const rules = evaluateRules(FOUNDER_ENTRY_RULES, null, { direction: 'short', symbol: 'MNQZ6', entry_time: new Date(FILL_UTC).toISOString() })
-const data = (p: DeepDivePayload): CoachReviewData => ({ payload: p, usesOrderFlow: true, rules, entryCtx: null, flow: null })
+const data = (p: DeepDivePayload): CoachReviewData => ({ payload: p, usesOrderFlow: true, rules, entryCtx: null, flow: null, stopBand: [0.5, 1.5] })
 
 console.log('the input, built from the Blind cut')
 const input = buildCoachReviewInput(data(blindPayload))
@@ -159,6 +159,22 @@ console.log('\na fill a fraction of a second after a trade in the same second (f
   const q = structuredClone(blindPayload)
   if (q.snapshot.bubbles) q.snapshot.bubbles.t[q.snapshot.bubbles.t.length - 1] = entrySec
   check('with the fill exactly on the second, a bubble stamped with that second is refused', throws(() => buildCoachReviewInput(data(q))))
+}
+
+console.log('\nthe stop against the trader\'s own stop rule (0.5x to 1.5x their ATR stop, as the Score judges it)')
+{
+  check('the plan says where the stop sits against the rule', /x the 1m ATR: wider than their stop rule \(0\.5 to 1\.5 x the 1m ATR\)/.test(input.text), input.text.split('\n').find(l => l.startsWith('Stop ')))
+  const inside = buildCoachReviewInput({ ...data(blindPayload), stopBand: [0.5, 20] })
+  check('inside the band, it says inside', /: inside their stop rule \(0\.5 to 20 x the 1m ATR\)/.test(inside.text))
+  const none = buildCoachReviewInput({ ...data(blindPayload), stopBand: null })
+  check('no ATR stop rule: no judgement in the plan', !/stop rule/.test(none.text))
+  check('your empty profile: the 1x default, 0.5 to 1.5', JSON.stringify(stopBandOf(null, 1)) === '[0.5,1.5]')
+  check('a 2 ATR stop setting: 1 to 3', JSON.stringify(stopBandOf({ stop: { mode: 'atr', value: 2 } }, 2)) === '[1,3]')
+  check('a points stop, or none, has no band', stopBandOf({ stop: { mode: 'pts', value: 10 } }, 1) === null && stopBandOf({ execution: { uses_orderflow: true } }, 1) === null)
+  const owner = traderBlock({ profileBlock: '', sp: null, usesOrderFlow: true, atrStopTarget: 1, tp1RMultiple: 2 })
+  check('the trader block gives the band, not the bare 1x', owner.includes('Their stop rule: anywhere from 0.5 to 1.5 x the 1m ATR is on their rule') && !/about 1 x the 1m ATR\./.test(owner), owner)
+  const pts = traderBlock({ profileBlock: '', sp: { stop: { mode: 'pts', value: 10 } }, usesOrderFlow: false, atrStopTarget: 1, tp1RMultiple: 2 })
+  check('a points stop: never tight or wide', pts.includes('10 points') && pts.includes('never call it tight or wide'), pts)
 }
 
 console.log('\nwhat the route reads')
