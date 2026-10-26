@@ -39,7 +39,7 @@ export default function Landing({ authError }: { authError?: string | null }) {
           {/* Says who it's for — the logo above already carries the tagline. */}
           <p className="text-xs font-mono uppercase tracking-widest text-blue-500">For futures day traders</p>
           <h1 className="mt-4 text-4xl sm:text-5xl font-bold text-white leading-tight" style={DISPLAY}>
-            We grade your decisions, not your P&amp;L.
+            Review every execution like a pro.
           </h1>
           <p className="mt-5 text-gray-400 text-base sm:text-lg max-w-lg">
             Every session gets a TapeScore — a 0–100 read on <em>how well you traded</em>, separate
