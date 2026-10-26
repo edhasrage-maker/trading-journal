@@ -38,7 +38,11 @@ if %errorlevel% equ 0 (
 echo. >> "%~dp0start-journal.log"
 echo === Starting at %date% %time% === >> "%~dp0start-journal.log"
 
-call npm run dev >> "%~dp0start-journal.log" 2>&1
+REM -H 127.0.0.1: answer only this PC. Bound to every interface, the journal
+REM was reachable from any device on the same Wi-Fi / Tailscale (Windows lets
+REM Node in on both Public and Private networks), and this PC holds the hosted
+REM database's service key. The browser still reaches it at localhost:3000.
+call npm run dev -- -H 127.0.0.1 >> "%~dp0start-journal.log" 2>&1
 
 echo. >> "%~dp0start-journal.log"
 echo === Exited at %date% %time% (exit code %errorlevel%) — restarting in 10s === >> "%~dp0start-journal.log"
