@@ -422,7 +422,8 @@ export interface CoachReviewItem {
   text: string
 }
 
-/** The coach's own call on the decision, in the trader's three words, and the one point that decided it. */
+/** The coach's own call on the decision and the one point that decided it. It always takes a side: good or
+ *  mistake (founder, 2026-10-25); "unsure" only on reviews saved before that. */
 export interface CoachReviewCall {
   kind: 'good' | 'mistake' | 'unsure'
   why: string

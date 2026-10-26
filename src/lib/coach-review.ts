@@ -35,7 +35,7 @@ import { footprintStats } from '@/lib/orderflow/footprint'
 import { ptClock, ptDate, utcToPtMs } from '@/lib/orderflow/pt-clock'
 
 /** Prompt and input version. A saved review made under another one offers "Ask again". */
-export const COACH_REVIEW_VERSION = 'cr-3'
+export const COACH_REVIEW_VERSION = 'cr-4'
 
 /**
  * What the route reads beside the Blind trade columns: the trade's day and
@@ -426,10 +426,10 @@ Rules:
 4. Order flow only when the data has an ORDER FLOW section. Without one, never mention order flow, delta, bubbles, the footprint or the tape.
 5. The stop: say where it sits against swings and levels, and its size in points and x ATR. Call it tight or wide only when the plan says it is outside their stop rule. Inside their rule it is on their rule: never call it tight, wide, or tighter or wider than their aim.
 6. Never say or hint: whether the trade worked, would have worked, or got stopped; anything after the fill, including how they managed, scaled or exited it; tilt, revenge, chasing, FOMO or their state of mind; their plan or bias for the day; news, other markets, the DOM or resting orders; a day type (trend day, range day). Say what price had done so far instead. Their size, their earlier trades and their day only as THE TRADER'S DAY section states them, against their own rules, kept or broken, never as a state of mind.
-7. Then give your own call on the decision to take this trade, in the trader's words: "good", "mistake" or "unsure". Good: the data at the fill supports taking it, in their framework. Mistake: the data, or one of their rules, argues clearly against it. Unsure: it is split, or the data can't tell. In "why", name the one point that decided it, in one sentence under 25 words, with a time, price, level or rule name from the data. You can't see their call: never mention it, and never call their read right or wrong.
+7. Then give your own call on the decision to take this trade: "good" or "mistake". Always take a side; there is no middle answer. Good: on balance the data at the fill supports taking it, in their framework. Mistake: on balance the data, or their rules, argue against it. When it is close, weigh it and say which point tipped it. In "why", name that one deciding point, in one sentence under 25 words, with a time, price, level or rule name from the data. You can't see their call: never mention it, and never call their read right or wrong.
 8. Talk to the trader as "you". Plain words, few of them: one or two short sentences, under 30 words, per observation. No headings, no filler, no hedging words.
 
-Return only JSON: {"observations":[{"kind":"for","text":"..."}],"call":{"kind":"unsure","why":"..."}}`
+Return only JSON: {"observations":[{"kind":"for","text":"..."}],"call":{"kind":"mistake","why":"..."}}`
 
 /** The structured output it must return. */
 export const COACH_REVIEW_SCHEMA = {
@@ -446,7 +446,8 @@ export const COACH_REVIEW_SCHEMA = {
     },
     call: {
       type: 'object',
-      properties: { kind: { type: 'string', enum: ['good', 'mistake', 'unsure'] }, why: { type: 'string' } },
+      // always a side (founder, 2026-10-25): no "unsure" for the coach
+      properties: { kind: { type: 'string', enum: ['good', 'mistake'] }, why: { type: 'string' } },
       required: ['kind', 'why'],
       additionalProperties: false,
     },
@@ -470,7 +471,7 @@ export function parseCoachReview(text: string): { items: CoachReviewItem[]; call
     .filter((x): x is CoachReviewItem => !!x && typeof x === 'object' && KIND_ORDER.includes((x as CoachReviewItem).kind) && typeof (x as CoachReviewItem).text === 'string')
     .map(x => ({ kind: x.kind, text: x.text.trim() }))
   const c = o.call as Partial<CoachReviewCall> | undefined
-  const call = c && (c.kind === 'good' || c.kind === 'mistake' || c.kind === 'unsure') && typeof c.why === 'string' && c.why.trim()
+  const call = c && (c.kind === 'good' || c.kind === 'mistake') && typeof c.why === 'string' && c.why.trim()
     ? { kind: c.kind, why: c.why.trim() } : null
   return { items, call }
 }

@@ -14,7 +14,7 @@
  *
  *   npx tsx scripts/test-coach-review.ts
  */
-import { buildCoachReviewInput, checkLine, finishCoachReview, parseCoachReview, timeLabelsIn, COACH_REVIEW_EXTRA, CoachReviewInputError, stopBandOf, traderBlock, dayAtFill, usualSizeOf, type CoachReviewData, type CoachReviewInput, type DayTrade } from '../src/lib/coach-review.ts'
+import { buildCoachReviewInput, checkLine, finishCoachReview, parseCoachReview, timeLabelsIn, COACH_REVIEW_EXTRA, COACH_REVIEW_SCHEMA, COACH_REVIEW_SYSTEM, CoachReviewInputError, stopBandOf, traderBlock, dayAtFill, usualSizeOf, type CoachReviewData, type CoachReviewInput, type DayTrade } from '../src/lib/coach-review.ts'
 import { OWNER_RAILS, UNTRACKED_RAILS } from '../src/lib/scoring-profile.ts'
 import { buildSnapshot, type SnapshotRequest } from '../src/lib/orderflow/server/snapshot.ts'
 import type { TickSource, HtfBars } from '../src/lib/orderflow/server/tick-source.ts'
@@ -215,10 +215,12 @@ console.log('\nthe coach\'s call')
 {
   const key = { trade: '', rules: '', profile: '' }
   const items = [{ kind: 'for' as const, text: 'You sold under VWAP with the 5m making lower highs.' }]
-  const parsed = parseCoachReview(JSON.stringify({ observations: items, call: { kind: 'unsure', why: 'Sellers met your price, but you sold a bounce with buyers still leading.' } }))
-  check('the call parses', parsed?.call?.kind === 'unsure' && !!parsed.call.why, parsed?.call)
+  const parsed = parseCoachReview(JSON.stringify({ observations: items, call: { kind: 'mistake', why: 'Sellers met your price, but you sold a bounce with buyers still leading.' } }))
+  check('the call parses', parsed?.call?.kind === 'mistake' && !!parsed.call.why, parsed?.call)
   const done = parsed && finishCoachReview(parsed, input, { model: 'm', at: '', key })
-  check('a call that passes the checks is kept', done?.call?.kind === 'unsure', done?.call)
+  check('a call that passes the checks is kept', done?.call?.kind === 'mistake', done?.call)
+  check('it always takes a side: "unsure" is not a call', parseCoachReview(JSON.stringify({ observations: items, call: { kind: 'unsure', why: 'It is split between the sellers and the bounce.' } }))?.call === null)
+  check('…and the schema only offers good or mistake', JSON.stringify(COACH_REVIEW_SCHEMA.properties.call.properties.kind.enum) === '["good","mistake"]' && !/"unsure"|Unsure:/.test(COACH_REVIEW_SYSTEM))
   const late = finishCoachReview({ items, call: { kind: 'mistake', why: 'By 08:50 the bounce had kept going against you.' } }, input, { model: 'm', at: '', key })
   check('a call whose line names a time after the fill is dropped, the points stay', !!late && late.call === null && late.items.length === 1)
   check('an unknown call word is not a call', parseCoachReview(JSON.stringify({ observations: items, call: { kind: 'great', why: 'x x x x x x x x' } }))?.call === null)
