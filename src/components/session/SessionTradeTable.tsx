@@ -17,7 +17,6 @@
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { format } from 'date-fns'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare, Upload } from 'lucide-react'
 import { maeHeatRatio, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
 import { plannedStopPrice } from '@/lib/planned-stop'
@@ -35,6 +34,22 @@ import type { RunnerRuleConfig } from '@/lib/runner-rules'
 import { tradeGrade, type TradeGrade } from '@/lib/trade-grade'
 import { reentryReads } from '@/lib/tapescore-day-rules'
 import { useFlowScores, flowScoreFor, entryCtxFor } from '@/lib/use-flow-scores'
+
+// Trade times read in Pacific — the app's display convention — on the server
+// and in the browser alike. date-fns `format` used whichever clock ran it, so
+// the server's UTC render ("2:21 PM") and the browser's ("7:21 AM") disagreed
+// and React threw away the server HTML (minified error #418).
+const PT_CLOCK = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' })
+const PT_CLOCK_SECONDS = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+/** "7:21 AM" — assembled from parts so the space before AM/PM is a plain one
+ *  (some ICU versions emit a narrow no-break space, which would make server
+ *  and browser disagree all over again). */
+const ptClock = (iso: string) => {
+  const p = Object.fromEntries(PT_CLOCK.formatToParts(new Date(iso)).map(x => [x.type, x.value]))
+  return `${p.hour}:${p.minute} ${p.dayPeriod}`
+}
+/** "07:21:00" */
+const ptClockSeconds = (iso: string) => PT_CLOCK_SECONDS.format(new Date(iso))
 
 type SortKey = 'time' | 'atr' | 'pnl' | 'score' | 'r' | 'mfe' | 'mae'
 type SortDir = 'asc' | 'desc'
@@ -562,7 +577,7 @@ export default function SessionTradeTable({
           {sortedTrades.map(t => {
             const setup = ((t.tags_json as unknown as { setups?: string[] } | null)?.setups ?? [])[0]
             const pnl = t.pnl
-            const time = t.entry_time ? format(new Date(t.entry_time), 'h:mm a') : '--'
+            const time = t.entry_time ? ptClock(t.entry_time) : '--'
             const summary = summaries[t.id]
             // Same fallback as the pro table: the trader's own note stands in
             // until an AI overview exists (or when it can't be generated, e.g.
@@ -715,7 +730,7 @@ export default function SessionTradeTable({
           const isLong = t.direction === 'long'
           const isShort = t.direction === 'short'
           const setup = t.tags_json?.setups?.[0]
-          const time = t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'
+          const time = t.entry_time ? ptClockSeconds(t.entry_time) : '--:--:--'
           const summary = summaries[t.id]
           const liveAtr = liveAtrByTradeId?.[t.id]
           const r = rMultiple(t, liveAtr)
@@ -1030,7 +1045,7 @@ export default function SessionTradeTable({
                     </button>
                   </td>
                   <td className="py-1.5 pr-3 text-gray-300">
-                    {t.entry_time ? format(new Date(t.entry_time), 'HH:mm:ss') : '--:--:--'}
+                    {t.entry_time ? ptClockSeconds(t.entry_time) : '--:--:--'}
                   </td>
                   {/* Setup cell — replaces the old Dir column. Direction is
                       encoded as a colored ▲ (long) / ▼ (short) icon at the
