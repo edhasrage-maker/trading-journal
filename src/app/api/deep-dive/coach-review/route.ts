@@ -4,20 +4,21 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceClient, isServiceConfigured } from '@/lib/supabase/service'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { deepDiveAllowed } from '@/lib/deep-dive-access'
-import { resolveRubric, type ScoringProfile } from '@/lib/scoring-profile'
+import { resolveRails, resolveRubric, type ScoringProfile } from '@/lib/scoring-profile'
 import { aiLimitForTier, consumeAiUsage, peekAiUsage, type UsageResult } from '@/lib/ai-usage'
 import { isAdminUser, resolveAiModel } from '@/lib/ai-model'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { evaluateRules, readEntryRules } from '@/lib/entry-rules'
 import { entryCtxIsCurrent, flowScoreIsCurrent } from '@/lib/orderflow/flow-score-meta'
-import { chartSeriesRoot } from '@/lib/futures-symbols'
+import { chartSeriesRoot, symbolRoot } from '@/lib/futures-symbols'
 import { TAPE_KEEP_DAYS } from '@/lib/orderflow/tape'
 import {
   COACH_REVIEW_EXTRA, COACH_REVIEW_SCHEMA, COACH_REVIEW_SYSTEM, CoachReviewInputError,
-  buildCoachReviewInput, coachReviewKey, finishCoachReview, parseCoachReview, staleReason, stopBandOf, timeLabelsIn, traderBlock,
+  buildCoachReviewInput, coachReviewKey, dayAtFill, finishCoachReview, parseCoachReview, staleReason, stopBandOf, timeLabelsIn, traderBlock, usualSizeOf,
+  type DayTrade,
 } from '@/lib/coach-review'
 import type { DeepDiveTradeRow } from '@/lib/orderflow/server/deep-dive-payload'
-import type { TradeCoachReview, TradeEntryCtx, TradeFlowScore, TradeReview, TradeVerdict } from '@/lib/supabase/types'
+import type { CoachReviewDayLine, TradeCoachReview, TradeEntryCtx, TradeFlowScore, TradeReview, TradeVerdict } from '@/lib/supabase/types'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -47,6 +48,8 @@ export interface CoachReviewResponse {
 }
 
 type Row = DeepDiveTradeRow & {
+  trading_day_id: string | null
+  quantity: number | string | null
   verdict: TradeVerdict | null
   coach: TradeCoachReview | null
   entry_ctx: TradeEntryCtx | null
@@ -79,6 +82,33 @@ async function load(supabase: AnyClient, id: string) {
   const key = coachReviewKey({ row, entryCtx, flow, rules, sp, profileText: profile.preferences_md, usesOrderFlow: of })
   const saved = row.coach && Array.isArray(row.coach.items) && row.coach.items.length ? row.coach : null
   return { row, sp, rubric, rules, profile, of, entryCtx, flow, key, saved }
+}
+
+/**
+ * "Your day at the fill": the same day's trades (dayAtFill keeps only what
+ * was known at the fill, and leaves this trade out) and the trader's usual
+ * size on the instrument, over their last 1000 trades. A read that fails
+ * gives no lines rather than no review.
+ */
+async function dayLines(supabase: AnyClient, row: Row, sp: ScoringProfile | null): Promise<CoachReviewDayLine[]> {
+  if (!row.symbol || !row.entry_time) return []
+  try {
+    const [day, recent] = await Promise.all([
+      row.trading_day_id
+        ? supabase.from('trades').select('id, symbol, entry_time, exit_time, exits_json, pnl, quantity').eq('trading_day_id', row.trading_day_id)
+        : Promise.resolve({ data: [] }),
+      supabase.from('trades').select('symbol, quantity').order('entry_time', { ascending: false }).limit(1000),
+    ])
+    return dayAtFill({
+      tradeId: row.id, fillUtcMs: Date.parse(row.entry_time), symbol: row.symbol,
+      quantity: row.quantity != null && row.quantity !== '' ? Number(row.quantity) : null,
+      day: (day.data ?? []) as DayTrade[], rails: resolveRails(sp, LOCAL_FEATURES_ENABLED),
+      usual: usualSizeOf(recent.data ?? [], symbolRoot(row.symbol)),
+    })
+  } catch (e) {
+    console.warn('[coach-review] day lines:', e instanceof Error ? e.message : e)
+    return []
+  }
 }
 
 async function caller() {
@@ -145,6 +175,7 @@ export async function POST(req: Request) {
   const { buildDeepDivePayload, buildDeepDivePayloadFromTape, DeepDiveError } = await import('@/lib/orderflow/server/deep-dive-payload')
   const opts = { blind: true, atrStopTarget: L.rubric.atrStopTarget, tp1RMultiple: L.rubric.tp1RMultiple }
   let input
+  const day = await dayLines(supabase, row, L.sp)
   try {
     let payload
     if (LOCAL_FEATURES_ENABLED) payload = buildDeepDivePayload(row, opts)
@@ -156,7 +187,7 @@ export async function POST(req: Request) {
     const rules = L.rules.length
       ? evaluateRules(L.rules, L.entryCtx, { direction: row.direction, symbol: row.symbol, entry_time: row.entry_time }).filter(r => r.counted)
       : null
-    input = buildCoachReviewInput({ payload, usesOrderFlow: L.of, rules, entryCtx: L.entryCtx, flow: L.flow, stopBand: stopBandOf(L.sp, L.rubric.atrStopTarget) })
+    input = buildCoachReviewInput({ payload, usesOrderFlow: L.of, rules, entryCtx: L.entryCtx, flow: L.flow, stopBand: stopBandOf(L.sp, L.rubric.atrStopTarget), day })
   } catch (e) {
     if (e instanceof DeepDiveError) return reply({ usage: await peek(), error: e.status === 404 ? 'The tick data at your fill isn\'t on the site.' : e.message, tooOld: e.status === 404 }, e.status)
     if (e instanceof CoachReviewInputError) return reply({ usage: await peek(), error: `Couldn't read the chart at your fill: ${e.message}.` }, 422)
@@ -193,7 +224,7 @@ export async function POST(req: Request) {
     return reply({ usage, error: COULDNT }, 502)
   }
   const parsed = parseCoachReview(text)
-  const review = parsed && finishCoachReview(parsed, input, { model, at: new Date().toISOString(), key: L.key })
+  const review = parsed && finishCoachReview(parsed, input, { model, at: new Date().toISOString(), key: L.key, day })
   if (!review) {
     console.error('[coach-review] no usable lines:', text.slice(0, 400))
     return reply({ usage, error: COULDNT }, 502)

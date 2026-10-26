@@ -25,8 +25,9 @@
  */
 import type { DeepDivePayload } from '@/lib/orderflow/server/deep-dive-payload'
 import type { EntryRuleConfig, RuleResult } from '@/lib/entry-rules'
-import { isEmptyScoringProfile, type ScoringProfile } from '@/lib/scoring-profile'
-import type { CoachReviewItem, TradeCoachReview, TradeEntryCtx, TradeFlowScore } from '@/lib/supabase/types'
+import { isEmptyScoringProfile, sizeCapFor, type RailConfig, type ScoringProfile } from '@/lib/scoring-profile'
+import { symbolRoot } from '@/lib/futures-symbols'
+import type { CoachReviewCall, CoachReviewDayLine, CoachReviewItem, TradeCoachReview, TradeEntryCtx, TradeFlowScore } from '@/lib/supabase/types'
 import { aggregateFrom, atr1m5m, toBars1m, vapPerBar, type Bar1m, type VapRow } from '@/lib/orderflow/bars'
 import { emaOnTf, vwap24h, vwapRth } from '@/lib/orderflow/indicators'
 import { volumeProfile } from '@/lib/orderflow/profile'
@@ -34,14 +35,14 @@ import { footprintStats } from '@/lib/orderflow/footprint'
 import { ptClock, ptDate, utcToPtMs } from '@/lib/orderflow/pt-clock'
 
 /** Prompt and input version. A saved review made under another one offers "Ask again". */
-export const COACH_REVIEW_VERSION = 'cr-2'
+export const COACH_REVIEW_VERSION = 'cr-3'
 
 /**
- * What the route reads from review_json beside the Blind trade columns: the
- * call (the gate only — never sent), the saved review, and the two entry-time
- * reads.
+ * What the route reads beside the Blind trade columns: the trade's day and
+ * size (for "Your day at the fill"), and from review_json the call (the gate
+ * only — never sent), the saved review, and the two entry-time reads.
  */
-export const COACH_REVIEW_EXTRA = 'verdict:review_json->verdict, coach:review_json->coach_review, entry_ctx:review_json->entry_ctx, score:review_json->score'
+export const COACH_REVIEW_EXTRA = 'trading_day_id, quantity, verdict:review_json->verdict, coach:review_json->coach_review, entry_ctx:review_json->entry_ctx, score:review_json->score'
 
 const M1_LOOKBACK = 90 * 60
 const M5_LOOKBACK = 8 * 3600
@@ -67,6 +68,8 @@ export interface CoachReviewData {
   flow: TradeFlowScore | null
   /** The trader's stop rule in × ATR (stopBandOf), or null when they have none in ATR. */
   stopBand: [number, number] | null
+  /** Your day at the fill (dayAtFill): their rules against the trades before this one. */
+  day: CoachReviewDayLine[]
 }
 
 /**
@@ -218,6 +221,12 @@ export function buildCoachReviewInput(d: CoachReviewData): CoachReviewInput {
     }
   }
 
+  // ---- their day at the fill: their own rules against the trades before this one ----
+  if (d.day.length) {
+    L.push('', "THE TRADER'S DAY AT THE FILL (worked out from their trades and rules; all of it from before the fill)")
+    for (const l of d.day) L.push(`${l.fact}${l.status ? ` [${l.status}]` : ''}`)
+  }
+
   // ---- order flow, only when the trader reads it ----
   if (of) {
     L.push('', 'ORDER FLOW (the trader reads it)')
@@ -261,7 +270,7 @@ export function buildCoachReviewInput(d: CoachReviewData): CoachReviewInput {
   else if (B.tp_src === 'assumed') unseen.push('a target you recorded (it used an assumed one)')
   if (d.rules && d.rules.length && !d.entryCtx) unseen.push('your entry rules at this fill')
   if (of && !d.flow) unseen.push('an order-flow Score for this fill')
-  L.push('', `NOT IN THE DATA (never guess these): ${unseen.join('; ')}; anything from the fill on; how the trade went; the trader's size, other trades, tags, notes and their own call.`)
+  L.push('', `NOT IN THE DATA (never guess these): ${unseen.join('; ')}; anything from the fill on; how the trade went; their other trades beyond THE TRADER'S DAY section; their tags, notes and their own call.`)
 
   return { text: L.join('\n'), times, labels: [...labels], lo, hi, entryPrice: px, fill, cutoff, unseen, of }
 }
@@ -274,6 +283,110 @@ function groupRows(rows: VapRow[] | undefined, g: number): [number, number, numb
     if (e) { e[0] += b; e[1] += a } else m.set(k, [b, a])
   }
   return [...m.entries()].sort((x, y) => x[0] - y[0]).map(([k, [b, a]]) => [k * TICK, b, a])
+}
+
+// ---- your day at the fill: from the trader's trades and rules, not the AI ----
+
+/** A trade of the same day, as the route reads it (the trade under review is passed too and left out by id). */
+export interface DayTrade {
+  id: string
+  symbol: string | null
+  entry_time: string | null
+  exit_time: string | null
+  exits_json?: { time: string }[] | null
+  pnl: number | string | null
+  quantity: number | string | null
+}
+
+/** Their usual size on one instrument: the modal lot count (the same rule as trader-baselines sizeByInstrument, 8+ trades). */
+export function usualSizeOf(trades: readonly { symbol: string | null; quantity: number | string | null }[], root: string): { typical: number; pct: number; n: number } | null {
+  const counts = new Map<number, number>()
+  let n = 0
+  for (const t of trades) {
+    const q = Number(t.quantity)
+    if (!t.symbol || !(q > 0) || symbolRoot(t.symbol) !== root) continue
+    counts.set(q, (counts.get(q) ?? 0) + 1); n++
+  }
+  if (n < 8) return null
+  const [typical, hits] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]
+  return { typical, pct: Math.round((hits / n) * 100), n }
+}
+
+const ORD = (k: number) => `${k}${k % 100 >= 11 && k % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][k % 10] ?? 'th'}`
+const dur = (sec: number) => (sec < 60 ? `${Math.round(sec)} s` : sec < 3600 ? `${Math.floor(sec / 60)}m ${String(Math.floor(sec % 60)).padStart(2, '0')}s` : `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`)
+const usd = (x: number) => `$${Math.round(Math.abs(x)).toLocaleString('en-US')}`
+/** A trade's last exit (its last leg), UTC ms; NaN when it has none. */
+const lastExitMs = (t: DayTrade) => {
+  const legs = Array.isArray(t.exits_json) ? t.exits_json.map(e => Date.parse(e.time)).filter(Number.isFinite) : []
+  return legs.length ? Math.max(...legs) : Date.parse(t.exit_time ?? '')
+}
+
+/**
+ * "Your day at the fill" (founder-approved, canvas row "Coach Review · round 2",
+ * option B: the loss lines too, shown once the call is saved). Only what was
+ * known at the fill: trades entered before it count toward the trade number; a
+ * result counts only for a trade fully out before the fill (one still open at
+ * the fill has no result yet); the trade under review is left out. A rule the
+ * trader hasn't set gives no line.
+ */
+export function dayAtFill(x: {
+  tradeId: string; fillUtcMs: number; symbol: string; quantity: number | null
+  day: readonly DayTrade[]; rails: RailConfig; usual: { typical: number; pct: number; n: number } | null
+}): CoachReviewDayLine[] {
+  const R = x.rails, out: CoachReviewDayLine[] = []
+  const others = x.day.filter(t => t.id !== x.tradeId)
+  const before = others.filter(t => Date.parse(t.entry_time ?? '') < x.fillUtcMs)
+  const closed = before
+    .map(t => ({ t, out: lastExitMs(t), pnl: Number(t.pnl) }))
+    .filter(c => Number.isFinite(c.out) && c.out < x.fillUtcMs && Number.isFinite(c.pnl))
+    .sort((a, b) => a.out - b.out)
+  const nth = before.length + 1
+
+  out.push(R.tradeCap != null
+    ? { fact: `${ORD(nth)} trade today. Your cap: ${R.tradeCap}.`, status: nth <= R.tradeCap ? 'kept' : 'over your cap', broken: nth > R.tradeCap }
+    : { fact: `${ORD(nth)} trade today.`, status: null, broken: false })
+
+  const root = symbolRoot(x.symbol), q = x.quantity
+  const cap = sizeCapFor(R, x.symbol, 'base'), up = sizeCapFor(R, x.symbol, 'sizeUp')
+  if (q != null && q > 0 && (x.usual || cap != null)) {
+    const u = x.usual
+    const fact = `${q} ${root}.` + (u ? ` Your usual on ${root}: ${u.typical} (${u.pct}% of your ${root} trades).` : '')
+      + (cap != null ? ` Your cap: ${cap}${up != null && up > cap ? ` (${up} on a size-up)` : ''}.` : '')
+    const over = cap != null && q > Math.max(cap, up ?? cap)
+    const status = over ? 'over your cap'
+      : cap != null && q > cap ? 'a size-up'
+      : u ? (q === u.typical ? 'your usual' : q > u.typical ? 'above your usual' : 'below your usual')
+      : 'within your cap'
+    out.push({ fact, status, broken: over })
+  }
+
+  const last = closed[closed.length - 1]
+  if (last) {
+    const gap = (x.fillUtcMs - last.out) / 1000
+    out.push({ fact: `${dur(gap)} after your last exit.`, status: null, broken: false })
+    // ---- the loss lines: they say how an earlier trade went ----
+    if (last.pnl < 0) {
+      const cd = R.cooldownSec
+      out.push(cd != null
+        ? { fact: `Your last trade lost ${usd(last.pnl)}. This is a re-entry ${dur(gap)} after it. Your cooldown: ${dur(cd)}.`, status: gap >= cd ? 'kept' : 'inside your cooldown', broken: gap < cd }
+        : { fact: `Your last trade lost ${usd(last.pnl)}. This is a re-entry ${dur(gap)} after it.`, status: null, broken: false })
+      if (R.postLossCap != null && q != null && q > 0 && cap != null) {
+        const prev = Number(last.t.quantity), prevRoot = last.t.symbol ? symbolRoot(last.t.symbol) : ''
+        out.push({
+          fact: `${q} ${root} after that loss${prev > 0 ? ` (it was ${prev}${prevRoot && prevRoot !== root ? ` ${prevRoot}` : ''})` : ''}. Your cap after a loss: ${cap}.`,
+          status: q <= cap ? 'kept' : 'over your cap after a loss', broken: q > cap,
+        })
+      }
+    }
+    if (R.dailyLossLimit != null) {
+      const dayPnl = closed.reduce((s, c) => s + c.pnl, 0), lim = Math.abs(R.dailyLossLimit), room = dayPnl + lim
+      out.push({
+        fact: `Day ${dayPnl < 0 ? 'down' : 'up'} ${usd(dayPnl)} before this trade: ${room > 0 ? `${usd(room)} from` : 'past'} your ${usd(lim)} daily loss limit.`,
+        status: room > 0 ? 'room left' : 'past your limit', broken: room <= 0,
+      })
+    }
+  }
+  return out
 }
 
 /** The trader's framework: their own words, their stop and target settings, and whether they read order flow. */
@@ -308,15 +421,15 @@ Give at least one "for" and one "against" when the data has them. Never invent o
 
 Rules:
 1. Every observation names something specific from the data: a time, a price, a level by its name, or one of the trader's rules by its name. Use only times and prices that appear in the data. Every time in the data is before the fill.
-2. Judge in the trader's own framework (THE TRADER). Use their rules and settings. Never add a rule, a threshold or a method they don't have.
+2. Judge in the trader's own framework (THE TRADER). Use their rules and settings. A rule of theirs that broke at the fill (a failed entry rule, or a line in THE TRADER'S DAY section such as "inside your cooldown", "over your cap" or "past your limit") is always one of your "against" points, named in its own words. Never add a rule, a threshold or a method they don't have.
 3. Always in scope: price action, structure (higher or lower highs and lows on 1m and 5m), location against the levels, VWAP and EMAs, and the stop and target against those.
 4. Order flow only when the data has an ORDER FLOW section. Without one, never mention order flow, delta, bubbles, the footprint or the tape.
 5. The stop: say where it sits against swings and levels, and its size in points and x ATR. Call it tight or wide only when the plan says it is outside their stop rule. Inside their rule it is on their rule: never call it tight, wide, or tighter or wider than their aim.
-6. Never say or hint: whether the trade worked, would have worked, or got stopped; anything after the fill, including how they managed, scaled or exited it; tilt, revenge, chasing, FOMO or their state of mind; their position size; their plan or bias for the day; news, other markets, the DOM or resting orders; a day type (trend day, range day). Say what price had done so far instead.
-7. Never call their read right or wrong, and don't grade the trade. Lay out what supports it and what argues against it.
+6. Never say or hint: whether the trade worked, would have worked, or got stopped; anything after the fill, including how they managed, scaled or exited it; tilt, revenge, chasing, FOMO or their state of mind; their plan or bias for the day; news, other markets, the DOM or resting orders; a day type (trend day, range day). Say what price had done so far instead. Their size, their earlier trades and their day only as THE TRADER'S DAY section states them, against their own rules, kept or broken, never as a state of mind.
+7. Then give your own call on the decision to take this trade, in the trader's words: "good", "mistake" or "unsure". Good: the data at the fill supports taking it, in their framework. Mistake: the data, or one of their rules, argues clearly against it. Unsure: it is split, or the data can't tell. In "why", name the one point that decided it, in one sentence under 25 words, with a time, price, level or rule name from the data. You can't see their call: never mention it, and never call their read right or wrong.
 8. Talk to the trader as "you". Plain words, few of them: one or two short sentences, under 30 words, per observation. No headings, no filler, no hedging words.
 
-Return only JSON: {"observations":[{"kind":"for","text":"..."}]}`
+Return only JSON: {"observations":[{"kind":"for","text":"..."}],"call":{"kind":"unsure","why":"..."}}`
 
 /** The structured output it must return. */
 export const COACH_REVIEW_SCHEMA = {
@@ -331,13 +444,19 @@ export const COACH_REVIEW_SCHEMA = {
         additionalProperties: false,
       },
     },
+    call: {
+      type: 'object',
+      properties: { kind: { type: 'string', enum: ['good', 'mistake', 'unsure'] }, why: { type: 'string' } },
+      required: ['kind', 'why'],
+      additionalProperties: false,
+    },
   },
-  required: ['observations'],
+  required: ['observations', 'call'],
   additionalProperties: false,
 } as const
 
 /** The model's JSON (fenced or not), loosely checked. Null when there is none. */
-export function parseCoachReview(text: string): { items: CoachReviewItem[] } | null {
+export function parseCoachReview(text: string): { items: CoachReviewItem[]; call: CoachReviewCall | null } | null {
   const raw = text.replace(/```(?:json)?/g, '').trim()
   let j: unknown
   try { j = JSON.parse(raw) } catch {
@@ -345,12 +464,15 @@ export function parseCoachReview(text: string): { items: CoachReviewItem[] } | n
     if (!m) return null
     try { j = JSON.parse(m[0]) } catch { return null }
   }
-  const o = j as { observations?: unknown }
+  const o = j as { observations?: unknown; call?: unknown }
   if (!o || !Array.isArray(o.observations)) return null
   const items = o.observations
     .filter((x): x is CoachReviewItem => !!x && typeof x === 'object' && KIND_ORDER.includes((x as CoachReviewItem).kind) && typeof (x as CoachReviewItem).text === 'string')
     .map(x => ({ kind: x.kind, text: x.text.trim() }))
-  return { items }
+  const c = o.call as Partial<CoachReviewCall> | undefined
+  const call = c && (c.kind === 'good' || c.kind === 'mistake' || c.kind === 'unsure') && typeof c.why === 'string' && c.why.trim()
+    ? { kind: c.kind, why: c.why.trim() } : null
+  return { items, call }
 }
 
 const TIME_RE = /\b([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?\b/g
@@ -373,6 +495,7 @@ export function checkLine(text: string, input: Pick<CoachReviewInput, 'labels' |
     if (hms ? !(labels.has(hms) || (labels.has(hm) && (hm !== fillMin || hms <= input.fill))) : !labels.has(hm)) return `${hms ?? hm} is not in the data`
   }
   for (const m of text.matchAll(NUM_RE)) {
+    if (m.index && text[m.index - 1] === '$') continue   // a dollar amount (a day line), not a price
     const v = Number(m[0].replace(/,/g, ''))
     if (!Number.isFinite(v) || v < input.entryPrice * 0.7 || v > input.entryPrice * 1.3) continue
     if (v < input.lo - TICK || v > input.hi + TICK) return `${m[0]} is off the chart`
@@ -387,8 +510,8 @@ export function checkLine(text: string, input: Pick<CoachReviewInput, 'labels' |
  * shows. Null when no line passes.
  */
 export function finishCoachReview(
-  parsed: { items: CoachReviewItem[] }, input: CoachReviewInput,
-  meta: { model: string; at: string; key: TradeCoachReview['key'] },
+  parsed: { items: CoachReviewItem[]; call?: CoachReviewCall | null }, input: CoachReviewInput,
+  meta: { model: string; at: string; key: TradeCoachReview['key']; day?: CoachReviewDayLine[] },
 ): TradeCoachReview | null {
   const items = parsed.items
     .filter(i => i.text.length >= 8 && !checkLine(i.text, input))
@@ -396,7 +519,13 @@ export function finishCoachReview(
     .slice(0, 5)
     .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind))
   if (!items.length) return null
-  return { v: COACH_REVIEW_VERSION, key: meta.key, model: meta.model, at: meta.at, fill: input.fill, cutoff: input.cutoff, items, unseen: input.unseen, of: input.of }
+  // the coach's call goes through the same checks as its points; a "why" that fails leaves no call
+  const c = parsed.call
+  const call = c && c.why.length >= 8 && !checkLine(c.why, input) ? { kind: c.kind, why: c.why.slice(0, 300) } : null
+  return {
+    v: COACH_REVIEW_VERSION, key: meta.key, model: meta.model, at: meta.at, fill: input.fill, cutoff: input.cutoff,
+    items, call, day: meta.day ?? [], unseen: input.unseen, of: input.of,
+  }
 }
 
 // ---- version key: what a saved review was made from ----

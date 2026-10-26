@@ -14,7 +14,8 @@
  *
  *   npx tsx scripts/test-coach-review.ts
  */
-import { buildCoachReviewInput, checkLine, finishCoachReview, parseCoachReview, timeLabelsIn, COACH_REVIEW_EXTRA, CoachReviewInputError, stopBandOf, traderBlock, type CoachReviewData, type CoachReviewInput } from '../src/lib/coach-review.ts'
+import { buildCoachReviewInput, checkLine, finishCoachReview, parseCoachReview, timeLabelsIn, COACH_REVIEW_EXTRA, CoachReviewInputError, stopBandOf, traderBlock, dayAtFill, usualSizeOf, type CoachReviewData, type CoachReviewInput, type DayTrade } from '../src/lib/coach-review.ts'
+import { OWNER_RAILS, UNTRACKED_RAILS } from '../src/lib/scoring-profile.ts'
 import { buildSnapshot, type SnapshotRequest } from '../src/lib/orderflow/server/snapshot.ts'
 import type { TickSource, HtfBars } from '../src/lib/orderflow/server/tick-source.ts'
 import { BLIND_TRADE_COLUMNS, type DeepDivePayload } from '../src/lib/orderflow/server/deep-dive-payload.ts'
@@ -102,7 +103,7 @@ const fillPtMs = utcToPtMs(FILL_UTC)
 const blindAt = (entryUtcMs: number): DeepDivePayload =>
   ({ trade: { id: 't', symbol: 'MNQZ6', inst: 'NQ' }, blind: true, snapshot: buildSnapshot({ ...req, entryUtcMs }, new MemSource()), build_ms: 0 })
 const rules = evaluateRules(FOUNDER_ENTRY_RULES, null, { direction: 'short', symbol: 'MNQZ6', entry_time: new Date(FILL_UTC).toISOString() })
-const data = (p: DeepDivePayload): CoachReviewData => ({ payload: p, usesOrderFlow: true, rules, entryCtx: null, flow: null, stopBand: [0.5, 1.5] })
+const data = (p: DeepDivePayload): CoachReviewData => ({ payload: p, usesOrderFlow: true, rules, entryCtx: null, flow: null, stopBand: [0.5, 1.5], day: [] })
 
 console.log('the input, built from the Blind cut')
 const input = buildCoachReviewInput(data(blindPayload))
@@ -180,8 +181,9 @@ console.log('\nthe stop against the trader\'s own stop rule (0.5x to 1.5x their 
 console.log('\nwhat the route reads')
 {
   const cols = `${BLIND_TRADE_COLUMNS}, ${COACH_REVIEW_EXTRA}`.toLowerCase()
-  const banned = ['exit_', 'exits_json', 'pnl', 'quantity', 'tags_json', 'notes', 'screenshot', 'high_during', 'low_during', 'post_exit', 'mfe', 'mae']
-  check('no exit, P&L, size, tags, notes, screenshot or excursion columns', banned.every(b => !cols.includes(b)), banned.filter(b => cols.includes(b)))
+  // quantity is read on purpose: "Your day at the fill" sets this trade's size against the trader's usual and cap
+  const banned = ['exit_', 'exits_json', 'pnl', 'tags_json', 'notes', 'screenshot', 'high_during', 'low_during', 'post_exit', 'mfe', 'mae']
+  check('no exit, P&L, tags, notes, screenshot or excursion columns for this trade', banned.every(b => !cols.includes(b)), banned.filter(b => cols.includes(b)))
 }
 
 console.log('\nthe line checks')
@@ -206,6 +208,63 @@ console.log('\nthe line checks')
   check('the after-the-fill line is dropped, the rest kept in For / Against / Look at order', !!done && JSON.stringify(done.items.map(i => i.kind)) === '["for","against","look"]', done?.items)
   check('couldn\'t see is what was never sent', !!done && JSON.stringify(done.unseen) === JSON.stringify(input.unseen), done?.unseen)
   check('nothing usable: no review', finishCoachReview({ items: [{ kind: 'for', text: 'By 09:30 it had run 40 points.' }] }, input, { model: 'm', at: '', key: { trade: '', rules: '', profile: '' } }) === null)
+  check('a dollar amount is not read as a price', checkLine('Your day was up $25,000 before this trade.', input) === null)
+}
+
+console.log('\nthe coach\'s call')
+{
+  const key = { trade: '', rules: '', profile: '' }
+  const items = [{ kind: 'for' as const, text: 'You sold under VWAP with the 5m making lower highs.' }]
+  const parsed = parseCoachReview(JSON.stringify({ observations: items, call: { kind: 'unsure', why: 'Sellers met your price, but you sold a bounce with buyers still leading.' } }))
+  check('the call parses', parsed?.call?.kind === 'unsure' && !!parsed.call.why, parsed?.call)
+  const done = parsed && finishCoachReview(parsed, input, { model: 'm', at: '', key })
+  check('a call that passes the checks is kept', done?.call?.kind === 'unsure', done?.call)
+  const late = finishCoachReview({ items, call: { kind: 'mistake', why: 'By 08:50 the bounce had kept going against you.' } }, input, { model: 'm', at: '', key })
+  check('a call whose line names a time after the fill is dropped, the points stay', !!late && late.call === null && late.items.length === 1)
+  check('an unknown call word is not a call', parseCoachReview(JSON.stringify({ observations: items, call: { kind: 'great', why: 'x x x x x x x x' } }))?.call === null)
+}
+
+console.log('\nyour day at the fill (worked out from your trades and rules, only what was known at the fill)')
+{
+  const at = (hms: string) => `2026-10-15T${hms}Z`
+  const fill = Date.parse(at('14:22:00'))                       // 07:22:00 PT
+  const T = (id: string, e: string, x: string | null, pnl: number, qty: number, exits?: string[]): DayTrade =>
+    ({ id, symbol: 'MNQZ6', entry_time: at(e), exit_time: x ? at(x) : null, exits_json: exits ? exits.map(s => ({ time: at(s) })) : null, pnl, quantity: qty })
+  const day: DayTrade[] = [
+    T('a', '13:40:00', '13:52:00', 120, 5),
+    T('b', '14:10:00', '14:20:08', -95, 5),                      // out 1m 52s before the fill, a loss
+    T('d', '14:15:00', '14:40:00', -300, 2, ['14:21:00', '14:40:00']),   // still open at the fill: no result yet
+    T('this', '14:22:00', '14:30:00', -999, 5),                  // the trade under review
+    T('e', '15:00:00', '15:10:00', 500, 5),                      // after the fill
+  ]
+  const usual = { typical: 5, pct: 62, n: 130 }
+  const lines = dayAtFill({ tradeId: 'this', fillUtcMs: fill, symbol: 'MNQZ6', quantity: 5, day, rails: OWNER_RAILS, usual })
+  const want = [
+    ['4th trade today. Your cap: 7.', 'kept'],
+    ['5 MNQ. Your usual on MNQ: 5 (62% of your MNQ trades). Your cap: 5 (10 on a size-up).', 'your usual'],
+    ['1m 52s after your last exit.', null],
+    ['Your last trade lost $95. This is a re-entry 1m 52s after it. Your cooldown: 1m 30s.', 'kept'],
+    ['5 MNQ after that loss (it was 5). Your cap after a loss: 5.', 'kept'],
+    ['Day up $25 before this trade: $525 from your $500 daily loss limit.', 'room left'],
+  ]
+  check('your rules, as the mockup reads', JSON.stringify(lines.map(l => [l.fact, l.status])) === JSON.stringify(want), lines)
+  check('this trade\'s own result, a trade still open at the fill and a later trade are not in it', !lines.some(l => /999|300|500 up|\$275/.test(l.fact)))
+  const quick = dayAtFill({ tradeId: 'this', fillUtcMs: Date.parse(at('14:20:38')), symbol: 'MNQZ6', quantity: 5, day, rails: OWNER_RAILS, usual })
+  const cd = quick.find(l => l.fact.startsWith('Your last trade lost'))
+  check('30 s after a loss with a 90 s cooldown: broken', !!cd && cd.broken && cd.status === 'inside your cooldown', cd)
+  const big = dayAtFill({ tradeId: 'this', fillUtcMs: fill, symbol: 'MNQZ6', quantity: 12, day, rails: OWNER_RAILS, usual })
+  check('12 MNQ over a 5 (10 on a size-up) cap: over your cap', big[1].status === 'over your cap' && big[1].broken, big[1])
+  const up = dayAtFill({ tradeId: 'this', fillUtcMs: fill, symbol: 'MNQZ6', quantity: 8, day, rails: OWNER_RAILS, usual })
+  check('8 MNQ: a size-up, not a break', up[1].status === 'a size-up' && !up[1].broken, up[1])
+  const none = dayAtFill({ tradeId: 'this', fillUtcMs: fill, symbol: 'MNQZ6', quantity: 5, day, rails: UNTRACKED_RAILS, usual })
+  check('no rules set: facts only, no cooldown, cap or limit lines', JSON.stringify(none.map(l => l.status)) === '[null,"your usual",null,null]' && !none.some(l => /cap|cooldown|limit/i.test(l.fact)), none)
+  const first = dayAtFill({ tradeId: 'this', fillUtcMs: fill, symbol: 'MNQZ6', quantity: 5, day: [day[3]], rails: OWNER_RAILS, usual })
+  check('the first trade of the day: no exit, loss or day lines', first.length === 2 && first[0].fact === '1st trade today. Your cap: 7.', first)
+  const recent = [...Array(9)].map(() => ({ symbol: 'MNQZ6', quantity: 5 })).concat([{ symbol: 'MNQZ6', quantity: 10 }, { symbol: 'MESZ6', quantity: 10 }])
+  check('your usual: the most common size on that instrument, from 8 trades', JSON.stringify(usualSizeOf(recent, 'MNQ')) === '{"typical":5,"pct":90,"n":10}' && usualSizeOf(recent, 'MES') === null)
+  const withDay = buildCoachReviewInput({ ...data(blindPayload), day: lines })
+  check('the coach gets the same lines', withDay.text.includes("THE TRADER'S DAY AT THE FILL") && withDay.text.includes('Your cap after a loss: 5. [kept]'))
+  check('…and still nothing from the fill on', withDay.times.every(t => t * 1000 < fillPtMs))
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall coach-review checks passed')

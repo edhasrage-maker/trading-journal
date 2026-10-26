@@ -422,6 +422,21 @@ export interface CoachReviewItem {
   text: string
 }
 
+/** The coach's own call on the decision, in the trader's three words, and the one point that decided it. */
+export interface CoachReviewCall {
+  kind: 'good' | 'mistake' | 'unsure'
+  why: string
+}
+
+/** One "Your day at the fill" line: worked out from the trader's trades and rules (not the AI), from before the fill. */
+export interface CoachReviewDayLine {
+  fact: string
+  /** "kept", "your usual", "room left" …; null = a plain fact with no rule. */
+  status: string | null
+  /** The line breaks one of the trader's rules. */
+  broken: boolean
+}
+
 /** trades.review_json.coach_review — saved so reopening it costs nothing. */
 export interface TradeCoachReview {
   /** Prompt / input version (COACH_REVIEW_VERSION). */
@@ -435,6 +450,10 @@ export interface TradeCoachReview {
   fill: string
   cutoff: string
   items: CoachReviewItem[]
+  /** The coach's call (absent on reviews made before it had one, or when its line failed the checks). */
+  call?: CoachReviewCall | null
+  /** Your day at the fill, as it was when this was asked. */
+  day?: CoachReviewDayLine[]
   /** What it couldn't see, in plain words ("news", "your prep notes" …). */
   unseen: string[]
   /** Read with order flow (the trader's profile uses it). */

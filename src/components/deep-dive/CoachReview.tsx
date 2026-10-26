@@ -130,6 +130,42 @@ export default function CoachReview({ tradeId, unlocked, full, draft, myCall, on
       {myCall.note && <span className="text-gray-400"> · “{myCall.note}”</span>}
     </div>
   )
+  // the coach's call next to yours, in the box that shows yours (founder's pick A, round 2)
+  const coach = review?.call ?? null
+  const callBox = coach ? (
+    <div className={cn('mt-3 border border-gray-800 rounded-md', t)} style={boxStyle}>
+      <div className={cn('grid gap-x-2 gap-y-1.5 leading-snug', big ? 'p-3' : 'px-2.5 py-2')} style={{ gridTemplateColumns: '48px minmax(0, 1fr)' }}>
+        {myCall && (
+          <>
+            <span className="text-gray-400">You</span>
+            <span><b className={cn('font-semibold', CALL_WORD[myCall.call].cls)}>{CALL_WORD[myCall.call].label}</b>{myCall.note && <span className="text-gray-400"> · “{myCall.note}”</span>}</span>
+          </>
+        )}
+        <span className="text-gray-400">Coach</span>
+        <span className="text-gray-100"><b className={cn('font-semibold', CALL_WORD[coach.kind].cls)}>{CALL_WORD[coach.kind].label}</b> · {coach.why}</span>
+      </div>
+      {myCall && (
+        <div className={cn('border-t border-gray-800 text-gray-400', big ? 'px-3 py-2 text-[12.5px]' : 'px-2.5 py-1.5 text-[11.5px]')}>
+          {myCall.call === coach.kind ? 'The same call as yours.' : 'A different call from yours.'}
+        </div>
+      )}
+    </div>
+  ) : echo
+  // your day at the fill: worked out from your trades and rules when it was asked, not by the AI
+  const dayBlock = review?.day?.length ? (
+    <div className={box} style={boxStyle}>
+      <div className="flex items-baseline justify-between">
+        <span className={cn('font-semibold uppercase tracking-[.8px] text-gray-400', big ? 'text-[11px]' : 'text-[10.5px]')}>Your day at the fill</span>
+        <span className={cn('text-gray-400', small)}>your rules</span>
+      </div>
+      {review.day.map((l, k) => (
+        <div key={k} className={cn('grid gap-2 py-1.5 border-b border-gray-800 last:border-b-0 leading-snug text-gray-100', t)} style={{ gridTemplateColumns: 'minmax(0, 1fr) auto' }}>
+          <span>{l.fact}</span>
+          {l.status && <span className={cn('whitespace-nowrap font-semibold', small, !l.broken && 'text-gray-300')} style={l.broken ? { color: caution.color } : undefined}>{l.status}</span>}
+        </div>
+      ))}
+    </div>
+  ) : null
   const limitBox = (withSave: boolean) => (
     <div className={box} style={boxStyle}>
       <div className={cn('font-semibold text-gray-100', big ? 'text-[14.5px]' : 'text-[13.5px]')}>Today’s {usage?.limit ?? ''} are used</div>
@@ -169,7 +205,7 @@ export default function CoachReview({ tradeId, unlocked, full, draft, myCall, on
         </div>
         <div className={cap}>What it reads</div>
         <p className={cn('leading-normal text-gray-300', big ? 'text-[13px]' : 'text-[12px]')}>
-          Only what printed before your fill: 1m and 5m candles, levels, VWAP and EMAs, {orderFlow ? 'bubbles and footprint, ' : ''}your stop and target, your entry rules{orderFlow ? ' and order-flow Score' : ''}, and your profile.
+          Only what printed before your fill: 1m and 5m candles, levels, VWAP and EMAs, {orderFlow ? 'bubbles and footprint, ' : ''}your stop and target, your entry rules{orderFlow ? ' and order-flow Score' : ''}, your day so far against your rules, and your profile.
         </p>
         <div className={cap}>What it never sees</div>
         <p className={cn('leading-normal text-gray-300', big ? 'text-[13px]' : 'text-[12px]')}>
@@ -190,7 +226,8 @@ export default function CoachReview({ tradeId, unlocked, full, draft, myCall, on
           </div>
         )}
         {full && <p className={cn('mt-2 text-gray-400', big ? 'text-[13px]' : 'text-[12px]')}>From the fill. It never sees what happened next.</p>}
-        {echo}
+        {callBox}
+        {dayBlock}
         {groups.map(g => (
           <div key={g.kind}>
             <div className={cap}>{g.label}</div>
