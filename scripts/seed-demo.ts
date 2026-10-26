@@ -16,6 +16,7 @@
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { dayAchievementIds, type AchievementTrade } from '../src/lib/achievements'
+import { ptDateSodToUtcMs, todayPT } from '../src/lib/pt-time'
 
 for (const l of readFileSync('.env.public-feed', 'utf8').split(/\r?\n/)) {
   const m = l.match(/^([A-Z_]+)=(.*)$/); if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
@@ -62,28 +63,73 @@ const TAG_LIBRARY: Array<[string, string[]]> = [
 // public NQ bar feed for these dates (see anchorTrade), so the LiveChart candles
 // and the trade overlays line up — no synthetic bars are written (that would
 // clobber the shared (symbol,ts) feed every real user reads).
-type DayPlan = { outcomes: boolean[]; breach: boolean; bias: Bias }
+type DayPlan = { back: number; outcomes: boolean[]; breach: boolean; bias: Bias }
 type Bias = 'bullish' | 'bearish' | 'neutral'
-// Keep the last date within a few sessions of "now" — a demo whose newest day
-// is weeks old reads as abandoned. All dates need full RTH bar coverage on the
-// public NQ feed (skip half-days like Juneteenth / July 3rd). The 06-22→07-01
-// run is deliberately all-winners: five consecutive green SESSIONS light the
-// Heat Check badge, giving the demo's achievement surfaces something to show.
-const DAY_PLAN: Record<string, DayPlan> = {
-  '2026-06-09': { outcomes: [true, true], breach: false, bias: 'bullish' },
-  '2026-06-11': { outcomes: [true, false, true], breach: false, bias: 'bullish' },
-  '2026-06-15': { outcomes: [false, false], breach: false, bias: 'bearish' },   // controlled down day, rules held
-  '2026-06-17': { outcomes: [false, true, false], breach: false, bias: 'neutral' },
-  '2026-06-22': { outcomes: [true], breach: false, bias: 'neutral' },           // green streak 1/5
-  '2026-06-24': { outcomes: [true, true], breach: false, bias: 'bullish' },     // 2/5
-  '2026-06-25': { outcomes: [true, true], breach: false, bias: 'bullish' },     // 3/5
-  '2026-06-29': { outcomes: [true, true], breach: false, bias: 'bullish' },     // 4/5
-  '2026-07-01': { outcomes: [true], breach: false, bias: 'bullish' },           // 5/5 → Heat Check
-  '2026-07-02': { outcomes: [false, false, false], breach: true, bias: 'bearish' }, // Breach showcase (post-loss size-up)
-  '2026-07-06': { outcomes: [true, false], breach: false, bias: 'neutral' },
-  '2026-07-09': { outcomes: [true, true], breach: false, bias: 'bullish' },
+// Dates are assigned at run time: `back` counts full sessions back from the
+// newest one the public NQ feed has in full (0 = newest), so the demo always
+// ends "now" — a demo whose newest day is weeks old reads as abandoned (it
+// opened to "0 sessions" in October when these were fixed June/July dates).
+// Half-days and feed gaps are skipped by the full-coverage check. The back-12
+// → back-5 run is deliberately all-winners: five consecutive green SESSIONS
+// light the Heat Check badge, giving the demo's achievement surfaces something
+// to show. Spacing is the original 2026-06-09 → 07-09 plan's.
+const DAY_PLAN: DayPlan[] = [
+  { back: 20, outcomes: [true, true], breach: false, bias: 'bullish' },
+  { back: 18, outcomes: [true, false, true], breach: false, bias: 'bullish' },
+  { back: 16, outcomes: [false, false], breach: false, bias: 'bearish' },   // controlled down day, rules held
+  { back: 14, outcomes: [false, true, false], breach: false, bias: 'neutral' },
+  { back: 12, outcomes: [true], breach: false, bias: 'neutral' },           // green streak 1/5
+  { back: 10, outcomes: [true, true], breach: false, bias: 'bullish' },     // 2/5
+  { back: 9, outcomes: [true, true], breach: false, bias: 'bullish' },      // 3/5
+  { back: 7, outcomes: [true, true], breach: false, bias: 'bullish' },      // 4/5
+  { back: 5, outcomes: [true], breach: false, bias: 'bullish' },            // 5/5 → Heat Check
+  { back: 4, outcomes: [false, false, false], breach: true, bias: 'bearish' }, // Breach showcase (post-loss size-up)
+  { back: 3, outcomes: [true, false], breach: false, bias: 'neutral' },
+  { back: 0, outcomes: [true, true], breach: false, bias: 'bullish' },
+]
+
+/** RTH (06:30–13:00 PT) as a UTC window — DST-exact, so winter dates work too. */
+function rthWindow(date: string): { start: string; end: string } {
+  return {
+    start: new Date(ptDateSodToUtcMs(date, 6.5 * 3600)).toISOString(),
+    end: new Date(ptDateSodToUtcMs(date, 13 * 3600)).toISOString(),
+  }
 }
-const DAYS = Object.keys(DAY_PLAN)
+
+/** A full RTH session has 390 one-minute bars; anything well short of that is a
+ *  half-day or a feed gap, and would leave the demo chart sparse. */
+const FULL_SESSION_BARS = 360
+
+/**
+ * The newest `n` weekdays (PT, before today) with a full RTH session on the
+ * public NQ feed, newest first. One count query per weekday, walking back up to
+ * ten weeks.
+ */
+async function recentFullSessions(n: number): Promise<Array<{ date: string; bars: number }>> {
+  const out: Array<{ date: string; bars: number }> = []
+  const d = new Date(todayPT() + 'T12:00:00Z')
+  for (let i = 0; i < 70 && out.length < n; i++) {
+    d.setUTCDate(d.getUTCDate() - 1)
+    const dow = d.getUTCDay()
+    if (dow === 0 || dow === 6) continue
+    const date = d.toISOString().slice(0, 10)
+    const { start, end } = rthWindow(date)
+    const { count } = await sb.from('ohlcv_bars').select('ts', { count: 'exact', head: true })
+      .eq('symbol', 'NQ').gte('ts', start).lte('ts', end)
+    if ((count ?? 0) >= FULL_SESSION_BARS) out.push({ date, bars: count ?? 0 })
+  }
+  return out
+}
+
+/** Each plan entry with its date, oldest first. */
+async function resolveDays(): Promise<Array<DayPlan & { date: string; bars: number }>> {
+  const need = Math.max(...DAY_PLAN.map(p => p.back)) + 1
+  const sessions = await recentFullSessions(need)
+  if (sessions.length < need) {
+    throw new Error(`only ${sessions.length} full NQ sessions on the public feed in ten weeks; need ${need}`)
+  }
+  return DAY_PLAN.map(p => ({ ...p, ...sessions[p.back] })).sort((a, b) => a.date.localeCompare(b.date))
+}
 
 const MNQ_MULT = 2   // MNQ = $2 / point
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -99,18 +145,19 @@ function mondayOf(date: string): string {
 interface Bar { ts: string; open: number; high: number; low: number; close: number }
 
 /**
- * Real RTH NQ bars for a demo date, ascending. RTH is 06:30–13:00 PT; all demo
- * dates are summer (PDT = UTC-7), so that maps to 13:30–20:00 UTC. The public
- * feed stores the mini root ('NQ') — the same series the cloud LiveChart draws
- * for an 'MNQ' trade (chartSeriesRoot('MNQ') === 'NQ'). Micros trade the mini's
- * price, so anchoring MNQ trades onto NQ bars is price-correct.
+ * Real RTH NQ bars for a demo date, ascending (RTH = 06:30–13:00 PT, see
+ * rthWindow). The public feed stores the mini root ('NQ') — the same series the
+ * cloud LiveChart draws for an 'MNQ' trade (chartSeriesRoot('MNQ') === 'NQ').
+ * Micros trade the mini's price, so anchoring MNQ trades onto NQ bars is
+ * price-correct.
  */
 async function fetchRthBars(date: string): Promise<Bar[]> {
+  const { start, end } = rthWindow(date)
   const { data } = await sb.from('ohlcv_bars')
     .select('ts, open, high, low, close')
     .eq('symbol', 'NQ')
-    .gte('ts', `${date}T13:30:00Z`)
-    .lte('ts', `${date}T20:00:00Z`)
+    .gte('ts', start)
+    .lte('ts', end)
     .order('ts', { ascending: true })
   return (data || []) as Bar[]
 }
@@ -486,7 +533,7 @@ function weekEndIso(weekStart: string): string {
   return d.toISOString().slice(0, 10)
 }
 
-async function seed(uid: string) {
+async function seed(uid: string, days: Array<DayPlan & { date: string }>) {
   // Tag library (best-effort — feeds the Settings → Tags list).
   const tagRows = TAG_LIBRARY.flatMap(([category, labels]) =>
     labels.map((label, i) => ({ category, label, sort_order: i, user_id: uid })))
@@ -500,8 +547,8 @@ async function seed(uid: string) {
   // since Career Day / Heat Check need the full P&L history).
   const achDays: Array<{ date: string; dayId: string; pnl: number; trades: AchievementTrade[]; dayRangePts: number | null }> = []
 
-  for (const date of DAYS) {
-    const plan = DAY_PLAN[date]
+  for (const plan of days) {
+    const date = plan.date
     const dayType = pick(DAY_TYPES)
 
     const bars = await fetchRthBars(date)
@@ -650,7 +697,7 @@ async function seed(uid: string) {
     else weeks++
   }
 
-  console.log(`seeded ${DAYS.length} days, ${totalTrades} trades, ${weeks} weekly recaps (AI panels pre-baked)`)
+  console.log(`seeded ${days.length} days, ${totalTrades} trades, ${weeks} weekly recaps (AI panels pre-baked)`)
 }
 
 async function main() {
@@ -665,13 +712,16 @@ async function main() {
     return
   }
 
+  const days = await resolveDays()
+  console.log(`demo sessions (newest full NQ sessions on the feed): ${days.map(d => `${d.date} (${d.bars} bars${d.breach ? ', breach' : ''})`).join(', ')}`)
+
   if (!commit) {
-    console.log(`[dry] would seed ${DAYS.length} days of synthetic trades for ${DEMO_EMAIL}`)
+    console.log(`[dry] would seed ${days.length} days of synthetic trades for ${DEMO_EMAIL}`)
     console.log('[dry] re-run with --commit to write')
     return
   }
   await wipe(uid) // idempotent re-seed
-  await seed(uid)
+  await seed(uid, days)
   console.log('\nDONE. Demo user ready:', DEMO_EMAIL)
 }
 
