@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { isDemoEmail } from '@/lib/demo'
+import { RETURN_TO_COOKIE, RETURN_TO_COOKIE_OPTIONS, safeNextPath } from '@/lib/safe-redirect'
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -65,18 +66,32 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/api/cron')        // Vercel Cron: no user cookie, self-gated by CRON_SECRET
 
   // Logged-out visitor on a protected route → send them to the landing (which
-  // carries the login form), not a bare /login.
+  // carries the login form), not a bare /login. A page they were opening (a
+  // saved link, a shared recap) is remembered so sign-in returns them to it.
+  // Only a real page open counts: the browser's Sec-Fetch-Dest is "document"
+  // then, and something else for API calls and the app's link prefetches
+  // (Next strips its own prefetch headers before the proxy, so they can't be
+  // told apart any other way). Speculative document prefetches are skipped too.
   if (!user && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = '/'
-    return NextResponse.redirect(url)
+    const res = NextResponse.redirect(url)
+    const dest = request.headers.get('sec-fetch-dest')
+    const prefetch = request.headers.get('purpose') === 'prefetch' || (request.headers.get('sec-purpose') ?? '').includes('prefetch')
+    if (request.method === 'GET' && !pathname.startsWith('/api/') && (!dest || dest === 'document') && !prefetch) {
+      const returnTo = safeNextPath(pathname + request.nextUrl.search, '')
+      if (returnTo) res.cookies.set(RETURN_TO_COOKIE, returnTo, RETURN_TO_COOKIE_OPTIONS)
+    }
+    return res
   }
 
-  // Signed-in user shouldn't sit on the landing or login — go to Review.
+  // Signed-in user shouldn't sit on the landing or login — go to the page they
+  // were opening before signing in, else Review.
   if (user && (pathname === '/' || pathname === '/login')) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
-    return NextResponse.redirect(url)
+    const returnTo = safeNextPath(request.cookies.get(RETURN_TO_COOKIE)?.value)
+    const res = NextResponse.redirect(new URL(returnTo, request.url))
+    res.cookies.delete(RETURN_TO_COOKIE)
+    return res
   }
 
   return supabaseResponse

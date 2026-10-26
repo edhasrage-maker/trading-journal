@@ -1,7 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import type { EmailOtpType } from '@supabase/supabase-js'
-import { safeNextPath } from '@/lib/safe-redirect'
+import { RETURN_TO_COOKIE, safeNextPath } from '@/lib/safe-redirect'
 
 /**
  * Magic-link / signup callback. Supabase sends users here after they click the
@@ -28,9 +29,15 @@ export async function GET(request: Request) {
   const tokenHash = searchParams.get('token_hash')
   const type = searchParams.get('type') as EmailOtpType | null
   // Land in the app on success (not the landing, which would just bounce
-  // authenticated users onward anyway). `next` comes from the link, so only a
-  // path on this site is honoured — never a redirect off it.
-  const next = safeNextPath(searchParams.get('next'))
+  // authenticated users onward anyway): the link's `next`, else the page they
+  // were opening when sign-in was asked for (RETURN_TO_COOKIE), else the
+  // dashboard. Both come from outside, so only a path on this site is honoured.
+  const cookieStore = await cookies()
+  const next = safeNextPath(searchParams.get('next') ?? cookieStore.get(RETURN_TO_COOKIE)?.value)
+  const succeed = () => {
+    cookieStore.delete(RETURN_TO_COOKIE)
+    return NextResponse.redirect(`${origin}${next}`)
+  }
 
   const fail = (reason: AuthErrorReason) =>
     NextResponse.redirect(`${origin}/?auth_error=${reason}`)
@@ -46,14 +53,14 @@ export async function GET(request: Request) {
 
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
-    if (!error) return NextResponse.redirect(`${origin}${next}`)
+    if (!error) return succeed()
     // The exchange itself failed: almost always a link that's already been used
     // or was opened in a browser without the matching code verifier.
     return fail('invalid')
   }
   if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash })
-    if (!error) return NextResponse.redirect(`${origin}${next}`)
+    if (!error) return succeed()
     return fail(/expired/i.test(error.message) ? 'expired' : 'invalid')
   }
 

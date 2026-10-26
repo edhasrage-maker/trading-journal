@@ -85,11 +85,13 @@ export default function AuthCard({ authError }: { authError?: string | null }) {
       } else if (mode === 'password') {
         const { error } = await sb.auth.signInWithPassword({ email, password, options: { captchaToken: captcha } })
         if (error) throw error
-        window.location.href = '/dashboard'
+        // Via `/`: the proxy sends a signed-in user on to the page they were
+        // opening before sign-in (if any), else the dashboard.
+        window.location.href = '/'
       } else {
         const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo(), captchaToken: captcha } })
         if (error) throw error
-        if (data.session) window.location.href = '/dashboard'      // email confirmation off → in immediately
+        if (data.session) window.location.href = '/'      // email confirmation off → in immediately (the proxy routes on)
         else setMsg('Account created — check your email to confirm, then sign in.')
       }
     } catch (err) {
