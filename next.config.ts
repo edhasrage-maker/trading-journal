@@ -16,6 +16,8 @@ const securityHeaders = [
 ]
 
 const nextConfig: NextConfig = {
+  // Don't advertise the framework in an X-Powered-By header.
+  poweredByHeader: false,
   // Keep heavy, non-imported project dirs out of the serverless function
   // trace (docs/ alone is ~220MB of PDFs/SVGs; research/ ~16MB). Nothing in
   // the app imports these at runtime, so excluding them only shrinks the
