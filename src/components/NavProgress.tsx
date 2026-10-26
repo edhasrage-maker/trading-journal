@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 
 /**
@@ -45,13 +45,19 @@ export default function NavProgress() {
     setPhase(p => (p === 'idle' ? p : 'done'))
   }, [url])
 
-  // Phase timing: one frame at 0% so the width transition runs, a safety stop
-  // while running, and a short fade before resetting.
+  // 'start' commits the bar at 0%; flushing styles before switching to 'run'
+  // makes the width transition start from 0 right away. (Waiting for an
+  // animation frame instead stalls in background tabs, where frames pause.)
+  const barRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (phase !== 'start') return
+    void barRef.current?.offsetWidth
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the 0% → 85% hand-off must follow the committed 0% (that's what starts the transition)
+    setPhase('run')
+  }, [phase])
+
+  // Phase timing: a safety stop while running, a short fade before resetting.
   useEffect(() => {
-    if (phase === 'start') {
-      const id = requestAnimationFrame(() => requestAnimationFrame(() => setPhase('run')))
-      return () => cancelAnimationFrame(id)
-    }
     if (phase === 'run') {
       const id = window.setTimeout(() => setPhase('done'), 10_000)
       return () => window.clearTimeout(id)
@@ -71,6 +77,7 @@ export default function NavProgress() {
   return (
     <div aria-hidden className="fixed top-0 inset-x-0 h-0.5 z-[60] pointer-events-none">
       <div
+        ref={barRef}
         className="h-full bg-blue-500 motion-reduce:transition-none"
         style={{ width, transition, opacity: phase === 'idle' || phase === 'done' ? 0 : 1 }}
       />
