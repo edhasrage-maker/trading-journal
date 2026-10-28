@@ -7,13 +7,13 @@ You're working on a personal trading journal that's been built across many sessi
 ## Architecture
 
 - **Stack:** Next.js 16 (App Router, Turbopack) · TypeScript · Tailwind · Supabase (Postgres + Storage + Auth) · `@anthropic-ai/sdk` (model `claude-sonnet-4-6`) · lightweight-charts v5 · Recharts where used.
-- **Critically: the dev server runs LOCALLY on the user's Windows machine** — same machine as Sierra Chart. Server routes can (and do) read local files: `.scid` market data via `src/lib/scid-reader.ts`, OBS recordings via `src/lib/video-frames.ts` (ffmpeg/ffprobe), and the user's `D:\SierraCharts\Data` directory. Designs that assume a cloud server are wrong here.
+- **The app in use is tapescore.app** (branch `live-server-version` → Vercel, public Supabase `dmutgkycrjudfejswvhg`). As of 2026-10-26 the founder no longer uses the local journal (localhost:3000, personal Supabase); run it only when a test needs it, and verify changes on tapescore.app. The local build still has routes that read local files (`.scid` via `src/lib/scid-reader.ts`, OBS recordings via `src/lib/video-frames.ts`, `D:\SierraCharts\Data`), gated behind `LOCAL_FEATURES_ENABLED`; the hosted build gets its bars from the "Refresh NQ ES Data" scheduled task (`scripts/public-bar-feed.ts`, run from this folder).
 - **Two synced machines.** The project lives on two Windows machines via GitHub. Same Supabase backend; SQL changes happen *live* on Supabase, the user runs them in the dashboard, then we update `supabase/schema.sql` to match.
 
 ## Dev server quirks
 
 - **Always launch dev with `unset ANTHROPIC_API_KEY && npm run dev`.** Claude Code leaks an empty `ANTHROPIC_API_KEY` env var that overrides `.env.local`, making every Anthropic-backed route return 503. This is a known leak — work around it, don't fight it.
-- `start-journal.bat` is the production launcher (Task Scheduler runs it on login). `start-journal.log` is the rolling dev log — `tail -n 5 start-journal.log` is the fastest "did it compile / did the request land?" check.
+- `start-journal.bat` starts the local journal on 127.0.0.1:3000 (this PC only). Its Task Scheduler auto-start ("Trading Journal Dev Server") is **disabled** since 2026-10-28; run the .bat by hand when a local test needs it. `start-journal.log` is the rolling dev log — `tail -n 5 start-journal.log` is the fastest "did it compile / did the request land?" check while it runs.
 - Hot-reload is Turbopack — fast but **doesn't run full TypeScript checks**. Always end a code change with `npx tsc --noEmit -p tsconfig.json 2>&1 | grep -iE "<filename>"`. ESLint runs cleanly via `npx eslint <files>`.
 
 ## Data model (Supabase)
@@ -81,14 +81,14 @@ After any code change:
 
 1. `npx tsc --noEmit -p tsconfig.json 2>&1 | grep -iE "<changed-file>"` — must return blank.
 2. `npx eslint <changed files>` — must return blank or only known-tolerated warnings.
-3. `tail -n 2 start-journal.log` — confirm the dev server hot-reloaded clean (`✓ Compiled`).
+3. `npm test` for logic changes; `npx next build` (hosted mode) for anything risky — the local dev server is usually off now.
 4. **For schema or data shape changes**, query the live DB via service-role to confirm. Pattern:
 
    ```bash
    node -e "const fs=require('fs');for(const l of fs.readFileSync('.env.local','utf8').split(/\r?\n/)){const m=l.match(/^([A-Z_]+)=(.*)$/);if(m)process.env[m[1]]=m[2].replace(/^[\"']|[\"']$/g,'');}const{createClient}=require('@supabase/supabase-js');const sb=createClient(process.env.NEXT_PUBLIC_SUPABASE_URL,process.env.SUPABASE_SERVICE_ROLE_KEY);(async()=>{const{data,count}=await sb.from('TABLE').select('*',{count:'exact',head:true});console.log(count);})()"
    ```
 
-5. For UI changes, the user can hard-reload at `http://localhost:3000/eod/<date>` or wherever the change lives. No browser MCP is paired (Claude-in-Chrome extension is not connected on this machine, last checked), so visual verification is on the user — surface logs / diagnostics in the code if a UI bug is hard to reason about.
+5. For UI changes: after the founder OKs the push, verify on tapescore.app with the built-in browser pane. It is usually signed in to the read-only demo ("Explore the demo" on the landing page), which is safe for click-throughs. The pane is often hidden (window width 0, animations frozen), so read DOM state rather than pixel sizes.
 
 ## What to read first when picking up an unfamiliar area
 
