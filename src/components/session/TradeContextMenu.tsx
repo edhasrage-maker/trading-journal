@@ -48,12 +48,17 @@ export default function TradeContextMenu({
   state,
   onClose,
   onOpenIntraday,
+  openLabel = 'Open in Log',
+  openHint = "Open this trade's full log",
   onHighlight,
   isHighlighted,
 }: {
   state: TradeContextMenuState | null
   onClose: () => void
   onOpenIntraday?: (tradeId: string) => void
+  /** The open item's wording — the Session page opens the full log in place. */
+  openLabel?: string
+  openHint?: string
   onHighlight?: (tradeId: string) => void
   /** Whether this trade already carries a chart highlight, so the item can read
    *  "Remove highlight" — the same toggle wording the chart's own menu uses. */
@@ -100,7 +105,7 @@ export default function TradeContextMenu({
       className="fixed z-50 w-52 py-1 bg-gray-900 border border-gray-700 rounded-lg shadow-xl"
       onContextMenu={e => e.preventDefault()}
     >
-      <MenuItem icon={ExternalLink} label="Open in Log" hint="Open this trade's full log" onClick={run(onOpenIntraday)} />
+      <MenuItem icon={ExternalLink} label={openLabel} hint={openHint} onClick={run(onOpenIntraday)} />
       <MenuItem
         icon={Highlighter}
         label={isHighlighted?.(state.tradeId) ? 'Remove highlight' : 'Highlight'}
