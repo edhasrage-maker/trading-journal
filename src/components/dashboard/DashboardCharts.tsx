@@ -231,12 +231,16 @@ interface Props {
   /** Set while a dashboard filter is active: `days` is already bounded, so the
    *  range picker gives way to this label. See DashboardStats. */
   rangeLabel?: string
+  /** Highlights: the equity curve alone, full width, with no range row (the
+   *  page's one time switch already bounded `days`) and its TapeScore strip
+   *  explained in words underneath. Daily Results is left to Detailed. */
+  equityOnly?: boolean
 }
 
-export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabel }: Props) {
+export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabel, equityOnly = false }: Props) {
   const [period, setPeriod] = useState<Period>(defaultPeriod)
   // Same contract as DashboardStats: an active dashboard filter owns the range.
-  const effectivePeriod: Period = rangeLabel ? 'all' : period
+  const effectivePeriod: Period = rangeLabel || equityOnly ? 'all' : period
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => {
     try {
@@ -276,6 +280,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
   return (
     <div className="mb-6">
       {/* Period selector — independent of the stat-card period below. */}
+      {!equityOnly && (
       <div className="flex items-center gap-2 mb-3">
         <label className="text-xs text-gray-500">Chart range:</label>
         {rangeLabel ? (
@@ -295,8 +300,9 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
         </div>
         )}
       </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className={equityOnly ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 lg:grid-cols-2 gap-4'}>
         {/* Equity Curve (cumulative). Container matches the stat tiles —
             no fill, hairline rule, squared corner. */}
         <div className="border border-gray-800 rounded-[3px] p-5">
@@ -330,9 +336,18 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
           ) : (
             <div className="text-center text-xs text-gray-600 italic py-16">No closed sessions in this range</div>
           )}
+          {equityOnly && hasData && scores.some(s => s != null) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-[11px] text-gray-500">
+              <span className="text-gray-400">The band under the curve is each session&apos;s TapeScore:</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.high }} />70+</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.mid }} />50–69</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.low }} />under 50</span>
+            </div>
+          )}
         </div>
 
         {/* Daily Results (per-day net P&L bars) */}
+        {!equityOnly && (
         <div className="border border-gray-800 rounded-[3px] p-5">
           <div className="flex items-baseline justify-between mb-3">
             <h2 className="font-semibold text-white text-sm">Daily Results</h2>
@@ -346,6 +361,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
             <div className="text-center text-xs text-gray-600 italic py-16">No closed sessions in this range</div>
           )}
         </div>
+        )}
       </div>
     </div>
   )

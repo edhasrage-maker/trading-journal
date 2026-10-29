@@ -79,13 +79,13 @@ export interface DayStat {
   trade_sums?: TradeSums | null
 }
 
-type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year'
+export type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year'
 // The trader's saved period sticks across visits — a preference, respected on
 // load. (An earlier v2 bump force-reset everyone to all-time; reverted, because
 // keeping your chosen period is the point of persisting it.)
 const PERIOD_KEY = 'dashboard-stat-period-v1'
 
-const PERIOD_LABELS: Record<Period, string> = {
+export const PERIOD_LABELS: Record<Period, string> = {
   all: 'All time',
   week: 'This Week',
   month: 'This Month',
@@ -96,7 +96,7 @@ const PERIOD_LABELS: Record<Period, string> = {
 
 /** Inclusive date bounds (YYYY-MM-DD strings) for each period, computed
  *  relative to "today" on the client (cheap; no need for server input). */
-function periodBounds(period: Period): { start: string; end: string } {
+export function periodBounds(period: Period): { start: string; end: string } {
   const now = new Date()
   const today = ymd(now)
   switch (period) {
@@ -182,25 +182,32 @@ interface Props {
   /** Which scope to show. Undefined → the Period menu's; null → hide it (a
    *  setup filter is on, and the read is about the whole book). */
   liftDragScope?: string | null
+  /** Set by a parent that owns the period for the whole page (Highlights' one
+   *  time switch drives these cards, the chart and the session list). The
+   *  Period menu is hidden and the saved Detailed preference is left alone. */
+  period?: Period
 }
 
-export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d', rangeLabel, scoreInRow = false, liftDrag, liftDragScope }: Props) {
-  const [period, setPeriod] = useState<Period>(defaultPeriod)
+export default function DashboardStats({ days, hideScoreHero = false, defaultPeriod = '30d', rangeLabel, scoreInRow = false, liftDrag, liftDragScope, period: controlledPeriod }: Props) {
+  const [periodState, setPeriod] = useState<Period>(controlledPeriod ?? defaultPeriod)
+  const period: Period = controlledPeriod ?? periodState
   const effectivePeriod: Period = rangeLabel ? 'all' : period
   // Hydrate from localStorage after mount so SSR matches initial render.
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => {
+    if (controlledPeriod) return
     try {
       const rawPeriod = localStorage.getItem(PERIOD_KEY) as Period | null
       // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
       if (rawPeriod && rawPeriod in PERIOD_LABELS) setPeriod(rawPeriod)
     } catch { /* ignore */ }
     setHydrated(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only hydration
   }, [])
   useEffect(() => {
-    if (!hydrated) return
+    if (!hydrated || controlledPeriod) return
     try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
-  }, [period, hydrated])
+  }, [period, hydrated, controlledPeriod])
 
   const stats = useMemo(() => {
     const { start, end } = periodBounds(effectivePeriod)
@@ -385,7 +392,8 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
 
   return (
     <div className="mb-6">
-      {/* Period selector */}
+      {/* Period selector — absent when a parent owns the period. */}
+      {!controlledPeriod && (
       <div className="flex items-center gap-2 mb-3">
         <label className="text-xs text-gray-500">Period:</label>
         {rangeLabel ? (
@@ -405,6 +413,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
         </div>
         )}
       </div>
+      )}
 
       {/* One TapeScore hero (Ruleset amendment 6): the report card before the
           ledger. Score ring + verdict sentence + axis chips; P&L lives in the

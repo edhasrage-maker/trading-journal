@@ -5,12 +5,10 @@ import EmptyStateImport from '@/components/dashboard/EmptyStateImport'
 import FirstReadCards from '@/components/dashboard/FirstReadCards'
 import DashboardFilterScope from '@/components/dashboard/DashboardFilterScope'
 import { type DayStat } from '@/components/dashboard/DashboardStats'
-import DashboardCharts from '@/components/dashboard/DashboardCharts'
 import DashboardModeSwitch from '@/components/dashboard/DashboardModeSwitch'
 import BeginnerDashboard from '@/components/dashboard/BeginnerDashboard'
 import AchievementCollection from '@/components/dashboard/AchievementCollection'
 import { achievementCounts } from '@/lib/achievements'
-import { mergeMgmtTotals } from '@/lib/trade-management'
 // Dashboard previously imported liveAtr + fetchAllBars to recompute per-trade
 // ATR from `ohlcv_bars` on every request. That path was retired in favor of
 // reading the pre-backfilled `trades.entry_atr_1m` column. Imports kept off
@@ -98,7 +96,7 @@ export default async function DashboardPage() {
   // the ATR stop setting, so it decides both how a dirty day is recomputed and
   // whether a cached one is still current; the order-flow Score setting is
   // applied when the days are read, so it never dirties the cache.
-  const [recentResult, statsResult, achResult, { atrStopTarget, includeFlow, entryRules, runnerRules, rulesSig }] = await Promise.all([
+  const [recentResult, statsResult, achResult, { atrStopTarget, includeFlow, entryRules, runnerRules, rulesSig }, headlineResult] = await Promise.all([
     supabase
       .from('trading_days')
       .select('id, date, eod_pnl, day_type, day_types')
@@ -118,8 +116,24 @@ export default async function DashboardPage() {
       .order('date', { ascending: false })
       .limit(PAGE_SIZE) as unknown as Promise<{ data: { id: string; achievements_json: string[] | null }[] | null; error: unknown }>,
     loadTapeScoreSettings(supabase),
+    // Highlights' Recent sessions lead each day with its recap headline. Just
+    // the one string out of the analysis blob, and separate + guarded like the
+    // two above so a missing column can never null the dashboard.
+    supabase
+      .from('trading_days')
+      .select('id, headline:eod_ai_analysis_json->>headline')
+      .gte('date', statsWindowStartParallel)
+      .order('date', { ascending: false })
+      .limit(PAGE_SIZE) as unknown as Promise<{ data: { id: string; headline: string | null }[] | null; error: unknown }>,
   ])
-  tick('recentDays + stats + achievements')
+  tick('recentDays + stats + achievements + headlines')
+
+  const headlines: Record<string, string> = {}
+  if (!headlineResult.error && headlineResult.data) {
+    for (const r of headlineResult.data) {
+      if (typeof r.headline === 'string' && r.headline.trim()) headlines[r.id] = r.headline.trim()
+    }
+  }
 
   const achievementsByDayId = new Map<string, string[]>()
   if (!achResult.error && achResult.data) {
@@ -357,58 +371,10 @@ export default async function DashboardPage() {
   // 30d on load, but the trader can widen it to their whole history).
   const recentDaysForTable = recentDays
 
-  // Beginner-mode data (docs/BEGINNER_PRO_MODES.md): plain-English 30-day
-  // summary + one "focus" derived from the same capture math Pro shows raw +
-  // a simple recent-session list. All computed here so the client view is dumb.
-  const beginner30 = recentDays.filter(d => d.date >= past30Start && d.eod_pnl != null)
-  const beginnerPnl = beginner30.reduce((a, d) => a + (d.eod_pnl ?? 0), 0)
-  const beginnerGreenDays = beginner30.filter(d => (d.eod_pnl ?? 0) > 0).length
-  const beginnerTradedDays = beginner30.length
-  const beginnerBestDay = beginner30.length ? Math.max(...beginner30.map(d => d.eod_pnl ?? 0)) : null
-  // Trade management over the same 30 days, pooled over the TRADES (each day's
-  // sums added) — the Highlights "Kept" chip reads the same definition the
-  // Detailed card does.
-  const beginnerMgmt = mergeMgmtTotals(recentDays.filter(d => d.date >= past30Start).map(d => d.mgmt))
-  // Trade win rate + capture % over the 30-day window — plain "how am I doing"
-  // signals for the Beginner summary (same numbers Pro shows, plainly labeled).
-  const beginnerWinWindow = recentDays.filter(d => d.date >= past30Start)
-  const beginnerWins = beginnerWinWindow.reduce((a, d) => a + d.trade_wins, 0)
-  const beginnerTradesWithPnl = beginnerWinWindow.reduce((a, d) => a + d.trades_with_pnl_count, 0)
-  const beginnerWinRate = beginnerTradesWithPnl > 0 ? (beginnerWins / beginnerTradesWithPnl) * 100 : null
-  // Highlights hero (score + leak) now comes from heroPeriods.month — the SAME
-  // this-month TapeScore + finding-engine leak the Detailed view renders — so
-  // the two modes never disagree. The old 30-day aggregate + hand-written
-  // capture focus were removed for exactly that drift.
-  // Lean Recent Days table for Highlights (Tape / Trades / Win % / P&L).
-  const beginnerDays = recentDaysForTable.slice(0, 8)
-
-  // "Does trading well actually pay?" — the claim the whole product rests on,
-  // stated as a measured fact rather than left for the trader to eyeball.
-  //
-  // Computed over ALL history, deliberately NOT the 30-day window: a dozen
-  // sessions is noise, and a line that flips sign week to week would be worse
-  // than no line. Suppressed entirely until BOTH buckets clear MIN_N, so it
-  // never draws a conclusion off three sessions.
   // How many sessions carry a TapeScore at all. Zero — the state a journal is
   // in right after its first import, since the score comes from the per-session
   // EOD read — makes Highlights swap its verdict for the step that produces one.
   const gradedDaysAllTime = recentDays.filter(d => d.tapescore?.score != null).length
-
-  const MIN_BUCKET = 5
-  const scoredDaysWithPnl = recentDays.filter(d => d.tapescore?.score != null && d.eod_pnl != null)
-  const wellTradedDays = scoredDaysWithPnl.filter(d => (d.tapescore?.score ?? 0) >= 70)
-  const poorlyTradedDays = scoredDaysWithPnl.filter(d => (d.tapescore?.score ?? 0) < 50)
-  const meanPnl = (rows: typeof scoredDaysWithPnl) =>
-    rows.length > 0 ? rows.reduce((a, d) => a + (d.eod_pnl ?? 0), 0) / rows.length : 0
-  const processPayoff =
-    wellTradedDays.length >= MIN_BUCKET && poorlyTradedDays.length >= MIN_BUCKET
-      ? {
-          highAvg: meanPnl(wellTradedDays),
-          lowAvg: meanPnl(poorlyTradedDays),
-          highN: wellTradedDays.length,
-          lowN: poorlyTradedDays.length,
-        }
-      : null
 
   tick('per-day computation loop')
   console.log('[dashboard perf]', perf.phases.map(p => `${p.name}=${p.ms}ms${p.rows != null ? ` (${p.rows})` : ''}`).join(' | '))
@@ -445,23 +411,19 @@ export default async function DashboardPage() {
           import and stays until dismissed. */}
       <FirstReadCards variant="dashboard" />
 
-      {/* Highlights (default) = plain summary + one focus + simple session list.
+      {/* Highlights (default) = the Detailed KPI cards on one time switch, the
+          equity curve, sessions that say what happened, the badge collection.
           Detailed Tape = the full overview: the all-time score cluster, period
           stats, charts, the list/calendar sessions, then this month's read. */}
       <DashboardModeSwitch
         beginner={
           <BeginnerDashboard
-            pnl={beginnerPnl}
-            winRate={beginnerWinRate}
-            mgmt={beginnerMgmt}
-            greenDays={beginnerGreenDays}
-            tradedDays={beginnerTradedDays}
-            bestDay={beginnerBestDay}
-            hero={heroPeriods.month}
-            processPayoff={processPayoff}
-            days={beginnerDays}
+            statsDays={statsDays}
+            days={recentDaysForTable}
+            headlines={headlines}
+            liftDrag={liftDrag}
+            achievements={<AchievementCollection counts={collectionCounts} />}
             gradedDaysAllTime={gradedDaysAllTime}
-            charts={<DashboardCharts days={statsDays} />}
           />
         }
       >

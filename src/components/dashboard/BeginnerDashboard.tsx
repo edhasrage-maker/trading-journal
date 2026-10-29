@@ -1,217 +1,103 @@
 'use client'
 
-import { useMfeUnit } from '@/lib/mfe-unit'
-import { mgmtView, formatKept, type MgmtTotals } from '@/lib/trade-management'
-import type { ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { Target, ChevronRight } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
-import { TapeScoreRing, HeroChip } from './TapeScoreHeroParts'
-import RecentDaysList, { type DayRowData } from './RecentDaysList'
-import { ScoreBreakdownInfo, type HeroPeriodData } from '@/components/review/ReviewMonthHero'
-import { tapeScorePeriodSentence } from '@/lib/tapescore'
-import { AXIS_DESC, axisTooltip } from '@/lib/tapescore-axes'
-import { SHOW_FINDING_CALLOUT } from '@/lib/finding-callout'
+import DashboardStats, { periodBounds, PERIOD_LABELS, type DayStat, type Period } from './DashboardStats'
+import DashboardCharts from './DashboardCharts'
+import HighlightsSessions from './HighlightsSessions'
+import type { DayRowData } from './RecentDaysList'
+import type { LiftDragView } from '@/lib/lift-drag'
 
 /**
- * Beginner ("Highlights") dashboard — a coach REPORT, not a lighter journal.
- * Leads with the One TapeScore (the same 0-100 ring + axis chips Detailed shows)
- * beside a plain-English verdict, then the single focus (the prescription), a
- * calm row of stat chips, the equity curve, a lean Recent Days table, and a seam
- * into Detailed Tape.
+ * Highlights dashboard (r2, founder 2026-10-28 — docs/tapescore-highlights-mockup-r2.html).
  *
- * CONSISTENCY: the score, the axis chips and the focus all come from the SAME
- * `hero` object the Detailed view renders — this month's TapeScore + this
- * month's finding-engine leak. So the two modes never disagree on the score or
- * the leak (they used to: this view ran a 30-day aggregate and a hand-written
- * capture line, while Detailed ran the finding engine over a chosen window).
- * The stat chips below stay a 30-day quick-reference, clearly labelled.
+ * The KPI cards are the Detailed ones, unchanged. Highlights gets simpler by
+ * taking things away around them: ONE time switch drives the cards, the equity
+ * curve and the session list, so no two numbers on the page cover different
+ * days; one chart (Daily Results stays in Detailed); and Recent sessions say
+ * what happened each day. Then the badge collection and the seam into
+ * Detailed Tape.
+ *
+ * The one exception to the switch is the profit-factor lifter / drag inside
+ * Trade management, which needs 60 sessions and says so on the card.
  */
+
+const PERIODS: Period[] = ['week', 'month', '30d', 'ytd']
+// Highlights' own saved choice — separate from Detailed's Period menu, which
+// also offers All time / Last Year.
+const PERIOD_KEY = 'highlights-period-v1'
+
 type Props = {
-  pnl: number
-  winRate: number | null
-  /** Trade-management sums pooled over the last 30 days. */
-  mgmt: MgmtTotals
-  greenDays: number
-  tradedDays: number
-  bestDay: number | null
-  /** This month's TapeScore + finding — the SAME data the Detailed hero shows,
-   *  so the score and the leak match across modes. */
-  hero: HeroPeriodData
-  /** All-time mean day P&L for well-traded (70+) vs poorly-traded (sub-50)
-   *  sessions. Null until both buckets have enough sessions to mean anything —
-   *  Detailed shows the same relationship as the TapeScore line on the equity
-   *  chart; here it's stated in words. */
-  processPayoff: {
-    highAvg: number
-    lowAvg: number
-    highN: number
-    lowN: number
-  } | null
-  /** Recent day rows for the lean Highlights table (Tape / Trades / Win % / P&L). */
+  /** Every day's stat projection (same as Detailed). */
+  statsDays: DayStat[]
+  /** Every non-blank day, newest first (same as Detailed's Days table). */
   days: DayRowData[]
+  /** Recap headline per trading_days id. */
+  headlines: Record<string, string>
+  /** Profit factor lifter / drag per scope — see DashboardStats. */
+  liftDrag?: Record<string, LiftDragView | null>
+  /** The lifetime badge collection (rendered by the page). */
+  achievements: ReactNode
   /** How many sessions in the whole journal carry a TapeScore. Zero with days
-   *  on the books is the freshly-imported case — see the hero copy below. */
+   *  on the books is the freshly-imported case — see "Start here". */
   gradedDaysAllTime: number
-  // Performance charts (equity curve), rendered below the stat chips.
-  charts?: ReactNode
 }
 
-function money(n: number | null): string {
-  if (n == null) return '—'
-  return `${n < 0 ? '-' : '+'}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`
-}
-
-/** "2026-07-24" → "Fri, Jul 24". Rendered at noon so the timezone can never
- *  roll the date back a day. */
+/** "2026-07-24" → "Fri, Jul 24". Noon so the timezone can't roll it back. */
 function dayLabel(date: string): string {
   try { return format(new Date(`${date}T12:00:00`), 'EEE, MMM d') } catch { return date }
 }
 
-const TONE = {
-  edge: { dot: 'bg-green-400', text: 'text-green-400', label: 'Clear edge' },
-  leak: { dot: 'bg-blue-400', text: 'text-blue-400', label: 'Clear leak' },
-  none: { dot: 'bg-gray-500', text: 'text-gray-400', label: 'No clear read' },
-  ungraded: { dot: 'bg-amber-400', text: 'text-amber-400', label: 'Not graded yet' },
-} as const
+/** "Sep 28 – Oct 28". */
+function spanLabel(from: string, to: string): string {
+  const f = (d: string) => { try { return format(new Date(`${d}T12:00:00`), 'MMM d') } catch { return d } }
+  return `${f(from)} – ${f(to)}`
+}
 
-export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, tradedDays, bestDay, hero, processPayoff, days, gradedDaysAllTime, charts }: Props) {
+export default function BeginnerDashboard({ statsDays, days, headlines, liftDrag, achievements, gradedDaysAllTime }: Props) {
   const { setMode } = useUiMode()
-  // Same unit as the Detailed Trade management card, so Kept matches it.
-  const [mfeUnit] = useMfeUnit()
-  const kept = mgmtView(mgmt, mfeUnit)
-  const { scorePeriod, carryover } = hero
-  const { score, band, risk, entry, exit, parts, scoredDays } = scorePeriod
+  const [period, setPeriod] = useState<Period>('30d')
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PERIOD_KEY) as Period | null
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
+      if (raw && PERIODS.includes(raw)) setPeriod(raw)
+    } catch { /* ignore */ }
+    setHydrated(true)
+  }, [])
+  useEffect(() => {
+    if (!hydrated) return
+    try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
+  }, [period, hydrated])
 
-  // A freshly-imported journal has sessions but NO TapeScore anywhere: the
-  // score comes from the end-of-day read, which runs per session and on
-  // request. The old copy fell through to "nothing separated itself this
-  // month", which reads as "we looked and found nothing" — the opposite of the
-  // truth, which is that nothing has been graded yet. So call that out and
-  // hand them the one action that fixes it. `days` is date-descending, so the
-  // first row is the session to grade.
+  const { start, end } = periodBounds(period)
+  const label = PERIOD_LABELS[period]
+  const inPeriodStats = useMemo(() => statsDays.filter(d => d.date >= start && d.date <= end), [statsDays, start, end])
+  const inPeriodDays = useMemo(() => days.filter(d => d.date >= start && d.date <= end), [days, start, end])
+  const sessions = inPeriodDays.length
+
+  // A freshly-imported journal has sessions but no TapeScore anywhere: the
+  // score comes from the end-of-day read, run per session. Hand them the one
+  // step that produces it. `days` is newest first, so the first is the one.
   const ungraded = gradedDaysAllTime === 0 && days.length > 0
   const gradeDate = days[0]?.date ?? null
 
-  // The verdict + focus come from the finding engine — the same leak Detailed
-  // shows, in plain words.
-  const state = ungraded ? 'ungraded' : carryover == null ? 'none' : carryover.mode === 'protect' ? 'edge' : 'leak'
-  const tone = TONE[state]
-  // With the finding hidden (SHOW_FINDING_CALLOUT) the headline is the score's
-  // own sentence — "Discipline held. 5 of 5 sessions kept the rules." Never the
-  // "nothing separated itself" line: that would claim we looked and found
-  // nothing, when a finding exists and is simply not shown.
-  const verdictText = ungraded
-    ? 'Your trades are in — none of your sessions are graded yet.'
-    : !SHOW_FINDING_CALLOUT
-      ? tapeScorePeriodSentence(scorePeriod)
-        ?? (tradedDays === 0
-          ? 'Log or import a few sessions and your score shows up here.'
-          : 'Run Analyze Session on a day to see this month’s score.')
-    : carryover
-      ? carryover.finding + (carryover.mode === 'protect' ? ' — keep leaning on it.' : '.')
-      : tradedDays === 0
-        ? 'Log or import a few sessions and your read shows up here.'
-        : 'Nothing separated itself this month — your numbers sit inside your normal range.'
-  const focus = carryover?.today
-    ?? 'No change to force — keep taking your A setups and let the sample build.'
-
-  // Calm reference row. Kept only appears when a trade actually went your way
-  // (a bare "—" reads as broken). Best day is signed-colored.
-  const chips: { label: string; value: string; valueClass?: string; title?: string }[] = [
-    { label: 'Day win rate', value: tradedDays > 0 ? `${Math.round((greenDays / tradedDays) * 100)}%` : '—' },
-    { label: 'Win rate', value: winRate == null ? '—' : `${Math.round(winRate)}%` },
-    ...(kept.went.count > 0
-      ? [{ label: 'Kept', value: formatKept(kept.went.keptPct), title: `Of your trades that went your way (${kept.went.count} of ${kept.classified} were up at least 1×ATR at some point): what you banked out of how far they ran, losses included.` }]
-      : []),
-    {
-      label: 'Best day',
-      value: money(bestDay),
-      valueClass: (bestDay ?? 0) > 0 ? 'text-green-400' : (bestDay ?? 0) < 0 ? 'text-red-400' : 'text-gray-100',
-    },
-  ]
-  const chipCols = chips.length === 4 ? 'sm:grid-cols-4' : 'sm:grid-cols-3'
-
   return (
     <div className="space-y-4">
-      {/* Hero report card — One TapeScore ring + the period verdict, P&L demoted.
-          The ring is the grade, the sentence is the coach's comment, the chips
-          are the subscores. Identical ring + chips to Detailed. */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex items-center gap-5 flex-wrap">
-        <TapeScoreRing
-          score={score}
-          band={band}
-          title="TapeScore — one 0-100 score per day: risk, entry and exit, weighted equally. Days that broke the rules or the daily loss limit cap at 49; 2 or more chase trades (quick re-entries after a loss with no fresh trigger) cap a day at 69."
-        />
-        <div className="flex-1 min-w-[240px]">
-          <div className="flex items-center gap-2 mb-2">
-            {/* The dot + "Clear edge / Clear leak / No clear read" is the finding's
-                state, so it goes when the finding does. "Not graded yet" is not
-                a finding and stays. */}
-            {SHOW_FINDING_CALLOUT || ungraded ? (
-              <>
-                <span className={`w-2 h-2 rounded-full ${tone.dot}`} />
-                <span className={`text-xs font-medium ${tone.text}`}>{tone.label}</span>
-              </>
-            ) : (
-              <span className="text-xs font-medium text-gray-400">TapeScore</span>
-            )}
-            <span className="text-[11px] text-gray-500">· this month</span>
-            <ScoreBreakdownInfo period={scorePeriod} />
-          </div>
-          <p className="text-lg font-semibold text-white leading-snug">{verdictText}</p>
-          {score != null && (
-            <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
-              {risk != null && (
-                <HeroChip label={`Risk ${risk}`} tone={risk >= 70 ? 'good' : risk >= 50 ? 'mid' : 'bad'}
-                  title={axisTooltip(`Risk (0-100): ${AXIS_DESC.risk}.`, parts, 'risk')} />
-              )}
-              {entry != null && (
-                <HeroChip label={`Entry ${entry}`} tone={entry >= 70 ? 'good' : entry >= 50 ? 'mid' : 'bad'}
-                  title={axisTooltip(`Entry (0-100): ${AXIS_DESC.entry}.`, parts, 'entry')} />
-              )}
-              {exit != null && (
-                <HeroChip label={`Exit ${exit}`} tone={exit >= 70 ? 'good' : exit >= 50 ? 'mid' : 'bad'}
-                  title={axisTooltip(`Exit (0-100): ${AXIS_DESC.exit}.`, parts, 'exit')} />
-              )}
-            </div>
-          )}
-          <div className="mt-3 text-xs text-gray-500">
-            {score != null
-              ? <>This month · {scoredDays} scored session{scoredDays === 1 ? '' : 's'}</>
-              : ungraded
-                ? <>A TapeScore comes from the end-of-day read on a session — it takes one click.</>
-                : <>No graded sessions this month yet</>}
-          </div>
-        </div>
-      </div>
-
-      {/* Does the score pay? The same relationship Detailed draws as a TapeScore
-          line over the equity curve, said in one sentence. All-time, so it's a
-          standing fact rather than a number that flips with a bad week. */}
-      {processPayoff && (
-        <p className="text-[13px] text-gray-400 leading-relaxed">
-          Sessions you scored <span className="text-gray-200 font-semibold">70+</span> averaged{' '}
-          <span className={processPayoff.highAvg >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{money(processPayoff.highAvg)}</span>
-          {' '}a day. Sessions under <span className="text-gray-200 font-semibold">50</span> averaged{' '}
-          <span className={processPayoff.lowAvg >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{money(processPayoff.lowAvg)}</span>.
-          <span className="text-gray-600"> · all time, {processPayoff.highN + processPayoff.lowN} sessions</span>
-        </p>
-      )}
-
-      {/* Your one focus — the single action, in plain English. Until a session
-          has been graded there IS no measured focus to give, so the box carries
-          the step that produces one instead of inventing advice. */}
-      {ungraded && gradeDate ? (
+      {ungraded && gradeDate && (
         <div className="rounded-xl border p-4" style={{ background: 'rgba(224,163,60,0.08)', borderColor: 'rgba(224,163,60,0.35)' }}>
           <div className="flex items-center gap-2 mb-1.5">
             <Target className="w-4 h-4 text-amber-400" />
             <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">Start here</span>
           </div>
           <p className="text-sm text-gray-200 leading-relaxed">
-            Grade a session and you get its TapeScore, how much of the move you kept, the heat you
-            took, and the one thing to work on. Do your most recent one first.
+            Your trades are in — none of your sessions are graded yet. Grade a session and you get its
+            TapeScore, how much of the move you kept, the heat you took, and the one thing to work on. Do
+            your most recent one first.
           </p>
           <Link
             href={`/review/today/${gradeDate}`}
@@ -220,54 +106,44 @@ export default function BeginnerDashboard({ pnl, winRate, mgmt, greenDays, trade
             Grade {dayLabel(gradeDate)} <ChevronRight className="w-4 h-4" />
           </Link>
         </div>
-      ) : SHOW_FINDING_CALLOUT ? (
-        <div className="rounded-xl border p-4" style={{ background: 'rgba(224,163,60,0.08)', borderColor: 'rgba(224,163,60,0.35)' }}>
-          <div className="flex items-center gap-2 mb-1.5">
-            <Target className="w-4 h-4 text-amber-400" />
-            <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">Your one focus</span>
-          </div>
-          <p className="text-sm text-gray-200 leading-relaxed">{focus}</p>
-        </div>
-      ) : null}
+      )}
 
-      {/* Clean stat chips — the calm reference row (numbers, not verdicts).
-          A 30-day quick-reference, labelled so its window is unmistakably
-          distinct from the month TapeScore above. */}
-      <div>
-        <div className="flex items-baseline gap-2 mb-2">
-          <span className="text-xs text-gray-500">Last 30 days</span>
-          <span className={`text-xs font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{money(pnl)} net</span>
-          <span className="text-xs text-gray-600">· {tradedDays} session{tradedDays === 1 ? '' : 's'}</span>
-        </div>
-        <div className={`grid grid-cols-2 ${chipCols} gap-3`}>
-          {chips.map(c => (
-            /* Blend-in container — matches the Detailed tiles (no fill, hairline
-               rule, squared corner) so the same stat reads the same in both modes. */
-            <div key={c.label} className="border border-gray-800 rounded-[3px] p-[18px]" title={c.title}>
-              <div className="text-xs text-gray-500 mb-1">{c.label}</div>
-              <div className={`text-xl font-semibold ${c.valueClass ?? 'text-gray-100'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>{c.value}</div>
-            </div>
+      {/* The one time switch — everything below answers for these days. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="text-xs text-gray-500">Showing</span>
+        <div className="inline-flex rounded-lg border border-gray-700 overflow-hidden" role="group" aria-label="Time range">
+          {PERIODS.map(p => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPeriod(p)}
+              aria-pressed={period === p}
+              className={`text-xs px-3 py-1.5 border-r border-gray-700 last:border-r-0 transition-colors ${
+                period === p ? 'bg-blue-950 text-blue-300 font-semibold' : 'bg-gray-900 text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              {PERIOD_LABELS[p]}
+            </button>
           ))}
         </div>
-      </div>
-
-      {/* Equity curve (kept in Highlights — intuitive). */}
-      {charts}
-
-      {/* Recent sessions — the same TapeScore table as Detailed, lean column set
-          (Tape / Trades / Win % / P&L), read-only. Each row links to its EOD. */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Recent sessions</h2>
-        </div>
-        {days.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-gray-500 text-center">No sessions yet.</div>
-        ) : (
-          <div className="px-3 sm:px-4 pb-2">
-            <RecentDaysList initialDays={days} mode="beginner" />
-          </div>
+        {/* Client clock decides "today", so print the span only after mount —
+            the server renders in UTC and would disagree in the evening. */}
+        {hydrated && (
+          <span className="text-xs text-gray-500">
+            {spanLabel(start, end)} · {sessions} session{sessions === 1 ? '' : 's'}
+          </span>
         )}
       </div>
+
+      {/* The Detailed KPI cards, as they are, on the switch's period. */}
+      <DashboardStats days={statsDays} hideScoreHero scoreInRow period={period} liftDrag={liftDrag} />
+
+      {/* One chart: the equity curve, with its TapeScore band explained. */}
+      <DashboardCharts days={inPeriodStats} rangeLabel={label} equityOnly />
+
+      <HighlightsSessions days={inPeriodDays} headlines={headlines} periodLabel={label} />
+
+      <div className="pt-2">{achievements}</div>
 
       {/* Graduation seam — one tap into the full Detailed Tape view. */}
       <button
