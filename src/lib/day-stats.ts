@@ -9,6 +9,7 @@ import { effectiveAnalysis } from '@/lib/tapescore-day-rules'
 import type { ProcessVerdict, TradeEntryCtx, TradeStops, TradingDay } from '@/lib/supabase/types'
 import type { EntryRuleConfig } from '@/lib/entry-rules'
 import type { RunnerRuleConfig } from '@/lib/runner-rules'
+import { dayGlanceFacts, type DayGlanceFacts } from '@/lib/day-glance'
 
 /**
  * The per-day dashboard rollup, extracted verbatim from the inline computation
@@ -160,6 +161,10 @@ export interface DayStatsRollup {
    *  trades. Optional only so a pre-v9 cached row still types while it
    *  recomputes. */
   mgmt?: MgmtTotals
+  /** The facts behind the Days table's four numbers (src/lib/day-glance.ts):
+   *  biggest planned risk, entry-rule checks, the day's best realized point and
+   *  what came after it. Optional only so a pre-v18 cached row still types. */
+  glance?: DayGlanceFacts
 }
 
 /**
@@ -173,6 +178,9 @@ export interface ScoredDayRollup extends DayStatsRollup {
   /** The day's per-trade sums + counts, with "Loss size" scored against the
    *  trader's risk yardstick going into the day. A period pools these. */
   trade_sums: TradeSums | null
+  /** The trader's usual planned risk per trade going into the day — the mean of
+   *  the yardstick Loss size used. Null = not enough earlier trades yet. */
+  risk_usual: number | null
 }
 
 /**
@@ -201,6 +209,7 @@ export function scoreDayRollups(
       ...(audit ? processFields(audit) : {}),
       tapescore: finishTapeScore(r.tape, sums, { ...opts, sizeUpFails }),
       trade_sums: sums,
+      risk_usual: reads[i]?.yardstick?.mean ?? null,
     }
   })
 }
@@ -340,7 +349,10 @@ export function isFreshStats(
 // v17 (2026-10-25): the order-flow Score is flow-5 (the 5-minute 9 EMA counts
 // as a key level), and the founder's trades are re-scored, so Entry's
 // order-flow sums move on those days.
-export const STATS_VERSION = 17
+// v18 (2026-10-28): the rollup gained `glance` — the facts behind the Days
+// table's four numbers (src/lib/day-glance.ts). Every cached row must recompute
+// to carry it, or those columns would stay blank on every cached day.
+export const STATS_VERSION = 18
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`
@@ -356,7 +368,7 @@ export function toStoredStats(r: DayStatsRollup): DayStatsStored {
   // trust every caller to pass the unscored one — a cached finished score would
   // go stale the moment an earlier day changed.
   /* eslint-disable @typescript-eslint/no-unused-vars */
-  const { id, date, day_type, day_types, achievements, tapescore, trade_sums, ...stored } = r as ScoredDayRollup
+  const { id, date, day_type, day_types, achievements, tapescore, trade_sums, risk_usual, ...stored } = r as ScoredDayRollup
   /* eslint-enable @typescript-eslint/no-unused-vars */
   return stored
 }
@@ -542,6 +554,7 @@ export function computeDayStats(
     symbol_counts: symbolCounts,
     logged_trade_pnl: tradesWithPnl.length > 0 ? summedPnl : null,
     mgmt: mgmtTotals(trades),
+    glance: dayGlanceFacts(trades, opts.entryRules),
     setups: setupsAll,
     process_score: day.ai_analysis_json?.score ?? null,
     overall_grade: (() => {

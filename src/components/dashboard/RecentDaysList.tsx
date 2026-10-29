@@ -11,6 +11,7 @@ import AchievementCoin from '@/components/AchievementCoin'
 import { ACHIEVEMENT_CATALOG, type AchievementId } from '@/lib/achievements'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { mgmtView, formatKept, type MgmtTotals } from '@/lib/trade-management'
+import { GLANCE_WINDOW_DAYS, RISK_OFF_MULTIPLE, CHECKS_OFF_POINTS, KEPT_OFF_POINTS, type DayGlanceRead } from '@/lib/day-glance'
 
 export interface DayRowData {
   id: string
@@ -75,6 +76,9 @@ export interface DayRowData {
   /** Trade-management sums for the day (src/lib/trade-management.ts) — behind
    *  the "Went your way" and "Kept" columns. Same sums the dashboard card pools. */
   mgmt?: MgmtTotals | null
+  /** The four numbers read against the trader's usual (src/lib/day-glance.ts).
+   *  Null/absent = nothing to read (no trades, or a cache row still recomputing). */
+  glance_read?: DayGlanceRead | null
 }
 
 interface Props {
@@ -85,7 +89,7 @@ interface Props {
   mode?: 'beginner' | 'pro'
 }
 
-type SortColumn = 'date' | 'tapescore' | 'trades' | 'win_rate' | 'pnl'
+type SortColumn = 'date' | 'tapescore' | 'trades' | 'win_rate' | 'pnl' | 'off'
 type SortDirection = 'asc' | 'desc'
 
 /** Columns the user can drag-reorder (Detailed only). Date is pinned left (row
@@ -95,9 +99,21 @@ type SortDirection = 'asc' | 'desc'
  *  Pt 13 rework (2026-07-12): Day type leaves the dashboard entirely (analytics
  *  is its home). Win % joins both modes; Detailed additionally shows the two
  *  trade-management reads — how many trades went your way, and how much of
- *  those you kept — the same two ideas as the Trade management card above. */
-type ReorderableColumnId = 'tapescore' | 'trades' | 'win_rate' | 'went' | 'kept' | 'pnl'
-const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trades', 'win_rate', 'went', 'kept']
+ *  those you kept — the same two ideas as the Trade management card above.
+ *
+ *  2026-10-28: Detailed leads with the four numbers that say which day to open
+ *  (src/lib/day-glance.ts) — Risk vs usual, Playbook, Kept, After your high —
+ *  plus how many of them are off. Trades, Win % and Went your way move behind
+ *  the Columns menu: on a 2–4 trade day a rate can only read 0, 50 or 100%. */
+type ReorderableColumnId = 'tapescore' | 'trades' | 'win_rate' | 'went' | 'kept' | 'pnl' | 'risk' | 'playbook' | 'after_high' | 'off'
+const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'risk', 'playbook', 'kept', 'after_high', 'off', 'trades', 'win_rate', 'went']
+/** Off by default in Detailed; the Columns menu adds them back. */
+const DEFAULT_HIDDEN: ReorderableColumnId[] = ['trades', 'win_rate', 'went']
+const COLUMN_LABELS: Record<ReorderableColumnId, string> = {
+  tapescore: 'TapeScore', pnl: 'PnL', risk: 'Risk vs usual', playbook: 'Playbook', kept: 'Kept',
+  after_high: 'After your high', off: 'Off usual', trades: 'Trades', win_rate: 'Win %', went: 'Went your way',
+}
+const HIDDEN_COLUMNS_STORAGE_KEY = 'dashboard-recent-days-hidden-columns-v1'
 /** Highlights: lean, fixed, non-reorderable. */
 const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trades', 'win_rate']
 // v3: v2 carried the now-removed `day_type` id; bump so stale saved orders reset.
@@ -106,7 +122,8 @@ const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trade
 // has ever used this table keeps the old arrangement and never sees the change.
 // v5: `mfe_mae` and `capture` became `went` and `kept`; a saved order naming the
 // old ids would drop both new columns.
-const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v5'
+// v6: the four day numbers joined and lead the default order.
+const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v6'
 
 /** Date earns a wider column than the numbers — it carries a weekday, a month
  *  and a date, plus any achievement coins — but only just: a quarter more. */
@@ -153,6 +170,28 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
   useEffect(() => {
     try { localStorage.setItem(COLUMN_ORDER_STORAGE_KEY, JSON.stringify(columnOrder)) } catch { /* ignore */ }
   }, [columnOrder])
+  // Columns the trader switched off (Detailed only), same hydrate/persist pattern.
+  const [hiddenCols, setHiddenCols] = useState<ReorderableColumnId[]>(DEFAULT_HIDDEN)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(HIDDEN_COLUMNS_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as unknown
+      if (!Array.isArray(parsed)) return
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration from localStorage
+      setHiddenCols(parsed.filter((x): x is ReorderableColumnId =>
+        typeof x === 'string' && (DEFAULT_COLUMN_ORDER as string[]).includes(x)))
+    } catch { /* ignore */ }
+  }, [])
+  const toggleColumn = (id: ReorderableColumnId) => {
+    setHiddenCols(prev => {
+      const next = prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+      // Never hide the last column.
+      if (next.length >= DEFAULT_COLUMN_ORDER.length) return prev
+      try { localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
 
   const onColDragStart = (e: React.DragEvent<HTMLTableCellElement>, id: ReorderableColumnId) => {
     setDragColId(id)
@@ -217,6 +256,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         case 'trades': return d.trade_count
         case 'win_rate': return d.win_rate
         case 'pnl': return d.eod_pnl
+        case 'off': return d.glance_read?.off ?? null
       }
     }
     return [...days].sort((a, b) => {
@@ -335,6 +375,19 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
     }
   }
 
+  // A two-line header for the four day numbers: the name, then what it measures.
+  const kpiTh = (id: ReorderableColumnId, label: string, sub: string, title: string) => (
+    <th
+      key={id}
+      {...dragProps(id)}
+      className={`font-normal py-2 pr-3 text-center ${dragProps(id).className ?? ''}`}
+      title={title}
+    >
+      <span className="text-gray-500">{label}</span>
+      <span className="block text-[10px] text-gray-600">{sub}</span>
+    </th>
+  )
+
   // Header node per reorderable column id, with the draggable / drop-hint
   // props spread onto each <th>.
   const headerNodes: Record<ReorderableColumnId, React.ReactNode> = {
@@ -397,7 +450,28 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         title="On the trades that went your way: what you banked out of how far they ran, losses included. Uses the unit chosen on the Trade management card."
       >
         <span className="text-gray-500">Kept</span>
+        {isPro && <span className="block text-[10px] text-gray-600">of what went your way</span>}
       </th>
+    ),
+    risk: kpiTh('risk', 'Risk vs usual', 'biggest risk on one trade',
+      `The biggest planned dollar risk on one trade, against your usual risk per trade going into the day (the same average Loss size uses). Lights up at ${RISK_OFF_MULTIPLE}× or more.`),
+    playbook: kpiTh('playbook', 'Playbook', 'entry-rule checks passed',
+      `The share of your entry-rule checks the day's trades passed, against your last ${GLANCE_WINDOW_DAYS} trading days. Lights up ${CHECKS_OFF_POINTS}+ points under usual.`),
+    after_high: kpiTh('after_high', 'After your high', 'once up a good day',
+      `Did you keep trading after your realized P&L reached a good day — your average green day over your last ${GLANCE_WINDOW_DAYS} trading days? Lights up when you did.`),
+    off: (
+      <SortableTh
+        key="off"
+        label="Off"
+        column="off"
+        current={sortColumn}
+        direction={sortDirection}
+        onSort={setSort}
+        align="center"
+        className="pr-3"
+        titleAttr="How many of Risk, Playbook, Kept and After your high are off your usual. Sort by it to put the days worth a look first."
+        thProps={dragProps('off')}
+      />
     ),
     pnl: (
       <SortableTh
@@ -413,7 +487,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
       />
     ),
   }
-  const effectiveOrder = isPro ? columnOrder : BEGINNER_COLUMN_ORDER
+  const effectiveOrder = isPro ? columnOrder.filter(c => !hiddenCols.includes(c)) : BEGINNER_COLUMN_ORDER
   // One share per data column, Date 1.25 shares. The two pinned columns
   // (selection, delete) exist only in Detailed and are taken off the top.
   const columnUnitPct =
@@ -452,6 +526,30 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
               {bulkDeleting ? 'Deleting…' : 'Delete selected'}
             </button>
           </div>
+        </div>
+      )}
+
+      {isPro && (
+        <div className="flex justify-end mb-2">
+          {/* A native disclosure: opens and closes without a click-outside handler. */}
+          <details className="relative">
+            <summary className="list-none cursor-pointer select-none text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md px-2.5 py-1">
+              Columns ▾
+            </summary>
+            <div className="absolute right-0 mt-1 z-20 w-52 bg-gray-900 border border-gray-700 rounded-lg shadow-lg p-2 flex flex-col gap-0.5">
+              {columnOrder.map(id => (
+                <label key={id} className="flex items-center gap-2 text-xs text-gray-300 px-1.5 py-1 rounded hover:bg-gray-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!hiddenCols.includes(id)}
+                    onChange={() => toggleColumn(id)}
+                    className="accent-blue-500"
+                  />
+                  {COLUMN_LABELS[id]}
+                </label>
+              ))}
+            </div>
+          </details>
         </div>
       )}
 
@@ -591,6 +689,7 @@ function DayRowItem({
 
   const cellBg = selected ? 'bg-blue-950/40' : 'group-hover:bg-gray-800/40'
   const mgmt = day.mgmt ? mgmtView(day.mgmt, mfeUnit) : null
+  const g = day.glance_read ?? null
   // Wrapping each cell in a Link would inflate markup; instead use a single
   // overlay link via the row's last cell with an onClick stopPropagation guard
   // on the checkbox + delete button.
@@ -680,7 +779,56 @@ function DayRowItem({
                   // No trade went your way: there was no exit to grade. A dash,
                   // not 0% — 0% is reserved for "it ran and you kept none of it".
                   ? <span className="text-gray-600 cursor-help" title="No trade went your way this day, so there was no exit to grade.">—</span>
-                  : formatKept(mgmt.went.keptPct)}
+                  : !isPro
+                    ? formatKept(mgmt.went.keptPct)
+                    : (
+                      <GlanceCell
+                        main={formatKept(mgmt.went.keptPct)}
+                        sub={g?.kept.usual != null ? `usual ${Math.round(g.kept.usual * 100)}%` : 'no usual yet'}
+                        off={g?.kept.off ?? false}
+                        title={`What you banked out of how far the trades that went your way ran.${g?.kept.usual != null ? ` Usual: ${Math.round(g.kept.usual * 100)}% over your last ${GLANCE_WINDOW_DAYS} trading days. Lights up ${KEPT_OFF_POINTS}+ points under usual.` : ''}`}
+                      />
+                    )}
+            </td>
+          ),
+          risk: (
+            <td key="risk" className={`py-2 pr-3 text-center ${cellBg}`}>
+              {g?.risk == null
+                ? <span className="text-gray-700" title="No trade this day had a planned stop.">—</span>
+                : (
+                  <GlanceCell
+                    main={usd(g.risk.max)}
+                    sub={g.risk.ratio != null ? `${g.risk.ratio.toFixed(1)}× usual` : 'no usual yet'}
+                    off={g.risk.off}
+                    title={`Biggest planned risk on one trade: ${usd(g.risk.max)}.${g.risk.usual != null ? ` Your usual risk per trade going into this day: ${usd(g.risk.usual)}.` : ''}`}
+                  />
+                )}
+            </td>
+          ),
+          playbook: (
+            <td key="playbook" className={`py-2 pr-3 text-center ${cellBg}`}>
+              {g?.playbook == null
+                ? <span className="text-gray-700" title="No entry-rule checks this day: no rules set, or the trades have no tape snapshot yet.">—</span>
+                : (
+                  <GlanceCell
+                    main={`${Math.round(g.playbook.pct * 100)}% (${g.playbook.passed} of ${g.playbook.checks})`}
+                    sub={g.playbook.mostMissed ? `most missed: ${g.playbook.mostMissed}` : 'every check passed'}
+                    off={g.playbook.off}
+                    title={`Entry-rule checks passed: ${g.playbook.passed} of ${g.playbook.checks}.${g.playbook.usual != null ? ` Usual: ${Math.round(g.playbook.usual * 100)}% over your last ${GLANCE_WINDOW_DAYS} trading days.` : ''}`}
+                  />
+                )}
+            </td>
+          ),
+          after_high: (
+            <td key="after_high" className={`py-2 pr-3 text-center ${cellBg}`}>
+              {g?.high == null ? <span className="text-gray-700">—</span> : <AfterHighCell high={g.high} />}
+            </td>
+          ),
+          off: (
+            <td key="off" className={`py-2 pr-3 text-center text-xs tracking-widest text-gray-300 ${cellBg}`}>
+              {g == null
+                ? <span className="text-gray-700">—</span>
+                : <span aria-label={`${g.off} of 4 off your usual`} title={`${g.off} of 4 off your usual`}>{'●'.repeat(g.off)}{'○'.repeat(4 - g.off)}</span>}
             </td>
           ),
           pnl: (
@@ -707,6 +855,49 @@ function DayRowItem({
       )}
     </tr>
   )
+}
+
+/** Whole dollars, with a sign when asked: "$400", "+$1,297", "-$340". */
+function usd(n: number, signed = false): string {
+  const s = n < 0 ? '-' : signed && n > 0 ? '+' : ''
+  return `${s}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`
+}
+
+/** One of the four day numbers: the value, a short line under it, and a
+ *  caution tint when it is off the trader's usual. Quiet otherwise. */
+function GlanceCell({ main, sub, off, title }: { main: string; sub: string; off: boolean; title: string }) {
+  return (
+    <span
+      className={`inline-flex flex-col items-center leading-tight rounded px-1.5 py-0.5 border ${
+        off ? 'bg-amber-950/40 border-amber-800/60' : 'border-transparent'
+      }`}
+      title={title}
+    >
+      <span className={`font-mono text-xs whitespace-nowrap ${off ? 'text-white font-semibold' : 'text-gray-300'}`}>{main}</span>
+      <span className={`text-[10px] ${off ? 'text-amber-300' : 'text-gray-500'}`}>{sub}</span>
+    </span>
+  )
+}
+
+/** "After your high": only a high worth a good day counts, so a day that was
+ *  briefly up $53 doesn't read as "gave it back". */
+function AfterHighCell({ high }: { high: NonNullable<DayGlanceRead['high']> }) {
+  const goodDay = high.bar != null ? usd(high.bar) : null
+  const title = `Your best realized P&L of the day: ${usd(high.peak, true)}.${goodDay ? ` A good day for you lately (average green day, last ${GLANCE_WINDOW_DAYS} trading days): ${goodDay}.` : ' Not enough green days yet to know what a good day is.'}`
+  if (high.peak <= 0) return <GlanceCell main="Never green" sub="no high to stop at" off={false} title={title} />
+  if (high.bar == null) return <GlanceCell main={`Best ${usd(high.peak, true)}`} sub="no usual yet" off={false} title={title} />
+  if (!high.reached) return <GlanceCell main="No big high" sub={`best ${usd(high.peak, true)} · good day ${goodDay}`} off={false} title={title} />
+  if (high.off) {
+    return (
+      <GlanceCell
+        main={`${high.afterTrades} trade${high.afterTrades === 1 ? '' : 's'} after`}
+        sub={`up ${usd(high.peak, true)}, then ${usd(high.afterPnl, true)}`}
+        off
+        title={title}
+      />
+    )
+  }
+  return <GlanceCell main="Stopped at the high" sub={`up ${usd(high.peak, true)}, nothing after`} off={false} title={title} />
 }
 
 /**

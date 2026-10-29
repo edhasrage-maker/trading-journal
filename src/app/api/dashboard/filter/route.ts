@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { clientError } from '@/lib/api-error'
 import { computeDayStats, scoreDayRollups, ROLLUP_TRADE_COLS, type DayForStats, type TradeForStats } from '@/lib/day-stats'
 import { loadTapeScoreSettings, loadRiskHistory } from '@/lib/day-stats-server'
+import { withGlance } from '@/lib/day-glance'
 import { tagKey } from '@/lib/tradezella-import'
 import type { TradingDay } from '@/lib/supabase/types'
 
@@ -138,11 +139,11 @@ export async function GET(req: Request) {
       achievements: [],
     })
     const sessionById = new Map(
-      scoreDayRollups(
+      withGlance(scoreDayRollups(
         days.map(d => computeDayStats(dayInput(d), allByDay.get(d.id) ?? [], prepAtr.get(d.id) ?? null, { atrStopTarget, entryRules, runnerRules })),
         riskHistory,
         { includeFlow, runnerOwn: runnerRules.some(r => r.on) },
-      ).map(r => [r.id, r]),
+      )).map(r => [r.id, r]),
     )
 
     // 5. Roll up each day that had a match over its matching trades, and give
@@ -155,6 +156,11 @@ export async function GET(req: Request) {
           ...computeDayStats(dayInput(d), matchedByDay.get(d.id)!, prepAtr.get(d.id) ?? null, { atrStopTarget, entryRules, runnerRules }),
           tapescore: session?.tapescore ?? null,
           trade_sums: session?.trade_sums ?? null,
+          risk_usual: session?.risk_usual ?? null,
+          // The four numbers are whole-session facts too: a day's risk, rule
+          // checks and best point don't change because a setup filter hides
+          // some of its trades.
+          glance_read: session?.glance_read ?? null,
           // The rules audit is a whole-session fact too (the size-up rule is
           // re-read from ALL the day's trades), so it comes from the session.
           process_verdict: session?.process_verdict ?? null,

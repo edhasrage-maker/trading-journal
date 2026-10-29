@@ -22,6 +22,7 @@ import {
   type DayStatsStored,
 } from '@/lib/day-stats'
 import { loadTapeScoreSettings, loadRiskHistory } from '@/lib/day-stats-server'
+import { withGlance } from '@/lib/day-glance'
 import { computeCarryover } from '@/lib/prep-carryover'
 import { liftDragByScope, type LiftDragTrade } from '@/lib/lift-drag'
 import type { TradeWithExcursion } from '@/lib/analytics'
@@ -209,7 +210,9 @@ export default async function DashboardPage() {
   const riskHistory = recentDaysBase.length >= PAGE_SIZE && oldestDate
     ? await loadRiskHistory(supabase, oldestDate)
     : []
-  const recentDaysMapped = scoreDayRollups(rolledUp, riskHistory, { includeFlow, runnerOwn: runnerRules.some(r => r.on) })
+  // The Days table's four numbers read each day against the days before it,
+  // so they are attached here, over the whole journal (src/lib/day-glance.ts).
+  const recentDaysMapped = withGlance(scoreDayRollups(rolledUp, riskHistory, { includeFlow, runnerOwn: runnerRules.some(r => r.on) }))
   tick('trade parts + tapescore', recentDaysMapped.length)
 
   // Store the days just recomputed so the next load reads them from cache —
