@@ -57,7 +57,14 @@ export const AI_LIMITS: Record<string, number> = {
   coach_review: 10,
   profile_synth: 6,
   analyze_eod: 15,
-  analyze_prep: 15,
+  // The full morning read (Detailed Tape "Run the read") — two Opus calls with
+  // a chart image, ~$0.10 a run. 5/day covers a normal morning; the plus tier
+  // keeps the old 15 (founder, 2026-10-28).
+  analyze_prep: 5,
+  // Highlights' one-line Watch — a small text-only call (~2K in, ~150 out). One
+  // runs on its own when Prep opens; the rest are "Run again" presses. Stored on
+  // the day, so reopening Prep never spends another.
+  prep_watch: 10,
   analyze_week: 8,
   predict_day_type: 15,
   extract_trade: 25,
@@ -78,6 +85,7 @@ export function aiLimitFor(action: string): number {
  *  (2026-10-25). */
 export const AI_LIMITS_PLUS: Record<string, number> = {
   coach_review: 25,
+  analyze_prep: 15,
 }
 
 /** An action's daily limit for this user: the plus tier's where it has one. */

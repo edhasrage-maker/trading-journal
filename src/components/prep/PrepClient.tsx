@@ -22,7 +22,7 @@ import DayTypePredictor from './DayTypePredictor'
 import { classifyIbDayType, ibDayTypeHeadline, ibDayTypeAiRead, ibDayTypeColumns } from '@/lib/ib-day-type'
 import HighImpactNews from './HighImpactNews'
 import Section, { GhostButton, Segmented, Chip } from '@/components/ui/Section'
-import PrepHero from './PrepHero'
+import PrepHero, { prepHeroRead } from './PrepHero'
 import PrepBridge from './PrepBridge'
 import PrepLedger from './PrepLedger'
 import PrepAiRead, { WatchKeep } from './PrepAiRead'
@@ -137,7 +137,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // Highlights (beginner) keeps Chart + Day Type + Prep Notes (Bias/Observations/
   // Mood) + the AI read; Detailed Tape (pro) adds Morning Conditions, Market
   // Context, and Trade Plans. (docs/BEGINNER_PRO_MODES.md)
-  const { mode } = useUiMode()
+  const { mode, ready: modeReady } = useUiMode()
   const [savedChartUrl, setSavedChartUrl] = useState<string | null>(initialDay?.chart_screenshot_url ?? null)
   const [chartUrl, setChartUrl] = useState<string | null>(initialDay?.chart_screenshot_url ?? null)
   // Multi-select: prep can tag combo sessions like "High Action + Double Inside".
@@ -870,6 +870,67 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
     }
   }
 
+  // ---- Highlights Watch: the small one-line read (/api/prep/watch) ----
+  // Written from the same read the hero shows, today's news, and the trader's
+  // bias / mood / note. Stored on the day by the route, so it runs once a day
+  // on its own; "Run again" forces a fresh one.
+  const heroRead = prepHeroRead({ context: context as Partial<MarketContext>, atrBaseline, barVol, adrAtNow: contextStats?.adr_at_now ?? null })
+  const [watchRunning, setWatchRunning] = useState(false)
+  const watchTriedRef = useRef(false)
+
+  const runWatch = async (force: boolean) => {
+    setWatchRunning(true)
+    try {
+      const res = await fetch('/api/prep/watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date,
+          force,
+          symbol: activeSymbol,
+          read: heroRead.state === 'none' ? null : {
+            headline: heroRead.headline,
+            sentence: heroRead.sub,
+            conditions: heroRead.read.chips.map(c => ({ label: c.label, verdict: c.verdict })),
+          },
+          news: highImpactNews.map(n => ({ timePt: n.timePt, title: n.title, country: n.country })),
+          bias: prepNotes.bias ?? null,
+          mood: prepNotes.mood ?? null,
+          note: prepNotes.bias_notes ?? null,
+        }),
+      })
+      const data = await res.json().catch(() => null) as { watch?: string; watch_at?: string | null; error?: string } | null
+      if (!res.ok || !data?.watch) {
+        // The automatic run fails quietly; a press says why.
+        if (force) showToast(`Couldn't get today's Watch: ${data?.error ?? `${res.status} ${res.statusText}`}`, 'error')
+        return
+      }
+      const watch = data.watch
+      setAiAnalysis(prev => ({ ...(prev ?? {}), watch, watch_at: data.watch_at ?? new Date().toISOString() }))
+    } catch (e) {
+      if (force) showToast(`Couldn't get today's Watch: ${e instanceof Error ? e.message : 'network error'}`, 'error')
+    } finally {
+      setWatchRunning(false)
+    }
+  }
+
+  // Once a day, on its own: today's Prep, in Highlights (after the saved mode
+  // has loaded — Detailed Tape never spends this), once the day's bars or their
+  // pre-session expectation exist, and only when the day has no Watch and no
+  // full read yet.
+  const hasWatch = !!aiAnalysis?.watch || !!aiAnalysis?.flags?.length
+  // Saturday / Sunday still show the carried-over expectation, but nobody is
+  // trading — don't spend the automatic run on them ("Run" still works).
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay()
+  const isWeekend = weekday === 0 || weekday === 6
+  useEffect(() => {
+    if (!modeReady || mode === 'pro' || !isToday || isWeekend || hasWatch || heroRead.state === 'none') return
+    if (watchTriedRef.current) return
+    watchTriedRef.current = true
+    void runWatch(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per page open when the conditions first hold
+  }, [modeReady, mode, isToday, isWeekend, hasWatch, heroRead.state])
+
   const extractContext = async () => {
     // Source the image either from a freshly-pasted file or, if absent,
     // from the already-saved screenshot URL.
@@ -1331,7 +1392,15 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
           classification, the full conditions ledger and the long-form AI read
           all live in Detailed Tape. */}
       {!pro && (
-        <Section title="Watch / Keep" control={analyzeButton}>
+        <Section
+          title="Watch / Keep"
+          control={
+            <GhostButton onClick={() => void runWatch(true)} disabled={watchRunning}>
+              {watchRunning && <Loader2 className="w-3 h-3 animate-spin" />}
+              {watchRunning ? 'Reading…' : aiAnalysis?.watch || aiAnalysis?.flags?.length ? 'Run again' : 'Run'}
+            </GhostButton>
+          }
+        >
           {/* Beginner day-read: one plain-language line calling out today's IB
               character (Detailed Tape shows this in the Market Context ledger). */}
           {ibHeadline && (
@@ -1339,7 +1408,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
               <span className="text-gray-500">Day read: </span>{ibHeadline}
             </p>
           )}
-          <WatchKeep analysis={aiAnalysis} />
+          <WatchKeep analysis={aiAnalysis} autoRuns={isToday && !isWeekend} running={watchRunning} />
         </Section>
       )}
 

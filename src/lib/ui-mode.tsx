@@ -23,9 +23,17 @@ function isUiMode(v: unknown): v is UiMode {
   return v === 'beginner' || v === 'pro'
 }
 
-const UiModeContext = createContext<{ mode: UiMode; setMode: (m: UiMode) => void }>({
+const UiModeContext = createContext<{
+  mode: UiMode
+  setMode: (m: UiMode) => void
+  /** True once the server's saved mode has been read (or the read failed).
+   *  Before that, `mode` is only the first-paint default — anything that SPENDS
+   *  on a mode (an AI call only Highlights makes) waits for this. */
+  ready: boolean
+}>({
   mode: 'beginner',
   setMode: () => {},
+  ready: false,
 })
 
 export function UiModeProvider({ children }: { children: React.ReactNode }) {
@@ -36,6 +44,7 @@ export function UiModeProvider({ children }: { children: React.ReactNode }) {
   // async server hydration from clobbering a fresh manual choice if the GET
   // resolves after the user has already flipped it.
   const userChangedRef = useRef(false)
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
     // 1. Optimistic paint from localStorage (instant, no flash for returners).
@@ -57,6 +66,7 @@ export function UiModeProvider({ children }: { children: React.ReactNode }) {
         }
       })
       .catch(() => { /* offline / not migrated → localStorage value stands */ })
+      .finally(() => { if (!cancelled) setReady(true) })
     return () => { cancelled = true }
   }, [])
 
@@ -77,7 +87,7 @@ export function UiModeProvider({ children }: { children: React.ReactNode }) {
     }).catch(() => { /* non-fatal */ })
   }, [])
 
-  return <UiModeContext.Provider value={{ mode, setMode }}>{children}</UiModeContext.Provider>
+  return <UiModeContext.Provider value={{ mode, setMode, ready }}>{children}</UiModeContext.Provider>
 }
 
 export function useUiMode() {

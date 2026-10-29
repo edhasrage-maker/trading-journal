@@ -2,6 +2,7 @@
 
 import { cn } from '@/lib/utils'
 import type { AiAnalysis } from '@/lib/supabase/types'
+import { watchAndKeep } from '@/lib/prep-watch'
 
 /**
  * The TapeScore read — plain read, yours to override.
@@ -16,22 +17,25 @@ import type { AiAnalysis } from '@/lib/supabase/types'
  * decision on this page.
  */
 
-export function watchAndKeep(analysis: AiAnalysis | null): { watch: string | null; keep: string | null } {
-  return {
-    watch: analysis?.flags?.find(Boolean) ?? null,
-    keep: analysis?.strengths?.find(Boolean) ?? null,
-  }
-}
+export { watchAndKeep }
 
 /** Highlights: one thing to watch, one thing to keep. Nothing else. */
-export function WatchKeep({ analysis }: { analysis: AiAnalysis | null }) {
+export function WatchKeep({ analysis, autoRuns = false, running = false }: {
+  analysis: AiAnalysis | null
+  /** Today's Prep fetches its Watch on open; other days only on request. */
+  autoRuns?: boolean
+  running?: boolean
+}) {
   const { watch, keep } = watchAndKeep(analysis)
 
   if (!watch && !keep) {
     return (
       <p className="text-sm text-gray-500 max-w-[62ch]">
-        Run the read once your chart and notes are in — TapeScore will name one thing to watch and
-        one thing to keep doing.
+        {running
+          ? 'Reading today’s news and market…'
+          : autoRuns
+            ? 'Today’s Watch shows up here on its own once the day’s news or bars are in.'
+            : 'Press Run for one thing to watch on this day.'}
       </p>
     )
   }

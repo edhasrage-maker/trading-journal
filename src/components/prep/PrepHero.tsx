@@ -46,6 +46,55 @@ const numOr = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null
 }
 
+export interface HeroReadInput {
+  context: Partial<MarketContext>
+  atrBaseline: number | null
+  barVol?: BarVolReading
+  adrAtNow?: number | null
+}
+
+/** The hero's read — its state, the conditions behind it, and the headline +
+ *  sentence it prints. Shared with PrepClient so the Highlights Watch call is
+ *  written from exactly the read the trader is looking at. */
+export function prepHeroRead({ context, atrBaseline, barVol, adrAtNow }: HeroReadInput) {
+  const adr = numOr(context.adr)
+  const atr = numOr(context.atr_1m)
+  const dayRange = numOr(context.day_range)
+
+  const read = readConditions({
+    rvol: numOr(context.rvol),
+    atr1m: barVol ? barVol.atr : atr,
+    atrBaseline: barVol ? barVol.baseline : atrBaseline,
+    atrBasis: barVol?.basis,
+    adr,
+    adrAtNow,
+    onh: numOr(context.onh),
+    onl: numOr(context.onl),
+    dayRange,
+    ibRatio: numOr(context.ib_vs_10d_avg),
+  })
+
+  // Pre-session: no realized range yet, but the last 10 days carried an
+  // ADR/ATR expectation over. Show it as an expectation, never judged as if it
+  // were live.
+  const preSession = dayRange == null && (adr != null || atr != null)
+  const state: ReadState = read.chips.length === 0 && !preSession
+    ? 'none'
+    : preSession ? 'forming' : 'set'
+
+  const headline =
+    state === 'set' ? (read.headline ?? 'Conditions are printing.')
+      : state === 'forming' ? 'Read fills in as the session prints.'
+        : 'No read yet.'
+
+  const sub =
+    state === 'set' ? read.sentence
+      : state === 'forming' ? 'Nothing has printed a range yet — this is what your last 10 days would expect for today.'
+        : 'Waiting for today’s bars — nothing has printed and no expectation is stored.'
+
+  return { read, state, headline, sub, adr, atr }
+}
+
 /** Current time in the PT session timezone, e.g. "06:52". */
 function ptClock(): string {
   return new Intl.DateTimeFormat('en-US', {
@@ -103,43 +152,10 @@ export default function PrepHero({
     return () => clearInterval(id)
   }, [isToday])
 
-  const adr = numOr(context.adr)
-  const atr = numOr(context.atr_1m)
-  const dayRange = numOr(context.day_range)
-
-  const read = readConditions({
-    rvol: numOr(context.rvol),
-    atr1m: barVol ? barVol.atr : atr,
-    atrBaseline: barVol ? barVol.baseline : atrBaseline,
-    atrBasis: barVol?.basis,
-    adr,
-    adrAtNow,
-    onh: numOr(context.onh),
-    onl: numOr(context.onl),
-    dayRange,
-    ibRatio: numOr(context.ib_vs_10d_avg),
-  })
-
-  // Pre-session: no realized range yet, but the last 10 days carried an
-  // ADR/ATR expectation over. Show it as an expectation, never judged as if it
-  // were live.
-  const preSession = dayRange == null && (adr != null || atr != null)
-  const state: ReadState = read.chips.length === 0 && !preSession
-    ? 'none'
-    : preSession ? 'forming' : 'set'
+  const { read, state, headline, sub, adr, atr } = prepHeroRead({ context, atrBaseline, barVol, adrAtNow })
 
   const stateLabel = { set: 'Read is set', forming: 'Read is forming', none: 'No read yet' }[state]
   const stateCls = { set: 'text-blue-400', forming: 'text-yellow-400', none: 'text-gray-500' }[state]
-
-  const headline =
-    state === 'set' ? (read.headline ?? 'Conditions are printing.')
-      : state === 'forming' ? 'Read fills in as the session prints.'
-        : 'No read yet.'
-
-  const sub =
-    state === 'set' ? read.sentence
-      : state === 'forming' ? 'Nothing has printed a range yet — this is what your last 10 days would expect for today.'
-        : 'Waiting for today’s bars — nothing has printed and no expectation is stored.'
 
   const subnote =
     state === 'forming' ? 'The live read replaces this the moment bars start printing.'

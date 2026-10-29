@@ -7,7 +7,7 @@ import { signDayScreenshots, screenshotStoragePath, normalizeStoredScreenshot } 
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { clientError } from '@/lib/api-error'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
-import type { TradingDay, MarketContext, Trade } from '@/lib/supabase/types'
+import type { TradingDay, MarketContext, Trade, AiAnalysis } from '@/lib/supabase/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -47,12 +47,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
   // row first so we can decide.
   const { data: existing } = await supabase
     .from('trading_days')
-    .select('prep_started_at')
+    .select('prep_started_at, ai_analysis_json')
     .eq('date', date)
-    .maybeSingle() as { data: { prep_started_at: string | null } | null }
+    .maybeSingle() as { data: { prep_started_at: string | null; ai_analysis_json: AiAnalysis | null } | null }
 
   const shouldSetStarted =
     prepStartedAt !== undefined && !existing?.prep_started_at
+
+  // The Highlights Watch line is written server-side by /api/prep/watch. A Prep
+  // autosave sends the page's whole ai_analysis_json, and a save that left
+  // before the Watch landed would drop it — so carry the stored one over when
+  // the incoming analysis has none.
+  const storedWatch = existing?.ai_analysis_json?.watch ? existing.ai_analysis_json : null
+  const mergedAnalysis = aiAnalysis && typeof aiAnalysis === 'object' && !aiAnalysis.watch && storedWatch
+    ? { ...aiAnalysis, watch: storedWatch.watch, watch_at: storedWatch.watch_at }
+    : aiAnalysis
 
   // dayTypes is the multi-select source of truth (post-2026-06-03 migration).
   // dayType is the legacy single primary, kept in sync as dayTypes[0] so
@@ -68,7 +77,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ date: s
     ...(resolvedPrimary !== undefined && { day_type: resolvedPrimary }),
     ...(dayTypesArray !== undefined && { day_types: dayTypesArray }),
     ...(prepNotes !== undefined && { prep_notes_json: prepNotes }),
-    ...(aiAnalysis !== undefined && { ai_analysis_json: aiAnalysis }),
+    ...(mergedAnalysis !== undefined && { ai_analysis_json: mergedAnalysis }),
     ...(shouldSetStarted && { prep_started_at: prepStartedAt }),
     ...(prepCompletedAt !== undefined && { prep_completed_at: prepCompletedAt }),
     updated_at: new Date().toISOString(),

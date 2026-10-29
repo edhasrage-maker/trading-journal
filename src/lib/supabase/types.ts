@@ -353,6 +353,11 @@ export interface AiAnalysis {
    *  day_read on Analyze, where the admin can override them. */
   day_stance?: 'go' | 'caution' | 'avoid'
   day_read?: string
+  /** Highlights' one-line Watch, from the small /api/prep/watch call. Lives
+   *  beside the full read rather than in `flags`, so the cheap line and the full
+   *  read never overwrite each other; Highlights shows whichever is newer. */
+  watch?: string
+  watch_at?: string
 }
 
 export interface StatPerformance {
