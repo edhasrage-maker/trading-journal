@@ -8,6 +8,7 @@ import {
 } from 'date-fns'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { DayRowData } from './RecentDaysList'
+import type { TapeScoreResult } from '@/lib/tapescore'
 
 interface Props {
   days: DayRowData[]
@@ -22,7 +23,7 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
  *
  * Renders one month at a time as a 7-column grid (Sunday-first), with a
  * sidebar of weekly rollups. Each day cell shows PnL, trade count, win
- * rate %, and the AI overall grade (color-banded). Cells are clickable
+ * rate %, and the day's TapeScore (color-banded). Cells are clickable
  * shortcuts to `/review/today/{date}`.
  *
  * Month navigation is bounded by the data window passed in from the
@@ -74,7 +75,9 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd }: Pr
     const sign = n > 0 ? '+' : n < 0 ? '-' : ''
     const abs = Math.abs(n)
     if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(2)}K`
-    return `${sign}$${abs.toFixed(0)}`
+    // Round the signed value, as the Days table does: rounding the absolute
+    // value turned -$287.50 into -$288 here and -$287 there.
+    return `${sign}$${Math.abs(Math.round(n))}`
   }
 
   return (
@@ -213,8 +216,8 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd }: Pr
 }
 
 /**
- * The day's TapeScore grade as a small dial — a ring filled to grade/10 with
- * the number inside.
+ * The day's TapeScore as a small dial — a ring filled to score/100 with the
+ * number inside.
  *
  * It replaced a bare digit in this corner, which sat opposite the date and read
  * as a second date: two 1–2 digit numbers in one row with nothing saying which
@@ -222,52 +225,48 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd }: Pr
  *
  * The arc is the point, not decoration. Every other signal in the cell already
  * has a second channel — P&L has the green/red cell tint behind it — leaving
- * grade as the only one carried by a digit alone. Filling the ring gives a bad
- * run a shape: thin arcs down a column read before any number does.
+ * the score as the only one carried by a digit alone. Filling the ring gives a
+ * bad run a shape: thin arcs down a column read before any number does.
  *
- * 19px, and the two-digit case (a perfect 10) sets smaller so it still fits
- * inside the ring rather than touching it.
+ * It reads the same 0-100 TapeScore, in the same three bands, as the Days
+ * table's pill (2026-10-28). It used to read the retired 0-10 AI execution
+ * grade, so the same day read 85 in the table and 7 here.
+ *
+ * 21px, so two digits fit inside the ring; a perfect 100 sets smaller.
  */
-function GradeDial({ grade }: { grade: number }) {
-  const stroke =
-    grade >= 9 ? 'stroke-green-400'
-    : grade >= 7 ? 'stroke-blue-400'
-    : grade >= 5 ? 'stroke-yellow-400'
-    : 'stroke-red-400'
-  const text =
-    grade >= 9 ? 'fill-green-300'
-    : grade >= 7 ? 'fill-blue-300'
-    : grade >= 5 ? 'fill-yellow-300'
-    : 'fill-red-300'
+function ScoreDial({ result }: { result: TapeScoreResult }) {
+  const { score, band } = result
+  const stroke = band === 'high' ? 'stroke-green-400' : band === 'mid' ? 'stroke-amber-400' : 'stroke-red-400'
+  const text = band === 'high' ? 'fill-green-300' : band === 'mid' ? 'fill-amber-300' : 'fill-red-300'
 
-  const R = 7.4
+  const R = 8.4
   const C = 2 * Math.PI * R
-  // Clamped so an out-of-range grade can't wrap the ring past full.
-  const filled = C * Math.max(0, Math.min(1, grade / 10))
+  // Clamped so an out-of-range score can't wrap the ring past full.
+  const filled = C * Math.max(0, Math.min(1, score / 100))
 
   return (
     <svg
-      viewBox="0 0 19 19"
-      className="w-[19px] h-[19px] shrink-0"
+      viewBox="0 0 21 21"
+      className="w-[21px] h-[21px] shrink-0"
       role="img"
-      aria-label={`TapeScore grade ${grade} out of 10`}
+      aria-label={`TapeScore ${score} out of 100`}
     >
-      <circle cx="9.5" cy="9.5" r={R} fill="none" strokeWidth="2.2" className="stroke-gray-700" />
+      <circle cx="10.5" cy="10.5" r={R} fill="none" strokeWidth="2.2" className="stroke-gray-700" />
       <circle
-        cx="9.5" cy="9.5" r={R} fill="none" strokeWidth="2.2" strokeLinecap="round"
+        cx="10.5" cy="10.5" r={R} fill="none" strokeWidth="2.2" strokeLinecap="round"
         strokeDasharray={`${filled} ${C - filled}`}
-        transform="rotate(-90 9.5 9.5)"
+        transform="rotate(-90 10.5 10.5)"
         className={stroke}
       />
       {/* Size set inline rather than via a text-[…] utility: this is an SVG
-          <text>, where the px value is a user-space unit inside the 19×19
+          <text>, where the px value is a user-space unit inside the 21×21
           viewBox, not a page font size. */}
       <text
-        x="9.5" y="9.5" textAnchor="middle" dominantBaseline="central"
+        x="10.5" y="10.5" textAnchor="middle" dominantBaseline="central"
         className={`${text} font-mono font-bold`}
-        style={{ fontSize: grade > 9 ? 7 : 8.5 }}
+        style={{ fontSize: score >= 100 ? 6 : 8 }}
       >
-        {grade}
+        {score}
       </text>
     </svg>
   )
@@ -307,10 +306,10 @@ function DayCell({
     const sign = n > 0 ? '+' : n < 0 ? '-' : ''
     const abs = Math.abs(n)
     if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(1)}K`
-    return `${sign}$${abs.toFixed(0)}`
+    return `${sign}$${Math.abs(Math.round(n))}`
   }
 
-  const grade = inMonth ? data?.overall_grade ?? null : null
+  const tapescore = inMonth ? data?.tapescore ?? null : null
 
   const content = (
     // A flex COLUMN with a reserved header row, not a box with the date
@@ -321,7 +320,7 @@ function DayCell({
     <div className={`aspect-square overflow-hidden px-1.5 pt-1 pb-1.5 rounded-md border transition-colors flex flex-col ${cellStyle} ${todayRing}`}>
       {/* Header — grade dial (left) opposite the date (right). */}
       <div className="flex items-center gap-1 min-h-[17px]">
-        {inMonth && hasTrades && grade != null && <GradeDial grade={grade} />}
+        {inMonth && hasTrades && tapescore != null && <ScoreDial result={tapescore} />}
         <span className={`ml-auto text-[11px] leading-none font-semibold ${
           !inMonth ? 'text-gray-700 font-medium'
           : isToday ? 'text-blue-300'
