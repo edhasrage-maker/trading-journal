@@ -19,6 +19,8 @@ interface Props {
   /** Mistake tags the app added because one of the trader's rules failed
    *  (review_json.auto_tags, src/lib/rule-tags.ts) — marked "auto". */
   autoTags?: string[]
+  /** `category|label` of the tags the coach put on (src/lib/coach-tag-audit.ts) — marked "coach". */
+  coachTags?: string[]
 }
 
 /** Shorter headings than the canonical names where the picker is tight on
@@ -36,7 +38,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const DEFAULT_SELECTED = 'bg-blue-700 border-blue-600 text-white'
 
-export default function TagSelector({ tags, selected, suggested, onChange, onTagCreated, autoTags }: Props) {
+export default function TagSelector({ tags, selected, suggested, onChange, onTagCreated, autoTags, coachTags }: Props) {
   // Highlights (beginner) shows only the Setup category; Detailed Tape (pro)
   // shows the full taxonomy. (docs/BEGINNER_PRO_MODES.md)
   const { mode } = useUiMode()
@@ -141,6 +143,10 @@ export default function TagSelector({ tags, selected, suggested, onChange, onTag
                       <span className="ml-1.5 text-[9px] uppercase tracking-wider border border-white/40 rounded px-1 align-middle"
                         title="Added by the app: one of your rules failed on this trade. Change the rule in Settings → Trading Rules to change it.">auto</span>
                     )}
+                    {sel && coachTags?.includes(`${cat}|${tag.label}`) && !(cat === 'mistakes' && autoTags?.includes(tag.label)) && (
+                      <span className="ml-1.5 text-[9px] uppercase tracking-wider border border-white/40 rounded px-1 align-middle"
+                        title="The coach put this tag on. Click it to take it off, and that counts as the coach being wrong. Check the rest in your weekly review.">coach</span>
+                    )}
                   </button>
                 )
               })}
@@ -180,6 +186,12 @@ export default function TagSelector({ tags, selected, suggested, onChange, onTag
           </div>
         )
       })}
+      {visible.some(def => normalizeTagArray(selected[def.key]).some(l => coachTags?.includes(`${def.key}|${l}`))) && (
+        <p className="text-xs text-gray-500 border-t border-gray-700 pt-3">
+          <span className="text-[9px] uppercase tracking-wider border border-gray-500 rounded px-1 align-middle text-gray-400 mr-1.5">coach</span>
+          the coach put this tag on. Click it to take it off, and that counts as the coach being wrong. Check the rest in your weekly review.
+        </p>
+      )}
     </div>
   )
 }

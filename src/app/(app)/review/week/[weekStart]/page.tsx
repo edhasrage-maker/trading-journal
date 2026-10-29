@@ -11,6 +11,7 @@ import { rMultiple, type TradeWithExcursion } from '@/lib/analytics'
 import { tradeMgmt } from '@/lib/trade-management'
 import { resolveScreenshotUrls } from '@/lib/storage-url'
 import type { FilmFrame } from '@/components/review/GameFilm'
+import { buildWeekCheck, type WeekTrade } from '@/lib/coach-tag-audit-server'
 import type { TradeReview } from '@/lib/supabase/types'
 import {
   loadPeriodDays, loadPeriodTrades, summarizePeriod, summarizeCommitments, comparisonRows,
@@ -124,6 +125,20 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
   const { data: { user } } = await supabase.auth.getUser()
   const film = { ...(await buildFilm(supabase, days, tradedDayIds)), replay: deepDiveAllowed(user?.email) }
 
+  // Check the coach's tags — the week's trades the coach picked tags on.
+  // Best-effort: a failure (or the table not set up yet) just leaves it off.
+  let coachCheck = null
+  if (tradedDayIds.length) {
+    try {
+      const dateById = new Map(days.map(d => [d.rollup.id, d.rollup.date]))
+      const { data: wk } = await supabase.from('trades')
+        .select('id, trading_day_id, entry_time, direction, pnl, tags_json')
+        .in('trading_day_id', tradedDayIds)
+        .order('entry_time', { ascending: true }) as { data: Array<Omit<WeekTrade, 'date'> & { trading_day_id: string }> | null }
+      coachCheck = await buildWeekCheck(supabase, (wk ?? []).map(t => ({ ...t, date: dateById.get(t.trading_day_id) ?? null })))
+    } catch (e) { console.error('[review/week] coach check', e) }
+  }
+
   // Pager: never forward past the current week.
   const currentWeek = weekStartFor(todayPT())
   const next = nextWeekStart(weekStart)
@@ -164,6 +179,7 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
       initialNotes={recap?.notes_md ?? ''}
       migrationPending={!!migrationPending}
       film={film}
+      coachCheck={coachCheck}
     />
   )
 }

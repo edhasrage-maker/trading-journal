@@ -5,6 +5,11 @@ import { BUILTIN_TAG_CATEGORIES, resolveTagCategories, type TagCategoryDef } fro
 import { categoryKeysInUse, readCategoryPrefs } from '@/lib/tag-categories-server'
 import { loadTapeScoreSettings } from '@/lib/day-stats-server'
 import { allRuleMistakeTags } from '@/lib/rule-tags'
+import CoachAccuracy from '@/components/settings/CoachAccuracy'
+import { hitRates, type TagHitRate } from '@/lib/coach-tag-audit'
+import { loadTradeAudits } from '@/lib/coach-tag-audit-server'
+import { weekStartFor } from '@/lib/week-dates'
+import { todayPT } from '@/lib/pt-time'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -66,6 +71,10 @@ export default async function TagsSettingsPage() {
   // the trader's rule mistake tags, marked "auto" in the list
   const { entryRules, runnerRules } = await loadTapeScoreSettings(supabase)
   const autoMistakes = allRuleMistakeTags(entryRules, runnerRules)
+  // How often the coach gets each tag right — best-effort, never blocks the page.
+  let rates: TagHitRate[] = []
+  try { rates = hitRates(await loadTradeAudits(supabase)) } catch (e) { console.error('[settings/tags] coach accuracy', e) }
+  const catLabel = new Map(categories.map(c => [c.key, c.label]))
 
   return (
     <div>
@@ -89,6 +98,7 @@ export default async function TagsSettingsPage() {
         </p>
       </header>
       <TagMergeClient tags={tags} usage={usage} categories={categories} hidden={hidden} autoMistakes={autoMistakes} />
+      <CoachAccuracy rates={rates} groupLabel={k => catLabel.get(k) ?? k} weekHref={`/review/week/${weekStartFor(todayPT())}`} />
     </div>
   )
 }

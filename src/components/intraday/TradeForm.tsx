@@ -20,6 +20,7 @@ import { entryTimeField, entryTimeForSave } from '@/lib/trade-entry-time'
 import { normalizeTagArray } from '@/lib/supabase/types'
 import { suggestTagsFromText, mergeTradeTags } from '@/lib/suggest-tags'
 import { downscaleForVision } from '@/lib/downscale-image'
+import type { CoachSource } from '@/lib/coach-tag-audit'
 import {
   DISCARD_TRADE_EDITS_MESSAGE, clearTradeDraft, draftSignature, pickDraftFields, readTradeDraft,
   restoreDraft, tradeDraftKey, writeTradeDraft, type DraftFields,
@@ -125,6 +126,9 @@ function rMultiple(s: FormState, symbol: string | null | undefined): string | nu
   if (!isNaN(pnl)) return (pnl / risk).toFixed(2) + 'R'
   return null
 }
+
+/** The 5m follow/fade labels /api/trades/suggest-tags adds from the trade's stored regime. */
+const STRUCTURE_LABELS = new Set(['Follow LTF structure', 'Fade LTF structure'])
 
 export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, compact = false, onSave, onCancel, onDirtyChange }: Props) {
   const [form, setForm] = useState<FormState>(() => {
@@ -277,6 +281,36 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   // form.suggestedTags — never auto-added. Fired on blur of the notes box and
   // by the "Suggest tags" button. `lastSuggestedNotesRef` dedupes so blur after
   // the button (or no edit) doesn't re-hit the API.
+  // What the coach picked on this trade (screenshot / notes / 5m follow-fade),
+  // recorded after a save so the audit can tell kept from taken off
+  // (src/lib/coach-tag-audit.ts). A pick the trader already had isn't one;
+  // `coachBeforeRef` holds their tags when the coach first picked.
+  const coachPicksRef = useRef<Map<string, CoachSource>>(new Map())
+  const coachBeforeRef = useRef<TradeTags | null>(null)
+  const noteCoachPicks = useCallback((picks: TradeTags | null | undefined, sourceOf: (label: string) => CoachSource, current: TradeTags) => {
+    if (!picks) return
+    for (const [cat, v] of Object.entries(picks)) {
+      for (const label of normalizeTagArray(v)) {
+        if (normalizeTagArray(current[cat as TagCategory]).includes(label)) continue
+        const k = `${cat}|${label}`
+        if (!coachPicksRef.current.has(k)) coachPicksRef.current.set(k, sourceOf(label))
+        if (!coachBeforeRef.current) coachBeforeRef.current = current
+      }
+    }
+  }, [])
+  // The tags the coach put on this trade, marked "coach" in the picker.
+  const [coachKeys, setCoachKeys] = useState<string[]>([])
+  const coachTradeId = trade?.id ?? null
+  useEffect(() => {
+    if (!coachTradeId) return
+    let live = true
+    fetch(`/api/coach-tags?trade=${coachTradeId}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then((d: { coach?: string[] } | null) => { if (live && d?.coach) setCoachKeys(d.coach) })
+      .catch(() => { /* the mark is optional */ })
+    return () => { live = false }
+  }, [coachTradeId])
+
   const [suggestingTags, setSuggestingTags] = useState(false)
   const lastSuggestedNotesRef = useRef<string>('')
   // Lets the server add the DETERMINISTIC 5m follow/fade confluence from the
@@ -304,11 +338,12 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       if (!res.ok) return
       const data = await res.json() as { suggestions?: TradeTags }
       if (data.suggestions && Object.keys(data.suggestions).length > 0) {
+        noteCoachPicks(data.suggestions, l => (STRUCTURE_LABELS.has(l) ? 'structure' : 'notes'), form.tags)
         setForm(f => ({ ...f, suggestedTags: mergeTradeTags(f.suggestedTags, data.suggestions) }))
       }
     } catch { /* best-effort: suggestions are optional */ }
     finally { setSuggestingTags(false) }
-  }, [form.notes, form.tags, editingTradeId])
+  }, [form.notes, form.tags, editingTradeId, noteCoachPicks])
 
   /**
    * Semantic suggestions used to wait for the notes field to LOSE focus, while
@@ -423,6 +458,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       const qty = data.quantity as number | null | undefined
       const sym = data.symbol as string | null | undefined
       const suggested = data.suggested_tags as TradeTags | null | undefined
+      noteCoachPicks(suggested, () => 'screenshot', form.tags)
 
       // A Sierra-imported trade already carries the weighted-average FILL as
       // entry_price (and fill-precise time/qty/direction). The chart read sees
@@ -550,6 +586,17 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       clearTradeDraft(draftKey)
       setSavedFields(pickDraftFields(form))
       setRestoredAt(null)
+      // Best-effort: the audit must never block or fail a save.
+      const picks = [...coachPicksRef.current].map(([k, source]) => {
+        const i = k.indexOf('|')
+        return { category: k.slice(0, i), label: k.slice(i + 1), source }
+      })
+      if (picks.length && data?.id) {
+        void fetch('/api/coach-tags', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'record', tradeId: data.id, picks, before: coachBeforeRef.current }),
+        }).catch(() => { /* optional */ })
+      }
       onSave(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error')
@@ -769,6 +816,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               tags={allTags}
               selected={form.tags}
               autoTags={trade?.review_json?.auto_tags}
+              coachTags={coachKeys}
               suggested={form.suggestedTags}
               onChange={t => set('tags', t)}
               onTagCreated={onTagCreated}
@@ -855,6 +903,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             tags={allTags}
             selected={form.tags}
             autoTags={trade?.review_json?.auto_tags}
+            coachTags={coachKeys}
             suggested={form.suggestedTags}
             onChange={t => set('tags', t)}
             onTagCreated={onTagCreated}

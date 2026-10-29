@@ -11,6 +11,7 @@ import { buildDayRegimeSeries, buildRegimeSeriesFrom1mBars, regimeAtEntry, build
 import { followFade } from '@/lib/market-structure'
 import { writeTradeStops } from '@/lib/trade-stops-server'
 import type { TradeStopOrder } from '@/lib/supabase/types'
+import { normalizeTagArray } from '@/lib/supabase/types'
 
 /** Canonical 5m-structure confluence labels. MUST stay identical to the strings
  *  in /api/trades/suggest-tags — a near-duplicate casing also exists in the
@@ -293,6 +294,21 @@ export async function POST(req: Request) {
         if (gbxTagged > 0 || pureGbx) {
           console.log(`[import-sc-log] GBX: tagged ${gbxTagged} out-of-RTH trade(s); pureGbxDay=${pureGbx}`)
         }
+        // RTH trades take the day's own labels when the day already has them
+        // (labels set in prep, trades imported after). Same rule as saving the
+        // labels (POST /api/trading-days/[date]): only a blank day_type is filled.
+        const dayLabels = cur.filter(x => x !== 'GBX')
+        let labelled = 0
+        if (dayLabels.length) {
+          for (const t of all) {
+            if (!t.entry_time || isOutsideRth(t.entry_time)) continue
+            const tj = (t.tags_json && typeof t.tags_json === 'object') ? t.tags_json : {}
+            if (normalizeTagArray(tj.day_type).length) continue
+            await supabase.from('trades').update({ tags_json: { ...tj, day_type: [...dayLabels] } }).eq('id', t.id)
+            labelled++
+          }
+        }
+        if (labelled > 0) console.log(`[import-sc-log] day labels: filled ${labelled} RTH trade(s) with ${dayLabels.join(', ')}`)
       }
 
       // 4d. Pivot market-structure regime (structure_5m_regime). Build ONE 5m

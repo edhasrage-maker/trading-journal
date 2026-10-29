@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { GhostButton } from '@/components/ui/Section'
 import { ScoreCluster, ScoreBreakdownInfo } from '@/components/review/ReviewMonthHero'
 import GameFilm, { type FilmFrame } from '@/components/review/GameFilm'
+import CoachTagCheck, { type CoachCheckData } from '@/components/review/CoachTagCheck'
 import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { EvidenceBar } from '@/lib/prep-carryover'
 import type { RecapVsRow, QuarterRead } from '@/lib/period-recap'
@@ -116,6 +117,8 @@ export interface RecapProps {
   migrationPending: boolean
   /** Week only: the screenshot catalog. */
   film?: { frames: FilmFrame[]; missing: number; migrationPending: boolean; replay?: boolean }
+  /** Week only: the coach's tags to check (null = the coach picked nothing this week). */
+  coachCheck?: CoachCheckData | null
 }
 
 const STATE_META: Record<FindingState, { label: string; cls: string }> = {
@@ -349,6 +352,9 @@ export default function PeriodRecapClient(p: RecapProps) {
           <GameFilm frames={p.film.frames} missing={p.film.missing} migrationPending={p.film.migrationPending} replay={p.film.replay} />
         </RecapSection>
       )}
+
+      {/* Check the coach's tags — ✓ / ✕ on what the coach picked this week */}
+      {p.coachCheck && <CoachTagCheck data={p.coachCheck} />}
 
       {/* Across the trailing periods */}
       {p.quarter && (
