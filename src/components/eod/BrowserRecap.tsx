@@ -906,17 +906,17 @@ export default function BrowserRecap({ trades, date, onTradesChanged }: Props) {
 
       {/* Frame grid */}
       {Object.keys(frames).length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+        <div className="grid grid-cols-1 gap-2 pt-1">
           {timedTrades.map((t, i) => {
             const frame = frames[t.id]
             if (!frame) return null
             const exitFrame = exitFrames[t.id]
             const delta = entryDelta[t.id] ?? 0
             const nudging = nudgingId === t.id
-            // Frames collapse so the grid reads as a compact commentary list.
-            // Default: open until AI commentary lands for the trade (extract →
-            // verify/nudge flow needs the frames visible), then auto-collapse.
-            const open = framesOpen[t.id] ?? !commentary[t.id]
+            // Frames start collapsed — one line per trade, click to see its
+            // entry and exit — so an extraction doesn't flood the page with
+            // every image at once (founder, 2026-10-29).
+            const open = framesOpen[t.id] ?? false
             const dir = t.direction?.toUpperCase() ?? '—'
             const dirTone = t.direction === 'long' ? 'text-green-300 bg-green-900/30 border-green-800'
               : t.direction === 'short' ? 'text-red-300 bg-red-900/30 border-red-800'

@@ -1156,28 +1156,34 @@ export default function SessionClient({
         />
       )}
 
-      {/* Recording recap (local: ffmpeg; cloud: decoded in the browser) — recap only. */}
-      {!live && LOCAL_FEATURES_ENABLED && <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />}
-      {!live && !LOCAL_FEATURES_ENABLED && <BrowserRecap trades={trades} date={date} onTradesChanged={refreshTrades} />}
+      {/* Session analysis — the AI read waits for the recap — across the page. */}
+      {!live && (
+        <div data-tour="eod-analyze">
+          <EodAnalysisCard
+            analysis={scoredAnalysis}
+            loading={analyzing}
+            onAnalyze={runAnalysis}
+            disabled={trades.length === 0 && !day?.eod_notes}
+            latestTradeUpdate={trades.reduce<string | null>((max, t) => {
+              if (!t.updated_at) return max
+              return max == null || t.updated_at > max ? t.updated_at : max
+            }, null)}
+          />
+        </div>
+      )}
 
-      {/* Session analysis + journal. The journal is the same trading_days.eod_notes
-          field live or not; the AI analysis waits for the recap. */}
+      {/* Recording recap beside the journal. The recording waits for the recap
+          (local: ffmpeg; cloud: decoded in the browser); the journal is the same
+          trading_days.eod_notes field live or not. */}
       <div className="flex flex-wrap gap-3.5 items-start">
         {!live && (
-          <div data-tour="eod-analyze" className="flex-[2_1_480px] min-w-0">
-            <EodAnalysisCard
-              analysis={scoredAnalysis}
-              loading={analyzing}
-              onAnalyze={runAnalysis}
-              disabled={trades.length === 0 && !day?.eod_notes}
-              latestTradeUpdate={trades.reduce<string | null>((max, t) => {
-                if (!t.updated_at) return max
-                return max == null || t.updated_at > max ? t.updated_at : max
-              }, null)}
-            />
+          <div className="flex-[1_1_420px] min-w-0">
+            {LOCAL_FEATURES_ENABLED
+              ? <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
+              : <BrowserRecap trades={trades} date={date} onTradesChanged={refreshTrades} />}
           </div>
         )}
-        <div className="flex-[1_1_300px] min-w-0">
+        <div className="flex-[1_1_320px] min-w-0">
           <EodNotesForm
             date={date}
             initialNotes={day?.eod_notes ?? ''}
