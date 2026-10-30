@@ -137,7 +137,7 @@ export default function EodNotesForm({
   const overrideActive = pnl.trim() !== '' && Number(pnl) !== computedPnl
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+    <div className="h-full flex flex-col bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-semibold text-white">{simple ? 'Your notes' : 'Session journal'}</h2>
         <div className="flex items-center gap-3">
@@ -162,7 +162,9 @@ export default function EodNotesForm({
         </div>
       </div>
 
-      <div>
+      {/* The notes grow to fill the card, so beside a taller box (the
+          Session page's recording recap) the journal stays level with it. */}
+      <div className="flex-1 flex flex-col">
         {!simple && <div className="flex items-center justify-between mb-2">
           <label className="block text-sm font-medium text-gray-300">
             Day Notes
@@ -177,7 +179,7 @@ export default function EodNotesForm({
           rows={simple ? 4 : 8}
           aria-label="Day notes"
           placeholder={simple ? 'How did today go? What do you want to remember?' : 'Overall day assessment, execution quality, what went well, what to fix tomorrow...'}
-          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
+          className={`w-full ${simple ? '' : 'flex-1 min-h-[12rem] '}bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500`}
         />
       </div>
 

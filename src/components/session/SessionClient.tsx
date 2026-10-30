@@ -1288,9 +1288,9 @@ export default function SessionClient({
       {/* Recording recap beside the journal. The recording waits for the recap
           (local: ffmpeg; cloud: decoded in the browser); the journal is the same
           trading_days.eod_notes field live or not. */}
-      <div className="flex flex-wrap gap-3.5 items-start">
+      <div className="flex flex-wrap gap-3.5 items-stretch">
         {!live && !simpleRecap && (
-          <div className="flex-[1_1_420px] min-w-0">
+          <div className="flex-[1_1_420px] min-w-0 flex flex-col [&>*]:flex-1">
             {LOCAL_FEATURES_ENABLED
               ? <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
               : <BrowserRecap trades={trades} date={date} onTradesChanged={refreshTrades} />}
