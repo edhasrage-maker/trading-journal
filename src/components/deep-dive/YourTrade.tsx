@@ -69,7 +69,7 @@ export default function YourTrade({ details, error, scoring = null, big = false,
       ) : <p className={empty}>No screenshot for this trade.</p>}
 
       {details
-        ? <TagEditor tags={details.tagsJson} ruleTags={details.ruleTags} big={big} {...editing} />
+        ? <TagEditor tags={details.tagsJson} ruleTags={details.ruleTags} tradeId={details.tradeId} coach={details.coachTags} big={big} {...editing} />
         : <><div className={cn(cap, 'mt-4 mb-1')}>Your tags</div><p className={empty}>Loading…</p></>}
 
       <ScreenshotLightbox src={zoom && details?.screenshot ? details.screenshot : null} onClose={() => setZoom(false)} />

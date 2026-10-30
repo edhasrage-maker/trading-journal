@@ -14,16 +14,21 @@ import { plannedStopPrice } from '@/lib/planned-stop'
 import { chartSeriesRoot } from '@/lib/futures-symbols'
 import { TAPE_KEEP_DAYS } from '@/lib/orderflow/tape'
 import { entryCtxIsCurrent, flowScoreIsCurrent } from '@/lib/orderflow/flow-score-meta'
+import { coachTagsOn } from '@/lib/coach-tag-audit-server'
+import type { CoachTagInfo } from '@/lib/coach-tag-audit'
 
 export const dynamic = 'force-dynamic'
 
 export interface ReplayDetails {
+  tradeId: string
   /** Signed screenshot URL, or null when the trade has none. */
   screenshot: string | null
   /** tags_json as stored. The panel edits its groups and sends it back whole, every other key kept (day_type, custom groups). */
   tagsJson: Record<string, unknown>
   /** The mistake tags your rules put on (review_json.auto_tags) → the name of the rule ('' if it's no longer on). */
   ruleTags: Record<string, string>
+  /** The coach's tags still on the trade, `category|label` → how sure, why, already kept (src/lib/coach-tag-audit.ts). */
+  coachTags: Record<string, CoachTagInfo>
   /** The trade's Score (Entry + Exit), exactly as the Recap's Score column works it out. */
   grade: TradeGrade
   /** For the Exit lines: the trade never got 1×ATR its way; a stop was logged. */
@@ -100,10 +105,14 @@ export async function GET(req: Request) {
   const tj = row.tags_json
 
   const [screenshot] = await resolveScreenshotUrls(supabase, [row.screenshot_url])
+  let coachTags: Record<string, CoachTagInfo> = {}
+  try { coachTags = await coachTagsOn(supabase, row.id) } catch (e) { console.error('[deep-dive/details] coach tags', e) }
   const out: ReplayDetails = {
+    tradeId: row.id,
     screenshot: screenshot ?? null,
     tagsJson: tj && typeof tj === 'object' && !Array.isArray(tj) ? tj : {},
     ruleTags: Object.fromEntries(auto.map(t => [t, ruleOf.get(t) ?? ''])),
+    coachTags,
     grade,
     neverWent: tradeMgmt(row, { thresholdAtr: giveBackAtr })?.went === false,
     hasStop: plannedStopPrice(row) != null,

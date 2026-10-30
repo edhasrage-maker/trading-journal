@@ -9,7 +9,7 @@
  * writes report it — nothing else breaks.
  */
 import { normalizeTagArray } from '@/lib/supabase/types'
-import { auditKey, auditTrade, COACH_SOURCES, NEVER_AUDITED, type AuditRow, type CoachSource, type TradeAudit } from '@/lib/coach-tag-audit'
+import { auditKey, auditTrade, COACH_SOURCES, NEVER_AUDITED, type AuditRow, type CoachSource, type CoachTagInfo, type TradeAudit } from '@/lib/coach-tag-audit'
 import { TRADE_TAG_CATS } from '@/lib/trade-tag-groups'
 import type { CoachCheckChip, CoachCheckData, CoachCheckTrade } from '@/components/review/CoachTagCheck'
 
@@ -69,6 +69,17 @@ export async function loadTradeAudits(supabase: AnyClient, tradeIds?: readonly s
   if (!ids.length) return []
   const trades = await tradesFor(supabase, ids)
   return trades.map(t => auditTrade(t.id, rows, t.tags_json, autoOf(t))).filter(a => a.tags.length > 0)
+}
+
+/** The coach's tags still on this trade, `category|label` → how sure, why, already kept. */
+export async function coachTagsOn(supabase: AnyClient, tradeId: string): Promise<Record<string, CoachTagInfo>> {
+  const [a] = await loadTradeAudits(supabase, [tradeId])
+  const out: Record<string, CoachTagInfo> = {}
+  for (const t of a?.tags ?? []) {
+    if (t.outcome === 'removed') continue
+    out[auditKey(t.category, t.label)] = { conf: t.conf, reason: t.reason, source: t.source, kept: t.outcome === 'kept' }
+  }
+  return out
 }
 
 /** `category|label` of the tags the coach put on this trade (the "coach" mark), still on it. */

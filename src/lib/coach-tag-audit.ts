@@ -78,6 +78,15 @@ export interface TagHitRate {
   right: number | null
 }
 
+/** One coach tag still on a trade, for the views that mark it (Deep Dive's Your tags). */
+export interface CoachTagInfo {
+  conf: 'H' | 'M' | 'L' | null
+  reason: string | null
+  source: CoachSource
+  /** The trader already said it's right (✓, or a suggestion they clicked). */
+  kept: boolean
+}
+
 export const auditKey = (category: string, label: string) => `${category}|${label}`
 
 const labels = (tags: Record<string, unknown> | null | undefined, cat: string) => normalizeTagArray(tags?.[cat])

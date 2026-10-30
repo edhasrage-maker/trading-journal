@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Check, X } from 'lucide-react'
+import { Check, ChevronRight, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useUiMode } from '@/lib/ui-mode'
 import type { CoachSource, Outcome } from '@/lib/coach-tag-audit'
 
 /**
@@ -16,6 +17,10 @@ import type { CoachSource, Outcome } from '@/lib/coach-tag-audit'
  * coach picked it. Your own tags, your rules' tags and day types are shown
  * plain — nothing to check. Under the list, one line: how often the coach is
  * right over all weeks, linking to the full table in Settings → Tags.
+ *
+ * In Highlights the section starts minimized to one line (counts + Show);
+ * in Detailed Tape it starts open (founder, 2026-10-29; mockup artboard
+ * "Weekly review in Highlights").
  *
  * The server builds every row (src/lib/coach-tag-audit-server.ts); this only
  * shows them and sends ✓ / ✕ / Undo to /api/coach-tags.
@@ -63,6 +68,11 @@ export default function CoachTagCheck({ data }: { data: CoachCheckData }) {
   const [why, setWhy] = useState<string | null>(null)
   const [busy, setBusy] = useState<Set<string>>(new Set())
   const [err, setErr] = useState<string | null>(null)
+  const { mode } = useUiMode()
+  const highlights = mode === 'beginner'
+  // the trader's own Show / Hide wins; until then Highlights starts minimized
+  const [openPick, setOpenPick] = useState<boolean | null>(null)
+  const open = openPick ?? !highlights
 
   const outcomeOf = (t: CoachCheckTrade, c: CoachCheckChip): Outcome => over[`${t.id}::${c.key}`] ?? c.outcome ?? 'pending'
 
@@ -100,12 +110,27 @@ export default function CoachTagCheck({ data }: { data: CoachCheckData }) {
 
   return (
     <div className="mt-8 pt-4 border-t border-gray-800">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 mb-2">
-        <span className="text-[15px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Check the coach&apos;s tags</span>
-        <span className="text-[13px] text-gray-300 tabular-nums">
-          <b className="text-gray-100 font-semibold">{waiting}</b> to check · <b className="text-blue-300 font-semibold">{kept}</b> kept · <b className="text-[#E8A15A] font-semibold">{removed}</b> taken off
-        </span>
-      </div>
+      {highlights ? (
+        <button type="button" onClick={() => setOpenPick(!open)} aria-expanded={open}
+          className={cn('w-full flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-1.5 text-left', open && 'mb-2')}>
+          <span className="inline-flex items-center gap-2">
+            <ChevronRight size={14} aria-hidden="true" className={cn('text-gray-400 transition-transform self-center', open && 'rotate-90')} />
+            <span className="text-[15px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Check the coach&apos;s tags</span>
+          </span>
+          <span className="text-[13px] text-gray-300 tabular-nums">
+            <b className="text-gray-100 font-semibold">{waiting}</b> to check · <b className="text-blue-300 font-semibold">{kept}</b> kept · <b className="text-[#E8A15A] font-semibold">{removed}</b> taken off
+            <span className="ml-3.5 text-blue-300">{open ? 'Hide' : 'Show'}</span>
+          </span>
+        </button>
+      ) : (
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 mb-2">
+          <span className="text-[15px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Check the coach&apos;s tags</span>
+          <span className="text-[13px] text-gray-300 tabular-nums">
+            <b className="text-gray-100 font-semibold">{waiting}</b> to check · <b className="text-blue-300 font-semibold">{kept}</b> kept · <b className="text-[#E8A15A] font-semibold">{removed}</b> taken off
+          </span>
+        </div>
+      )}
+      {open && <>
       <p className="text-[13.5px] leading-relaxed text-gray-300 max-w-[820px] mb-3">
         ✓ keeps a tag, ✕ takes it off the trade. Click a tag to see why the coach picked it. Taking a tag off or adding one anywhere else (the trade form, Deep Dive) counts too.
       </p>
@@ -204,6 +229,7 @@ export default function CoachTagCheck({ data }: { data: CoachCheckData }) {
         </span>
         <Link href="/settings/tags#coach-accuracy" className="text-[13px] text-blue-300 hover:text-blue-200">See every tag in Settings</Link>
       </div>
+      </>}
     </div>
   )
 }
