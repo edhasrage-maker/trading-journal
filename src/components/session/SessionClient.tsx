@@ -23,7 +23,7 @@ import ImportTradesButton, { type ImportResult } from '@/components/eod/ImportTr
 import SCFolderWatcher from '@/components/eod/SCFolderWatcher'
 import EodAnalysisCard from '@/components/eod/EodAnalysisCard'
 import TapeScoreHeader from '@/components/eod/TapeScoreHeader'
-import type { EntryRuleConfig } from '@/lib/entry-rules'
+import { entryRulesSig, type EntryRuleConfig } from '@/lib/entry-rules'
 import type { RunnerRuleConfig } from '@/lib/runner-rules'
 import RecordingCommentary from '@/components/eod/RecordingCommentary'
 import BrowserRecap from '@/components/eod/BrowserRecap'
@@ -114,9 +114,13 @@ interface Props {
 type FormMode = { type: 'none' } | { type: 'add'; file: File | null } | { type: 'edit'; trade: Trade }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
-// summary is reused until the tags/notes/fills actually change. djb2.
-function hashTrade(t: Trade): string {
+// summary is reused until the tags/notes/fills or the trader's entry rules
+// actually change. djb2. SUMMARY_VERSION retires every cached summary when the
+// coach's input changes (2: rule results go in as facts, 2026-10-29).
+const SUMMARY_VERSION = 2
+function hashTrade(t: Trade, rulesSig: string): string {
   const basis = JSON.stringify({
+    v: SUMMARY_VERSION, r: rulesSig,
     d: t.direction, e: t.entry_price, p: t.pnl, q: t.quantity,
     x: t.exits_json, tg: t.tags_json, n: t.notes,
   })
@@ -360,6 +364,7 @@ export default function SessionClient({
 
   // ── AI overview lines (recap only) ──
   // Cached in localStorage by content hash; misses go in one batched call.
+  const summaryRulesSig = useMemo(() => entryRulesSig(entryRules), [entryRules])
   const [summaries, setSummaries] = useState<Record<string, string>>({})
   const [summariesLoading, setSummariesLoading] = useState(false)
   useEffect(() => {
@@ -371,7 +376,7 @@ export default function SessionClient({
     const cached: Record<string, string> = {}
     const missing: Trade[] = []
     for (const t of trades) {
-      const h = hashTrade(t)
+      const h = hashTrade(t, summaryRulesSig)
       try {
         const raw = localStorage.getItem(summaryCacheKey(t.id))
         if (raw) {
@@ -403,14 +408,14 @@ export default function SessionClient({
         setSummaries(prev => ({ ...prev, ...got }))
         for (const t of missing) {
           if (got[t.id]) {
-            try { localStorage.setItem(summaryCacheKey(t.id), JSON.stringify({ h: hashTrade(t), s: got[t.id] })) } catch { /* ignore */ }
+            try { localStorage.setItem(summaryCacheKey(t.id), JSON.stringify({ h: hashTrade(t, summaryRulesSig), s: got[t.id] })) } catch { /* ignore */ }
           }
         }
       })
       .catch(() => { /* silent */ })
       .finally(() => { if (!cancelled) setSummariesLoading(false) })
     return () => { cancelled = true }
-  }, [trades, live])
+  }, [trades, live, summaryRulesSig])
 
   const refreshTrades = async () => {
     try {

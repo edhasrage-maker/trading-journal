@@ -20,7 +20,7 @@ import ImportTradesButton, { type ImportResult } from './ImportTradesButton'
 import SCFolderWatcher from './SCFolderWatcher'
 import EodAnalysisCard from './EodAnalysisCard'
 import TapeScoreHeader from './TapeScoreHeader'
-import type { EntryRuleConfig } from '@/lib/entry-rules'
+import { entryRulesSig, type EntryRuleConfig } from '@/lib/entry-rules'
 import type { RunnerRuleConfig } from '@/lib/runner-rules'
 import RecordingCommentary from './RecordingCommentary'
 import BrowserRecap from './BrowserRecap'
@@ -99,9 +99,13 @@ interface Props {
 }
 
 // Stable content hash for a trade's summary-relevant fields, so a cached AI
-// summary is reused until the tags/notes/fills actually change. djb2.
-function hashTrade(t: Trade): string {
+// summary is reused until the tags/notes/fills or the trader's entry rules
+// actually change. djb2. SUMMARY_VERSION retires every cached summary when the
+// coach's input changes (2: rule results go in as facts, 2026-10-29).
+const SUMMARY_VERSION = 2
+function hashTrade(t: Trade, rulesSig: string): string {
   const basis = JSON.stringify({
+    v: SUMMARY_VERSION, r: rulesSig,
     d: t.direction, e: t.entry_price, p: t.pnl, q: t.quantity,
     x: t.exits_json, tg: t.tags_json, n: t.notes,
   })
@@ -280,6 +284,7 @@ export default function EodClient({
   // AI 1-2 line per-trade narratives shown in the trade list's Overview column.
   // Cached in localStorage by content hash so we only call Claude when a trade's
   // tags/notes/fills change.
+  const summaryRulesSig = useMemo(() => entryRulesSig(entryRules), [entryRules])
   const [summaries, setSummaries] = useState<Record<string, string>>({})
   const [summariesLoading, setSummariesLoading] = useState(false)
 
@@ -312,7 +317,7 @@ export default function EodClient({
     const cached: Record<string, string> = {}
     const missing: Trade[] = []
     for (const t of trades) {
-      const h = hashTrade(t)
+      const h = hashTrade(t, summaryRulesSig)
       try {
         const raw = localStorage.getItem(summaryCacheKey(t.id))
         if (raw) {
@@ -344,14 +349,14 @@ export default function EodClient({
         setSummaries(prev => ({ ...prev, ...got }))
         for (const t of missing) {
           if (got[t.id]) {
-            try { localStorage.setItem(summaryCacheKey(t.id), JSON.stringify({ h: hashTrade(t), s: got[t.id] })) } catch { /* ignore */ }
+            try { localStorage.setItem(summaryCacheKey(t.id), JSON.stringify({ h: hashTrade(t, summaryRulesSig), s: got[t.id] })) } catch { /* ignore */ }
           }
         }
       })
       .catch(() => { /* silent */ })
       .finally(() => { if (!cancelled) setSummariesLoading(false) })
     return () => { cancelled = true }
-  }, [trades])
+  }, [trades, summaryRulesSig])
 
   // The mouse-event arg is still accepted by TradeList (it passed e for the
   // cursor coords) but we no longer use it now that the popup-on-cursor was

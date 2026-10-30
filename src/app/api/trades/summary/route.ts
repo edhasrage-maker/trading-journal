@@ -3,21 +3,12 @@ import { NextResponse } from 'next/server'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { consumeAiUsage } from '@/lib/ai-usage'
 import { createClient } from '@/lib/supabase/server'
+import { loadTapeScoreSettings } from '@/lib/day-stats-server'
+import { buildSummaryPrompt, summaryRuleResults, type SummaryTrade } from '@/lib/trade-summary-prompt'
+import type { RuleResult } from '@/lib/entry-rules'
+import type { TradeEntryCtx } from '@/lib/supabase/types'
 
 const client = new Anthropic()
-
-interface SummaryTrade {
-  id: string
-  direction?: string | null
-  entry_price?: number | null
-  pnl?: number | null
-  quantity?: number | null
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  exits_json?: any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tags_json?: any
-  notes?: string | null
-}
 
 /**
  * POST /api/trades/summary
@@ -28,6 +19,9 @@ interface SummaryTrade {
  * own notes — e.g. "Dicey long but saw 3 failures at IBL with absorption and a
  * delta fade, so I entered above the cluster and targeted the imbalance."
  *
+ * Each counted entry rule's result and reason goes in as a fact, read here from
+ * the trade's own row under the trader's rules (src/lib/trade-summary-prompt.ts).
+ *
  * The whole day's trades are summarized in ONE call; the client caches results
  * by content hash so this only runs when a trade's tags/notes actually change.
  */
@@ -36,8 +30,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
   }
 
+  const supabase = await createClient()
   if (!LOCAL_FEATURES_ENABLED) {
-    const supabase = await createClient()
     const gate = await consumeAiUsage(supabase, 'trades_summary')
     if (!gate.allowed) return NextResponse.json({ error: gate.message, ...gate }, { status: 429 })
   }
@@ -51,32 +45,24 @@ export async function POST(req: Request) {
   }
   if (trades.length === 0) return NextResponse.json({ summaries: {} })
 
-  const block = trades.map(t => {
-    const dir = t.direction?.toUpperCase() ?? '—'
-    const pnl = t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '—'
-    const tj = t.tags_json ?? {}
-    const exits = Array.isArray(t.exits_json) && t.exits_json.length > 0
-      ? t.exits_json.map((e: { qty?: number; price?: number }) => `${e.qty ?? '?'}@${e.price ?? '?'}`).join(', ')
-      : '—'
-    const list = (v: unknown) => Array.isArray(v) ? (v.join(', ') || '—') : (v || '—')
-    return `id: ${t.id}
-  dir/size: ${dir} ${t.quantity ?? '?'} @ ${t.entry_price ?? '?'} | exits: ${exits} | PnL ${pnl}
-  setups: ${list(tj.setups)} | order_flow: ${list(tj.order_flow)} | confluences: ${list(tj.confluences)}
-  management: ${list(tj.trade_management)} | mistakes: ${list(tj.mistakes)} | day_type: ${list(tj.day_type)}
-  notes: ${t.notes?.trim() || '(none)'}`
-  }).join('\n\n')
+  // The rule facts. Read under RLS, so only the trader's own trades come back;
+  // any failure just leaves them out (the summary still writes from the tags).
+  const rulesById = new Map<string, { results: RuleResult[]; autoTags: string[] }>()
+  try {
+    const { entryRules } = await loadTapeScoreSettings(supabase)
+    if (entryRules.some(r => r.on)) {
+      const { data } = await supabase
+        .from('trades')
+        .select('id, direction, symbol, entry_time, entry_ctx:review_json->entry_ctx, auto_tags:review_json->auto_tags')
+        .in('id', trades.map(t => t.id))
+      for (const row of (data ?? []) as { id: string; direction: string | null; symbol: string | null; entry_time: string | null; entry_ctx: TradeEntryCtx | null; auto_tags: unknown }[]) {
+        const autoTags = Array.isArray(row.auto_tags) ? row.auto_tags.filter((x): x is string => typeof x === 'string') : []
+        rulesById.set(row.id, { results: summaryRuleResults(entryRules, { ...row, auto_tags: autoTags }), autoTags })
+      }
+    }
+  } catch { /* summaries without rule facts */ }
 
-  const prompt = `You are summarizing a futures trader's individual trades for their journal. The trader uses an MGI / order-flow approach with structural levels (PDH/PDL, IBH/IBL, ONH/ONL, VWAP) and order-flow triggers (absorption, exhaustion, delta, stacked imbalance).
-
-For EACH trade below, write ONE punchy 1-2 line summary in the trader's own voice that weaves together the thesis: the setup + where it happened (confluence), the order-flow trigger, how it was managed/targeted, and the gist of any notes. Mention a mistake only if tagged. Keep it concrete and readable — like a human recap, not a list of tags.
-
-Example style: "Dicey long but saw selling fail a 3rd time at IBL with absorption and a delta fade, so I entered above the cluster and targeted the stacked imbalance."
-
-Trades:
-${block}
-
-Respond with ONLY valid JSON (no markdown, no code fences), mapping each trade id to its summary string:
-{ "summaries": { "<id>": "<1-2 line summary>", ... } }`
+  const prompt = buildSummaryPrompt(trades, rulesById)
 
   try {
     const message = await client.messages.create({
