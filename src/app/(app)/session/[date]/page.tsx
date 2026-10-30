@@ -97,7 +97,7 @@ export default async function SessionPage({ params }: { params: Promise<{ date: 
   }
 
   // Per-trade LIVE ATR: compute ATR-10 Wilder from 1-min bars at each trade's
-  // entry_time and pass to EodClient as a map { tradeId → atrPts }. The trade
+  // entry_time and pass to SessionClient as a map { tradeId → atrPts }. The trade
   // list surfaces this as an "ATR @ entry" chip so the trader can see how
   // volatile the market actually was when each trade fired (the prep ATR is
   // a single morning snapshot, often stale by trade time).

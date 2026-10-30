@@ -5,7 +5,7 @@ import { X, ZoomIn, ZoomOut } from 'lucide-react'
 
 /**
  * Fullscreen zoom modal for trade screenshots. Shared by both the read-mode
- * view (IntradayClient) and the edit-mode form (TradeForm via PinPlacement).
+ * view (SessionClient) and the edit-mode form (TradeForm via PinPlacement).
  *
  * Three zoom levels, sized off the image's OWN pixels rather than the viewport:
  *   0 — Fit to viewport (object-contain, default)

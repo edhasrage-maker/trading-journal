@@ -105,7 +105,7 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
   // the user hasn't pasted a Sierra screenshot. Falls back to text-only
   // analysis if the chart isn't ready (no bars / pre-mount / screenshot view).
   const liveChartRef = useRef<LiveChartHandle>(null)
-  // Chart view toggle — same pattern as EodClient. Defaults to LIVE so
+  // Chart view toggle — same pattern as SessionClient. Defaults to LIVE so
   // session levels (PDH/PDL/IBH/IBL/ONH/ONL + extensions, VWAP, EMA9/20) are
   // visible immediately on page open — those compute from the .scid bars, no
   // screenshot required. User can flip to Screenshot when they want to paste

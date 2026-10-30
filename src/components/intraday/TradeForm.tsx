@@ -40,7 +40,7 @@ interface Props {
   onTagCreated?: (tag: TradeTag) => void
   /** Symbol to use for the live R-multiple preview when adding a NEW trade
    *  (no trade.symbol yet). Typically the most-common symbol on the day from
-   *  IntradayClient. Falls back to multiplier=1 when null — better than
+   *  SessionClient. Falls back to multiplier=1 when null — better than
    *  silently showing R values off by the contract multiplier. */
   defaultSymbol?: string | null
   /** Other trades on the same day — used for the "Copy tags from..." dropdown. */
@@ -177,7 +177,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   const canNudgeFrame = !!(LOCAL_FEATURES_ENABLED && trade?.id && recVideoFile && trade.entry_time)
   const canNudgeBrowser = !!(!LOCAL_FEATURES_ENABLED && trade?.id && trade.entry_time)
   const canNudge = canNudgeFrame || canNudgeBrowser
-  // Zoom lightbox state — independent of IntradayClient's lightbox since
+  // Zoom lightbox state — independent of the trade panel's lightbox since
   // TradeForm is mounted as a modal/inline form with its own scope.
   const [zoomedScreenshot, setZoomedScreenshot] = useState<string | null>(null)
 
@@ -608,7 +608,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   }
 
   // Prefer the edited trade's symbol; fall back to the day's default symbol
-  // passed from IntradayClient (most-common symbol on the day); fall back to
+  // passed from SessionClient (most-common symbol on the day); fall back to
   // null which makes rMultiple use multiplier=1.
   const r = rMultiple(form, trade?.symbol ?? defaultSymbol ?? null)
 
