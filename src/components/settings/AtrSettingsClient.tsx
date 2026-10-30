@@ -181,7 +181,7 @@ export default function AtrSettingsClient() {
       <div className="bg-blue-950/20 border border-blue-900/40 rounded-lg p-4 text-xs text-blue-200/80 space-y-2">
         <p className="text-blue-300 font-semibold uppercase tracking-wider text-[10px]">Where it applies</p>
         <ul className="list-disc pl-5 space-y-1">
-          <li>Drives the <strong>ATR@ column</strong> and the <strong>ATR-unit R fallback</strong> (used when a trade has no stop and no TP) on the <strong>EOD Recap</strong>, computed live from bars.</li>
+          <li>Drives the <strong>ATR@ column</strong> and the <strong>ATR-unit R fallback</strong> (used when a trade has no stop and no TP) on the <strong>Session</strong> page, computed live from bars.</li>
           <li>Default <strong>1m · Wilder&apos;s · 10</strong> matches the Sierra Chart ATR-10.</li>
           <li>The <strong>give-back threshold</strong> sets how far a trade must run your way (in ×ATR) before a close ≤ breakeven counts as a &ldquo;gave it back&rdquo; on the EOD panel + coach. Default <strong>1×</strong>.</li>
           <li>Needs 1-minute bars for the day; days without bars fall back to the stored 1m Wilder-10 value.</li>

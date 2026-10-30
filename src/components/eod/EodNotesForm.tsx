@@ -135,7 +135,7 @@ export default function EodNotesForm({
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-white">EOD Recap</h2>
+        <h2 className="font-semibold text-white">Session journal</h2>
         <div className="flex items-center gap-3">
           {saving ? (
             <span className="text-xs text-gray-500">Saving…</span>
