@@ -11,7 +11,7 @@ import AchievementCoin from '@/components/AchievementCoin'
 import { ACHIEVEMENT_CATALOG, type AchievementId } from '@/lib/achievements'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { mgmtView, formatKept, type MgmtTotals } from '@/lib/trade-management'
-import { GLANCE_WINDOW_DAYS, RISK_OFF_MULTIPLE, PLAYBOOK_OFF_POINTS, KEPT_OFF_POINTS, type DayGlanceRead } from '@/lib/day-glance'
+import { GLANCE_WINDOW_DAYS, RISK_OFF_MULTIPLE, PLAYBOOK_OFF_POINTS, KEPT_OFF_POINTS, TRADES_OFF_MULTIPLE, type DayGlanceRead } from '@/lib/day-glance'
 
 export interface DayRowData {
   id: string
@@ -102,18 +102,22 @@ type SortDirection = 'asc' | 'desc'
  *  those you kept — the same two ideas as the Trade management card above.
  *
  *  2026-10-28: Detailed leads with the four numbers that say which day to open
- *  (src/lib/day-glance.ts) — Risk vs usual, Playbook, Kept, After your high —
- *  plus how many of them are off. Trades, Win % and Went your way move behind
- *  the Columns menu: on a 2–4 trade day a rate can only read 0, 50 or 100%. */
+ *  (src/lib/day-glance.ts) — Risk vs usual, Trades vs usual, MFE Profit Kept,
+ *  After your high — plus how many of them are off. Entry Compliance, Win % and
+ *  Went your way sit behind the Columns menu: on a 2–4 trade day a rate can only
+ *  read 0, 50 or 100%, and Entry Compliance needs the trader's own entry rules
+ *  (and is already part of the TapeScore's Entry). */
 type ReorderableColumnId = 'tapescore' | 'trades' | 'win_rate' | 'went' | 'kept' | 'pnl' | 'risk' | 'playbook' | 'after_high' | 'off'
-const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'risk', 'playbook', 'kept', 'after_high', 'off', 'trades', 'win_rate', 'went']
+const DEFAULT_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'risk', 'trades', 'kept', 'after_high', 'off', 'playbook', 'win_rate', 'went']
 /** Off by default in Detailed; the Columns menu adds them back. */
-const DEFAULT_HIDDEN: ReorderableColumnId[] = ['trades', 'win_rate', 'went']
+const DEFAULT_HIDDEN: ReorderableColumnId[] = ['playbook', 'win_rate', 'went']
 const COLUMN_LABELS: Record<ReorderableColumnId, string> = {
-  tapescore: 'TapeScore', pnl: 'PnL', risk: 'Risk vs usual', playbook: 'Playbook', kept: 'Kept',
-  after_high: 'After your high', off: 'Off usual', trades: 'Trades', win_rate: 'Win %', went: 'Went your way',
+  tapescore: 'TapeScore', pnl: 'PnL', risk: 'Risk vs usual', playbook: 'Entry Compliance', kept: 'MFE Profit Kept',
+  after_high: 'After your high', off: 'Off usual', trades: 'Trades vs usual', win_rate: 'Win %', went: 'Went your way',
 }
-const HIDDEN_COLUMNS_STORAGE_KEY = 'dashboard-recent-days-hidden-columns-v1'
+// v2: Trades vs usual became a default column and Entry Compliance optional;
+// a saved v1 list would keep Trades hidden.
+const HIDDEN_COLUMNS_STORAGE_KEY = 'dashboard-recent-days-hidden-columns-v2'
 /** Highlights: lean, fixed, non-reorderable. */
 const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trades', 'win_rate']
 // v3: v2 carried the now-removed `day_type` id; bump so stale saved orders reset.
@@ -123,7 +127,8 @@ const BEGINNER_COLUMN_ORDER: ReorderableColumnId[] = ['tapescore', 'pnl', 'trade
 // v5: `mfe_mae` and `capture` became `went` and `kept`; a saved order naming the
 // old ids would drop both new columns.
 // v6: the four day numbers joined and lead the default order.
-const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v6'
+// v7: Trades vs usual took Entry Compliance's place among them.
+const COLUMN_ORDER_STORAGE_KEY = 'dashboard-recent-days-column-order-v7'
 
 /** Date earns a wider column than the numbers — it carries a weekday, a month
  *  and a date, plus any achievement coins — but only just: a quarter more. */
@@ -408,13 +413,16 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
     trades: (
       <SortableTh
         key="trades"
-        label="Trades"
+        label={isPro
+          ? <span className="inline-flex flex-col items-center"><span>Trades vs usual</span><span className="text-[10px] text-gray-600">trades taken</span></span>
+          : 'Trades'}
         column="trades"
         current={sortColumn}
         direction={sortDirection}
         onSort={setSort}
         align="center"
         className="pr-3"
+        titleAttr={isPro ? `The day's trade count against your usual day (the middle of your last ${GLANCE_WINDOW_DAYS} trading days). Lights up at ${TRADES_OFF_MULTIPLE}× or more.` : undefined}
         thProps={dragProps('trades')}
       />
     ),
@@ -449,13 +457,13 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         className={`font-normal py-2 pr-3 text-center ${dragProps('kept').className ?? ''}`}
         title="On the trades that went your way: what you banked out of how far they ran, losses included. Uses the unit chosen on the Trade management card."
       >
-        <span className="text-gray-500">Kept</span>
+        <span className="text-gray-500">{isPro ? 'MFE Profit Kept' : 'Kept'}</span>
         {isPro && <span className="block text-[10px] text-gray-600">of what went your way</span>}
       </th>
     ),
-    risk: kpiTh('risk', 'Risk vs usual', 'biggest risk on one trade',
-      `The biggest planned dollar risk on one trade, against your usual risk per trade going into the day (the same average Loss size uses). Lights up at ${RISK_OFF_MULTIPLE}× or more.`),
-    playbook: kpiTh('playbook', 'Playbook', 'trades that passed every rule',
+    risk: kpiTh('risk', 'Risk vs usual', 'avg risk per trade',
+      `The day's average planned dollar risk per trade, against your usual risk per trade going into the day (the same average Loss size uses). Lights up at ${RISK_OFF_MULTIPLE}× or more.`),
+    playbook: kpiTh('playbook', 'Entry Compliance', 'trades that passed every rule',
       `The share of the day's trades that passed every one of your entry rules, against your last ${GLANCE_WINDOW_DAYS} trading days. Lights up ${PLAYBOOK_OFF_POINTS}+ points under usual.`),
     after_high: kpiTh('after_high', 'After your high', 'once up a good day',
       `Did you keep trading after your realized P&L reached a good day — your average green day over your last ${GLANCE_WINDOW_DAYS} trading days? Lights up when you did.`),
@@ -469,7 +477,7 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
         onSort={setSort}
         align="center"
         className="pr-3"
-        titleAttr="How many of Risk, Playbook, Kept and After your high are off your usual. Sort by it to put the days worth a look first."
+        titleAttr="How many of Risk vs usual, Trades vs usual, MFE Profit Kept and After your high are off your usual. Sort by it to put the days worth a look first."
         thProps={dragProps('off')}
       />
     ),
@@ -756,7 +764,18 @@ function DayRowItem({
           ),
           trades: (
             <td key="trades" className={`py-2 pr-3 text-center text-gray-300 font-mono ${cellBg}`}>
-              {day.trade_count > 0 ? day.trade_count : <span className="text-gray-700">—</span>}
+              {day.trade_count === 0
+                ? <span className="text-gray-700">—</span>
+                : !isPro || g == null
+                  ? day.trade_count
+                  : (
+                    <GlanceCell
+                      main={String(day.trade_count)}
+                      sub={g.trades.usual != null ? `usual ${g.trades.usual % 1 ? g.trades.usual.toFixed(1) : g.trades.usual}` : 'no usual yet'}
+                      off={g.trades.off}
+                      title={`${day.trade_count} trade${day.trade_count === 1 ? '' : 's'}.${g.trades.usual != null ? ` Your usual day: ${g.trades.usual} (the middle of your last ${GLANCE_WINDOW_DAYS} trading days).` : ''}`}
+                    />
+                  )}
             </td>
           ),
           win_rate: (
@@ -797,10 +816,10 @@ function DayRowItem({
                 ? <span className="text-gray-700" title="No trade this day had a planned stop.">—</span>
                 : (
                   <GlanceCell
-                    main={usd(g.risk.max)}
+                    main={usd(g.risk.avg)}
                     sub={g.risk.ratio != null ? `${g.risk.ratio.toFixed(1)}× usual` : 'no usual yet'}
                     off={g.risk.off}
-                    title={`Biggest planned risk on one trade: ${usd(g.risk.max)}.${g.risk.usual != null ? ` Your usual risk per trade going into this day: ${usd(g.risk.usual)}.` : ''}`}
+                    title={`Average planned risk per trade: ${usd(g.risk.avg)}${g.risk.max != null ? ` (biggest single trade ${usd(g.risk.max)})` : ''}.${g.risk.usual != null ? ` Your usual risk per trade going into this day: ${usd(g.risk.usual)}.` : ''}`}
                   />
                 )}
             </td>

@@ -8,15 +8,21 @@ import type { TradeEntryCtx } from '@/lib/supabase/types'
  * The four numbers a trader reads on each day of the dashboard's Days table to
  * decide which day to open (founder, 2026-10-28):
  *
- *   Risk vs usual    the biggest planned dollar risk on one trade, against the
- *                    trader's usual risk per trade (the same yardstick Loss size
- *                    uses, src/lib/exit-rollup.ts)
- *   Playbook         the share of the day's trades that passed every counted
+ *   Risk vs usual    the day's average planned dollar risk per trade, against
+ *                    the trader's usual risk per trade (the same yardstick Loss
+ *                    size uses, src/lib/exit-rollup.ts) — an average against an
+ *                    average, so a busy day isn't flagged just for having more
+ *                    trades to take a maximum over (founder, 2026-10-29)
+ *   Trades vs usual  the day's trade count against the median trading day
+ *                    before it — replaced Entry Compliance as one of the four
+ *                    (founder, 2026-10-29): every trader has the data, and it
+ *                    isn't already inside the TapeScore
+ *   Entry Compliance (optional column, not one of the four) the share of the day's trades that passed every counted
  *                    entry rule (src/lib/entry-rules.ts), against the days
  *                    before it — by trade, not by rule check (founder,
  *                    2026-10-29: 94 of 105 checks read 90% on a day only 7
  *                    of 15 trades were clean)
- *   Kept             the existing "kept" (src/lib/trade-management.ts), against
+ *   MFE Profit Kept  the existing "kept" (src/lib/trade-management.ts), against
  *                    the days before it
  *   After your high  once the day's realized P&L reached a good day — the
  *                    average green day among the trading days before it — did
@@ -30,8 +36,8 @@ import type { TradeEntryCtx } from '@/lib/supabase/types'
 
 /** Earlier trading days the usuals are taken from. */
 export const GLANCE_WINDOW_DAYS = 20
-/** Risk lights up at this multiple of the usual risk per trade. */
-export const RISK_OFF_MULTIPLE = 2
+/** Risk lights up when the day's average risk per trade reaches this multiple of the usual. */
+export const RISK_OFF_MULTIPLE = 1.5
 /** Playbook lights up this many points under its usual. */
 export const PLAYBOOK_OFF_POINTS = 10
 /** Fewer checked trades than this in the window → no usual yet (the same floor as Kept). */
@@ -42,6 +48,10 @@ export const KEPT_OFF_POINTS = 15
 export const KEPT_MIN_TRADES = 5
 /** Fewer green days than this in the window → no "good day" to measure a high against. */
 export const HIGH_MIN_GREEN_DAYS = 5
+/** Trades lights up at this multiple of the usual day's trade count. */
+export const TRADES_OFF_MULTIPLE = 2
+/** Fewer earlier trading days than this in the window → no usual trade count yet. */
+export const TRADES_MIN_DAYS = 5
 
 /** What a day stores. JSON-safe — cached in `stats_json`. */
 export interface DayGlanceFacts {
@@ -134,9 +144,12 @@ export function dayGlanceFacts(trades: readonly GlanceTrade[], entryRules?: read
 
 /** What the table renders for a day: each number with its usual and whether it is off. */
 export interface DayGlanceRead {
-  /** Null = no trade had a planned stop. */
-  risk: { max: number; usual: number | null; ratio: number | null; off: boolean } | null
-  /** Null = no trade on the day had an entry rule checked. */
+  /** Null = no trade had a planned stop. `ratio` = avg ÷ usual; `max` is the biggest single trade. */
+  risk: { avg: number; max: number | null; usual: number | null; ratio: number | null; off: boolean } | null
+  /** The day's trade count against the usual day (the median of the window). */
+  trades: { count: number; usual: number | null; ratio: number | null; off: boolean }
+  /** Null = no trade on the day had an entry rule checked. Shown as Entry
+   *  Compliance (optional column); not one of the four, so not in `off`. */
   playbook: { passed: number; trades: number; pct: number; usual: number | null; off: boolean; mostMissed: string | null } | null
   /** Usual kept (0..1, dollars) going into the day; `off` compares the day's own kept. */
   kept: { pct: number | null; usual: number | null; off: boolean }
@@ -151,7 +164,7 @@ export interface DayGlanceRead {
     afterPnl: number
     off: boolean
   } | null
-  /** How many of the four are off. */
+  /** How many of the four (risk, trades, kept, high) are off. */
   off: number
 }
 
@@ -165,6 +178,9 @@ export interface GlanceDay {
   mgmt?: MgmtTotals | null
   /** The trader's usual planned risk per trade going into the day (the Loss-size yardstick's mean). */
   risk_usual?: number | null
+  /** The day's summed planned dollar risk over its trades with a stop, and how many (the rollup's risk sums). */
+  sum_risk_dollars?: number | null
+  risk_sample?: number | null
 }
 
 /** `days` with each day's read attached as `glance_read` (null = no facts to read). Order is preserved. */
@@ -189,13 +205,15 @@ export function readDayGlance(days: readonly GlanceDay[]): Map<string, DayGlance
     if (!g) continue
     const prior = traded.slice(Math.max(0, i - GLANCE_WINDOW_DAYS), i)
 
-    // Risk vs usual.
+    // Risk vs usual: the day's average risk per trade against the usual one.
     const usualRisk = d.risk_usual != null && d.risk_usual > 0 ? d.risk_usual : null
-    const risk = g.risk_max == null ? null : {
+    const avgRisk = (d.risk_sample ?? 0) > 0 && (d.sum_risk_dollars ?? 0) > 0 ? d.sum_risk_dollars! / d.risk_sample! : null
+    const risk = avgRisk == null ? null : {
+      avg: avgRisk,
       max: g.risk_max,
       usual: usualRisk,
-      ratio: usualRisk != null ? g.risk_max / usualRisk : null,
-      off: usualRisk != null && g.risk_max >= RISK_OFF_MULTIPLE * usualRisk,
+      ratio: usualRisk != null ? avgRisk / usualRisk : null,
+      off: usualRisk != null && avgRisk >= RISK_OFF_MULTIPLE * usualRisk,
     }
 
     // Playbook: checked trades pooled over the window.
@@ -238,9 +256,22 @@ export function readDayGlance(days: readonly GlanceDay[]): Map<string, DayGlance
       off: reached && g.after_peak_trades > 0,
     }
 
+    // Trades vs usual: the median trading day in the window, so one 15-trade
+    // day doesn't drag the usual up for the next twenty.
+    const counts = prior.map(p => p.trade_count).sort((a, b) => a - b)
+    const tradesUsual = counts.length >= TRADES_MIN_DAYS
+      ? (counts.length % 2 ? counts[(counts.length - 1) / 2] : (counts[counts.length / 2 - 1] + counts[counts.length / 2]) / 2)
+      : null
+    const trades = {
+      count: d.trade_count,
+      usual: tradesUsual,
+      ratio: tradesUsual != null && tradesUsual > 0 ? d.trade_count / tradesUsual : null,
+      off: tradesUsual != null && tradesUsual > 0 && d.trade_count >= TRADES_OFF_MULTIPLE * tradesUsual,
+    }
+
     out.set(d.id, {
-      risk, playbook, kept, high,
-      off: [risk?.off, playbook?.off, kept.off, high.off].filter(Boolean).length,
+      risk, trades, playbook, kept, high,
+      off: [risk?.off, trades.off, kept.off, high.off].filter(Boolean).length,
     })
   }
   return out

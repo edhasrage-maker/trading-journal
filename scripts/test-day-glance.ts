@@ -63,21 +63,24 @@ const facts = (o: Partial<DayGlanceFacts> = {}): DayGlanceFacts => ({
 })
 const day = (i: number, pnl: number, o: Partial<GlanceDay> = {}, f: Partial<DayGlanceFacts> = {}): GlanceDay => ({
   id: `d${i}`, date: `2026-09-${String(i).padStart(2, '0')}`, trade_count: 3, eod_pnl: pnl,
-  glance: facts(f), mgmt: emptyMgmtTotals(), risk_usual: 120, ...o,
+  glance: facts(f), mgmt: emptyMgmtTotals(), risk_usual: 120, sum_risk_dollars: 360, risk_sample: 3, ...o,
 })
 {
   // 20 prior days: 10 green at +300, 10 red; 80% of trades passed every rule.
   const prior = Array.from({ length: 20 }, (_, i) => day(i + 1, i % 2 === 0 ? 300 : -100))
   const reads = readDayGlance([
     ...prior,
-    day(21, 400, {}, { risk_max: 250 }),                                                   // risk 2.08× → off
+    day(21, 400, { sum_risk_dollars: 540 }, { risk_max: 250 }),                            // avg $180 = 1.5× → off
+    day(26, 300, { sum_risk_dollars: 450 }, { risk_max: 300 }),                            // one $300 trade, avg $150 = 1.25× → quiet
     day(22, -287, {}, { peak: 53, after_peak_trades: 3, after_peak_pnl: -340 }),            // small high → quiet
     day(23, 500, {}, { peak: 900, after_peak_trades: 2, after_peak_pnl: -400 }),            // real high, kept going → off
     day(24, 300, {}, { trades_passed: 6, trades_checked: 10, misses: { L2: 3, F6: 1 } }),   // 60% vs 80% → off
     day(25, 300, {}, { trades_passed: 7, trades_checked: 10 }),                             // 70% vs ~79% → quiet (under 10 pts)
   ])
   const r21 = reads.get('d21')!, r22 = reads.get('d22')!, r23 = reads.get('d23')!, r24 = reads.get('d24')!, r25 = reads.get('d25')!
-  check('risk at 2× usual or more lights up', r21.risk?.off === true && Math.abs((r21.risk?.ratio ?? 0) - 250 / 120) < 1e-9)
+  check('the day\'s average risk at 1.5× usual lights up', r21.risk?.off === true && r21.risk?.avg === 180 && Math.abs((r21.risk?.ratio ?? 0) - 1.5) < 1e-9)
+  const r26 = reads.get('d26')!
+  check('one big trade alone doesn\'t light it — the average does', r26.risk?.off === false && r26.risk?.max === 300)
   // d22's window is d2–d21: nine +300 days and d21's +400.
   check('a good day = the average green day in the rolling window', r22.high?.bar === 310, String(r22.high?.bar))
   check('a $53 high is not a high — no light', r22.high?.reached === false && r22.high?.off === false)
@@ -88,9 +91,19 @@ const day = (i: number, pnl: number, o: Partial<GlanceDay> = {}, f: Partial<DayG
   check('off counts the lit numbers', r21.off === 1 && r22.off === 0 && r23.off === 1)
 }
 {
+  // Trades vs usual: the median day in the window (3 here), lit at 2×.
+  const prior = Array.from({ length: 20 }, (_, i) => day(i + 1, 100, { trade_count: i === 0 ? 15 : 3 }))
+  const reads = readDayGlance([...prior, day(21, 100, { trade_count: 6 }), day(22, 100, { trade_count: 5 })])
+  const r21 = reads.get('d21')!, r22 = reads.get('d22')!
+  check('usual trades = the median day, not dragged up by one 15-trade day', r21.trades.usual === 3, String(r21.trades.usual))
+  check('2× the usual count lights up', r21.trades.off === true && r21.trades.ratio === 2)
+  check('under 2× stays quiet', r22.trades.off === false)
+  check('Entry Compliance is not one of the four in `off`', r21.off === 1)
+}
+{
   // Fewer than 5 green days → no bar; no yardstick → no risk light.
   const prior = Array.from({ length: 6 }, (_, i) => day(i + 1, i < 3 ? 300 : -100))
-  const reads = readDayGlance([...prior, day(7, 400, { risk_usual: null }, { risk_max: 900, peak: 900, after_peak_trades: 4 })])
+  const reads = readDayGlance([...prior, day(7, 400, { risk_usual: null, sum_risk_dollars: 2700 }, { risk_max: 900, peak: 900, after_peak_trades: 4 })])
   const r = reads.get('d7')!
   check('no "good day" until 5 green days', r.high?.bar === null && r.high?.off === false)
   check('no usual risk → risk never lights', r.risk?.usual === null && r.risk?.off === false)
