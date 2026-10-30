@@ -73,7 +73,7 @@ const settingsItems = [
 // a newcomer can't tell whether they're views, sections or account tiers. Each
 // carries a one-line explanation on hover.
 const VIEW_TOGGLE_TITLES = {
-  beginner: 'Highlights — the short version: your score, one focus, and recent sessions.',
+  beginner: 'Highlights — the short version: your score, what happened, and what to do next.',
   pro: 'Detailed Tape — everything: full stats, charts and every breakdown.',
 } as const
 

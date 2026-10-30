@@ -302,6 +302,12 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
       evidence: [],
     }
   }
+  // A broken rule needs no sample: a thin week that broke one is not a week
+  // with "nothing to learn". This used to say "nothing here needs a lesson"
+  // right above a coach's read naming the breach as the week's leak.
+  if (s.railsDays > 0 && s.railsKept < s.railsDays && (s.tradedDays <= 2 || s.trades < 8)) {
+    return railsBrokenFinding(s, 'Too few trades to read your setups yet, but a broken rule doesn’t need a sample.')
+  }
   if (s.tradedDays <= 2 || s.trades < 8) {
     return {
       state: 'none',
@@ -339,6 +345,18 @@ function weeklyFinding(carryover: Carryover | null, s: PeriodSummary, baseline: 
     headline: 'Nothing separated itself.',
     sub: `${s.trades} trades across ${s.tradedDays} sessions — nothing this week diverged from how you normally trade. ${railsPart}`,
     next: 'No change to force — keep taking your A setups and let the sample build.',
+    evidence: [],
+  }
+}
+
+/** A period where a rule broke and nothing else cleared: say so, plainly. */
+function railsBrokenFinding(s: PeriodSummary, why: string): RecapFinding {
+  const broken = s.railsDays - s.railsKept
+  return {
+    state: 'leak',
+    headline: `Rules broken on ${broken} of ${s.railsDays} graded day${s.railsDays === 1 ? '' : 's'}.`,
+    sub: `${s.trades} trade${s.trades === 1 ? '' : 's'} across ${s.tradedDays} session${s.tradedDays === 1 ? '' : 's'}. ${why} Open the red day in the sessions below to see which rule.`,
+    next: 'Before each entry, check it against your rules: size, daily loss limit, number of trades.',
     evidence: [],
   }
 }

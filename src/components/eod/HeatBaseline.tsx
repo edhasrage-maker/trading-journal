@@ -49,9 +49,11 @@ export default function HeatBaseline({
 
       {baseline && (
         <p className="text-[13px] text-gray-400 leading-relaxed max-w-[74ch] mt-2">
-          Your winners barely test the stop: inside half you win{' '}
-          <b className="font-semibold text-green-400">{baseline.insideWinPct}%</b> of the time, past half{' '}
-          <b className="font-semibold text-red-400">{baseline.pastWinPct}%</b>.
+          {baselineLead(baseline)} inside half you win{' '}
+          <b className={`font-semibold ${winCls(baseline.insideWinPct, baseline.pastWinPct)}`}>{baseline.insideWinPct}%</b>{' '}
+          of the time <span className="text-gray-500">({baseline.insideN} trades)</span>, past half{' '}
+          <b className={`font-semibold ${winCls(baseline.pastWinPct, baseline.insideWinPct)}`}>{baseline.pastWinPct}%</b>{' '}
+          <span className="text-gray-500">({baseline.pastN})</span>.
           <span className="text-gray-500">
             {' '}From your last {baseline.measuredN} trades with a stop set.
           </span>
@@ -61,8 +63,29 @@ export default function HeatBaseline({
   )
 }
 
-/** What the session did, in one sentence, before any history is mentioned. */
-function todaySentence(t: TodayHeat): string {
+/** Win rates closer than this read as "about the same" — no claim either way. */
+const SAME_PTS = 10
+
+/** The opening clause for the history line. It says which way the trader's
+ *  own split leans, and only when it actually leans that way: the line used to
+ *  say "your winners barely test the stop" unconditionally, even when the
+ *  past-half win rate was the higher one. */
+function baselineLead(b: Baseline): string {
+  const gap = b.insideWinPct - b.pastWinPct
+  if (gap >= SAME_PTS) return 'Your winners barely test the stop:'
+  if (gap <= -SAME_PTS) return 'Going past halfway hasn’t cost you so far:'
+  return 'Halfway to the stop makes little difference for you:'
+}
+
+/** Green for the higher of the two win rates, red for the lower, grey when they're about the same. */
+function winCls(self: number, other: number): string {
+  if (Math.abs(self - other) < SAME_PTS) return 'text-gray-200'
+  return self > other ? 'text-green-400' : 'text-red-400'
+}
+
+/** What the session did, in one sentence, before any history is mentioned.
+ *  Highlights' "What happened" uses it on its own, without the history line. */
+export function todaySentence(t: TodayHeat): string {
   if (t.measurable === 1) {
     if (t.stopped === 1) return 'Today’s trade ran to your stop.'
     return `Today’s trade went ${Math.round(t.singlePct ?? 0)}% of the way to your stop before it resolved.`
@@ -74,7 +97,10 @@ function todaySentence(t: TodayHeat): string {
   if (t.stopped > 0) parts.push(`${t.stopped} ran to the stop`)
 
   const trades = `${t.measurable} trade${t.measurable === 1 ? '' : 's'}`
-  if (parts.length === 1) return `Today: all ${trades} ${parts[0].replace(/^\d+ /, '')}.`
+  if (parts.length === 1) {
+    const all = t.measurable === 2 ? 'both trades' : `all ${trades}`
+    return `Today: ${all} ${parts[0].replace(/^\d+ /, '')}.`
+  }
   const last = parts.pop()!
   return `Today, of ${trades}: ${parts.join(', ')} and ${last}.`
 }

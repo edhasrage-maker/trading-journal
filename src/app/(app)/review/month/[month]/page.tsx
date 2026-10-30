@@ -169,6 +169,18 @@ function monthlyFinding(carryover: Carryover | null, s: PeriodSummary, isCurrent
       evidence: [],
     }
   }
+  // A broken rule is the month's read when nothing else cleared — never "not
+  // every month has a lesson" over a breach (it contradicted the coach's read).
+  if (s.railsDays > 0 && s.railsKept < s.railsDays) {
+    const broken = s.railsDays - s.railsKept
+    return {
+      state: 'leak',
+      headline: `Rules broken on ${broken} of ${s.railsDays} graded day${s.railsDays === 1 ? '' : 's'}.`,
+      sub: `${s.trades} trades across ${s.tradedDays} sessions. No setup or habit stood out from the rest of your book; the broken rule${broken === 1 ? ' is' : 's are'} the one thing to fix. Open the week it happened in to see which rule.`,
+      next: 'Before each entry, check it against your rules: size, daily loss limit, number of trades.',
+      evidence: [],
+    }
+  }
   const railsPart = s.railsDays > 0 ? ` Rails held on ${s.railsKept} of ${s.railsDays} graded days.` : ''
   return {
     state: 'none',

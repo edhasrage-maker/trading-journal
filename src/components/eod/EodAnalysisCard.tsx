@@ -6,6 +6,7 @@ import type { EodAiAnalysis, ProcessVerdict, ExecutionScore, RuleId, RuleStatus 
 import { useUiMode } from '@/lib/ui-mode'
 import AiDisclaimer from '@/components/AiDisclaimer'
 import { ptDateTime } from '@/lib/pt-time'
+import { plainRuleCodes } from '@/lib/plain-rule-codes'
 
 interface Props {
   analysis: EodAiAnalysis | null
@@ -103,6 +104,57 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
         ? 'text-yellow-400'
         : 'text-red-400'
 
+  // Highlights (docs/tapescore-recap-highlights-mockup-r1.html): the coach's
+  // read as two short columns — what went well, what cost you — with rule codes
+  // said in words. The headline already leads the page, the Tomorrow lines sit
+  // second on it (RecapTomorrow), and the summary paragraph and the pattern
+  // lines stay in Detailed. Ungraded, RecapTomorrow carries the Grade button,
+  // so this renders nothing.
+  if (mode === 'beginner') {
+    if (!analysis) return null
+    const worked = (analysis.what_worked ?? []).filter(t => t?.trim()).slice(0, 2).map(plainRuleCodes)
+    const cost = (analysis.mistakes ?? []).filter(t => t?.trim()).slice(0, 2).map(plainRuleCodes)
+    return (
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-semibold text-white text-sm" style={{ fontFamily: 'var(--font-display)' }}>The coach&rsquo;s read</h3>
+          <button
+            onClick={onAnalyze}
+            disabled={loading || disabled}
+            className={`flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed text-xs px-2.5 py-1 rounded-md border transition-colors ${
+              isStale ? 'border-amber-700/60 text-amber-300 hover:bg-amber-950/40' : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500'
+            }`}
+            title={isStale ? 'Trades changed after this read ran. Run it again for an up-to-date read.' : undefined}
+          >
+            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+            {loading ? 'Analyzing…' : isStale ? 'Trades changed: analyze again' : 'Analyze again'}
+          </button>
+        </div>
+        {(worked.length > 0 || cost.length > 0) && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {[
+              { title: 'Went well', items: worked, head: 'text-green-400', dot: 'bg-green-500' },
+              { title: 'Cost you', items: cost, head: 'text-red-400', dot: 'bg-red-500' },
+            ].filter(c => c.items.length > 0).map(c => (
+              <div key={c.title}>
+                <div className={`text-[11px] font-semibold uppercase tracking-wide mb-1.5 ${c.head}`}>{c.title}</div>
+                <ul className="space-y-1.5">
+                  {c.items.map((text, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-gray-300 leading-relaxed">
+                      <span className={`mt-[9px] w-1.5 h-1.5 rounded-full shrink-0 ${c.dot}`} aria-hidden="true" />
+                      <span>{text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+        <AiDisclaimer />
+      </div>
+    )
+  }
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -159,10 +211,9 @@ export default function EodAnalysisCard({ analysis, loading, onAnalyze, disabled
             )
           )}
 
-          {/* Plain summary line. In Pro it sits under the v1.3 verdict cards; in
-              Beginner it's the headline (shown regardless of era since the score
-              grids are hidden). */}
-          {(hasV13 || mode === 'beginner') && analysis.summary && (
+          {/* Plain summary line, under the v1.3 verdict cards. (Highlights
+              returns its own card above.) */}
+          {hasV13 && analysis.summary && (
             <p className="text-sm text-gray-300 leading-relaxed pb-3 border-b border-gray-800">{analysis.summary}</p>
           )}
 

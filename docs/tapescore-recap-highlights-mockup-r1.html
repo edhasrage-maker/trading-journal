@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recap Highlights r1</title>
+<style>
+  /* Recap in Highlights, r1 (2026-10-29). Demo data: Mon Oct 19 (49, -$844) and the week of Oct 19.
+     Same tokens as tapescore-highlights-mockup-r2.html. */
+  :root{
+    --bg:#F1F3F5; --card:#FFFFFF; --card2:#F7F8FA; --line:#E2E5E9; --hair:#ECEEF1;
+    --ink:#1D232B; --mut:#5F6670; --faint:#9298A1;
+    --acc:#2F6FA3; --acc-soft:#E6EFF7;
+    --pos:#0E6E67; --pos-soft:#E3F1EF;
+    --neg:#9A2233; --neg-soft:#F6E5E7;
+    --cau:#A8741A; --cau-soft:#F7EEDC;
+    --track:#E6E9ED; --mark:#C2410C;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0A0A0C; --card:#131519; --card2:#1B1E23; --line:#282C32; --hair:#1C2026;
+      --ink:#E8EAED; --mut:#969BA3; --faint:#5E636B;
+      --acc:#4F97CE; --acc-soft:#14222E;
+      --pos:#4FC58E; --pos-soft:#14261E;
+      --neg:#E0685F; --neg-soft:#2A1716;
+      --cau:#D6B24E; --cau-soft:#2A2414; --track:#22262C; --mark:#FB923C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0A0A0C; --card:#131519; --card2:#1B1E23; --line:#282C32; --hair:#1C2026;
+    --ink:#E8EAED; --mut:#969BA3; --faint:#5E636B;
+    --acc:#4F97CE; --acc-soft:#14222E;
+    --pos:#4FC58E; --pos-soft:#14261E;
+    --neg:#E0685F; --neg-soft:#2A1716;
+    --cau:#D6B24E; --cau-soft:#2A2414; --track:#22262C; --mark:#FB923C;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg)}
+  body{color:var(--ink);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .num{font-variant-numeric:tabular-nums}
+  .pos{color:var(--pos)} .neg{color:var(--neg)} .cau{color:var(--cau)}
+  b{font-weight:600}
+
+  .page{max-width:1180px;margin:0 auto;padding:32px 16px 80px}
+  .kick{font:600 11px/1 ui-monospace,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+  h1{font-size:clamp(24px,3.4vw,32px);letter-spacing:-.02em;line-height:1.15;margin:10px 0}
+  h2.sec{font-size:20px;letter-spacing:-.01em;margin:44px 0 6px}
+  .lede{max-width:80ch;color:var(--mut);font-size:15px}
+  .lede strong{color:var(--ink)}
+  .theme{margin-top:14px;display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:12px}
+  .theme button{background:none;border:0;color:var(--mut);padding:6px 12px;cursor:pointer;font:inherit}
+  .theme button.on{background:var(--card);color:var(--ink);font-weight:600}
+
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:22px;align-items:start;margin-top:22px}
+  @media (max-width:1000px){.layout{grid-template-columns:1fr}}
+
+  .frame{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--bg);box-shadow:0 20px 50px -30px rgba(0,0,0,.35)}
+  .bar{display:flex;align-items:center;gap:6px;padding:9px 12px;background:var(--card2);border-bottom:1px solid var(--line)}
+  .bar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+  .bar span{margin-left:10px;font:12px ui-monospace,Consolas,monospace;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mast{display:flex;align-items:center;gap:20px;padding:12px 18px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{font-weight:700;font-size:15px}
+  .nav{display:flex;gap:16px;font-size:13px;color:var(--mut);flex:1;flex-wrap:wrap}
+  .nav .on{color:var(--ink);font-weight:600}
+  .mode{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;font-size:12px}
+  .mode span{padding:5px 10px;color:var(--mut)} .mode .on{background:var(--acc-soft);color:var(--acc);font-weight:600}
+  .tabs{display:flex;gap:4px;padding:10px 18px 0;background:var(--card);border-bottom:1px solid var(--line);font-size:13px}
+  .tabs span{padding:6px 12px;color:var(--mut);border-bottom:2px solid transparent}
+  .tabs .on{color:var(--ink);font-weight:600;border-color:var(--acc)}
+  .app{padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+  @media (max-width:640px){.app{padding:14px 12px}}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px 20px;position:relative}
+  .card h3{font-size:14px;font-weight:600;margin-bottom:10px;display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .card h3 small{font-weight:400;font-size:12px;color:var(--faint)}
+
+  /* numbered markers tying the frame to the change list */
+  .m{position:absolute;top:-9px;left:-9px;width:22px;height:22px;border-radius:50%;background:var(--mark);color:#fff;font:700 11px/22px Inter,system-ui,sans-serif;text-align:center;z-index:2;box-shadow:0 0 0 3px var(--bg)}
+
+  .titlerow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;position:relative}
+  .titlerow h2{font-size:20px;letter-spacing:-.01em;margin-right:6px}
+  .pill{font-size:12px;border:1px solid var(--line);border-radius:6px;padding:4px 10px;color:var(--mut);background:var(--card)}
+  .coinp{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--cau)}
+
+  /* hero */
+  .hero{display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center}
+  @media (max-width:640px){.hero{grid-template-columns:1fr}}
+  .ring{position:relative;width:104px;height:104px}
+  .ring .v{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ring .s{font-size:32px;font-weight:600;line-height:1;color:var(--neg)}
+  .ring .w{font-size:11px;color:var(--neg);margin-top:4px}
+  .headline{font-size:17px;font-weight:600;line-height:1.35}
+  .money{display:flex;align-items:baseline;gap:12px;margin-top:6px}
+  .money .p{font-size:28px;font-weight:700}
+  .money .r{font-size:18px;font-weight:700}
+  .sub{font-size:13px;color:var(--mut)}
+  .parts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+  @media (max-width:640px){.parts{grid-template-columns:1fr}}
+  .part{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--card2)}
+  .part .k{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--mut)}
+  .part .k b{font-size:18px;color:var(--ink)}
+  .part .t{font-size:12px;color:var(--mut);margin-top:3px;line-height:1.4}
+  .part.low{border-color:var(--neg);background:var(--neg-soft)}
+  .part.low .k span::after{content:" · lowest";color:var(--neg);font-weight:600}
+  .capline{margin-top:12px;font-size:13px;color:var(--neg);display:flex;gap:8px;align-items:baseline}
+  .capline::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--neg);transform:translateY(-1px)}
+
+  /* tomorrow */
+  .tom{border-left:3px solid var(--acc)}
+  .tom ol{list-style:none;display:grid;gap:8px;counter-reset:t}
+  .tom li{counter-increment:t;display:grid;grid-template-columns:24px 1fr;gap:8px;font-size:15px;line-height:1.45}
+  .tom li::before{content:counter(t);width:22px;height:22px;border-radius:50%;background:var(--acc-soft);color:var(--acc);font:700 12px/22px Inter,system-ui,sans-serif;text-align:center}
+  .tom .foot{margin-top:10px;font-size:12px;color:var(--faint)}
+
+  /* what happened */
+  .wh ul{list-style:none;display:grid;gap:9px}
+  .wh li{display:grid;grid-template-columns:20px 1fr;gap:8px;font-size:14px;line-height:1.45}
+  .dot{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-top:1px}
+  .dot.bad{background:var(--neg-soft);color:var(--neg)} .dot.ok{background:var(--pos-soft);color:var(--pos)} .dot.n{background:var(--track);color:var(--mut)}
+  .tref{font-size:11px;font-weight:700;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--mut);white-space:nowrap}
+
+  /* chart placeholder */
+  .chart{height:200px;border-radius:6px;background:linear-gradient(180deg,var(--card2),var(--card));border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:13px;position:relative}
+  .chart svg{position:absolute;inset:14px;width:calc(100% - 28px);height:calc(100% - 28px)}
+
+  /* trades */
+  .tr{display:grid;grid-template-columns:26px 54px 70px 1fr auto auto;gap:10px;align-items:center;padding:11px 0 8px;border-top:1px solid var(--hair);font-size:13px}
+  h3 + .tr{border-top:0}
+  @media (max-width:640px){.tr{grid-template-columns:26px 50px 1fr auto auto}.tr .setup{display:none}.tnote{padding-left:0}}
+  .tn{width:22px;height:22px;border-radius:50%;background:var(--track);color:var(--mut);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .dir{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;text-align:center}
+  .dir.l{background:var(--pos-soft);color:var(--pos)} .dir.s{background:var(--neg-soft);color:var(--neg)}
+  .setup{color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sc{font-size:12px;border:1px solid var(--line);border-radius:5px;padding:2px 8px;white-space:nowrap}
+  .sc b{font-size:13px;margin-right:4px}
+  .sc.g{border-color:color-mix(in srgb,var(--pos) 45%,transparent);color:var(--pos);background:var(--pos-soft)}
+  .sc.r{border-color:color-mix(in srgb,var(--neg) 45%,transparent);color:var(--neg);background:var(--neg-soft)}
+  .tpl{font-weight:600;text-align:right;min-width:58px}
+  .tnote{padding:0 0 10px 36px;margin-top:-4px;font-size:12.5px;color:var(--mut);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .tag{font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;border:1px solid}
+  .tag.r{color:var(--neg);background:var(--neg-soft);border-color:color-mix(in srgb,var(--neg) 40%,transparent)}
+  .tag.b{color:var(--acc);background:var(--acc-soft);border-color:color-mix(in srgb,var(--acc) 40%,transparent)}
+
+  /* coach */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:640px){.cols{grid-template-columns:1fr}}
+  .cols h4{font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+  .cols ul{list-style:none;display:grid;gap:7px;font-size:13.5px;line-height:1.45}
+  .cols li{padding-left:14px;position:relative}
+  .cols li::before{content:"";position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:50%;background:var(--c)}
+  .regen{font-size:12px;border:1px solid var(--line);border-radius:6px;padding:3px 10px;color:var(--mut);background:var(--card2);font-weight:400}
+  .disc{margin-top:12px;font-size:11px;color:var(--faint)}
+
+  .notes textarea{width:100%;min-height:70px;border:1px solid var(--line);border-radius:6px;background:var(--card2);color:var(--ink);font:14px/1.5 Inter,system-ui,sans-serif;padding:10px 12px;resize:vertical}
+  .badge{display:flex;align-items:center;gap:12px;font-size:13px}
+  .coin{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#F5D77A,#B8862B);display:flex;align-items:center;justify-content:center;color:#3B2A08;font-weight:800;font-size:13px;flex:none}
+  .seam{border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;font-size:13px;color:var(--mut);background:var(--card)}
+
+  /* side notes */
+  .side{display:grid;gap:14px;position:sticky;top:14px}
+  @media (max-width:1000px){.side{position:static}}
+  .note{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 18px;font-size:13.5px}
+  .note h4{font-size:13px;margin-bottom:8px}
+  .note ol{list-style:none;display:grid;gap:9px;counter-reset:n}
+  .note ol li{counter-increment:n;position:relative;padding-left:30px;line-height:1.45}
+  .note ol li::before{content:counter(n);position:absolute;left:0;top:1px;width:20px;height:20px;border-radius:50%;background:var(--mark);color:#fff;font:700 11px/20px Inter,system-ui,sans-serif;text-align:center}
+  .note ol.ab li::before{content:counter(n,upper-alpha)}
+  .note ul{list-style:none;display:grid;gap:6px;line-height:1.45}
+  .note ul li{padding-left:14px;position:relative;color:var(--mut)}
+  .note ul li::before{content:"→";position:absolute;left:0;color:var(--faint)}
+  .note ul li b{color:var(--ink)}
+  .note.bug{border-color:color-mix(in srgb,var(--neg) 40%,var(--line))}
+  .note.bug h4{color:var(--neg)}
+
+  /* week frame */
+  .wkstats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+  @media (max-width:640px){.wkstats{grid-template-columns:1fr 1fr}}
+  .st{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--card2)}
+  .st .l{font-size:12px;color:var(--mut)} .st .v{font-size:20px;font-weight:600;margin-top:2px} .st .x{font-size:11px;color:var(--faint)}
+  .srow{display:grid;grid-template-columns:96px 118px 1fr 84px;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--hair);font-size:13px}
+  .srow.h{border-top:0;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);padding-top:0}
+  @media (max-width:640px){.srow{grid-template-columns:80px 1fr 74px}.srow .story{grid-column:1/-1;grid-row:2}.srow.h{display:none}}
+  .spill{display:inline-flex;align-items:baseline;gap:5px;font-size:12px;border:1px solid;border-radius:5px;padding:2px 7px;white-space:nowrap}
+  .spill b{font-size:14px}
+  .spill.g{color:var(--pos);background:var(--pos-soft);border-color:color-mix(in srgb,var(--pos) 40%,transparent)}
+  .spill.r{color:var(--neg);background:var(--neg-soft);border-color:color-mix(in srgb,var(--neg) 40%,transparent)}
+  .story{color:var(--ink)}
+  .off{color:var(--faint)}
+
+  .q{margin-top:40px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px 22px}
+  .q h3{font-size:16px;margin-bottom:10px}
+  .q ol{padding-left:20px;display:grid;gap:8px;font-size:14px;color:var(--mut)}
+  .q ol b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="kick">TapeScore · Recap in Highlights · r1 · 2026-10-29</div>
+  <h1>The day recap in Highlights: the score explained, one thing for tomorrow, then what happened.</h1>
+  <p class="lede">Today the Highlights Recap is the Detailed Recap with Trade management taken out. It keeps the jargon (<b>P2 and P3 failed</b>, <b>≥1×ATR</b>, <b>evaluable trades</b>), a trade Score of <b>100</b> with no label on two losing trades, a heat line that disagrees with its own numbers, and the recording and P&amp;L-override tools. <strong>This r1 reorders the page around three questions a new trader asks: how did I do, what do I change tomorrow, and what happened.</strong> Demo data: Mon Oct 19, scored 49, −$844.</p>
+  <div class="theme" role="group" aria-label="Theme">
+    <button type="button" data-t="">Auto</button><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button>
+  </div>
+
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app/review/today/2026-10-19 · Highlights</span></div>
+      <div class="mast">
+        <span class="brand">TapeScore</span>
+        <span class="nav"><span>Dashboard</span><span>Prep</span><span>Log</span><span class="on">Recap</span><span>Edge Analysis</span></span>
+        <span class="mode"><span class="on">Highlights</span><span>Detailed Tape</span></span>
+      </div>
+      <div class="tabs"><span class="on">Mon Oct 19</span><span>Week</span><span>Month</span></div>
+      <div class="app">
+
+        <div class="titlerow">
+          <span class="m" style="top:-4px;left:-14px">1</span>
+          <h2>Recap · Mon, Oct 19</h2>
+          <span class="pill num">10/19/2026 ▾</span>
+          <span class="pill">Share</span>
+          <span class="pill">Import trade log</span>
+        </div>
+
+        <!-- HERO -->
+        <div class="card">
+          <span class="m">2</span>
+          <div class="hero">
+            <div class="ring">
+              <svg viewBox="0 0 104 104" width="104" height="104" aria-hidden="true">
+                <circle cx="52" cy="52" r="44" fill="none" stroke="var(--track)" stroke-width="9"/>
+                <circle cx="52" cy="52" r="44" fill="none" stroke="var(--neg)" stroke-width="9" stroke-linecap="round"
+                  stroke-dasharray="135.5 276.5" transform="rotate(-90 52 52)"/>
+              </svg>
+              <div class="v"><span class="s num">49</span><span class="w">Broke a rule</span></div>
+            </div>
+            <div>
+              <p class="headline">Sizing up after losses turned a manageable red day destructive.</p>
+              <div class="money"><span class="p neg num">−$844</span><span class="r neg num">−3.0R</span></div>
+              <p class="sub num">3 trades · 0% win rate</p>
+            </div>
+          </div>
+          <div class="parts">
+            <div class="part"><div class="k"><span>Risk</span><b class="num">73</b></div><div class="t">Kept 3 of your 5 rules. Stops a sensible size on 2 of 3 trades.</div></div>
+            <div class="part low"><div class="k"><span>Entry</span><b class="num">32</b></div><div class="t">Checklist 33, plan 29: most entries didn't match your checklist or your plan.</div></div>
+            <div class="part"><div class="k"><span>Exit</span><b class="num">44</b></div><div class="t">You kept none of what went your way. Every stop held.</div></div>
+          </div>
+          <p class="capline">Breaking more than one rule caps the day at 49, so it can't show green or amber.</p>
+        </div>
+
+        <!-- TOMORROW -->
+        <div class="card tom">
+          <span class="m">3</span>
+          <h3>For tomorrow <small>from the coach's read</small></h3>
+          <ol>
+            <li>After any loss, stay at 5 MNQ for the rest of the day.</li>
+            <li>If the same idea loses twice, it's done for the day. Write it down and leave that level alone.</li>
+          </ol>
+          <p class="foot">Proposed: also show these on tomorrow's Prep (question 3).</p>
+        </div>
+
+        <!-- WHAT HAPPENED -->
+        <div class="card wh">
+          <span class="m">4</span>
+          <h3>What happened <small>from your fills and what price did</small></h3>
+          <ul>
+            <li><span class="dot bad">!</span><span>You sized up right after a loss, twice <span class="tref">trades 2, 3</span>. That broke two of your rules: no size-up after a loss, and the size-up gate.</span></li>
+            <li><span class="dot bad">!</span><span>Trade 3 was up <b class="pos num">+$1,020</b> at its best and closed at <b class="neg num">−$307</b> <span class="tref">trade 3</span>.</span></li>
+            <li><span class="dot ok">✓</span><span>All 3 trades ran to the stop, and every stop held. Nothing was moved or held past it.</span></li>
+          </ul>
+        </div>
+
+        <!-- CHART -->
+        <div class="card">
+          <span class="m">5</span>
+          <div class="chart">
+            <svg viewBox="0 0 600 170" preserveAspectRatio="none" aria-hidden="true">
+              <polyline fill="none" stroke="var(--faint)" stroke-width="1.5" points="0,60 40,55 80,70 120,62 160,90 200,84 240,110 280,100 320,120 360,112 400,135 440,128 480,140 520,132 560,150 600,144"/>
+              <circle cx="150" cy="86" r="5" fill="var(--pos)"/><circle cx="330" cy="118" r="5" fill="var(--neg)"/><circle cx="470" cy="137" r="5" fill="var(--pos)"/>
+            </svg>
+            <span style="position:relative;background:var(--card);padding:2px 8px;border-radius:4px">Live chart with your three trades. Unchanged; the Screenshot toggle moves to Detailed.</span>
+          </div>
+        </div>
+
+        <!-- TRADES -->
+        <div class="card">
+          <span class="m">6</span>
+          <h3>Trades (3) <small>tap a trade to see its score</small></h3>
+          <div class="tr">
+            <span class="tn">1</span><span class="dir l">LONG</span><span class="num">7:21 AM</span><span class="setup">Trend Pullback</span>
+            <span class="sc g"><b class="num">100</b>Excellent</span><span class="tpl neg num">−$224</span>
+          </div>
+          <div class="tnote"><span class="tag b">Good loss</span>Early on the trend pullback; the trigger hadn't fully printed. Stop did its job.</div>
+          <div class="tr">
+            <span class="tn">2</span><span class="dir s">SHORT</span><span class="num">9:05 AM</span><span class="setup">Break &amp; Retest</span>
+            <span class="sc g"><b class="num">100</b>Excellent</span><span class="tpl neg num">−$313</span>
+          </div>
+          <div class="tnote"><span class="tag r">Sized up after a loss</span>Sized up chasing it back, and couldn't give up on the idea.</div>
+          <div class="tr">
+            <span class="tn">3</span><span class="dir l">LONG</span><span class="num">10:49 AM</span><span class="setup">Range Reversal</span>
+            <span class="sc r"><b class="num">44</b>Needs work</span><span class="tpl neg num">−$307</span>
+          </div>
+          <div class="tnote"><span class="tag r">Sized up after a loss</span><span class="tag r">Gave back +$1,020</span>Sized up chasing it back, and couldn't give up on the idea.</div>
+        </div>
+
+        <!-- COACH -->
+        <div class="card">
+          <span class="m">7</span>
+          <h3>The coach's read <span class="regen">Analyze again</span></h3>
+          <div class="cols">
+            <div style="--c:var(--pos)">
+              <h4 class="pos">Went well</h4>
+              <ul>
+                <li>The first trade was normal size, at a level you marked, with a stop set.</li>
+                <li>You wrote down the rule breaks the same day. That's what makes tomorrow's reset possible.</li>
+              </ul>
+            </div>
+            <div style="--c:var(--neg)">
+              <h4 class="neg">Cost you</h4>
+              <ul>
+                <li>Trades 2 and 3 went to 10 MNQ right after losses. Size should have gone down there, not up.</li>
+                <li>You took the same reversal idea again and again without waiting for a new setup.</li>
+              </ul>
+            </div>
+          </div>
+          <p class="disc">AI-generated. It can be wrong and isn't financial advice.</p>
+        </div>
+
+        <!-- NOTES -->
+        <div class="card notes">
+          <span class="m">8</span>
+          <h3>Your notes <small>saves as you type</small></h3>
+          <textarea aria-label="Day notes">Reversal day that got away — sized up chasing it back after losses. Rule break logged, reset tomorrow.</textarea>
+        </div>
+
+        <div class="card">
+          <span class="m">9</span>
+          <div class="badge"><span class="coin">CD</span><span><b>Badges earned today.</b> <span class="sub">Shows only on a day you earn one (Oct 19 earned none; Oct 23 shows Career Day).</span></span></div>
+        </div>
+
+        <div class="seam" style="position:relative"><span class="m">10</span>See the full breakdown in Detailed Tape →</div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="note">
+        <h4>What changes, top to bottom</h4>
+        <ol>
+          <li><b>"EOD Recap" becomes "Recap · Mon, Oct 19".</b> "EOD" is our word, not theirs. The date picker, Share and Import stay.</li>
+          <li><b>The score explains itself.</b> Risk, Entry and Exit are on the card with a plain line each, and the lowest one is marked. Today you only see them by clicking the ring, which nobody finds. The cap gets a one-line reason. The word under the score matches the dashboard (Excellent / Strong / Fair / Needs work / Broke a rule).</li>
+          <li><b>"For tomorrow" moves up to second place.</b> It's the coach's Tomorrow lines, already sizes, counts and levels. Today they're the last thing on the page. If an ungraded day shows the Grade button here, a new user's first step is near the top.</li>
+          <li><b>"What happened" replaces Session behavior and the heat line.</b> Each point is one sentence with the trade number. "Ran ≥1×ATR… evaluable… handed back $1,327 from peak" becomes "Trade 3 was up +$1,020 and closed at −$307."</li>
+          <li><b>The chart is unchanged.</b> The Live/Screenshot toggle goes to Detailed.</li>
+          <li><b>Trades get numbers, a word with the score, and day-level flags.</b> A losing trade at 100 says "Good loss". Trades 2 and 3 score 100 or 44 and still carry "Sized up after a loss", because the trade Score doesn't see sizing. Without that tag, "100 / Sized up chasing it back" reads as a contradiction.</li>
+          <li><b>The coach's read becomes two columns, Went well and Cost you,</b> two lines each. Rule codes like P1–P5 become your rule names. The summary paragraph repeats the headline and drops out, and the • pattern lines go to Detailed. This is display only; no prompt change. <i>The wording in this mockup is a bit plainer than the coach's. The build shows the coach's own lines with only the rule codes swapped. Plainer wording than that would need a prompt change, and those are paused.</i></li>
+          <li><b>"EOD Recap" notes become "Your notes":</b> just the box. Computed P&amp;L and P&amp;L override go to Detailed.</li>
+          <li><b>Today's badges stay</b>, smaller.</li>
+          <li><b>The same "full breakdown" seam as the dashboard.</b></li>
+        </ol>
+      </div>
+      <div class="note">
+        <h4>Moves to Detailed Tape (nothing is deleted)</h4>
+        <ul>
+          <li><b>Recording recap (BETA)</b> and its paragraph of instructions</li>
+          <li><b>Computed P&amp;L, P&amp;L override</b></li>
+          <li><b>The lifetime heat split</b> ("inside half you win 78%…")</li>
+          <li><b>Session analysis summary paragraph + pattern lines</b></li>
+          <li><b>Live / Screenshot toggle</b>, calibration</li>
+          <li>Trade management (already Detailed-only)</li>
+        </ul>
+      </div>
+      <div class="note bug">
+        <h4>Found on the way (bugs, in both modes)</h4>
+        <ul>
+          <li><b>The heat line contradicts its numbers.</b> It always says "Your winners barely test the stop", even when the past-half win rate is higher. On the demo it's 78% inside vs <b>100%</b> past half. It also says "all 2 trades".</li>
+          <li><b>The Week recap disagrees with itself.</b> "No clear read: nothing here needs a lesson" sits above a coach's read that calls post-loss sizing "the week's sharpest leak".</li>
+          <li><b>"Gave back a winner: trade 3"</b> can't be matched to anything, because the trade list has no numbers. Fixed by ⑥.</li>
+          <li>The dashboard's Highlights button tooltip still says "your score, one focus, and recent sessions" (out of date since r2).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- WEEK -->
+  <h2 class="sec">The Week (and Month) recap in Highlights</h2>
+  <p class="lede">Today the Week and Month recaps look the same in both modes: 8 stat boxes, a "No clear read" card, the sessions table with Read / Kept / Rules columns, Game film, the week-before comparison, the coach's read with four sections, and on Month a 9-row quarter table. <strong>Highlights keeps the same order as the day:</strong> the score, the focus for next week, the sessions as rows that say what happened (the same rows as the dashboard), four numbers, then the coach's read.</p>
+
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app/review/week/2026-10-19 · Highlights</span></div>
+      <div class="tabs"><span>Mon Oct 19</span><span class="on">Week</span><span>Month</span></div>
+      <div class="app">
+        <div class="titlerow"><h2>Week of Oct 19 – 23</h2><span class="pill">‹ Oct 12 – 16</span><span class="pill">Oct 26 – 30 ›</span></div>
+
+        <div class="card">
+          <span class="m">A</span>
+          <div class="hero">
+            <div class="ring">
+              <svg viewBox="0 0 104 104" width="104" height="104" aria-hidden="true">
+                <circle cx="52" cy="52" r="44" fill="none" stroke="var(--track)" stroke-width="9"/>
+                <circle cx="52" cy="52" r="44" fill="none" stroke="var(--cau)" stroke-width="9" stroke-linecap="round"
+                  stroke-dasharray="190.8 276.5" transform="rotate(-90 52 52)"/>
+              </svg>
+              <div class="v"><span class="s num" style="color:var(--cau)">69</span><span class="w" style="color:var(--cau)">Fair</span></div>
+            </div>
+            <div>
+              <p class="headline">Red week, but discipline mostly held. The leaks were timing, not rules.</p>
+              <div class="money"><span class="p neg num">−$416</span><span class="r neg num">−0.19R</span></div>
+              <p class="sub num">7 trades over 3 sessions · down $1,261 on the week before</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card tom">
+          <span class="m">B</span>
+          <h3>For next week <small>from the coach's read</small></h3>
+          <ol>
+            <li>After any loss, stay at 5 MNQ. The size-up never applies after a loss.</li>
+            <li>Before you enter, name two of your three order-flow signals. If you can't, stay at normal size.</li>
+          </ol>
+        </div>
+
+        <div class="wkstats" style="position:relative">
+          <span class="m">C</span>
+          <div class="st"><div class="l">Win rate</div><div class="v num">43%</div><div class="x">3 of 7 trades</div></div>
+          <div class="st"><div class="l">Green days</div><div class="v num">2 of 3</div><div class="x">sessions</div></div>
+          <div class="st"><div class="l">Rules kept</div><div class="v num">2 of 3</div><div class="x">days</div></div>
+          <div class="st"><div class="l">Per trade</div><div class="v neg num">−$59</div><div class="x">average</div></div>
+        </div>
+
+        <div class="card">
+          <span class="m">D</span>
+          <h3>The sessions <small>tap one for its recap</small></h3>
+          <div class="srow h"><span>Day</span><span>TapeScore</span><span>What happened</span><span style="text-align:right">P&amp;L</span></div>
+          <div class="srow"><span><b>Mon, Oct 19</b><br><span class="sub">3 trades</span></span><span><span class="spill r"><b class="num">49</b>Broke a rule</span></span><span class="story">Sizing up after losses turned a manageable red day destructive.</span><span class="neg num" style="text-align:right;font-weight:600">−$844</span></div>
+          <div class="srow"><span><b>Tue, Oct 20</b><br><span class="sub">2 trades</span></span><span><span class="spill g"><b class="num">76</b>Strong</span></span><span class="story">Disciplined, level-anchored trading. The wins were earned, not lucky.</span><span class="pos num" style="text-align:right;font-weight:600">+$27</span></div>
+          <div class="srow"><span><b>Fri, Oct 23</b><br><span class="sub">2 trades</span></span><span><span class="spill g"><b class="num">83</b>Excellent</span></span><span class="story">Disciplined, level-anchored trading. The wins were earned, not lucky.</span><span class="pos num" style="text-align:right;font-weight:600">+$401</span></div>
+          <p class="sub off" style="margin-top:8px">Wed and Thu: no trades (folded into one line, not two empty rows).</p>
+        </div>
+
+        <div class="card">
+          <span class="m">E</span>
+          <h3>The coach's read <span class="regen">Re-generate</span></h3>
+          <div class="cols">
+            <div style="--c:var(--pos)"><h4 class="pos">Went well</h4><ul><li>Entries came from levels you marked in prep, not from the middle of the range.</li><li>Normal 5 MNQ size on every trade except the flagged ones.</li></ul></div>
+            <div style="--c:var(--neg)"><h4 class="neg">Cost you</h4><ul><li>Monday: size went up to 10 MNQ after losses instead of down. That was the week's biggest cost.</li><li>A few entries went in before the trigger had printed.</li></ul></div>
+          </div>
+        </div>
+
+        <div class="card notes"><span class="m">F</span><h3>Your notes</h3><textarea aria-label="Week notes" placeholder="What do you want to remember about this week?"></textarea></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>Week / Month, Highlights</h4>
+        <ol class="ab">
+          <li><b>Hero: the score, the coach's headline, P&amp;L, and the change vs last week</b> in one line. Risk/Entry/Exit stay on the ring click; three parts on a week mean less than on a day.</li>
+          <li><b>"For next week" is the coach's Focus lines</b>, moved up from the bottom. If there's no coach read yet, it shows the Generate button here.</li>
+          <li><b>4 numbers instead of 8:</b> win rate, green days, rules kept, per trade. Avg R, Went your way and Kept go to Detailed.</li>
+          <li><b>The sessions use the same rows as the dashboard</b> (score word + recap headline), not Read / Kept / Rules. Days with no trades fold into one line.</li>
+          <li><b>The coach's read is two columns.</b> Themes go to Detailed.</li>
+          <li><b>Notes stay.</b></li>
+        </ol>
+      </div>
+      <div class="note">
+        <h4>Hidden in Highlights</h4>
+        <ul>
+          <li><b>"No clear read" card</b>: it says there's nothing to learn, which is noise for a beginner (and it contradicts the coach's read, see bugs)</li>
+          <li><b>Game film</b> when the week has no screenshots</li>
+          <li><b>Against the week before</b>: folded into the hero line</li>
+          <li><b>Month: the 9-row quarter table</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="q">
+    <h3>Your call</h3>
+    <ol>
+      <li><b>Risk / Entry / Exit on the day card</b>, with the lowest marked? Or keep it behind the ring click like today?</li>
+      <li><b>"Good loss"</b> on a losing trade that scored 70+: yes, or a different word?</li>
+      <li><b>"For tomorrow" on tomorrow's Prep</b>: show the two lines at the top of Prep's Highlights? (Not built today. It would sit next to Watch / Keep.)</li>
+      <li><b>Fix the two bugs now</b> (heat-line wording, Week "No clear read" vs the coach's read), before the Highlights build?</li>
+    </ol>
+  </div>
+</div>
+<script>
+  (function(){
+    var root=document.documentElement, btns=document.querySelectorAll('.theme button');
+    function set(t){ if(t){root.setAttribute('data-theme',t)} else {root.removeAttribute('data-theme')}
+      btns.forEach(function(b){b.classList.toggle('on',b.getAttribute('data-t')===t)}) }
+    btns.forEach(function(b){b.addEventListener('click',function(){set(b.getAttribute('data-t'))})});
+    set('');
+  })();
+</script>
+</body>
+</html>

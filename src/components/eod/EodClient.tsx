@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import Link from 'next/link'
-import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2 } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2, ChevronRight } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from './EodNotesForm'
 import ChartScreenshotPanel from './ChartScreenshotPanel'
@@ -28,6 +28,8 @@ import TradeManagementCard from '@/components/TradeManagementCard'
 import HeatBaseline from './HeatBaseline'
 import { summarizeTodayHeat, type HeatBaseline as HeatBaselineData } from '@/lib/heat-baseline'
 import BehavioralProxiesPanel from './BehavioralProxiesPanel'
+import RecapWhatHappened from './RecapWhatHappened'
+import RecapTomorrow from './RecapTomorrow'
 import AchievementBadges from '@/components/AchievementBadges'
 import AchievementShowcase from '@/components/eod/AchievementShowcase'
 import { dayAchievements, type AchievementId } from '@/lib/achievements'
@@ -248,7 +250,10 @@ export default function EodClient({
 
   // Highlights hides the MFE/MAE-capture metrics in the header (kept for
   // Detailed Tape); plain stats — Trades, Win Rate, W/L, PnL — always show.
-  const { mode } = useUiMode()
+  const { mode, setMode } = useUiMode()
+  // Highlights reorders the Recap around three questions — how did I do, what
+  // do I change tomorrow, what happened (docs/tapescore-recap-highlights-mockup-r1.html).
+  const simpleView = mode === 'beginner'
   // Deep-link: /eod/<date>?trade=<id> (e.g. double-clicking a chart arrow from
   // another page) scrolls to + highlights that trade's row once it's rendered.
   const searchParams = useSearchParams()
@@ -890,7 +895,7 @@ export default function EodClient({
               flex-wrap so a day with several badges drops them to their own row
               instead of squeezing the heading. */}
           <div className="flex items-center gap-2.5 flex-wrap">
-            <h1 className="text-xl font-bold text-white">EOD Recap</h1>
+            <h1 className="text-xl font-bold text-white">{simpleView ? 'Recap' : 'EOD Recap'}</h1>
             <AchievementBadges items={achievements} />
           </div>
           {/* Ended by choice (Pt 13 step 3) — a positive discipline note when the
@@ -1035,6 +1040,7 @@ export default function EodClient({
         pnl={computedPnl}
         dailyLossLimit={dailyLossLimit}
         live={sessionStillLive}
+        partsInline={simpleView}
         aside={mode === 'pro' && trades.length > 0
           ? <TradeManagementCard totals={mgmt} className="min-w-0" perTrade={{ day: dayPerTrade, usual: usualPerTrade }} />
           : undefined}
@@ -1044,7 +1050,24 @@ export default function EodClient({
           item 23) — self-suppressing, so an empty day shows nothing. The heat
           read that used to sit beside it moved down to the trade table, where
           the MAE column it interprets actually lives. */}
-      <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} />
+      {simpleView ? (
+        <>
+          {/* Second on the page: the coach's Tomorrow lines, or — before the
+              day is graded — the Grade button. The tour's "grade" step points here. */}
+          <div data-tour="eod-analyze">
+            <RecapTomorrow
+              analysis={scoredAnalysis}
+              loading={analyzing}
+              onAnalyze={runAnalysis}
+              disabled={trades.length === 0 && !day?.eod_notes}
+              hasTrades={trades.length > 0}
+            />
+          </div>
+          <RecapWhatHappened trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} today={todayHeat} />
+        </>
+      ) : (
+        <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} />
+      )}
 
       {/* Chart area — toggle between legacy screenshot+calibration and the
           new live-bars rendering. Screenshot path will be removed in Phase 5
@@ -1053,7 +1076,8 @@ export default function EodClient({
           Shown on mobile too — LiveChart now self-measures its width and uses
           a shorter mobile height, so the chart + toggle are usable on a phone. */}
       <div className="space-y-6">
-      <div className="flex justify-end -mb-2">
+      {/* Highlights keeps the live chart only; Screenshot + calibration are Detailed. */}
+      {!simpleView && <div className="flex justify-end -mb-2">
         <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
           <button
             type="button"
@@ -1074,9 +1098,9 @@ export default function EodClient({
             <ImageIcon className="w-3.5 h-3.5" /> Screenshot
           </button>
         </div>
-      </div>
+      </div>}
 
-      {chartView === 'live' ? (
+      {chartView === 'live' || simpleView ? (
         <LiveChart
           ref={liveChartRef}
           date={date}
@@ -1152,7 +1176,7 @@ export default function EodClient({
         )}
       </ChartScreenshotPanel>
       )}
-      {chartView === 'screenshot' && day?.last_sc_import_at && (
+      {chartView === 'screenshot' && !simpleView && day?.last_sc_import_at && (
         <p className="text-xs text-gray-500 -mt-3 ml-1">
           Last import: {format(new Date(day.last_sc_import_at), 'MMM d, HH:mm')}
         </p>
@@ -1197,7 +1221,8 @@ export default function EodClient({
       {/* The line that makes the table's MAE column mean something: the
           trader's own inside-half vs past-half split. Sits directly above the
           table it interprets — the number itself is already in the MAE cell. */}
-      <HeatBaseline baseline={heatBaseline} today={todayHeat} />
+      {/* Highlights says today's half of this in "What happened"; the lifetime split is Detailed. */}
+      {!simpleView && <HeatBaseline baseline={heatBaseline} today={todayHeat} />}
 
       <TradeList
         trades={trades}
@@ -1223,6 +1248,8 @@ export default function EodClient({
         runnerRules={runnerRules}
         includeFlow={includeFlowScore}
         atrStopTarget={atrStopTarget}
+        pressingIds={pressingIds}
+        giveBackIds={roundTripStats?.ids ?? null}
       />
 
       {/* Right-click menu on a trade row → open the full log, or highlight the
@@ -1261,13 +1288,13 @@ export default function EodClient({
       })()}
 
       {/* OBS frame commentary reads local recordings via ffmpeg — local only. */}
-      {LOCAL_FEATURES_ENABLED && (
+      {LOCAL_FEATURES_ENABLED && !simpleView && (
         <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
       )}
 
       {/* Cloud build: no ffmpeg/filesystem, so recap runs in the browser —
           the user's recording is decoded client-side and never uploaded. */}
-      {!LOCAL_FEATURES_ENABLED && (
+      {!LOCAL_FEATURES_ENABLED && !simpleView && (
         <BrowserRecap trades={trades} date={date} onTradesChanged={refreshTrades} />
       )}
 
@@ -1282,13 +1309,14 @@ export default function EodClient({
           if (!auto) showToast('EOD recap saved', 'success')
         }}
         onError={msg => showToast(msg, 'error')}
+        simple={simpleView}
       />
 
       {/* AI session analysis. latestTradeUpdate flags the analysis as stale
           when any trade has been modified after the analysis was generated —
           common when the user backfills tags, stops, or detected levels post-
           analysis. */}
-      <div data-tour="eod-analyze">
+      <div data-tour={simpleView ? undefined : 'eod-analyze'}>
         <EodAnalysisCard
           analysis={scoredAnalysis}
           loading={analyzing}
@@ -1305,6 +1333,17 @@ export default function EodClient({
           stay pinned by the recap title; this is the large earned-today coins
           + the lifetime collection strip, at the foot of the recap. */}
       <AchievementShowcase earned={achievements} counts={achievementCounts} className="mt-2" />
+
+      {/* Graduation seam — the same one the Highlights dashboard ends with. */}
+      {simpleView && (
+        <button
+          type="button"
+          onClick={() => setMode('pro')}
+          className="w-full flex items-center justify-center gap-1.5 text-sm text-gray-400 hover:text-gray-200 border border-gray-800 hover:border-gray-600 rounded-xl py-2.5 transition-colors"
+        >
+          See the full breakdown in Detailed Tape <ChevronRight className="w-4 h-4" />
+        </button>
+      )}
 
       {/* Danger Zone delete moved exclusively to the dashboard's per-row
           trash button + bulk-delete — duplicate entry point on the EOD page

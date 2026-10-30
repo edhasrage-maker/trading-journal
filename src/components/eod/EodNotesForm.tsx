@@ -12,6 +12,9 @@ interface Props {
   /** `auto` is true for the quiet save-as-you-type, false for the Save button. */
   onSaved?: (notes: string, pnl: number | null, auto: boolean) => void
   onError?: (msg: string) => void
+  /** Highlights: just the notes box, titled "Your notes", saving as you type.
+   *  Computed P&L and the override stay in Detailed (an override still applies). */
+  simple?: boolean
 }
 
 /** Save-as-you-type delay — the same as the intraday journal box. */
@@ -40,6 +43,7 @@ export default function EodNotesForm({
   computedPnl,
   onSaved,
   onError,
+  simple = false,
 }: Props) {
   const initialPnlText = initialPnl != null ? String(initialPnl) : ''
   const [notes, setNotes] = useState(initialNotes)
@@ -135,7 +139,7 @@ export default function EodNotesForm({
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-white">Session journal</h2>
+        <h2 className="font-semibold text-white">{simple ? 'Your notes' : 'Session journal'}</h2>
         <div className="flex items-center gap-3">
           {saving ? (
             <span className="text-xs text-gray-500">Saving…</span>
@@ -146,36 +150,38 @@ export default function EodNotesForm({
           ) : status === 'saved' ? (
             <span className="text-xs text-gray-500">Saved</span>
           ) : null}
-          <button
+          {!simple && <button
             onClick={() => { void save(false) }}
             disabled={saving}
             className="flex items-center gap-2 font-medium px-4 py-2 rounded-lg text-sm transition-colors text-white disabled:opacity-60 bg-blue-600 hover:bg-blue-500"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? 'Saving...' : 'Save'}
-          </button>
+          </button>}
+          {simple && <MicButton onText={appendDictation} title="Dictate your day notes" />}
         </div>
       </div>
 
       <div>
-        <div className="flex items-center justify-between mb-2">
+        {!simple && <div className="flex items-center justify-between mb-2">
           <label className="block text-sm font-medium text-gray-300">
             Day Notes
           </label>
           {/* The longest thing anyone types in the app, written at the end of a
               session when typing it out is the last thing you want to do. */}
           <MicButton onText={appendDictation} title="Dictate your day notes" />
-        </div>
+        </div>}
         <textarea
           value={notes}
           onChange={e => { setNotes(e.target.value); setStatus('idle') }}
-          rows={8}
-          placeholder="Overall day assessment, execution quality, what went well, what to fix tomorrow..."
+          rows={simple ? 4 : 8}
+          aria-label="Day notes"
+          placeholder={simple ? 'How did today go? What do you want to remember?' : 'Overall day assessment, execution quality, what went well, what to fix tomorrow...'}
           className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      {!simple && <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
             Computed PnL <span className="text-xs text-gray-500">(sum of trades)</span>
@@ -207,7 +213,7 @@ export default function EodNotesForm({
             }`}
           />
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

@@ -12,7 +12,13 @@ import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { TradeGrade } from '@/lib/trade-grade'
 
-export function GradeChip({ grade, open, onToggle }: { grade: TradeGrade; open: boolean; onToggle: () => void }) {
+/** The trade score's word, on the same bands as the day's. Highlights shows it
+ *  beside the number, so a bare "100" on a losing trade says what it means. */
+export function gradeWord(score: number): string {
+  return score >= 80 ? 'Excellent' : score >= 70 ? 'Strong' : score >= 50 ? 'Fair' : 'Needs work'
+}
+
+export function GradeChip({ grade, open, onToggle, word = false }: { grade: TradeGrade; open: boolean; onToggle: () => void; word?: boolean }) {
   if (grade.score == null) return <span className="text-gray-700" title="Nothing about this trade could be graded yet.">—</span>
   return (
     <button
@@ -23,6 +29,11 @@ export function GradeChip({ grade, open, onToggle }: { grade: TradeGrade; open: 
       className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-700 bg-gray-900 text-gray-200 hover:border-gray-500 shrink-0 leading-none align-middle ${open ? 'ring-1 ring-blue-400/60' : ''}`}
     >
       <span className="tabular-nums">{grade.score}</span>
+      {word && (
+        <span className={`font-semibold ${grade.score >= 70 ? 'text-green-400' : grade.score >= 50 ? 'text-amber-300' : 'text-red-400'}`}>
+          {gradeWord(grade.score)}
+        </span>
+      )}
       {open ? <ChevronUp className="w-3 h-3 opacity-60" /> : <ChevronDown className="w-3 h-3 opacity-60" />}
     </button>
   )

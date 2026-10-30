@@ -17,16 +17,30 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
   const sixtyDaysBefore = new Date(`${date}T12:00:00Z`)
   sixtyDaysBefore.setUTCDate(sixtyDaysBefore.getUTCDate() - 60)
   const wideStart = sixtyDaysBefore.toISOString().slice(0, 10)
+  // "For tomorrow" reaches back two weeks at most: older advice is stale.
+  const twoWeeksBefore = new Date(`${date}T00:00:00Z`)
+  twoWeeksBefore.setUTCDate(twoWeeksBefore.getUTCDate() - 14)
+  const lastRecapStart = twoWeeksBefore.toISOString().slice(0, 10)
 
   // ── Stage A: everything independent of the day row, in parallel ──
   // (Was a sequential waterfall — user, news, day, tags, and the 60-day window
   //  are all independent, so they run concurrently instead of one-at-a-time.)
-  const [userRes, highImpactNews, dayRes, dayTypeTagsRes, windowDaysRes] = await Promise.all([
+  const [userRes, highImpactNews, dayRes, dayTypeTagsRes, windowDaysRes, lastRecapRes] = await Promise.all([
     supabase.auth.getUser(),
     fetchHighImpactNews(date),               // cached + Next data-cache; never throws
     supabase.from('trading_days').select('*').eq('date', date).single(),
     supabase.from('trade_tags').select('label').eq('category', 'day_type').order('sort_order'),
     supabase.from('trading_days').select('id, date, day_type, day_types').gte('date', wideStart).lt('date', date),
+    // The last graded session's Tomorrow lines (Highlights shows them on top of
+    // Prep). Just that one array out of the analysis blob; guarded below.
+    supabase
+      .from('trading_days')
+      .select('date, focus:eod_ai_analysis_json->next_session_focus')
+      .lt('date', date)
+      .gte('date', lastRecapStart)
+      .not('eod_ai_analysis_json', 'is', null)
+      .order('date', { ascending: false })
+      .limit(1),
   ])
 
   // Admin = local owner build, OR the hosted user whose email matches ADMIN_EMAIL.
@@ -40,6 +54,12 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
     ...dayObj,
     day_types: Array.isArray(dayObj.day_types) ? dayObj.day_types as string[] : null,
   } as TradingDay : null
+
+  const lastRecapRow = lastRecapRes.error ? null : ((lastRecapRes.data ?? []) as { date: string; focus: unknown }[])[0] ?? null
+  const lastFocusLines = Array.isArray(lastRecapRow?.focus)
+    ? (lastRecapRow.focus as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    : []
+  const lastFocus = lastRecapRow && lastFocusLines.length > 0 ? { date: lastRecapRow.date, lines: lastFocusLines } : null
 
   // Day-type options sourced from trade_tags so prep + intraday share one list.
   const dayTypeOptions = ((dayTypeTagsRes.data ?? []) as { label: string }[]).map(t => t.label)
@@ -128,6 +148,7 @@ export default async function PrepPage({ params }: { params: Promise<{ date: str
       isAdmin={isAdmin}
       carryover={carryover}
       historyTrades={windowTradesWithContext}
+      lastFocus={lastFocus}
     />
   )
 }

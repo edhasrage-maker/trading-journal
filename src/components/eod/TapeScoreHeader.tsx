@@ -45,6 +45,7 @@ export default function TapeScoreHeader({
   showScore = true,
   live = false,
   aside,
+  partsInline = false,
 }: {
   analysis: EodAiAnalysis | null
   /** Prep AI quality score (1-10) from ai_analysis_json.score. */
@@ -76,6 +77,10 @@ export default function TapeScoreHeader({
   live?: boolean
   /** The card's right half (Trade management). */
   aside?: ReactNode
+  /** Highlights: Risk, Entry and Exit on the card itself, each with its two
+   *  weakest parts and the lowest axis marked, plus the cap's reason — rather
+   *  than behind a click on the ring that nobody finds. */
+  partsInline?: boolean
 }) {
   // The day's per-trade parts, through the same two steps the per-day rollup
   // takes (store the day's inputs, then score them against the risk yardstick),
@@ -153,11 +158,12 @@ export default function TapeScoreHeader({
                 )}
               </div>
               {!scored && showScore && tradeCount > 0 && (
-                <p className="text-xs text-gray-500">Not scored yet — run Analyze Session below for the day&rsquo;s TapeScore.</p>
+                <p className="text-xs text-gray-500">{partsInline ? 'Not graded yet — grade it below for the day’s TapeScore.' : <>Not scored yet — run Analyze Session below for the day&rsquo;s TapeScore.</>}</p>
               )}
             </div>
           </div>
           {takeawayEl && <div className="sm:hidden mt-3">{takeawayEl}</div>}
+          {partsInline && scored && <InlineParts result={result} />}
         </div>
         {aside && (
           <div className="lg:flex-[1.15] min-w-0 border-t lg:border-t-0 lg:border-l border-gray-800 pt-5 lg:pt-0 lg:pl-7 flex flex-col justify-center">
@@ -211,6 +217,81 @@ function partSummary(parts: TapeScoreParts, axis: Axis, keys: PartKey[]): string
   if (!bits.length) return ''
   bits[0] = bits[0].charAt(0).toUpperCase() + bits[0].slice(1)
   return bits.join(' · ')
+}
+
+/** A part in plain words: counts where the part is graded trade by trade, else its score. */
+const PLAIN: Record<PartKey, string> = {
+  rules: 'rules', lossSize: 'loss size', stopSize: 'stop size', reentry: 'waited after a loss',
+  checklist: 'checklist', entryRules: 'your entry rules', flow: 'order flow', plan: 'matched your plan',
+  kept: 'profit kept', stopRespected: 'stop respected', runner: 'runner rules',
+}
+function plainPart(parts: TapeScoreParts, axis: Axis, k: PartKey): { score: number; text: string } | null {
+  const p = (parts[axis] as Record<PartKey, PartView>)[k]
+  if (!p || p.score == null || !(p.weight > 0)) return null
+  const score = Math.round(p.score)
+  if (k === 'rules' && parts.rulesKept != null && parts.rulesOf != null) {
+    return { score, text: `kept ${parts.rulesKept} of ${parts.rulesOf} rules` }
+  }
+  if (COUNTED.has(k) && p.n != null && p.n > 0) {
+    const x = Math.round((p.score / 100) * p.n)
+    const what = k === 'stopSize' ? 'stop the right size' : PLAIN[k]
+    return { score, text: `${what} on ${x} of ${p.n} trade${p.n === 1 ? '' : 's'}` }
+  }
+  return { score, text: `${k === 'runner' && !parts.runnerOwn ? 'runner' : PLAIN[k]} ${score}` }
+}
+
+/** Highlights' Risk / Entry / Exit row: each axis with its two weakest parts in
+ *  plain words, the lowest axis marked, and why the day was capped. */
+function InlineParts({ result }: { result: TapeScoreResult }) {
+  const { components: c, parts } = result
+  if (!parts) return null
+  const shown = AXES.filter(a => c[a.axis] != null)
+  if (!shown.length) return null
+  const lowest = shown.reduce((lo, a) => ((c[a.axis] as number) < (c[lo.axis] as number) ? a : lo), shown[0])
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        {shown.map(({ axis, label, keys }) => {
+          const v = c[axis] as number
+          const low = shown.length > 1 && axis === lowest.axis
+          const bits = keys
+            .map(k => plainPart(parts, axis, k))
+            .filter((b): b is { score: number; text: string } => b != null)
+            .sort((a, b) => a.score - b.score)
+            .slice(0, 2)
+            .map(b => b.text)
+          const line = bits.length ? bits.join(' · ') : ''
+          return (
+            <div
+              key={axis}
+              className={`rounded-lg border px-3 py-2.5 ${low ? 'border-red-800/60 bg-red-950/20' : 'border-gray-800 bg-gray-950/40'}`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[13px] text-gray-400">
+                  {label}
+                  {low && <span className="text-red-400 font-semibold"> · lowest</span>}
+                </span>
+                <span className={`text-lg font-bold tabular-nums ${v >= 70 ? 'text-green-400' : v >= 50 ? 'text-amber-300' : 'text-red-400'}`}>{v}</span>
+              </div>
+              {line && <p className="text-[12px] text-gray-400 leading-snug mt-0.5">{line.charAt(0).toUpperCase() + line.slice(1)}</p>}
+            </div>
+          )
+        })}
+      </div>
+      {result.capped && (
+        <p className="text-[13px] text-red-300">
+          <span className="inline-block w-[7px] h-[7px] rounded-full bg-red-400 mr-2 align-[2px]" aria-hidden="true" />
+          Breaking your daily loss limit, or more than one rule, caps the day at 49.
+        </p>
+      )}
+      {!result.capped && result.chaseCapped && (
+        <p className="text-[13px] text-amber-200">
+          <span className="inline-block w-[7px] h-[7px] rounded-full bg-amber-400 mr-2 align-[2px]" aria-hidden="true" />
+          Two or more quick re-entries after a loss cap the day at {CHASE_CAP}.
+        </p>
+      )}
+    </div>
+  )
 }
 
 const ptHm = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit' }) : '?')

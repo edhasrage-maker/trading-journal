@@ -12,6 +12,8 @@ import CoachTagCheck, { type CoachCheckData } from '@/components/review/CoachTag
 import type { TapeScorePeriod } from '@/lib/tapescore'
 import type { EvidenceBar } from '@/lib/prep-carryover'
 import type { RecapVsRow, QuarterRead } from '@/lib/period-recap'
+import { useUiMode } from '@/lib/ui-mode'
+import { plainRuleCodes } from '@/lib/plain-rule-codes'
 
 export type { RecapVsRow, QuarterRead }
 
@@ -142,6 +144,12 @@ export default function PeriodRecapClient(p: RecapProps) {
     return v.went.count > 0 ? formatKept(v.went.keptPct) : '—'
   }
   const s = STATE_META[p.finding.state]
+  // Highlights (docs/tapescore-recap-highlights-mockup-r1.html): the same hero,
+  // four numbers, the coach's read with next week's focus first, the sessions
+  // as score + result, notes. Kept / Rules / Read columns, the coach-tag check,
+  // the trailing-period table and the before/after table stay in Detailed.
+  const { mode } = useUiMode()
+  const simple = mode === 'beginner'
 
   return (
     <div>
@@ -236,10 +244,25 @@ export default function PeriodRecapClient(p: RecapProps) {
         </div>
       </div>
 
+      {simple && (
+        <div className="flex flex-wrap mt-7 pt-4 border-t border-gray-800 gap-y-4">
+          <NumCell first label={`${p.scope === 'week' ? 'Week' : 'Month'} P&L`} value={fmtUsd(p.numbers.pnl)} valueCls={pnlCls(p.numbers.pnl)} small={`${p.numbers.trades} trades`} />
+          <NumCell label="Win rate" value={p.numbers.winRate != null ? `${p.numbers.winRate}%` : '—'} />
+          <NumCell label="Green days" value={String(p.numbers.dayWins)} small={`of ${p.numbers.tradedDays}`} />
+          {p.numbers.railsDays > 0 && (
+            <NumCell label="Rules kept" value={String(p.numbers.railsKept)} small={`of ${p.numbers.railsDays} days`} />
+          )}
+        </div>
+      )}
+
+      {simple && (
+        <CoachRead simple scope={p.scope} periodKey={p.periodKey} initial={p.initialSynthesis} migrationPending={p.migrationPending} />
+      )}
+
       {/* The numbers — two inline ledgers, no cards. Split because the outcome
           row and the execution row answer different questions, and nine cells
           on one line stops scanning as a row. */}
-      <div className="flex flex-wrap mt-7 pt-4 border-t border-gray-800 gap-y-4">
+      {!simple && <><div className="flex flex-wrap mt-7 pt-4 border-t border-gray-800 gap-y-4">
         <NumCell first label={`${p.scope === 'week' ? 'Week' : 'Month'} P&L`} value={fmtUsd(p.numbers.pnl)} valueCls={pnlCls(p.numbers.pnl)} />
         <NumCell
           label="$ / trade"
@@ -270,7 +293,7 @@ export default function PeriodRecapClient(p: RecapProps) {
         {p.numbers.railsDays > 0 && (
           <NumCell label="Rules followed" value={String(p.numbers.railsKept)} small={`of ${p.numbers.railsDays} days`} />
         )}
-      </div>
+      </div></>}
 
       {/* Commitment follow-through — the loop, reported */}
       {p.commitment && (
@@ -302,6 +325,14 @@ export default function PeriodRecapClient(p: RecapProps) {
       {/* Sessions / weeks ledger */}
       <RecapSection title={p.ledger.title} hint={p.ledger.hint}>
         <div>
+          {simple ? (
+            <div className={cn('grid gap-3.5 pb-2 text-[12.5px] text-gray-500', SIMPLE_COLS)}>
+              <span>{p.scope === 'week' ? 'Day' : 'Week'}</span>
+              <span className="text-right">Trades</span>
+              <span>TapeScore</span>
+              <span className="text-right">Result</span>
+            </div>
+          ) : (
           <div className={cn('grid gap-3.5 pb-2 text-[12.5px] text-gray-500', GRID_COLS)}>
             <span>{p.scope === 'week' ? 'Day' : 'Week'}</span>
             <span className="hidden sm:block">{p.scope === 'week' ? 'Read' : ''}</span>
@@ -311,8 +342,23 @@ export default function PeriodRecapClient(p: RecapProps) {
             <span className="text-right">TapeScore</span>
             <span className="text-right">Result</span>
           </div>
+          )}
           {p.ledger.rows.map(row => {
-            const inner = (
+            const inner = simple ? (
+              <>
+                <span className={cn('font-semibold', row.empty ? 'text-gray-600' : 'text-gray-100')}>
+                  {row.label}
+                  {row.sub && <span className="text-gray-500 font-normal ml-2 text-[12px]">{row.sub}</span>}
+                </span>
+                <span className="text-right tabular-nums">{row.empty ? '—' : row.trades}</span>
+                <span>
+                  {row.score != null ? <ScoreWord score={row.score} breach={row.railsTone === 'neg'} /> : <span className="text-gray-600">{row.empty ? 'no trades' : '—'}</span>}
+                </span>
+                <span className={cn('text-right tabular-nums font-semibold', pnlCls(row.pnl))}>
+                  {row.pnl != null ? fmtUsd(row.pnl) : '—'}
+                </span>
+              </>
+            ) : (
               <>
                 <span className={cn('font-semibold', row.empty ? 'text-gray-600' : 'text-gray-100')}>
                   {row.label}
@@ -336,7 +382,7 @@ export default function PeriodRecapClient(p: RecapProps) {
             )
             const rowCls = cn(
               'grid gap-3.5 items-baseline py-2 border-t border-gray-800/70 text-[13.5px]',
-              GRID_COLS,
+              simple ? SIMPLE_COLS : GRID_COLS,
               row.empty && 'opacity-60',
             )
             return row.href
@@ -347,17 +393,17 @@ export default function PeriodRecapClient(p: RecapProps) {
       </RecapSection>
 
       {/* Game film — the week's screenshots, your call on each */}
-      {p.film && (
+      {p.film && !(simple && p.film.frames.length === 0) && (
         <RecapSection title="Game film" hint="every screenshot this week — flip through, make the call">
           <GameFilm frames={p.film.frames} missing={p.film.missing} migrationPending={p.film.migrationPending} replay={p.film.replay} />
         </RecapSection>
       )}
 
       {/* Check the coach's tags — ✓ / ✕ on what the coach picked this week */}
-      {p.coachCheck && <CoachTagCheck data={p.coachCheck} />}
+      {p.coachCheck && !simple && <CoachTagCheck data={p.coachCheck} />}
 
       {/* Across the trailing periods */}
-      {p.quarter && (
+      {p.quarter && !simple && (
         <RecapSection title={p.quarter.title}>
           <h3
             className="text-[19px] font-semibold text-gray-100 leading-snug max-w-[34ch] tracking-[-0.01em]"
@@ -443,7 +489,7 @@ export default function PeriodRecapClient(p: RecapProps) {
       )}
 
       {/* Against the prior period */}
-      {p.vs && (
+      {p.vs && !simple && (
         <RecapSection title={p.vs.title}>
           <div className="max-w-[620px]">
             <div className="grid grid-cols-[1fr_110px_110px_120px] gap-3.5 pb-2 text-[12.5px] text-gray-500">
@@ -466,12 +512,12 @@ export default function PeriodRecapClient(p: RecapProps) {
         </RecapSection>
       )}
 
-      <CoachRead
+      {!simple && <CoachRead
         scope={p.scope}
         periodKey={p.periodKey}
         initial={p.initialSynthesis}
         migrationPending={p.migrationPending}
-      />
+      />}
 
       <RecapNotes
         scope={p.scope}
@@ -480,6 +526,19 @@ export default function PeriodRecapClient(p: RecapProps) {
         migrationPending={p.migrationPending}
       />
     </div>
+  )
+}
+
+const SIMPLE_COLS = 'grid-cols-[minmax(100px,1fr)_58px_132px_88px] max-sm:grid-cols-[minmax(80px,1fr)_40px_112px_76px]'
+
+/** Highlights' score + word, on the dashboard's bands; a day that broke a rule says so. */
+function ScoreWord({ score, breach }: { score: number; breach: boolean }) {
+  const word = breach ? 'Broke a rule' : score >= 80 ? 'Excellent' : score >= 70 ? 'Strong' : score >= 50 ? 'Fair' : 'Needs work'
+  const cls = breach || score < 50 ? 'text-red-300' : score >= 70 ? 'text-green-300' : 'text-amber-300'
+  return (
+    <span className={cn('inline-flex items-baseline gap-1.5 text-[12px] whitespace-nowrap', cls)}>
+      <b className="tabular-nums text-[14px]" style={{ fontFamily: 'var(--font-display)' }}>{score}</b>{word}
+    </span>
   )
 }
 
@@ -521,7 +580,10 @@ function generatedAtPT(iso: string | undefined): string | null {
   } catch { return null }
 }
 
-function CoachRead({ scope, periodKey, initial, migrationPending }: {
+function CoachRead({ scope, periodKey, initial, migrationPending, simple = false }: {
+  /** Highlights: next period's focus first (numbered), the headline, then Went
+   *  well / Cost you, two lines each, rule codes in words. */
+  simple?: boolean
   scope: 'week' | 'month'
   periodKey: string
   initial: AiSynthesis | null
@@ -551,6 +613,64 @@ function CoachRead({ scope, periodKey, initial, migrationPending }: {
 
   const at = generatedAtPT(synthesis?.generated_at)
   const focusLabel = scope === 'week' ? 'Focus next week' : 'Focus next month'
+  if (simple) {
+    const focus = (synthesis?.focus_next_week ?? []).filter(t => t?.trim()).map(plainRuleCodes)
+    const worked = (synthesis?.what_worked ?? []).filter(t => t?.trim()).slice(0, 2).map(plainRuleCodes)
+    const cost = (synthesis?.what_didnt ?? []).filter(t => t?.trim()).slice(0, 2).map(plainRuleCodes)
+    return (
+      <RecapSection
+        title="The coach’s read"
+        action={<GhostButton onClick={generate} disabled={generating}>{generating ? 'Generating…' : synthesis ? 'Re-generate' : 'Generate'}</GhostButton>}
+      >
+        {synthesis ? (
+          <div className="space-y-4">
+            {focus.length > 0 && (
+              <div className="border-l-[3px] border-blue-500 pl-4">
+                <div className="text-[13px] font-bold text-blue-400 mb-2" style={{ fontFamily: 'var(--font-display)' }}>
+                  {scope === 'week' ? 'For next week' : 'For next month'}
+                </div>
+                <ol className="space-y-2">
+                  {focus.map((f, i) => (
+                    <li key={i} className="flex gap-2.5 text-[15px] text-gray-100 leading-snug max-w-[70ch]">
+                      <span className="w-[22px] h-[22px] shrink-0 rounded-full bg-blue-950 text-blue-300 text-[12px] font-bold grid place-items-center" aria-hidden="true">{i + 1}</span>
+                      <span className="pt-px">{f}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {synthesis.headline && <p className="text-[15px] font-semibold text-gray-100 max-w-[62ch]">{plainRuleCodes(synthesis.headline)}</p>}
+            {(worked.length > 0 || cost.length > 0) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-[900px]">
+                {[
+                  { title: 'Went well', items: worked, head: 'text-green-400', dot: 'bg-green-500' },
+                  { title: 'Cost you', items: cost, head: 'text-red-400', dot: 'bg-red-500' },
+                ].filter(c => c.items.length > 0).map(c => (
+                  <div key={c.title}>
+                    <div className={cn('text-[11px] font-semibold uppercase tracking-wide mb-1.5', c.head)}>{c.title}</div>
+                    <ul className="space-y-1.5">
+                      {c.items.map((text, i) => (
+                        <li key={i} className="flex gap-2 text-[13.5px] text-gray-300 leading-relaxed">
+                          <span className={cn('mt-[8px] w-1.5 h-1.5 rounded-full shrink-0', c.dot)} aria-hidden="true" />
+                          <span>{text}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+            {at && <p className="text-[11px] text-gray-600">AI-generated {at}. It can be wrong and isn&rsquo;t financial advice.</p>}
+          </div>
+        ) : (
+          <p className="text-[13px] text-gray-500 max-w-[62ch]">
+            Generate the coach&rsquo;s read for this {scope}: what went well, what cost you, and what to focus on next {scope}.
+          </p>
+        )}
+        {error && <p className="text-[13px] text-red-400 mt-2">{error}</p>}
+      </RecapSection>
+    )
+  }
   return (
     <RecapSection
       title="The coach’s read"

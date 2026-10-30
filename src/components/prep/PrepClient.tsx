@@ -26,6 +26,7 @@ import PrepHero, { prepHeroRead } from './PrepHero'
 import PrepBridge from './PrepBridge'
 import PrepLedger from './PrepLedger'
 import PrepAiRead, { WatchKeep } from './PrepAiRead'
+import { plainRuleCodes } from '@/lib/plain-rule-codes'
 import { dayTypeConsequence, formatR, type Carryover } from '@/lib/prep-carryover'
 import type { TradeWithContext } from '@/lib/analytics'
 import type { NewsEvent } from '@/lib/economic-calendar'
@@ -77,6 +78,9 @@ interface Props {
   /** Trades from the carryover window, joined with day/context. Powers the
    *  per-day-type consequence line ("on high-action days you average +0.6R"). */
   historyTrades: TradeWithContext[]
+  /** The last graded session's "For tomorrow" lines (within two weeks), shown
+   *  first in Highlights so the plan from the Recap reaches the open. */
+  lastFocus?: { date: string; lines: string[] } | null
 }
 
 /** Market-context fields the bar feed derives. A value in one of these is
@@ -87,7 +91,7 @@ const BAR_DERIVED_FIELDS = [
   'atr_at_ib_close', 'rvol_at_ib_close', 'atr_10d_avg',
 ] as const
 
-export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrPctAuto, dayRangeAuto, chartSymbol, initialTrades, highImpactNews, isAdmin, carryover, historyTrades }: Props) {
+export default function PrepClient({ date, initialDay, initialContext, dayTypeOptions, drAdrPctAuto, dayRangeAuto, chartSymbol, initialTrades, highImpactNews, isAdmin, carryover, historyTrades, lastFocus = null }: Props) {
   const router = useRouter()
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -1330,6 +1334,22 @@ export default function PrepClient({ date, initialDay, initialContext, dayTypeOp
         beginner={!pro}
       />
 
+      {/* Highlights: the last Recap's Tomorrow lines, at the top of the plan. */}
+      {!pro && lastFocus && (
+        <Section title="From your last recap" sub={lastFocusLabel(lastFocus.date)}>
+          <ol className="space-y-2">
+            {lastFocus.lines.map((line, i) => (
+              <li key={i} className="flex gap-2.5 text-[15px] text-gray-100 leading-snug">
+                <span className="w-[22px] h-[22px] shrink-0 rounded-full bg-blue-950 text-blue-300 text-[12px] font-bold grid place-items-center" aria-hidden="true">
+                  {i + 1}
+                </span>
+                <span className="pt-px">{plainRuleCodes(line)}</span>
+              </li>
+            ))}
+          </ol>
+        </Section>
+      )}
+
       {/* ── The commitment: Review diagnoses, Prep prescribes ── */}
       <PrepBridge
         carryover={carryover}
@@ -1744,4 +1764,9 @@ function PrepTiming({
         : 'Prep timer running'}
     </p>
   )
+}
+
+/** "2026-10-28" → "Wed, Oct 28 recap". Noon so the timezone can't roll it back. */
+function lastFocusLabel(date: string): string {
+  try { return `${format(new Date(`${date}T12:00:00`), 'EEE, MMM d')} recap` } catch { return date }
 }

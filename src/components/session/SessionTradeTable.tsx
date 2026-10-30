@@ -200,6 +200,13 @@ interface Props {
   /** Grades from the page (useTradeGrades), when it shows them elsewhere too —
    *  the table then reads none itself. */
   gradeOf?: (t: Trade) => TradeGrade | null
+  /** Highlights: trades that sized up while red or right after a loss
+   *  (sizeUpTradeIds). The trade Score doesn't see sizing, so without this
+   *  flag a revenge size-up can read "100 Excellent". */
+  pressingIds?: readonly string[] | null
+  /** Highlights: trades that went your way, then closed at breakeven or worse
+   *  (aggregateRoundTrips ids). */
+  giveBackIds?: readonly string[] | null
 }
 
 /**
@@ -277,6 +284,8 @@ export default function SessionTradeTable({
   includeFlow = true,
   atrStopTarget = 1,
   gradeOf: gradeOfProp,
+  pressingIds,
+  giveBackIds,
 }: Props) {
   // Capture (live Intraday) vs review (EOD recap). Every judgment column and the
   // AI sub-rows are gated OFF in capture; the review path evaluates exactly as
@@ -567,9 +576,14 @@ export default function SessionTradeTable({
     )
   }
 
-  // Beginner: a simple plain list — time · direction · setup · result, with the
-  // AI overview note. No R / MFE% / MAE% / ATR / post-exit columns.
+  // Beginner: a simple plain list — number · direction · time · setup · score
+  // (with its word) · result, the day-level flags the Score can't see, and the
+  // AI overview note. No R / MFE% / MAE% / ATR / post-exit columns. The number
+  // is the trade's place in the session, the same one "What happened" cites.
   if (mode === 'beginner') {
+    const seqById = new Map(trades.map((t, i) => [t.id, i + 1]))
+    const pressing = new Set(pressingIds ?? [])
+    const gaveBack = new Set(giveBackIds ?? [])
     return (
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <h2 className="font-semibold text-white mb-3 text-sm" style={{ fontFamily: 'var(--font-display)' }}>Trades ({trades.length})</h2>
@@ -586,6 +600,16 @@ export default function SessionTradeTable({
             const overviewIsNotes = !summary && !!t.notes?.trim()
             const isLong = t.direction === 'long'
             const grade = gradeOf(t)
+            const flags: { label: string; cls: string; title: string }[] = []
+            if (grade?.score != null && grade.score >= 70 && (pnl ?? 0) < 0) {
+              flags.push({ label: 'Good loss', cls: 'text-blue-300 bg-blue-950/50 border-blue-800/60', title: 'You traded it well; the market just didn’t pay.' })
+            }
+            if (pressing.has(t.id)) {
+              flags.push({ label: 'Sized up after a loss', cls: 'text-red-300 bg-red-950/40 border-red-800/60', title: 'Bigger than usual while red on the day or right after a loss. The trade Score doesn’t see sizing; the day’s Risk does.' })
+            }
+            if (gaveBack.has(t.id)) {
+              flags.push({ label: 'Gave back a winner', cls: 'text-amber-300 bg-amber-950/40 border-amber-800/60', title: 'It went your way, then closed at breakeven or worse.' })
+            }
             return (
               <div
                 key={t.id}
@@ -593,21 +617,31 @@ export default function SessionTradeTable({
                 onClick={rowAction ? () => rowAction(t.id) : undefined}
               >
                 <div className="flex items-center gap-3">
+                  <span className="w-5 h-5 shrink-0 rounded-full bg-gray-800 text-gray-400 text-[10px] font-bold grid place-items-center tabular-nums" title="Trade number in the session">
+                    {seqById.get(t.id)}
+                  </span>
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isLong ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>{isLong ? 'LONG' : 'SHORT'}</span>
                   <span className="text-sm text-gray-300 tabular-nums">{time}</span>
                   {setup && <span className="text-xs text-gray-500 truncate">{setup}</span>}
                   <span className="flex-1" />
                   {grade && grade.score != null && (
-                    <GradeChip grade={grade} open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
+                    <GradeChip grade={grade} word open={openScoreId === t.id} onToggle={() => setOpenScoreId(openScoreId === t.id ? null : t.id)} />
                   )}
                   <span className={`text-sm font-semibold ${(pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {pnl == null ? '--' : `${pnl < 0 ? '-' : '+'}$${Math.abs(Math.round(pnl)).toLocaleString('en-US')}`}
                   </span>
                 </div>
                 {grade && openScoreId === t.id && <TradeGradeDetail grade={grade} neverWent={tradeMgmt(t, { thresholdAtr: giveBackAtr })?.went === false} hasStop={plannedStopPrice(t) != null} />}
+                {flags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-1.5 pl-8">
+                    {flags.map(f => (
+                      <span key={f.label} className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border ${f.cls}`} title={f.title}>{f.label}</span>
+                    ))}
+                  </div>
+                )}
                 {overviewText && (
                   <p
-                    className={`text-xs text-gray-500 mt-1.5 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
+                    className={`text-xs text-gray-500 mt-1.5 pl-8 leading-snug ${overviewIsNotes ? 'italic' : ''}`}
                     title={overviewIsNotes ? 'From your own notes on this trade — AI summary not yet generated.' : undefined}
                   >
                     {overviewText}
