@@ -15,7 +15,7 @@ import { useChartInstruments } from '@/lib/use-chart-instruments'
 import BarWatcher from '@/components/charts/BarWatcher'
 import SessionTradeTable from './SessionTradeTable'
 import TradeContextMenu, { type TradeContextMenuState } from './TradeContextMenu'
-import TradeEditDrawer from './TradeEditDrawer'
+import TradeOpenPanel from './TradeOpenPanel'
 import BulkTagModal from './BulkTagModal'
 import PasteStrip from './PasteStrip'
 import TradeForm from '@/components/intraday/TradeForm'
@@ -45,6 +45,7 @@ import { effectiveAnalysis, sizeUpTradeIds } from '@/lib/tapescore-day-rules'
 import { perTrade, type PerTrade } from '@/lib/trade-r'
 import { mergeTradeTags } from '@/lib/suggest-tags'
 import SessionTabs from './SessionTabs'
+import { useTradeGrades } from '@/lib/use-trade-grades'
 import type { RiskYardstick } from '@/lib/exit-score'
 import type {
   TradingDay,
@@ -170,6 +171,10 @@ export default function SessionClient({
   const clock = useSessionClock(date)
   const beforeClose = clock.mounted ? clock.isToday && clock.beforeClose : initialLive
   const live = beforeClose && !endedAt
+  // Each trade's Score, read once for the table and the trade panel alike.
+  const gradeOf = useTradeGrades(trades, {
+    capture: live, entryRules, runnerRules, includeFlow: includeFlowScore, atrStopTarget,
+  })
   const closeMs = rthCloseMs(date)
   const closeLabel = Number.isFinite(closeMs) ? ptShort(closeMs) : '1:00 PM'
   const endedAtLabel = endedAt ? ptShort(endedAt) : null
@@ -206,7 +211,7 @@ export default function SessionClient({
 
   // ── Adding / editing trades ──
   const [formMode, setFormMode] = useState<FormMode>({ type: 'none' })
-  // Recap edit-in-place drawer: the id of the trade being quick-edited.
+  // The trade open in the side panel (TradeOpenPanel).
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null)
   const startFromFile = (file: File) => setFormMode({ type: 'add', file })
   const startManual = () => setFormMode({ type: 'add', file: null })
@@ -1107,6 +1112,7 @@ export default function SessionClient({
             runnerRules={runnerRules}
             includeFlow={includeFlowScore}
             atrStopTarget={atrStopTarget}
+            gradeOf={gradeOf}
           />
           {live && (
             <p className="mt-2 text-xs text-gray-500">No scores, verdicts or AI while the market is open. The same table gains them in the recap.</p>
@@ -1124,27 +1130,31 @@ export default function SessionClient({
         isHighlighted={(id: string) => !!trades.find(t => t.id === id)?.highlighted}
       />
 
-      {/* Edit-in-place drawer; "Open full log" opens the full form on this page. */}
-      {editingTradeId && (() => {
-        const editingTrade = trades.find(tr => tr.id === editingTradeId)
-        if (!editingTrade) return null
-        return (
-          <TradeEditDrawer
-            trade={editingTrade}
-            date={date}
-            allTags={allTags}
-            defaultSymbol={chartSymbol}
-            onSave={saved => {
-              setTrades(prev => prev.map(tr => (tr.id === saved.id ? saved : tr)))
-              setEditingTradeId(null)
-              showToast('Trade updated', 'success')
-            }}
-            onClose={() => setEditingTradeId(null)}
-            onOpenFullLog={openFullLog}
-            onTagCreated={addTag}
-          />
-        )
-      })()}
+      {/* One trade, opened: the result, why it scored, then the editable log
+          (log only while live). "Open full log" opens the full form on this page. */}
+      {editingTradeId && (
+        <TradeOpenPanel
+          trades={trades}
+          tradeId={editingTradeId}
+          live={live}
+          date={date}
+          allTags={allTags}
+          defaultSymbol={chartSymbol}
+          gradeOf={gradeOf}
+          liveAtrByTradeId={liveAtrByTradeId}
+          giveBackAtr={giveBackAtr}
+          postExitByTradeId={postExitByTradeId}
+          deepDive={deepDive}
+          onStep={setEditingTradeId}
+          onSave={saved => {
+            setTrades(prev => prev.map(tr => (tr.id === saved.id ? saved : tr)))
+            showToast('Trade updated', 'success')
+          }}
+          onClose={() => setEditingTradeId(null)}
+          onOpenFullLog={openFullLog}
+          onTagCreated={addTag}
+        />
+      )}
 
       {/* Recording recap (local: ffmpeg; cloud: decoded in the browser) — recap only. */}
       {!live && LOCAL_FEATURES_ENABLED && <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />}

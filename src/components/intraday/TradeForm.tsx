@@ -51,6 +51,8 @@ interface Props {
    *  save() as the full form — everything not shown is preserved from the trade.
    *  (Session-merge Pt 13, step 2.) */
   compact?: boolean
+  /** Compact only: the host shows the screenshot itself (the Session trade panel). */
+  hideScreenshot?: boolean
   onSave: (trade: Trade) => void
   onCancel: () => void
   /** Told whenever the form gains or loses unsaved edits, so a host that can
@@ -130,7 +132,7 @@ function rMultiple(s: FormState, symbol: string | null | undefined): string | nu
 /** The 5m follow/fade labels /api/trades/suggest-tags adds from the trade's stored regime. */
 const STRUCTURE_LABELS = new Set(['Follow LTF structure', 'Fade LTF structure'])
 
-export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, compact = false, onSave, onCancel, onDirtyChange }: Props) {
+export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, compact = false, hideScreenshot = false, onSave, onCancel, onDirtyChange }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
     const base = empty()
@@ -761,7 +763,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             lightbox as the full form, but no upload / re-read / frame-nudge.
             Re-shooting or re-extracting levels is a full-log job, which is what
             the drawer's "Open full log" button is for. */}
-        {compact && form.screenshot_url && (
+        {compact && !hideScreenshot && form.screenshot_url && (
           <div>
             <PinPlacement
               imageUrl={form.screenshot_url}

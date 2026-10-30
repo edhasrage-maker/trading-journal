@@ -15,7 +15,7 @@
  * so the EOD render never changes. (Session-merge Pt 13, step 1.)
  */
 
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare, Upload } from 'lucide-react'
 import { maeHeatRatio, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
@@ -31,9 +31,8 @@ import type { Trade } from '@/lib/supabase/types'
 import { GradeChip, TradeGradeDetail } from './TradeGrade'
 import type { EntryRuleConfig } from '@/lib/entry-rules'
 import type { RunnerRuleConfig } from '@/lib/runner-rules'
-import { tradeGrade, type TradeGrade } from '@/lib/trade-grade'
-import { reentryReads } from '@/lib/tapescore-day-rules'
-import { useFlowScores, flowScoreFor, entryCtxFor } from '@/lib/use-flow-scores'
+import type { TradeGrade } from '@/lib/trade-grade'
+import { useTradeGrades } from '@/lib/use-trade-grades'
 
 // Trade times read in Pacific — the app's display convention — on the server
 // and in the browser alike. date-fns `format` used whichever clock ran it, so
@@ -123,7 +122,7 @@ function loadColPrefs(): Record<ColKey, boolean> {
 /** The "Kept" cell for one trade. Only a trade that went your way has an exit
  *  to grade; one that never did says so instead of printing 0%, which blamed
  *  the exit for an entry that never worked. */
-function keptCell(m: TradeMgmt | null): { text: string; cls: string; title: string } {
+export function keptCell(m: TradeMgmt | null): { text: string; cls: string; title: string } {
   if (m == null) return { text: '—', cls: 'text-gray-700', title: 'No price data (or no ATR and no stop) to sort this trade by yet.' }
   if (!m.went) return { text: 'N/A', cls: 'text-gray-600', title: 'Never got 1×ATR your way, so there was no exit to grade: an entry question, not an exit one.' }
   if (m.kept === 0) return { text: '0%', cls: 'text-red-400 font-bold', title: 'Went your way, then gave it all back.' }
@@ -131,7 +130,7 @@ function keptCell(m: TradeMgmt | null): { text: string; cls: string; title: stri
 }
 
 /** One excursion magnitude in the active unit, unsigned — the bar's end caps. */
-function magLabel(v: number | null | undefined, unit: MfeUnit): string {
+export function magLabel(v: number | null | undefined, unit: MfeUnit): string {
   if (v == null) return '—'
   if (unit === 'dollars') return '$' + Math.round(v).toLocaleString('en-US')
   if (unit === 'atr') return `${v.toFixed(1)}×`
@@ -198,6 +197,9 @@ interface Props {
   includeFlow?: boolean
   /** The trader's ATR stop setting (default 1). */
   atrStopTarget?: number
+  /** Grades from the page (useTradeGrades), when it shows them elsewhere too —
+   *  the table then reads none itself. */
+  gradeOf?: (t: Trade) => TradeGrade | null
 }
 
 /**
@@ -274,6 +276,7 @@ export default function SessionTradeTable({
   runnerRules,
   includeFlow = true,
   atrStopTarget = 1,
+  gradeOf: gradeOfProp,
 }: Props) {
   // Capture (live Intraday) vs review (EOD recap). Every judgment column and the
   // AI sub-rows are gated OFF in capture; the review path evaluates exactly as
@@ -282,16 +285,13 @@ export default function SessionTradeTable({
   // Scores for trades that have none for their present fill are computed by the
   // site in the background and land here without a reload (review only).
   // The Log (capture) reads just the entry snapshots, for the rule mistake tags.
-  const { scores: liveScores, entry: liveEntry } = useFlowScores(trades, true, { entryOnly: isCapture })
-  // Each trade's Score = its grade: Entry (the trader's entry rules + the
-  // order-flow Score) and Exit (profit kept, stop respected, runner rules),
-  // averaged — src/lib/trade-grade.ts. Review only.
-  // A quick re-entry after a loss adds "Waited after a loss" to its Score: read over the day's trades.
-  const reentries = useMemo(() => reentryReads(trades), [trades])
-  const gradeOf = useCallback((t: Trade): TradeGrade | null => (isCapture ? null : tradeGrade(t, {
-    entryRules, runnerRules, includeFlow, atrStopTarget, flow: flowScoreFor(t, liveScores), entryCtx: entryCtxFor(t, liveEntry),
-    reentry: reentries.get(t.id) ?? null,
-  })), [isCapture, entryRules, runnerRules, includeFlow, atrStopTarget, liveScores, liveEntry, reentries])
+  // Each trade's Score (review only) — src/lib/use-trade-grades.ts. A page that
+  // also shows grades elsewhere (the Session page's trade panel) hands its own
+  // in, so the trades are read once.
+  const ownGradeOf = useTradeGrades(trades, {
+    capture: isCapture, entryRules, runnerRules, includeFlow, atrStopTarget, enabled: !gradeOfProp,
+  })
+  const gradeOf = gradeOfProp ?? ownGradeOf
   // Row-click action: edit in place when an edit handler is provided (Intraday
   // inline form, or the EOD recap drawer), else open the full log (deep-link).
   const rowAction = onEdit ?? onRowOpen

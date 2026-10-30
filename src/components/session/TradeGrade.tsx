@@ -252,3 +252,91 @@ export function TradeGradeCompact({ grade: g, neverWent, hasStop, note, big = fa
     </div>
   )
 }
+
+/** "Profit kept 100%" — a part's number joins its label; pass/fail words are the dot's job. */
+const withStatus = (l: Line) => (/^(pass|fail|unknown|yes|no|—)$/.test(l.status) ? l.label : `${l.label} ${l.status}`)
+
+function Bullets({ lines }: { lines: Line[] }) {
+  return (
+    <>
+      {lines.map(l => (
+        <p key={l.key} className={l.greyed ? 'opacity-50' : ''}>
+          <span className={`inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle ${DOT[l.dot]}`} aria-hidden="true" />
+          <b className="font-semibold text-gray-100" title={l.title}>{withStatus(l)}</b>{' '}
+          <span className={l.muted ? 'text-gray-500' : 'text-gray-300'}>{l.text}</span>
+        </p>
+      ))}
+    </>
+  )
+}
+
+/**
+ * "Why it scored N" — the Session trade panel's Score breakdown (mockup:
+ * SessionTradeOpen). The same reasons as TradeGradeDetail, grouped the way the
+ * trader reads a fill: the order flow at it, their own entry rules (the unmet
+ * ones as chips, then every rule's one-line reason), then the exit.
+ */
+export function TradeGradeWhy({ grade: g, neverWent, hasStop }: {
+  grade: TradeGrade
+  neverWent: boolean
+  hasStop: boolean
+}) {
+  const { ruleLines, factLines, exitLines, runnerLines, waitedLines, readAt, tapeRule, greyed, tapeNums } = gradeLines(g, neverWent, hasStop)
+  const notMet = g.entryResults.filter(x => x.counted && x.status === 'fail')
+  const checked = g.entryResults.filter(x => x.counted && x.status !== 'unknown')
+  const section = 'border-l-2 border-gray-700 pl-2.5 space-y-1.5'
+  const head = 'font-semibold text-gray-400'
+  return (
+    <section aria-label={`Why it scored ${g.score ?? '—'}`} className="space-y-3 text-[12.5px] leading-snug">
+      <h3 className="text-sm font-semibold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+        Why it scored {g.score ?? '—'}
+      </h3>
+      {waitedLines.length > 0 && (
+        <div className={`${section} border-blue-500/60`}>
+          <p className={head}>Waited after a loss · {r(g.parts.waited)} of 100</p>
+          <Bullets lines={waitedLines} />
+        </div>
+      )}
+      {factLines.length > 0 && (
+        <div className={section}>
+          <p className={head}>
+            Order flow at your fill{readAt ? ` (${readAt})` : ''}{g.parts.flow != null ? ` · ${r(g.parts.flow)} of 100` : ''}
+          </p>
+          <Bullets lines={factLines} />
+        </div>
+      )}
+      {ruleLines.length > 0 && (
+        <div className={section}>
+          <p className={head}>
+            Your entry rules · {notMet.length ? `${notMet.length} not met` : checked.length ? `all ${checked.length} met` : 'not checked yet'}
+          </p>
+          {notMet.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {notMet.map(x => (
+                <span key={x.id} title={x.name} className="text-[11.5px] border border-red-800/60 bg-red-950/40 text-red-300 rounded-full px-2.5 py-px">
+                  {x.label}
+                </span>
+              ))}
+            </div>
+          )}
+          <Bullets lines={ruleLines} />
+        </div>
+      )}
+      {(exitLines.length > 0 || runnerLines.length > 0) && (
+        <div className={section}>
+          <p className={head}>Exit</p>
+          <Bullets lines={exitLines} />
+          <Bullets lines={runnerLines} />
+        </div>
+      )}
+      {(readAt || greyed || waitedLines.length > 0) && (
+        <p className="text-[11px] text-gray-500">
+          {waitedLines.length > 0 && <>{WAITED_NOTE} </>}
+          {readAt && <>Entry reads only what printed before your fill at {readAt} PT.</>}
+          {readAt && tapeRule && g.flowScore && <> The two Tape Reader numbers{tapeNums ? ` (${tapeNums})` : ''} are two windows of the same study: your rules use the 480 s before the fill (your research); the order-flow Score uses 8 clock minutes (your chart).</>}
+          {greyed && <>{readAt ? ' ' : ''}Greyed rules started after this trade, so they don&apos;t count toward its Score.</>}
+        </p>
+      )}
+    </section>
+  )
+}
