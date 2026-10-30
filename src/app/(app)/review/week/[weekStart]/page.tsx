@@ -104,7 +104,7 @@ export default async function WeeklyRecapPage({ params }: PageProps) {
     const traded = (r?.trade_count ?? 0) > 0
     const hasResult = traded || r?.eod_pnl != null
     return {
-      href: hasResult ? `/review/today/${date}` : null,
+      href: hasResult ? `/session/${date}` : null,
       label: format(parseISO(date), 'EEE'),
       sub: format(parseISO(date), 'MMM d'),
       read: r && r.day_types.length > 0 ? displayDayTypes(r.day_types) : null,
@@ -266,7 +266,7 @@ async function buildFilm(
       time: entry
         ? entry.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false }) + ' PT'
         : '',
-      href: date ? `/review/today/${date}` : '#',
+      href: date ? `/session/${date}` : '#',
       symbol: r.symbol,
       direction: r.direction,
       pnl: r.pnl,
@@ -407,7 +407,7 @@ function weeklyCommitment(days: PeriodDay[]): RecapCommitment | null {
   if (report.held > 0) parts.push(`held it ${report.held} of ${report.tracked} tracked day${report.tracked === 1 ? '' : 's'}`)
   else parts.push(`tracked ${report.tracked} day${report.tracked === 1 ? '' : 's'}`)
   if (report.broke > 0) parts.push(`slipped ${report.broke}`)
-  if (report.unresolved > 0) parts.push(`${report.unresolved} not resolved yet — close ${report.unresolved === 1 ? 'it' : 'them'} in Recap · Today`)
+  if (report.unresolved > 0) parts.push(`${report.unresolved} not resolved yet — close ${report.unresolved === 1 ? 'it' : 'them'} in Session`)
   return {
     mode,
     text: report.top.text,

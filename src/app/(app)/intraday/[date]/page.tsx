@@ -1,70 +1,14 @@
-import { createClient } from '@/lib/supabase/server'
-import IntradayClient from '@/components/intraday/IntradayClient'
-import { signTradeScreenshots } from '@/lib/storage-url'
-import type { ScoringProfile } from '@/lib/scoring-profile'
-import type { Trade, TradeTag } from '@/lib/supabase/types'
+import { redirect } from 'next/navigation'
+import { sessionPath } from '@/lib/session-route'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyClient = any
-
-export default async function IntradayPage({
+/** The Log merged into the Session page; old links (and ?trade=) still land. */
+export default async function IntradayDateRedirect({
   params,
   searchParams,
 }: {
   params: Promise<{ date: string }>
-  searchParams: Promise<{ trade?: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
 }) {
   const { date } = await params
-  const { trade: openTradeId } = await searchParams
-  const supabase: AnyClient = await createClient()
-
-  // Use `*` instead of an explicit select that names `day_types` — the
-  // 2026-06-03 day-types-array migration may not have been run yet, and a
-  // named-column select would error the entire query out (and the page would
-  // render empty even though the trading_day + trades exist). `*` returns
-  // whatever columns exist; missing day_types just comes through as undefined.
-  const { data: day } = await supabase.from('trading_days').select('*').eq('date', date).single()
-
-  let trades: Trade[] = []
-  if (day) {
-    const { data } = await supabase
-      .from('trades').select('*').eq('trading_day_id', day.id).order('entry_time', { ascending: true })
-    trades = (data ?? []) as Trade[]
-    // Sign private-bucket screenshot paths for the client (no-op on public URLs).
-    await signTradeScreenshots(supabase, trades)
-  }
-
-  const { data: tags } = await supabase.from('trade_tags').select('*').order('sort_order')
-
-  // Per-user Coach Score rules (onboarding). Empty/missing → default rubric, so
-  // the owner's local app grades exactly as before. `*`-style resilience: a bad
-  // read just yields undefined → defaults.
-  const { data: profRow } = await supabase
-    .from('trader_profile').select('scoring_profile_json').eq('id', 'default').maybeSingle()
-  const scoringProfile =
-    (profRow?.scoring_profile_json && typeof profRow.scoring_profile_json === 'object'
-      ? profRow.scoring_profile_json : null) as ScoringProfile | null
-
-  return (
-    <div>
-      <IntradayClient
-        date={date}
-        initialTrades={trades}
-        allTags={(tags ?? []) as TradeTag[]}
-        scoringProfile={scoringProfile}
-        initialOpenTradeId={openTradeId ?? null}
-        initialSessionNotes={(day?.eod_notes as string | null) ?? ''}
-        initialSessionEndedAt={(day?.session_ended_at as string | null) ?? null}
-        prepDayTypes={
-          // Multi-select array if available, else legacy single primary as a
-          // one-element array. Either form seeds the new trade's day_type tag.
-          (day?.day_types as string[] | null)?.filter(Boolean).length
-            ? (day!.day_types as string[])
-            : day?.day_type
-              ? [day.day_type as string]
-              : []
-        }
-      />
-    </div>
-  )
+  redirect(sessionPath(date, await searchParams))
 }

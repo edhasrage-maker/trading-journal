@@ -44,6 +44,7 @@ import { buildHighlights } from '@/lib/trade-highlights'
 import { effectiveAnalysis, sizeUpTradeIds } from '@/lib/tapescore-day-rules'
 import { perTrade, type PerTrade } from '@/lib/trade-r'
 import { mergeTradeTags } from '@/lib/suggest-tags'
+import SessionTabs from './SessionTabs'
 import type { RiskYardstick } from '@/lib/exit-score'
 import type {
   TradingDay,
@@ -77,6 +78,8 @@ interface Props {
   initialLive: boolean
   /** day_types from Prep — seeds a NEW trade's day-type tag. */
   prepDayTypes?: string[]
+  /** Show the Replay Review tab (decided on the server — see deep-dive-access.ts). */
+  deepDive?: boolean
   /** trade.id → live ATR-10 at entry (points), from 1-min bars server-side. */
   liveAtrByTradeId?: Record<string, number>
   /** trade.id → post-exit continuation @30m, from bars server-side. */
@@ -138,6 +141,7 @@ export default function SessionClient({
   allTags: initialAllTags,
   initialLive,
   prepDayTypes,
+  deepDive = false,
   liveAtrByTradeId,
   postExitByTradeId,
   pnlHistory,
@@ -851,17 +855,7 @@ export default function SessionClient({
       {/* Header: title, day, status · then the day's actions. */}
       <div data-tour="eod-header" className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5">
         <h1 className="text-[22px] font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Session</h1>
-        <input
-          type="date"
-          value={date}
-          onChange={e => {
-            const next = e.target.value
-            if (next && next !== date) router.push(`/session/${next}`)
-          }}
-          className="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2 py-1.5 font-mono focus:outline-none focus:border-blue-500"
-          title="Switch to a different day"
-          aria-label="Session date"
-        />
+        <SessionTabs day={date} active="day" deepDive={deepDive} onPickDay={next => router.push(`/session/${next}`)} />
         <span
           className={`inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-0.5 border ${
             status.tone === 'live' || status.tone === 'ended'

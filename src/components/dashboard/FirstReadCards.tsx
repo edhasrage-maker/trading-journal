@@ -13,7 +13,7 @@ import type { RankedInsight } from '@/lib/data-insights'
  * best and toughest historical day and teases the EOD read for each — the same
  * capture / heat / behavioral read they'll get after every session — so the
  * product pays off the moment their first import lands. Each card deep-links
- * into the full recap at /eod/<date>; no parallel recap surface is built.
+ * into the full recap at /session/<date>; no parallel recap surface is built.
  *
  * Two mounts, one component:
  *  - variant="dashboard": self-gates on the write-once `first_read` flag +
@@ -135,7 +135,7 @@ function TeaserCard({ teaser, kind }: { teaser: FirstReadTeaser; kind: 'best' | 
 
   return (
     <Link
-      href={`/review/today/${teaser.date}`}
+      href={`/session/${teaser.date}`}
       className={`group block rounded-lg border p-4 transition-colors ${
         isBest
           ? 'border-emerald-900/50 bg-emerald-950/20 hover:border-emerald-700/70'

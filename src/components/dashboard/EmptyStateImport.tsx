@@ -181,7 +181,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
               {grading ? 'Reading your last session…' : busy ? 'Importing…' : 'Import trades (CSV)'}
             </button>
             <Link
-              href={`/intraday/${today}`}
+              href={`/session/${today}`}
               className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg border border-gray-700 bg-gray-800 text-gray-200 text-sm font-medium hover:bg-gray-700 transition-colors"
             >
               <PencilLine className="w-4 h-4" /> Log a trade manually

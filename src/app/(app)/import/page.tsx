@@ -342,11 +342,11 @@ export default function ImportPage() {
             </ul>
           )}
           {/* Straight into the session you just imported, not back to the
-              overview. Bare /review resolves server-side to the session
+              overview. Bare /session resolves server-side to the session
               awaiting completion, else the most recent trading day — which is
               exactly what an import just produced, so no date plumbing needed.
               "Back to the dashboard" reads like an exit from a job half done. */}
-          <Link href="/review" className="inline-flex items-center gap-1.5 mt-3 text-sm font-medium text-blue-400 hover:text-blue-300">
+          <Link href="/session" className="inline-flex items-center gap-1.5 mt-3 text-sm font-medium text-blue-400 hover:text-blue-300">
             Review your trades →
           </Link>
           <p className="text-xs text-gray-600 mt-1.5">

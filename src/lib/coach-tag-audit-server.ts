@@ -230,7 +230,7 @@ export async function buildWeekCheck(supabase: AnyClient, weekTrades: readonly W
       time: entry ? entry.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false }) : '',
       dir: t.direction === 'long' ? 'Long' : t.direction === 'short' ? 'Short' : '',
       pnl: t.pnl,
-      href: t.date ? `/review/today/${t.date}?trade=${t.id}` : '#',
+      href: t.date ? `/session/${t.date}?trade=${t.id}` : '#',
       groups,
     })
   }

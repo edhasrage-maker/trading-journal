@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { todayPT } from '@/lib/pt-time'
 import { cn } from '@/lib/utils'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { useUiMode } from '@/lib/ui-mode'
@@ -38,10 +37,15 @@ import BrandLockup from '@/components/BrandLockup'
 const REVIEW_FOLLOW_SEC = 60 * 60
 const REVIEW_VISIT_COOKIE = 'ts_review_visit'
 
+/** True when the path is in this nav item's section (one prefix, or several). */
+function isOn(pathname: string, match: string | string[]): boolean {
+  return (Array.isArray(match) ? match : [match]).some(m => pathname.startsWith(m))
+}
+
 function navTourAnchor(href: string): string | undefined {
   if (href === '/dashboard') return 'nav-dashboard'
   if (href.startsWith('/prep')) return 'nav-prep'
-  if (href.startsWith('/review')) return 'nav-eod'
+  if (href.startsWith('/session')) return 'nav-eod'
   if (href === '/analytics') return 'nav-analytics'
   return undefined
 }
@@ -145,30 +149,6 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
     window.dispatchEvent(new Event('tapescore:start-tour'))
   }
 
-  // `today` is the PT session date, not machine-local — a mis-set OS timezone
-  // on either synced machine would otherwise point these links at the wrong
-  // calendar day. Tick every minute so links roll over across midnight PT.
-  const [today, setToday] = useState<string>(() => todayPT())
-  useEffect(() => {
-    const id = setInterval(() => {
-      const next = todayPT()
-      setToday(prev => (prev === next ? prev : next))
-    }, 60_000)
-    return () => clearInterval(id)
-  }, [])
-
-  // The date the review tabs default to when NOT on a dated route: today once
-  // today's prep is started, else the most-recently-traded day.
-  const [anchor, setAnchor] = useState<string | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/nav-anchor')
-      .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (!cancelled && d?.anchor) setAnchor(d.anchor as string) })
-      .catch(() => { /* fall back to today */ })
-    return () => { cancelled = true }
-  }, [pathname])
-
   // First-run orientation for new testers; hidden once onboarding completes and
   // always on the local owner build. Starts hidden so an established user never
   // sees it flash in and out on load.
@@ -184,18 +164,13 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   }, [])
   const showWelcome = !LOCAL_FEATURES_ENABLED && onboardingCompleted === false
 
-  // On a dated route the tabs stick to THAT date. Otherwise Prep points at
-  // today (where you start today's prep) while the review tabs follow the
-  // anchor, so they don't land on an empty today.
-  //
-  // `review/today` belongs in this list: the day recap used to live at
-  // /eod/<date>, and when it moved under Review the pattern here was never
-  // widened — so every dated recap page quietly dropped the date and threw you
-  // back to today the moment you clicked another tab. Keep this in step with
-  // the day-level routes; week and month are deliberately absent, since their
-  // date is a period start, not the day you're looking at.
+  // On a dated route the tabs stick to THAT date, so Prep → Session is one
+  // day's loop. Keep this in step with the day-level routes (the old /intraday,
+  // /eod and /review/today ones redirect to /session, but can still be on screen
+  // for a moment); week and month are deliberately absent, since their date is a
+  // period start, not the day you're looking at.
   const urlDate = (() => {
-    const m = /^\/(?:prep|intraday|eod|review\/today)\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
+    const m = /^\/(?:prep|session|intraday|eod|review\/today)\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
     return m ? m[1] : null
   })()
 
@@ -203,14 +178,14 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   // state, so the bare /prep route can read it on the server and redirect. The
   // client had no business owning this: deriving the href here meant calling
   // Date.now() during render and setting state from an effect. The honest shape
-  // is the one /review already uses — a bare link the server resolves.
+  // is the one /session already uses — a bare link the server resolves.
   //
   // Why an hour: reviewing Friday's session on Sunday and then clicking Prep
   // should open Friday, because you are still working on Friday. A window makes
   // that a continuation of what you are doing now, rather than a sticky
   // preference that quietly redirects you days later.
   useEffect(() => {
-    const m = /^\/review\/today\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
+    const m = /^\/session\/(\d{4}-\d{2}-\d{2})/.exec(pathname)
     if (!m) return
     try {
       document.cookie =
@@ -218,17 +193,19 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
     } catch { /* cookies blocked — Prep just means today */ }
   }, [pathname])
 
-  const reviewDate = urlDate ?? anchor ?? today
-  // Review keeps the day too, so Prep → Trade → Review is one day's loop rather
-  // than three sections each with their own idea of the date. With no date in
-  // play it stays bare, and /review picks the session to open on its own.
-  const reviewHref = urlDate ? `/review/today/${urlDate}` : '/review'
+  // Session keeps the day too. With no date in play it stays bare, and
+  // /session picks the day to open on its own (today while there's a session to
+  // trade, otherwise the last one you traded).
+  const sessionHref = urlDate ? `/session/${urlDate}` : '/session'
+  // Week, Month and Replay Review are Session's other tabs, so they light it too.
+  const sessionMatch = ['/session', '/review']
 
   // `match` is the prefix that lights the item up — kept separate from href so
   // the dated links (/prep/2026-07-25) still match their section.
   // Dashboard is the home — the all-trades overview, front and centre, the first
   // thing everyone sees (it's also the signed-in landing). Then the daily loop:
-  // Prep → Log → Recap (per-session debrief; EOD folds into Recap·Today), then
+  // Prep → Session (Log and Recap merged into one page, with Week and Month as
+  // its other tabs), then
   // Edge Analysis across every trade. Names say what each page is FOR — the
   // founder found Trade / Review / Patterns too vague (2026-10-08).
   // Calendar is gone as a destination — it's the Dashboard's list/calendar
@@ -237,8 +214,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome', match: '/welcome' }] : []),
     { href: '/dashboard', label: 'Dashboard', match: '/dashboard' },
     { href: urlDate ? `/prep/${urlDate}` : '/prep', label: 'Prep', match: '/prep' },
-    { href: `/intraday/${reviewDate}`, label: 'Log', match: '/intraday' },
-    { href: reviewHref, label: 'Recap', match: '/review' },
+    { href: sessionHref, label: 'Session', match: sessionMatch },
     { href: '/analytics', label: 'Edge Analysis', match: '/analytics' },
   ]
 
@@ -249,8 +225,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   const mobileTabs = [
     { href: '/dashboard', label: 'Home', match: '/dashboard' },
     { href: urlDate ? `/prep/${urlDate}` : '/prep', label: 'Prep', match: '/prep' },
-    { href: `/intraday/${reviewDate}`, label: 'Log', match: '/intraday' },
-    { href: reviewHref, label: 'Recap', match: '/review' },
+    { href: sessionHref, label: 'Session', match: sessionMatch },
   ]
   const moreNav = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome' }] : []),
@@ -263,7 +238,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   useEffect(() => { setMoreOpen(false) }, [pathname])
 
   // The current section's label, shown in place of the nav on narrow widths.
-  const activeLabel = navItems.find(n => pathname.startsWith(n.match))?.label ?? ''
+  const activeLabel = navItems.find(n => isOn(pathname, n.match))?.label ?? ''
 
   return (
     <>
@@ -273,7 +248,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
 
         <nav className="flex items-center gap-0.5 flex-1 min-w-0">
           {navItems.map(({ href, label, match }) => {
-            const active = pathname.startsWith(match)
+            const active = isOn(pathname, match)
             return (
               <Link
                 key={label}
@@ -391,7 +366,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
         style={{ paddingBottom: 'var(--tabbar-bottom)' }}
       >
         {mobileTabs.map(({ href, label, match }) => {
-          const active = pathname.startsWith(match)
+          const active = isOn(pathname, match)
           return (
             <Link
               key={label}

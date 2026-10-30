@@ -40,7 +40,7 @@ interface Props {
   hoverTradeId?: string | null
   /** Double-click a trade arrow. When provided (e.g. the EOD page, where the
    *  trade list is on-screen), the parent scrolls to that trade's row. When
-   *  omitted, LiveChart falls back to navigating to /eod/<date>?trade=<id>. */
+   *  omitted, LiveChart falls back to navigating to /session/<date>?trade=<id>. */
   onTradeActivate?: (tradeId: string) => void
   /** Right-click → Highlight on a trade arrow. Toggles: the menu reads "Remove
    *  highlight" for a trade already in `highlights`. Omit and the item isn't
@@ -693,7 +693,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
   const activateArrow = (id: string) => {
     setArrowMenu(null)
     if (onTradeActivate) onTradeActivate(id)
-    else if (!readOnly) router.push(`/review/today/${date}?trade=${id}`)
+    else if (!readOnly) router.push(`/session/${date}?trade=${id}`)
   }
 
   // Native double-click (kept as a belt-and-suspenders path alongside the
@@ -2525,7 +2525,7 @@ const LiveChart = forwardRef<LiveChartHandle, Props>(function LiveChart(
             >
               <button
                 type="button"
-                onClick={() => { const id = arrowMenu.tradeId; setArrowMenu(null); if (onTradeActivate) onTradeActivate(id); else if (!readOnly) router.push(`/intraday/${date}?trade=${id}`) }}
+                onClick={() => { const id = arrowMenu.tradeId; setArrowMenu(null); if (onTradeActivate) onTradeActivate(id); else if (!readOnly) router.push(`/session/${date}?trade=${id}`) }}
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-200 hover:bg-gray-800 hover:text-white text-left"
               >
                 <Activity className="w-3.5 h-3.5 text-blue-400" />

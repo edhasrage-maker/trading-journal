@@ -395,7 +395,7 @@ export default async function DashboardPage() {
           click away. */}
       {scope.pending && (
         <Link
-          href={`/review/today/${scope.today}`}
+          href={`/session/${scope.today}`}
           className="flex items-center justify-between gap-3 mb-6 px-4 py-3 rounded-lg border border-gray-800 border-l-[3px] border-l-yellow-600 bg-gray-900 hover:bg-gray-800/60 transition-colors group"
         >
           <span className="text-sm text-gray-200">

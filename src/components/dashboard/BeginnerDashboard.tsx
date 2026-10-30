@@ -100,7 +100,7 @@ export default function BeginnerDashboard({ statsDays, days, headlines, liftDrag
             your most recent one first.
           </p>
           <Link
-            href={`/review/today/${gradeDate}`}
+            href={`/session/${gradeDate}`}
             className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 px-3.5 py-2 text-sm font-semibold text-gray-950 transition-colors"
           >
             Grade {dayLabel(gradeDate)} <ChevronRight className="w-4 h-4" />

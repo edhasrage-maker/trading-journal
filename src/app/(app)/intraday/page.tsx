@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
-import { todayPT } from '@/lib/pt-time'
 
-/** Bare /intraday → today's log instead of a 404. */
+/** Bare /intraday → the Session page, which picks the day. */
 export default function IntradayIndexRedirect() {
-  redirect(`/intraday/${todayPT()}`)
+  redirect('/session')
 }

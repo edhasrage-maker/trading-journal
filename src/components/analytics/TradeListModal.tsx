@@ -19,7 +19,7 @@ import { displayDayType, displayDayTypes } from '@/lib/day-type-display'
  * extra fetch.
  *
  * Columns: Date · Side · Qty · Entry · R · PnL · Kept · MAE % · Day Type.
- * Native trades' Date links to /eod/<date>; historical trades have no
+ * Native trades' Date links to /session/<date>; historical trades have no
  * detail page so the date renders as plain text.
  */
 
@@ -205,7 +205,7 @@ function TradeRow({ t }: { t: TradeWithContext }) {
       <td className="py-1.5 px-3 whitespace-nowrap">
         {native && t.date ? (
           <Link
-            href={`/review/today/${t.date}`}
+            href={`/session/${t.date}`}
             className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
           >
             {t.date}

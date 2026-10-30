@@ -8,9 +8,9 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 /**
- * The Review shell. One destination, four time scopes — Today (the session
- * debrief that used to be /eod), Week, Month (the findings view that used to be
- * /dashboard) and All time.
+ * The shell for Session's Week, Month and Replay Review pages. The day itself
+ * lives at /session/<date>; these keep their /review URLs and carry the same
+ * Session header and range switch.
  */
 export default async function ReviewLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -21,7 +21,7 @@ export default async function ReviewLayout({ children }: { children: React.React
 
   return (
     <ReviewShell>
-      <ReviewNav todayDate={scope.today} weekStart={scope.weekStart} pending={scope.pending} deepDive={deepDive} />
+      <ReviewNav todayDate={scope.today} pending={scope.pending} deepDive={deepDive} />
       {children}
     </ReviewShell>
   )

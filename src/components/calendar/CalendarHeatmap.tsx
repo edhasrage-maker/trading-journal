@@ -19,7 +19,7 @@ const DOW_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
  * Multi-month calendar. In 'tapescore' mode each traded day is colored by its
  * decision-grade band (green ≥70 / amber 50–69 / red <50; neutral = ungraded)
  * with the score + P&L centered and a breach dot on rule-break days. In 'pnl'
- * mode it falls back to the classic money heatmap. Cells link to /eod/{date}.
+ * mode it falls back to the classic money heatmap. Cells link to /session/{date}.
  */
 export default function CalendarHeatmap({ days, startDate, endDate, colorMode }: Props) {
   const byDate = new Map(days.map(s => [s.date, s]))
@@ -119,7 +119,7 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
             return (
               <Link
                 key={i}
-                href={`/review/today/${dateStr}`}
+                href={`/session/${dateStr}`}
                 className={`min-h-[46px] rounded flex items-start justify-start p-1 text-[9px] text-gray-700 hover:bg-gray-800 transition-colors border ${isToday ? 'border-amber-500/60' : 'border-gray-800/40'}`}
                 title={`${format(d, 'EEE, MMM d, yyyy')} — no trades`}
               >
@@ -138,7 +138,7 @@ function MonthGrid({ month, byDate, maxAbs, colorMode }: {
           return (
             <Link
               key={i}
-              href={`/review/today/${dateStr}`}
+              href={`/session/${dateStr}`}
               className={`relative min-h-[46px] rounded flex flex-col items-center justify-center hover:ring-2 hover:ring-blue-400 transition-all ${isToday ? 'ring-2 ring-amber-500/70' : ''}`}
               style={{ backgroundColor: bg }}
               title={tip}

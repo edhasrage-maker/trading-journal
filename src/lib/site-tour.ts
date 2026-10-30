@@ -33,7 +33,7 @@ export interface TourStep {
 /** The sequence of routes the tour walks. The engine navigates from one to the
  *  next populated route when a chapter finishes. Dated routes are bare prefixes
  *  here; the engine appends the actual date (todayPT) when navigating. */
-export const TOUR_ROUTE_ORDER = ['/dashboard', '/prep', '/review/today', '/analytics'] as const
+export const TOUR_ROUTE_ORDER = ['/dashboard', '/prep', '/session', '/analytics'] as const
 
 export const TOUR_STEPS: TourStep[] = [
   // ---------------------------------------------------------------- Dashboard
@@ -103,20 +103,20 @@ export const TOUR_STEPS: TourStep[] = [
     anchor: 'nav-eod',
     title: 'Next: recap your day',
     description:
-      'After the session, Recap is where you grade what you actually did. Click Next →',
+      'After the close, Session is where you grade what you actually did. Click Next →',
   },
   // ---------------------------------------------------------------------- EOD
   {
-    route: '/review/today',
+    route: '/session',
     anchor: 'eod-header',
-    title: 'EOD Recap',
+    title: 'Your session',
     description:
       'Every trade you took, with the stats that matter — whether it went your way, how much of that you kept, and the heat you took (MFE and MAE). This is your game film.',
     side: 'bottom',
     align: 'start',
   },
   {
-    route: '/review/today',
+    route: '/session',
     anchor: 'eod-analyze',
     title: 'Grade your execution',
     description:
@@ -125,7 +125,7 @@ export const TOUR_STEPS: TourStep[] = [
     align: 'center',
   },
   {
-    route: '/review/today',
+    route: '/session',
     anchor: 'nav-analytics',
     title: 'Next: the big picture',
     description:

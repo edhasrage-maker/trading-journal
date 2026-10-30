@@ -1,7 +1,14 @@
 import { redirect } from 'next/navigation'
+import { sessionPath } from '@/lib/session-route'
 
 /** Deep links to the old per-day EOD recap keep working. */
-export default async function EodDateRedirect({ params }: { params: Promise<{ date: string }> }) {
+export default async function EodDateRedirect({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ date: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   const { date } = await params
-  redirect(`/review/today/${date}`)
+  redirect(sessionPath(date, await searchParams))
 }

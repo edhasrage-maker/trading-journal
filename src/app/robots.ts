@@ -21,6 +21,7 @@ export default function robots(): MetadataRoute.Robots {
       disallow: [
         '/api/',
         '/review',
+        '/session',
         '/prep',
         '/eod',
         '/intraday',

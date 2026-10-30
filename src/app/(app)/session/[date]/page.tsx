@@ -4,6 +4,7 @@ import SessionClient from '@/components/session/SessionClient'
 import { computeHeatBaseline } from '@/lib/heat-baseline'
 import { isTodayPt, isBeforeRthClose } from '@/lib/rth'
 import { todayPT } from '@/lib/pt-time'
+import { deepDiveAllowed } from '@/lib/deep-dive-access'
 import CommitmentResolution from '@/components/review/CommitmentResolution'
 import { fetchAllBars, postExitExtension, type AtrBar, type PostExitData } from '@/lib/atr'
 import { configuredAtr } from '@/lib/atr-config'
@@ -33,6 +34,8 @@ export default async function SessionPage({ params }: { params: Promise<{ date: 
   const { date } = await params
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date))) redirect(`/session/${todayPT()}`)
   const supabase: AnyClient = await createClient()
+  // Who's looking — only to decide the Replay Review tab. Runs alongside the loads below.
+  const userPromise = supabase.auth.getUser()
   // ── Stage A: config + the day row + all-days aggregates, in parallel ──
   // atrCfg = the trader's chosen ATR measurement (drives the ATR@ column);
   // giveBackAtr = their "was up" multiple; tags = the tag library; pnlHistory +
@@ -161,6 +164,7 @@ export default async function SessionPage({ params }: { params: Promise<{ date: 
         date={date}
         initialDay={day}
         initialLive={isTodayPt(date) && isBeforeRthClose(date)}
+        deepDive={deepDiveAllowed((await userPromise).data?.user?.email)}
         prepDayTypes={
           // Multi-select array if available, else the legacy single primary.
           // Either seeds a NEW trade's day_type tag.

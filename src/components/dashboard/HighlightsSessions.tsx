@@ -97,7 +97,7 @@ export default function HighlightsSessions({ days, headlines, periodLabel }: {
           return (
             <li key={d.id} className="border-t border-gray-800">
               <Link
-                href={`/review/today/${d.date}`}
+                href={`/session/${d.date}`}
                 className="grid grid-cols-[auto_1fr_auto] md:grid-cols-[110px_120px_1fr_76px_92px_14px] gap-x-3.5 gap-y-2 items-center px-4 sm:px-5 py-3 hover:bg-gray-800/40 transition-colors"
               >
                 <div className="text-[13px] font-semibold text-gray-100">
