@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Onboarding r1</title>
+<style>
+  /* New-user onboarding, r1 (2026-10-29). Same tokens as the Highlights / Recap mockups. */
+  :root{
+    --bg:#F1F3F5; --card:#FFFFFF; --card2:#F7F8FA; --line:#E2E5E9; --hair:#ECEEF1;
+    --ink:#1D232B; --mut:#5F6670; --faint:#9298A1;
+    --acc:#2F6FA3; --acc-soft:#E6EFF7;
+    --pos:#0E6E67; --pos-soft:#E3F1EF;
+    --neg:#9A2233; --neg-soft:#F6E5E7;
+    --cau:#A8741A; --cau-soft:#F7EEDC;
+    --track:#E6E9ED; --mark:#C2410C;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0A0A0C; --card:#131519; --card2:#1B1E23; --line:#282C32; --hair:#1C2026;
+      --ink:#E8EAED; --mut:#969BA3; --faint:#5E636B;
+      --acc:#4F97CE; --acc-soft:#14222E;
+      --pos:#4FC58E; --pos-soft:#14261E;
+      --neg:#E0685F; --neg-soft:#2A1716;
+      --cau:#D6B24E; --cau-soft:#2A2414; --track:#22262C; --mark:#FB923C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0A0A0C; --card:#131519; --card2:#1B1E23; --line:#282C32; --hair:#1C2026;
+    --ink:#E8EAED; --mut:#969BA3; --faint:#5E636B;
+    --acc:#4F97CE; --acc-soft:#14222E;
+    --pos:#4FC58E; --pos-soft:#14261E;
+    --neg:#E0685F; --neg-soft:#2A1716;
+    --cau:#D6B24E; --cau-soft:#2A2414; --track:#22262C; --mark:#FB923C;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg)}
+  body{color:var(--ink);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .num{font-variant-numeric:tabular-nums}
+  .pos{color:var(--pos)} .neg{color:var(--neg)}
+  b{font-weight:600}
+
+  .page{max-width:1180px;margin:0 auto;padding:32px 16px 80px}
+  .kick{font:600 11px/1 ui-monospace,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+  h1{font-size:clamp(24px,3.4vw,32px);letter-spacing:-.02em;line-height:1.15;margin:10px 0}
+  .lede{max-width:82ch;color:var(--mut);font-size:15px}
+  .lede strong{color:var(--ink)}
+  .theme{margin-top:14px;display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:12px}
+  .theme button{background:none;border:0;color:var(--mut);padding:6px 12px;cursor:pointer;font:inherit}
+  .theme button.on{background:var(--card);color:var(--ink);font-weight:600}
+
+  /* the path strip */
+  .path{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:22px}
+  @media (max-width:760px){.path{grid-template-columns:1fr 1fr}}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:13px}
+  .step .n{font:700 11px/1 ui-monospace,Consolas,monospace;color:var(--mark);letter-spacing:.08em}
+  .step b{display:block;font-size:14px;margin:4px 0 2px}
+  .step span{color:var(--mut)}
+  .step.now{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc-soft)}
+  .step .was{display:block;margin-top:6px;font-size:12px;color:var(--faint)}
+
+  h2.sec{font-size:20px;letter-spacing:-.01em;margin:44px 0 4px;display:flex;gap:10px;align-items:baseline}
+  h2.sec .n{font:700 12px/1 ui-monospace,Consolas,monospace;color:var(--mark)}
+  .sub{font-size:14px;color:var(--mut);max-width:80ch}
+
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:22px;align-items:start;margin-top:16px}
+  @media (max-width:1000px){.layout{grid-template-columns:1fr}}
+
+  .frame{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--bg);box-shadow:0 20px 50px -30px rgba(0,0,0,.35)}
+  .bar{display:flex;align-items:center;gap:6px;padding:9px 12px;background:var(--card2);border-bottom:1px solid var(--line)}
+  .bar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+  .bar span{margin-left:10px;font:12px ui-monospace,Consolas,monospace;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mast{display:flex;align-items:center;gap:20px;padding:12px 18px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{font-weight:700;font-size:15px}
+  .nav{display:flex;gap:16px;font-size:13px;color:var(--mut);flex:1;flex-wrap:wrap}
+  .nav .on{color:var(--ink);font-weight:600}
+  .app{padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+  @media (max-width:640px){.app{padding:14px 12px}}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px 20px;position:relative}
+  .card h3{font-size:15px;font-weight:600;margin-bottom:4px}
+  .card .hint{font-size:13px;color:var(--mut)}
+  .m{position:absolute;top:-9px;left:-9px;width:22px;height:22px;border-radius:50%;background:var(--mark);color:#fff;font:700 11px/22px Inter,system-ui,sans-serif;text-align:center;z-index:2;box-shadow:0 0 0 3px var(--bg)}
+
+  .hello{text-align:center;padding:26px 20px 6px}
+  .hello h3{font-size:22px;letter-spacing:-.01em}
+  .hello p{color:var(--mut);font-size:14px;margin-top:4px}
+
+  .doors{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  @media (max-width:760px){.doors{grid-template-columns:1fr}}
+  .door{border:1px solid var(--line);border-radius:10px;padding:16px;background:var(--card);position:relative}
+  .door.on{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc-soft)}
+  .door .ic{width:34px;height:34px;border-radius:8px;background:var(--acc-soft);color:var(--acc);display:flex;align-items:center;justify-content:center;font-weight:700;margin-bottom:10px}
+  .door b{display:block;font-size:15px}
+  .door span{font-size:13px;color:var(--mut)}
+  .door .tag{position:absolute;top:12px;right:12px;font-size:11px;font-weight:600;color:var(--pos);background:var(--pos-soft);border-radius:4px;padding:1px 6px}
+
+  .plats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .plat{font-size:13px;border:1px solid var(--line);border-radius:7px;padding:6px 12px;background:var(--card2);color:var(--mut)}
+  .plat.on{border-color:var(--acc);color:var(--acc);background:var(--acc-soft);font-weight:600}
+  .plat small{font-size:11px;color:var(--faint);margin-left:4px}
+  .how{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;margin-top:14px}
+  @media (max-width:760px){.how{grid-template-columns:1fr}}
+  .how ol{list-style:none;display:grid;gap:8px;counter-reset:h}
+  .how li{counter-increment:h;position:relative;padding-left:30px;font-size:14px;line-height:1.45}
+  .how li::before{content:counter(h);position:absolute;left:0;top:0;width:22px;height:22px;border-radius:50%;background:var(--acc-soft);color:var(--acc);font:700 12px/22px Inter,system-ui,sans-serif;text-align:center}
+  .how code{font:12.5px ui-monospace,Consolas,monospace;background:var(--card2);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+  .drop{border:2px dashed var(--line);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:18px;gap:4px;color:var(--mut);font-size:13px;min-height:130px}
+  .drop b{color:var(--ink);font-size:14px}
+  .small{font-size:12px;color:var(--faint)}
+
+  /* progress */
+  .prog{display:grid;gap:12px}
+  .pl{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;font-size:14px}
+  .pl .d{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+  .pl .d.ok{background:var(--pos-soft);color:var(--pos)}
+  .pl .d.run{border:2px solid var(--acc);border-right-color:transparent}
+  .pl .d.wait{background:var(--track)}
+  .pl small{color:var(--faint);font-size:12px}
+  .btn{display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:8px 14px;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+  .btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+  .btn.am{background:#E0A33C;border-color:#E0A33C;color:#1b1408}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+  /* recap first visit */
+  .hero{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+  @media (max-width:640px){.hero{grid-template-columns:1fr}}
+  .ring{position:relative;width:96px;height:96px}
+  .ring .v{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ring .s{font-size:30px;font-weight:600;line-height:1;color:var(--pos)}
+  .ring .w{font-size:11px;color:var(--pos);margin-top:3px}
+  .headline{font-size:16px;font-weight:600;line-height:1.35}
+  .money{font-size:24px;font-weight:700;margin-top:4px}
+  .first{border:1px solid color-mix(in srgb,var(--acc) 45%,var(--line));background:var(--acc-soft);border-radius:8px;padding:12px 14px;font-size:13.5px;line-height:1.5}
+  .first b{color:var(--acc)}
+  .q2{display:grid;gap:14px}
+  .qq{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:center}
+  @media (max-width:640px){.qq{grid-template-columns:1fr}}
+  .qq .l{font-size:14px;font-weight:600}
+  .qq .l small{display:block;font-weight:400;color:var(--mut);font-size:12px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:13px;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--card2);color:var(--mut)}
+  .chip.on{border-color:var(--acc);color:var(--acc);background:var(--acc-soft);font-weight:600}
+  .ghost{font-size:13px;color:var(--mut);text-decoration:underline;text-underline-offset:3px}
+
+  /* checklist */
+  .gs{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:start}
+  @media (max-width:640px){.gs{grid-template-columns:1fr}}
+  .gs ul{list-style:none;display:grid;gap:8px;margin-top:10px}
+  .gs li{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;font-size:14px}
+  .gs li .d{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+  .gs li .d.ok{background:var(--pos-soft);color:var(--pos)}
+  .gs li .d.todo{border:1.5px solid var(--line)}
+  .gs li.done span{color:var(--faint);text-decoration:line-through}
+  .gs li a{font-size:13px;color:var(--acc);font-weight:600;text-decoration:none;white-space:nowrap}
+  .meter{width:120px}
+  .meter .t{height:6px;border-radius:3px;background:var(--track);overflow:hidden}
+  .meter .t i{display:block;height:100%;width:40%;background:var(--acc)}
+  .meter small{font-size:12px;color:var(--mut)}
+  .window{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--mut)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--card)}
+  .seg span{font-size:12.5px;padding:5px 11px;color:var(--mut);border-right:1px solid var(--line)}
+  .seg span:last-child{border-right:0}
+  .seg .on{background:var(--acc-soft);color:var(--acc);font-weight:600}
+  .ghostcards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  @media (max-width:640px){.ghostcards{grid-template-columns:1fr}}
+  .gc{border:1px solid var(--line);border-radius:6px;padding:14px;background:var(--card)}
+  .gc .l{font-size:12px;color:var(--mut)} .gc .v{font-size:22px;font-weight:600}
+
+  /* side notes */
+  .side{display:grid;gap:14px;position:sticky;top:14px}
+  @media (max-width:1000px){.side{position:static}}
+  .note{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 18px;font-size:13.5px}
+  .note h4{font-size:13px;margin-bottom:8px}
+  .note ul{list-style:none;display:grid;gap:7px;line-height:1.45}
+  .note ul li{padding-left:14px;position:relative;color:var(--mut)}
+  .note ul li::before{content:"→";position:absolute;left:0;color:var(--faint)}
+  .note ul li b{color:var(--ink)}
+  .note.now{border-color:color-mix(in srgb,var(--neg) 35%,var(--line))}
+  .note.now h4{color:var(--neg)}
+
+  .tbl{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:14px;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .tbl th,.tbl td{text-align:left;padding:10px 12px;border-top:1px solid var(--hair);vertical-align:top}
+  .tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);border-top:0;background:var(--card2)}
+  .tbl td:first-child{font-weight:600;white-space:nowrap}
+  .tbl .s{color:var(--mut)}
+  .wrap{overflow-x:auto}
+
+  .q{margin-top:40px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px 22px}
+  .q h3{font-size:16px;margin-bottom:10px}
+  .q ol{padding-left:20px;display:grid;gap:8px;font-size:14px;color:var(--mut)}
+  .q ol b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="kick">TapeScore · New-user onboarding · r1 · 2026-10-29</div>
+  <h1>Trades in, one session graded, and the trader is reading their first Recap in under two minutes.</h1>
+  <p class="lede">Today a new trader lands on an empty dashboard with "Import trades (CSV)". There's no help finding that file on their platform, and the landing page's "paste your chart" isn't offered. After the import they're dropped on the dashboard, often showing "0 sessions" because the 30-day window misses older history. A setup banner then asks for a 4-step wizard full of R, ATR and POC/VAH, and "Skip for now" brings the banner straight back. <strong>r1 cuts this to four screens. Each one has a single next step, and the payoff (a graded session with "For tomorrow") arrives before we ask for anything.</strong></p>
+  <div class="theme" role="group" aria-label="Theme">
+    <button type="button" data-t="">Auto</button><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button>
+  </div>
+
+  <div class="path">
+    <div class="step"><span class="n">① GET TRADES IN</span><b>Three ways in</b><span>Paste a chart, import from your platform, or type one.</span><span class="was">Today: CSV button + "log manually"</span></div>
+    <div class="step"><span class="n">② READING</span><b>Your trades, graded</b><span>Latest session graded while you watch.</span><span class="was">Today: a spinner, then the dashboard</span></div>
+    <div class="step now"><span class="n">③ FIRST RECAP</span><b>The payoff, then 2 questions</b><span>Score, For tomorrow, then your loss limit and trade cap.</span><span class="was">Today: never shown; 4-step wizard via banner</span></div>
+    <div class="step"><span class="n">④ DASHBOARD</span><b>Getting started, 2 of 5</b><span>A checklist replaces the banner and the tour.</span><span class="was">Today: banner + 9-step tour</span></div>
+  </div>
+
+  <!-- ① -->
+  <h2 class="sec"><span class="n">①</span>Get your trades in</h2>
+  <p class="sub">Replaces the empty dashboard. Three equal ways in, with the one the landing page promises first. Picking "Import" opens a platform picker that shows that platform's own export steps next to the drop zone.</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app/dashboard · first visit, empty journal</span></div>
+      <div class="mast"><span class="brand">TapeScore</span><span class="nav"><span class="on">Dashboard</span><span>Prep</span><span>Session</span><span>Edge Analysis</span></span></div>
+      <div class="app">
+        <div class="hello"><h3>Let's grade your first session</h3><p>Bring in one day of trades. Takes about a minute.</p></div>
+        <div class="doors">
+          <div class="door"><span class="m">1</span><div class="ic">⌘V</div><b>Paste a chart screenshot</b><span>We read the trade off your chart. You confirm the P&amp;L.</span></div>
+          <div class="door on"><span class="tag">Most people</span><div class="ic">⇪</div><b>Import from your platform</b><span>A day, a week or your whole history.</span></div>
+          <div class="door"><div class="ic">✎</div><b>Type a trade in</b><span>Long or short, contracts, P&amp;L. Four boxes.</span></div>
+        </div>
+        <div class="card">
+          <span class="m">2</span>
+          <h3>Where do you trade?</h3>
+          <div class="plats">
+            <span class="plat on">Tradovate</span><span class="plat">NinjaTrader</span><span class="plat">TopstepX <small>soon</small></span><span class="plat">Rithmic <small>soon</small></span><span class="plat">Sierra Chart</span><span class="plat">Tradezella</span><span class="plat">Something else</span>
+          </div>
+          <div class="how">
+            <ol>
+              <li>In Tradovate, open <b>Reports</b> (the bar-chart icon, top right).</li>
+              <li>Pick the <b>Performance</b> tab and set the dates you want.</li>
+              <li>Click <b>Download Report</b>. You get a file like <code>Performance.csv</code>.</li>
+            </ol>
+            <div class="drop"><b>Drop the file here</b>or click to pick it<span class="small">.csv or Sierra .txt · we only read trades</span></div>
+          </div>
+          <p class="small" style="margin-top:10px">Steps are illustrative. Each platform's real menu path to be confirmed against a live account before shipping.</p>
+        </div>
+        <p class="small" style="text-align:center">Just looking? <span class="ghost">Explore the demo first</span></p>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>What changes</h4>
+        <ul>
+          <li><b>Paste is a front door</b>, not hidden on the Log page. It is the landing page's headline promise. It reuses the Session page's paste strip; after reading the chart it asks for the P&amp;L (extraction doesn't return it today).</li>
+          <li><b>Platform picker → that platform's export steps</b>, next to the drop zone. No more "Detected headers: …" as the first help a trader sees.</li>
+          <li><b>"Type a trade in" = 4 boxes</b> (direction, instrument, contracts, P&amp;L), P&amp;L required. Today nothing is required and a blank trade saves.</li>
+          <li>The file picker's Sierra account picker stays as is.</li>
+        </ul>
+      </div>
+      <div class="note now">
+        <h4>Needs work first</h4>
+        <ul>
+          <li><b>TopstepX and Rithmic</b> aren't recognised by the CSV reader. They're marked "soon" until we have a real export to build against. <i>Can you get one of each?</i></li>
+          <li>Tradovate / NinjaTrader parsing is still marked "validate against real exports" in the code.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② -->
+  <h2 class="sec"><span class="n">②</span>Reading your trades</h2>
+  <p class="sub">The wait becomes the first proof the product works: each line ticks as it happens. It ends on the Recap of the graded session, not the dashboard.</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app · after the drop</span></div>
+      <div class="app">
+        <div class="card">
+          <span class="m">3</span>
+          <h3>Reading Performance.csv</h3>
+          <div class="prog" style="margin-top:12px">
+            <div class="pl"><span class="d ok">✓</span><span><b>214 trades</b> across <b>41 sessions</b>, Jun 2 – Oct 28</span><small>done</small></div>
+            <div class="pl"><span class="d ok">✓</span><span>Sorted them into sessions by trading day</span><small>done</small></div>
+            <div class="pl"><span class="d run"></span><span>Grading your latest session, <b>Tue, Oct 28</b></span><small>~20 s</small></div>
+            <div class="pl"><span class="d wait"></span><span>Your dashboard will show Jun 2 – Oct 28</span><small></small></div>
+          </div>
+        </div>
+        <div class="card">
+          <span class="m">4</span>
+          <div class="row" style="justify-content:space-between">
+            <span class="hint">Want more than one? Grade your last 5 sessions now so the dashboard has scores to show.</span>
+            <span class="row"><span class="btn">Grade 5 more</span><span class="btn p">Open my Recap →</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>What changes</h4>
+        <ul>
+          <li><b>Plain progress lines</b> with real counts, instead of a spinner.</li>
+          <li><b>Lands on the graded Recap</b>, where the value is, rather than the dashboard.</li>
+          <li><b>The dashboard's window covers the import.</b> If the newest trade is older than 30 days, the first visit opens on a range that contains it, not "0 sessions".</li>
+          <li><b>"Grade 5 more" is opt-in</b> (5 AI calls). Today only the newest session is ever auto-graded; every later import needs a manual Grade.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ -->
+  <h2 class="sec"><span class="n">③</span>First Recap: the payoff, then two questions</h2>
+  <p class="sub">The trader sees their score and "For tomorrow" before we ask for anything. Then we ask two questions that make the score theirs, with tap-to-pick answers. These are the new-trader picks we decided for Prep.</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app/session/2026-10-28 · Highlights · first visit</span></div>
+      <div class="mast"><span class="brand">TapeScore</span><span class="nav"><span>Dashboard</span><span>Prep</span><span class="on">Session</span><span>Edge Analysis</span></span></div>
+      <div class="app">
+        <div class="first"><b>Your first graded session.</b> The score grades how you traded, not what you made: Risk, Entry and Exit, out of 100. Under it is the one thing to do tomorrow.</div>
+        <div class="card">
+          <div class="hero">
+            <div class="ring">
+              <svg viewBox="0 0 96 96" width="96" height="96" aria-hidden="true">
+                <circle cx="48" cy="48" r="40" fill="none" stroke="var(--track)" stroke-width="8"/>
+                <circle cx="48" cy="48" r="40" fill="none" stroke="var(--pos)" stroke-width="8" stroke-linecap="round" stroke-dasharray="183 251" transform="rotate(-90 48 48)"/>
+              </svg>
+              <div class="v"><span class="s num">73</span><span class="w">Strong</span></div>
+            </div>
+            <div>
+              <p class="headline">Patient entries; the exits gave back more than they kept.</p>
+              <p class="money neg num">−$140</p>
+              <p class="hint num">4 trades · 50% win rate</p>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="border-left:3px solid var(--acc)">
+          <h3>For tomorrow</h3>
+          <p style="font-size:15px">1. Once a trade is up 2× your stop, move the stop to break-even.</p>
+        </div>
+        <div class="card">
+          <span class="m">5</span>
+          <h3>Two questions make this score yours</h3>
+          <p class="hint" style="margin-bottom:14px">Right now it grades you against general rules. Your answers change Risk to your own limits. You can change them any time in Settings.</p>
+          <div class="q2">
+            <div class="qq"><span class="l">Stop for the day after losing<small>your daily loss limit</small></span><span class="chips"><span class="chip">$150</span><span class="chip on">$300</span><span class="chip">$500</span><span class="chip">Other</span><span class="chip">I don't use one</span></span></div>
+            <div class="qq"><span class="l">Most trades in a day<small>your trade cap</small></span><span class="chips"><span class="chip">3</span><span class="chip on">5</span><span class="chip">8</span><span class="chip">Other</span><span class="chip">No cap</span></span></div>
+          </div>
+          <div class="row" style="margin-top:16px"><span class="btn p">Save and re-score</span><span class="ghost">Not now</span><span class="small" style="margin-left:auto">Playbook, setups and the rest: Settings → Your trading</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>What changes</h4>
+        <ul>
+          <li><b>One sentence of orientation</b> on the first Recap only, then gone.</li>
+          <li><b>Two questions instead of a 4-step wizard.</b> They save to the same rails the wizard writes (<code>daily_loss_limit</code>, <code>max_trades</code>), and the day re-scores.</li>
+          <li><b>"Not now" means not now</b>: it stays in the checklist ④ and never comes back as a banner. Today "Skip for now" brings the banner straight back.</li>
+          <li><b>The full wizard moves to Settings</b> as "Your trading" (playbook, setups, entry rules), for when they want more. A trader who wants it straight away finds it in the checklist.</li>
+          <li>No R, ATR, rails or POC on this screen.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ④ -->
+  <h2 class="sec"><span class="n">④</span>Dashboard: Getting started</h2>
+  <p class="sub">One checklist card on top of the Highlights dashboard until it's done or dismissed. It replaces the setup banner and the 9-step tour. Each item is one click to the place it's done.</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app/dashboard · Highlights</span></div>
+      <div class="mast"><span class="brand">TapeScore</span><span class="nav"><span class="on">Dashboard</span><span>Prep</span><span>Session</span><span>Edge Analysis</span></span></div>
+      <div class="app">
+        <div class="card">
+          <span class="m">6</span>
+          <div class="gs">
+            <div>
+              <h3>Getting started</h3>
+              <ul>
+                <li class="done"><span class="d ok">✓</span><span>Bring in your trades</span><span></span></li>
+                <li class="done"><span class="d ok">✓</span><span>Read your first graded session</span><span></span></li>
+                <li><span class="d todo"></span><span>Set your loss limit and trade cap</span><a>Two taps →</a></li>
+                <li><span class="d todo"></span><span>Do tomorrow's Prep before the open</span><a>3 minutes →</a></li>
+                <li><span class="d todo"></span><span>Grade a second session</span><a>Pick one →</a></li>
+              </ul>
+            </div>
+            <div class="meter"><small class="num">2 of 5</small><div class="t"><i></i></div><p class="small" style="margin-top:8px"><span class="ghost">Hide this</span></p></div>
+          </div>
+        </div>
+        <div class="window"><span>Showing</span><span class="seg"><span>This Week</span><span>This Month</span><span>Last 30 Days</span><span class="on">Since you started</span></span><span class="num">Jun 2 – Oct 28 · 41 sessions</span></div>
+        <div class="ghostcards">
+          <div class="gc"><div class="l">TapeScore</div><div class="v num">71</div></div>
+          <div class="gc"><div class="l">P&amp;L</div><div class="v pos num">+$2,310</div></div>
+          <div class="gc"><div class="l">Win rate</div><div class="v num">54%</div></div>
+        </div>
+        <p class="small" style="text-align:center">…the rest of the Highlights dashboard as shipped</p>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>What changes</h4>
+        <ul>
+          <li><b>A checklist instead of a tour.</b> The tour narrates screens; the checklist gets things done. The tour stays in the Help menu for anyone who wants it.</li>
+          <li><b>"Since you started"</b> joins the time switch and is the default until the journal has 30 days of recent trades.</li>
+          <li>The "Prep before the open" item is the habit we want. It ties straight to For tomorrow → From your last recap.</li>
+          <li><b>New accounts always start in Highlights</b>, even if they used Detailed in the demo first.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="sec">Smaller fixes that ride along</h2>
+  <div class="wrap">
+  <table class="tbl">
+    <thead><tr><th>Where</th><th>Today</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Landing page</td><td class="s">"Heat vs capture in ATR", "1.1×ATR"</td><td>Plain words: "how far it went against you", "how much of the move you kept"</td></tr>
+      <tr><td>Import page</td><td class="s">MAE/MFE and Sierra order notes shown to everyone</td><td>Behind "Advanced"; the platform picker leads</td></tr>
+      <tr><td>Tour</td><td class="s">The Recap 404 is gone since the Session merge. On a weekday before the close it now opens today's empty live session, where its "Grade" step has nothing to point at.</td><td>Retired for new users (④); if kept, open the last day with trades</td></tr>
+      <tr><td>Setup: confluences</td><td class="s">Only "Yes, I do" or "Skip — remind me later"</td><td>Add "I don't use these" (moot if the wizard moves to Settings)</td></tr>
+      <tr><td>Setup: timezone</td><td class="s">Starts blank</td><td>Default from the browser</td></tr>
+      <tr><td>Log form</td><td class="s">A completely blank trade can be saved; no exit price</td><td>P&amp;L required; add Exit price</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="q">
+    <h3>Your call</h3>
+    <ol>
+      <li><b>Land on the graded Recap</b> after the first import, rather than the dashboard?</li>
+      <li><b>Two questions instead of the 4-step wizard</b> for everyone, with the full wizard moved to Settings → Your trading? Or keep the "I trade a system" path for experienced traders?</li>
+      <li><b>Retire the tour for new users</b> in favour of the Getting started checklist?</li>
+      <li><b>"Grade 5 more"</b> after the first import: offer it (5 AI calls, opt-in), or just grade the latest?</li>
+    </ol>
+  </div>
+</div>
+<script>
+  (function(){
+    var root=document.documentElement, btns=document.querySelectorAll('.theme button');
+    function set(t){ if(t){root.setAttribute('data-theme',t)} else {root.removeAttribute('data-theme')}
+      btns.forEach(function(b){b.classList.toggle('on',b.getAttribute('data-t')===t)}) }
+    btns.forEach(function(b){b.addEventListener('click',function(){set(b.getAttribute('data-t'))})});
+    set('');
+  })();
+</script>
+</body>
+</html>

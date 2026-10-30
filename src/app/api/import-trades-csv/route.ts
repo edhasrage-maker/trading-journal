@@ -15,6 +15,8 @@ import { readStopOrders } from '@/lib/sc-stops'
 import { writeTradeStops } from '@/lib/trade-stops-server'
 import type { TradeStopOrder } from '@/lib/supabase/types'
 import { fillStructureForDays, STRUCTURE_SPAN_DAYS } from '@/lib/structure-from-bars'
+import { readTagMap, tagsForRow, type TagMapEntry } from '@/lib/import-tag-columns'
+import { applyImportedTags, type ImportedTagEntry, type ImportedTagSummary } from '@/lib/import-tags-server'
 
 /**
  * The trading day a trade belongs to: the PT calendar date of its entry — the
@@ -53,6 +55,9 @@ interface PendingTrade {
   trade_date: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   row: Record<string, any>
+  /** Tags and notes carried over from the file's own columns (trade CSVs only,
+   *  when the trader confirmed "We found your tags"). */
+  carried?: { tags: Record<string, string[]>; notes: string | null }
 }
 
 /** Page the shared ohlcv_bars for [startIso, endIso] (past the 1000-row cap). */
@@ -246,6 +251,10 @@ export async function POST(req: Request) {
   // local times with no zone, so we read them in the uploader's timezone rather
   // than the (UTC) server's — otherwise every fill displays hours off.
   let clientTz: string | undefined
+  // The trader's choices from "We found your tags" (column → group / notes /
+  // leave out). Absent = trades only, exactly as before.
+  let rawTagMap: unknown = null
+  let tagMapUsed: TagMapEntry[] = []
   const ctype = req.headers.get('content-type') || ''
   try {
     if (ctype.includes('multipart/form-data')) {
@@ -257,11 +266,14 @@ export async function POST(req: Request) {
       csvText = await (file as File).text()
       const tzv = form.get('tz')
       if (typeof tzv === 'string' && tzv) clientTz = tzv
+      const tm = form.get('tagMap')
+      if (typeof tm === 'string' && tm) { try { rawTagMap = JSON.parse(tm) } catch { /* ignore a bad map: trades only */ } }
     } else {
       const body = await req.json().catch(() => ({}))
       if (Array.isArray(body.trades)) directTrades = body.trades
       else csvText = body.csv ?? ''
       if (typeof body.tz === 'string' && body.tz) clientTz = body.tz
+      if (body.tagMap) rawTagMap = body.tagMap
     }
   } catch {
     return NextResponse.json({ error: 'Could not read the upload.' }, { status: 400 })
@@ -382,8 +394,18 @@ export async function POST(req: Request) {
     total = res.total
     skipped = res.skipped
     warnings.push(...res.warnings)
+    const tagMap = readTagMap(rawTagMap, res.headers)
+    tagMapUsed = tagMap
+    let tooLong = 0
     for (const t of res.trades) {
+      let carried: PendingTrade['carried']
+      if (tagMap.length > 0) {
+        const c = tagsForRow(t.cells, res.headers, tagMap)
+        tooLong += c.dropped
+        if (Object.keys(c.tags).length > 0 || c.notes) carried = { tags: c.tags, notes: c.notes }
+      }
       pending.push({
+        carried,
         trade_date: t.trade_date,
         row: {
           entry_time: t.entry_time,
@@ -401,6 +423,7 @@ export async function POST(req: Request) {
         },
       })
     }
+    if (tooLong > 0) warnings.push(`Left out ${tooLong} tag value(s) longer than a tag usually is — they read like sentences. Put those in a Notes column to keep them.`)
   }
 
   if (pending.length === 0) {
@@ -424,6 +447,26 @@ export async function POST(req: Request) {
     try {
       await applyGrossCommissions(db, pending, warnings)
     } catch { /* non-fatal: keep gross P&L */ }
+  }
+
+  // Tags and notes from the file's own columns: groups + library first, then
+  // onto the rows below. Never blocks the import — on failure the trades still
+  // land, untagged, and the trader is told.
+  let tagSummary: ImportedTagSummary | null = null
+  const carried: ImportedTagEntry[] = pending
+    .filter(p => p.carried)
+    .map(p => ({ row: p.row, tags: p.carried!.tags, notes: p.carried!.notes }))
+  if (carried.length > 0) {
+    try {
+      tagSummary = await applyImportedTags(db, carried, tagMapUsed)
+      if (tagSummary.overCap.length > 0) {
+        warnings.push(`Left out the tags in ${tagSummary.overCap.map(h => `"${h}"`).join(', ')}: you already have the most tag groups allowed (12). Merge or remove one in Settings → Tags, then import again.`)
+      }
+    } catch (e) {
+      console.error('[import-trades-csv] tags skipped:', e instanceof Error ? e.message : 'unknown')
+      warnings.push('Could not bring your tags over (your trades still imported). Try again from Import, or add tags on each trade.')
+      for (const c of carried) { delete c.row.tags_json; delete c.row.notes }
+    }
   }
 
   // Find-or-create a trading_day per distinct date (RLS scopes to this user).
@@ -519,6 +562,13 @@ export async function POST(req: Request) {
     warnings.push('Could not fill 5m structure from market data (import still completed).')
   }
 
+  // Trades already in the journal are skipped by the upsert, so their tags and
+  // notes aren't touched — say so rather than imply they were updated.
+  if (tagSummary && (inserted?.length ?? 0) < pending.length) {
+    const already = pending.length - (inserted?.length ?? 0)
+    warnings.push(`${already} trade(s) were already in your journal, so their tags and notes weren't changed.`)
+  }
+
   // Launch funnel: the account's first trades are in.
   if ((inserted?.length ?? 0) > 0) after(() => recordFunnelEvent(supabase, user, 'first_trades'))
 
@@ -529,5 +579,6 @@ export async function POST(req: Request) {
     total,
     skipped,
     warnings,
+    tags: tagSummary,
   })
 }

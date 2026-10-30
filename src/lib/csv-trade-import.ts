@@ -28,9 +28,14 @@ export interface ParsedTrade {
   high_during_position: number | null
   low_during_position: number | null
   dedup_key: string // stable per row → idempotent re-import
+  /** The row's own cells, aligned with `ImportParseResult.headers` — what the
+   *  tag carry-over reads tag and note columns from (src/lib/import-tag-columns.ts). */
+  cells: string[]
 }
 
 export interface ImportParseResult {
+  /** The file's header row, as written (not normalized). */
+  headers: string[]
   trades: ParsedTrade[]
   total: number
   skipped: number
@@ -38,7 +43,7 @@ export interface ImportParseResult {
 }
 
 /** Normalize a header cell to an alias key: lowercase, strip non-alphanumerics. */
-function normKey(s: string): string {
+export function normKey(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
@@ -74,23 +79,42 @@ const ALIASES: Record<string, string[]> = {
   closeTime: ['closetime'],
 }
 
-/** Minimal RFC-4180-ish CSV line splitter (handles quoted fields w/ commas). */
-function splitCsvLine(line: string): string[] {
-  const out: string[] = []
+/** Every header (normalized) this parser reads as a trade field. A column under
+ *  one of these names is never offered as tags. */
+export const TRADE_FIELD_KEYS: ReadonlySet<string> = new Set(Object.values(ALIASES).flat())
+
+/**
+ * The whole file as records of trimmed cells, RFC-4180 style: a quoted field
+ * may hold commas, doubled quotes AND line breaks. Journal exports put
+ * multi-line notes in quotes, which a split-on-newline reader cut into broken
+ * rows. Records whose cells are all empty are dropped (blank lines).
+ */
+export function readCsvRecords(text: string): string[][] {
+  const out: string[][] = []
+  let row: string[] = []
   let cur = ''
   let inQuotes = false
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i]
+  const endRow = () => {
+    row.push(cur)
+    cur = ''
+    const cells = row.map(c => c.trim())
+    if (cells.some(c => c !== '')) out.push(cells)
+    row = []
+  }
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
     if (inQuotes) {
       if (c === '"') {
-        if (line[i + 1] === '"') { cur += '"'; i++ } else { inQuotes = false }
+        if (text[i + 1] === '"') { cur += '"'; i++ } else { inQuotes = false }
       } else cur += c
     } else if (c === '"') inQuotes = true
-    else if (c === ',') { out.push(cur); cur = '' }
+    else if (c === ',') { row.push(cur); cur = '' }
+    else if (c === '\n') endRow()
+    else if (c === '\r') { if (text[i + 1] === '\n') i++; endRow() }
     else cur += c
   }
-  out.push(cur)
-  return out.map(s => s.trim())
+  if (cur !== '' || row.length > 0) endRow()
+  return out
 }
 
 function toNumber(v: string | undefined): number | null {
@@ -160,11 +184,12 @@ function detectDirection(raw: string | undefined): 'long' | 'short' | null {
  */
 export function parseTradeCsv(csvText: string): ImportParseResult {
   const warnings: string[] = []
-  const lines = csvText.split(/\r?\n/).filter(l => l.trim() !== '')
-  if (lines.length < 2) {
-    return { trades: [], total: 0, skipped: 0, warnings: ['Empty or header-only file.'] }
+  const records = readCsvRecords(csvText)
+  if (records.length < 2) {
+    return { headers: records[0] ?? [], trades: [], total: 0, skipped: 0, warnings: ['Empty or header-only file.'] }
   }
-  const header = splitCsvLine(lines[0]).map(normKey)
+  const headers = records[0]
+  const header = headers.map(normKey)
 
   // Build field → column-index map from aliases (first match wins).
   const col: Record<string, number> = {}
@@ -177,10 +202,10 @@ export function parseTradeCsv(csvText: string): ImportParseResult {
 
   const trades: ParsedTrade[] = []
   let skipped = 0
-  const total = lines.length - 1
+  const total = records.length - 1
 
-  for (let r = 1; r < lines.length; r++) {
-    const cells = splitCsvLine(lines[r])
+  for (let r = 1; r < records.length; r++) {
+    const cells = records[r]
 
     const symbol = get(cells, 'symbol')?.trim() || null
     let direction = detectDirection(get(cells, 'side'))
@@ -274,6 +299,7 @@ export function parseTradeCsv(csvText: string): ImportParseResult {
       high_during_position: high,
       low_during_position: low,
       dedup_key,
+      cells,
     })
   }
 
@@ -283,5 +309,5 @@ export function parseTradeCsv(csvText: string): ImportParseResult {
       `This export format may need a mapping tweak.`,
     )
   }
-  return { trades, total, skipped, warnings }
+  return { headers, trades, total, skipped, warnings }
 }

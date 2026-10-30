@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Upload, PencilLine, BarChart2, Loader2, AlertTriangle } from 'lucide-react'
 import SierraAccountPicker from '@/components/import/SierraAccountPicker'
+import TagMappingStep from '@/components/import/TagMappingStep'
+import { tagColumnsInFile, type TagColumn, type TagMapEntry } from '@/lib/import-tag-columns'
 import { isSierraLogText, sierraAccountsInLog, filterSierraLogByAccounts, type SierraAccount } from '@/lib/sc-accounts'
 import { combineSierraLog } from '@/lib/sc-combine'
 import { autoGradeLatestSession } from '@/lib/autograde'
@@ -31,9 +33,11 @@ export default function EmptyStateImport({ today }: { today: string }) {
   const [grading, setGrading] = useState(false)
   // A multi-account Sierra log awaiting the account choice before upload.
   const [pending, setPending] = useState<{ name: string; text: string; accounts: SierraAccount[] } | null>(null)
+  // A trade CSV with tag / note columns, waiting on "We found your tags".
+  const [tagStep, setTagStep] = useState<{ file: File; columns: TagColumn[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  async function postFile(file: File) {
+  async function postFile(file: File, tagMap?: TagMapEntry[]) {
     if (file.size > MAX_UPLOAD_BYTES) {
       setError(`That file is ${(file.size / 1e6).toFixed(1)} MB — over the ~4 MB upload limit. For a Sierra log, import a single account; otherwise export a shorter date range.`)
       return
@@ -44,6 +48,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
       fd.append('file', file)
       // Read Sierra's naive timestamps in the uploader's timezone, not the server's.
       fd.append('tz', Intl.DateTimeFormat().resolvedOptions().timeZone)
+      if (tagMap && tagMap.length > 0) fd.append('tagMap', JSON.stringify(tagMap))
       const res = await fetch('/api/import-trades-csv', { method: 'POST', body: fd })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) { setError(json.error || 'Import failed.'); return }
@@ -77,6 +82,7 @@ export default function EmptyStateImport({ today }: { today: string }) {
     const f = files?.[0]
     if (!f) return
     setError(null)
+    setTagStep(null)
     // Peek at Sierra logs: a copy-trading export carries many accounts, and
     // uploading it whole is both too big and N× duplicated. Let the user pick an
     // account and filter to it in the browser before upload.
@@ -86,6 +92,9 @@ export default function EmptyStateImport({ today }: { today: string }) {
         const accounts = sierraAccountsInLog(text)
         if (accounts.length > 1) { setPending({ name: f.name, text, accounts }); return }
       }
+      // Tags and notes in the file's own columns → ask where they go first.
+      const columns = tagColumnsInFile(text)
+      if (columns.length > 0) { setTagStep({ file: f, columns }); return }
     } catch { /* fall through to a plain upload */ }
     void postFile(f)
   }
@@ -166,6 +175,15 @@ export default function EmptyStateImport({ today }: { today: string }) {
             onCancel={() => setPending(null)}
             onConfirm={confirmAccounts}
             onCombineAll={combineAll}
+          />
+        </div>
+      ) : tagStep ? (
+        <div className="mt-6">
+          <TagMappingStep
+            columns={tagStep.columns}
+            busy={busy}
+            onConfirm={map => void postFile(tagStep.file, map)}
+            onSkip={() => void postFile(tagStep.file)}
           />
         </div>
       ) : (

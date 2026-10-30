@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Onboarding r2.1</title>
+<style>
+  /* New-user onboarding, r2 (2026-10-29). Same tokens as the Highlights / Recap mockups. */
+  :root{
+    --bg:#F1F3F5; --card:#FFFFFF; --card2:#F7F8FA; --line:#E2E5E9; --hair:#ECEEF1;
+    --ink:#1D232B; --mut:#5F6670; --faint:#9298A1;
+    --acc:#2F6FA3; --acc-soft:#E6EFF7;
+    --pos:#0E6E67; --pos-soft:#E3F1EF;
+    --neg:#9A2233; --neg-soft:#F6E5E7;
+    --cau:#A8741A; --cau-soft:#F7EEDC;
+    --track:#E6E9ED; --mark:#C2410C;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0A0A0C; --card:#131519; --card2:#1B1E23; --line:#282C32; --hair:#1C2026;
+      --ink:#E8EAED; --mut:#969BA3; --faint:#5E636B;
+      --acc:#4F97CE; --acc-soft:#14222E;
+      --pos:#4FC58E; --pos-soft:#14261E;
+      --neg:#E0685F; --neg-soft:#2A1716;
+      --cau:#D6B24E; --cau-soft:#2A2414; --track:#22262C; --mark:#FB923C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0A0A0C; --card:#131519; --card2:#1B1E23; --line:#282C32; --hair:#1C2026;
+    --ink:#E8EAED; --mut:#969BA3; --faint:#5E636B;
+    --acc:#4F97CE; --acc-soft:#14222E;
+    --pos:#4FC58E; --pos-soft:#14261E;
+    --neg:#E0685F; --neg-soft:#2A1716;
+    --cau:#D6B24E; --cau-soft:#2A2414; --track:#22262C; --mark:#FB923C;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg)}
+  body{color:var(--ink);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .num{font-variant-numeric:tabular-nums}
+  .pos{color:var(--pos)} .neg{color:var(--neg)}
+  b{font-weight:600}
+
+  .page{max-width:1180px;margin:0 auto;padding:32px 16px 80px}
+  .kick{font:600 11px/1 ui-monospace,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+  h1{font-size:clamp(24px,3.4vw,32px);letter-spacing:-.02em;line-height:1.15;margin:10px 0}
+  .lede{max-width:82ch;color:var(--mut);font-size:15px}
+  .lede strong{color:var(--ink)}
+  .theme{margin-top:14px;display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:12px}
+  .theme button{background:none;border:0;color:var(--mut);padding:6px 12px;cursor:pointer;font:inherit}
+  .theme button.on{background:var(--card);color:var(--ink);font-weight:600}
+
+  /* the path strip */
+  .path{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:22px}
+  @media (max-width:760px){.path{grid-template-columns:1fr 1fr}}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:13px}
+  .step .n{font:700 11px/1 ui-monospace,Consolas,monospace;color:var(--mark);letter-spacing:.08em}
+  .step b{display:block;font-size:14px;margin:4px 0 2px}
+  .step span{color:var(--mut)}
+  .step.now{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc-soft)}
+  .step .was{display:block;margin-top:6px;font-size:12px;color:var(--faint)}
+
+  h2.sec{font-size:20px;letter-spacing:-.01em;margin:44px 0 4px;display:flex;gap:10px;align-items:baseline}
+  h2.sec .n{font:700 12px/1 ui-monospace,Consolas,monospace;color:var(--mark)}
+  .sub{font-size:14px;color:var(--mut);max-width:80ch}
+
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:22px;align-items:start;margin-top:16px}
+  @media (max-width:1000px){.layout{grid-template-columns:1fr}}
+
+  .frame{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--bg);box-shadow:0 20px 50px -30px rgba(0,0,0,.35)}
+  .bar{display:flex;align-items:center;gap:6px;padding:9px 12px;background:var(--card2);border-bottom:1px solid var(--line)}
+  .bar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+  .bar span{margin-left:10px;font:12px ui-monospace,Consolas,monospace;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mast{display:flex;align-items:center;gap:20px;padding:12px 18px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{font-weight:700;font-size:15px}
+  .nav{display:flex;gap:16px;font-size:13px;color:var(--mut);flex:1;flex-wrap:wrap}
+  .nav .on{color:var(--ink);font-weight:600}
+  .app{padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+  @media (max-width:640px){.app{padding:14px 12px}}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px 20px;position:relative}
+  .card h3{font-size:15px;font-weight:600;margin-bottom:4px}
+  .card .hint{font-size:13px;color:var(--mut)}
+  .m{position:absolute;top:-9px;left:-9px;width:22px;height:22px;border-radius:50%;background:var(--mark);color:#fff;font:700 11px/22px Inter,system-ui,sans-serif;text-align:center;z-index:2;box-shadow:0 0 0 3px var(--bg)}
+
+  .hello{text-align:center;padding:26px 20px 6px}
+  .hello h3{font-size:22px;letter-spacing:-.01em}
+  .hello p{color:var(--mut);font-size:14px;margin-top:4px}
+
+  .doors{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  @media (max-width:760px){.doors{grid-template-columns:1fr}}
+  .door{border:1px solid var(--line);border-radius:10px;padding:16px;background:var(--card);position:relative}
+  .door.on{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc-soft)}
+  .door .ic{width:34px;height:34px;border-radius:8px;background:var(--acc-soft);color:var(--acc);display:flex;align-items:center;justify-content:center;font-weight:700;margin-bottom:10px}
+  .door b{display:block;font-size:15px}
+  .door span{font-size:13px;color:var(--mut)}
+  .door .tag{position:absolute;top:12px;right:12px;font-size:11px;font-weight:600;color:var(--pos);background:var(--pos-soft);border-radius:4px;padding:1px 6px}
+
+  .plats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .plat{font-size:13px;border:1px solid var(--line);border-radius:7px;padding:6px 12px;background:var(--card2);color:var(--mut)}
+  .plat.on{border-color:var(--acc);color:var(--acc);background:var(--acc-soft);font-weight:600}
+  .plat small{font-size:11px;color:var(--faint);margin-left:4px}
+  .how{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;margin-top:14px}
+  @media (max-width:760px){.how{grid-template-columns:1fr}}
+  .how ol{list-style:none;display:grid;gap:8px;counter-reset:h}
+  .how li{counter-increment:h;position:relative;padding-left:30px;font-size:14px;line-height:1.45}
+  .how li::before{content:counter(h);position:absolute;left:0;top:0;width:22px;height:22px;border-radius:50%;background:var(--acc-soft);color:var(--acc);font:700 12px/22px Inter,system-ui,sans-serif;text-align:center}
+  .how code{font:12.5px ui-monospace,Consolas,monospace;background:var(--card2);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+  .drop{border:2px dashed var(--line);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:18px;gap:4px;color:var(--mut);font-size:13px;min-height:130px}
+  .drop b{color:var(--ink);font-size:14px}
+  .small{font-size:12px;color:var(--faint)}
+
+  /* progress */
+  .prog{display:grid;gap:12px}
+  .pl{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;font-size:14px}
+  .pl .d{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+  .pl .d.ok{background:var(--pos-soft);color:var(--pos)}
+  .pl .d.run{border:2px solid var(--acc);border-right-color:transparent}
+  .pl .d.wait{background:var(--track)}
+  .pl small{color:var(--faint);font-size:12px}
+  .btn{display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:8px 14px;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+  .btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+  .btn.am{background:#E0A33C;border-color:#E0A33C;color:#1b1408}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+  /* recap first visit */
+  .hero{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+  @media (max-width:640px){.hero{grid-template-columns:1fr}}
+  .ring{position:relative;width:96px;height:96px}
+  .ring .v{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ring .s{font-size:30px;font-weight:600;line-height:1;color:var(--pos)}
+  .ring .w{font-size:11px;color:var(--pos);margin-top:3px}
+  .headline{font-size:16px;font-weight:600;line-height:1.35}
+  .money{font-size:24px;font-weight:700;margin-top:4px}
+  .first{border:1px solid color-mix(in srgb,var(--acc) 45%,var(--line));background:var(--acc-soft);border-radius:8px;padding:12px 14px;font-size:13.5px;line-height:1.5}
+  .first b{color:var(--acc)}
+  .q2{display:grid;gap:14px}
+  .qq{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:center}
+  @media (max-width:640px){.qq{grid-template-columns:1fr}}
+  .qq .l{font-size:14px;font-weight:600}
+  .qq .l small{display:block;font-weight:400;color:var(--mut);font-size:12px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:13px;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--card2);color:var(--mut)}
+  .chip.on{border-color:var(--acc);color:var(--acc);background:var(--acc-soft);font-weight:600}
+  .ghost{font-size:13px;color:var(--mut);text-decoration:underline;text-underline-offset:3px}
+
+  /* checklist */
+  .gs{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:start}
+  @media (max-width:640px){.gs{grid-template-columns:1fr}}
+  .gs ul{list-style:none;display:grid;gap:8px;margin-top:10px}
+  .gs li{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;font-size:14px}
+  .gs li .d{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+  .gs li .d.ok{background:var(--pos-soft);color:var(--pos)}
+  .gs li .d.todo{border:1.5px solid var(--line)}
+  .gs li.done span{color:var(--faint);text-decoration:line-through}
+  .gs li a{font-size:13px;color:var(--acc);font-weight:600;text-decoration:none;white-space:nowrap}
+  .meter{width:120px}
+  .meter .t{height:6px;border-radius:3px;background:var(--track);overflow:hidden}
+  .meter .t i{display:block;height:100%;width:40%;background:var(--acc)}
+  .meter small{font-size:12px;color:var(--mut)}
+  .window{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--mut)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--card)}
+  .seg span{font-size:12.5px;padding:5px 11px;color:var(--mut);border-right:1px solid var(--line)}
+  .seg span:last-child{border-right:0}
+  .seg .on{background:var(--acc-soft);color:var(--acc);font-weight:600}
+  .ghostcards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  @media (max-width:640px){.ghostcards{grid-template-columns:1fr}}
+  .gc{border:1px solid var(--line);border-radius:6px;padding:14px;background:var(--card)}
+  .gc .l{font-size:12px;color:var(--mut)} .gc .v{font-size:22px;font-weight:600}
+
+  /* side notes */
+  .side{display:grid;gap:14px;position:sticky;top:14px}
+  @media (max-width:1000px){.side{position:static}}
+  .note{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 18px;font-size:13.5px}
+  .note h4{font-size:13px;margin-bottom:8px}
+  .note ul{list-style:none;display:grid;gap:7px;line-height:1.45}
+  .note ul li{padding-left:14px;position:relative;color:var(--mut)}
+  .note ul li::before{content:"→";position:absolute;left:0;color:var(--faint)}
+  .note ul li b{color:var(--ink)}
+  .note.now{border-color:color-mix(in srgb,var(--neg) 35%,var(--line))}
+  .note.now h4{color:var(--neg)}
+
+  .tbl{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:14px;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .tbl th,.tbl td{text-align:left;padding:10px 12px;border-top:1px solid var(--hair);vertical-align:top}
+  .tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);border-top:0;background:var(--card2)}
+  .tbl td:first-child{font-weight:600;white-space:nowrap}
+  .tbl .s{color:var(--mut)}
+  .wrap{overflow-x:auto}
+
+  .q{margin-top:40px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px 22px}
+  .q h3{font-size:16px;margin-bottom:10px}
+  .q ol{padding-left:20px;display:grid;gap:8px;font-size:14px;color:var(--mut)}
+  .q ol b{color:var(--ink)}
+</style>
+<style>
+  .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+  @media (max-width:640px){.tiles{grid-template-columns:1fr 1fr}}
+  .tile{border:1px solid var(--line);border-radius:10px;padding:16px 12px;text-align:center;background:var(--card);font-size:15px;font-weight:600}
+  .tile small{display:block;font-size:12px;font-weight:400;color:var(--faint);margin-top:2px}
+  .tile.on{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc-soft);color:var(--acc)}
+  .alt{text-align:center;font-size:13.5px;color:var(--mut);margin-top:14px}
+  .alt a{color:var(--acc);font-weight:600;text-decoration:none}
+  .back{font-size:13px;color:var(--mut)}
+  .oneq{display:grid;gap:8px}
+  .oneq .l{font-size:15px;font-weight:600}
+  .oneq .l small{display:block;font-weight:400;color:var(--mut);font-size:13px}
+  .big{font-size:15px;line-height:1.5}
+  .crit{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:18px}
+  @media (max-width:760px){.crit{grid-template-columns:1fr}}
+  .crit .c{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;font-size:13.5px}
+  .crit .c b{display:block;font-size:14px;margin-bottom:4px}
+  .crit .c .was{color:var(--neg)} .crit .c .now{color:var(--pos)}
+  .crit .c p{color:var(--mut);margin-top:4px}
+  .map{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:12px}
+  .map th,.map td{text-align:left;padding:9px 10px;border-top:1px solid var(--hair);vertical-align:middle}
+  .map th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);border-top:0}
+  .map td:first-child{font-weight:600;white-space:nowrap}
+  .map .ex{color:var(--mut);font-size:12.5px}
+  .map .ex i{font-style:normal;display:inline-block;border:1px solid var(--line);border-radius:4px;padding:0 6px;margin:1px 3px 1px 0;background:var(--card2)}
+  .sel{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:4px 10px;background:var(--card);font-size:13px;white-space:nowrap}
+  .sel.new{border-color:color-mix(in srgb,var(--acc) 45%,var(--line));color:var(--acc)}
+  .sel::after{content:"▾";color:var(--faint);font-size:11px}
+  .counts{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;font-size:13px;color:var(--mut)}
+  .counts b{color:var(--ink)}
+  .mwrap{overflow-x:auto}
+  .tile.jr{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap}
+  .tile.jr small{display:inline;margin:0}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="kick">TapeScore · New-user onboarding · r2.1 · 2026-10-29 · adds ①b, bringing your tags over</div>
+  <h1>One question per screen, and nothing to decide until you've seen your score.</h1>
+  <p class="lede">r1 was shorter than today, but read as a first-timer it still asked too much. The first screen had three doors and seven platforms at once. The wait screen asked people to choose "Grade 5 more" before they knew what grading is. The questions arrived after the score and then changed it. <strong>r2 asks one thing per screen. The two questions fill the 20-second wait, so the first score is already theirs. The page then explains in one sentence why a losing day can score well.</strong></p>
+  <div class="theme" role="group" aria-label="Theme">
+    <button type="button" data-t="">Auto</button><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button>
+  </div>
+
+  <div class="crit">
+    <div class="c"><b>Screen 1 had three doors plus a platform picker</b><span class="was">r1: paste / import / type, then 7 platform chips, then steps, all visible at once.</span><p class="now">r2: one question, "Where do you trade?". Paste and type become one small line underneath. A pasted chart is one trade, not a session, so it's a poor first step anyway.</p></div>
+    <div class="c"><b>"Grade 5 more" asked a decision nobody can make yet</b><span class="was">r1: two buttons on the wait screen, one of them costing AI calls.</span><p class="now">r2: no choice. It grades the latest session and opens it. "Grade more" lives on the Recap's day switcher, where it makes sense.</p></div>
+    <div class="c"><b>The questions came after the score, then changed it</b><span class="was">r1: "Save and re-score" — a new user's first number moved under them.</span><p class="now">r2: asked during the wait, 3 answers + "Not sure" each. The first score already uses them.</p></div>
+    <div class="c"><b>A red day scored "Strong" with no reason given</b><span class="was">r1: −$140 next to 73 Strong; the orientation line said "Risk, Entry and Exit, out of 100".</span><p class="now">r2: one sentence that answers the question they're actually asking: "You lost $140 but kept to your plan, so the score is good."</p></div>
+    <div class="c"><b>The checklist had five items and two unexplained words</b><span class="was">r1: "Prep", "Grade a second session — Pick one", "Since you started".</span><p class="now">r2: three items in plain words. The window uses the existing "All time".</p></div>
+    <div class="c"><b>"Most people" tag, ⌘V icon, "re-score", "rails"</b><span class="was">r1: small bits of noise and insider words.</span><p class="now">r2: removed.</p></div>
+  </div>
+
+  <div class="path">
+    <div class="step now"><span class="n">① ONE QUESTION</span><b>Where do you trade?</b><span>Pick your platform, see its 3 export steps, drop the file.</span></div>
+    <div class="step"><span class="n">② WHILE WE READ IT</span><b>Two quick taps</b><span>Loss limit and trade cap, during the 20-second grade.</span></div>
+    <div class="step"><span class="n">③ YOUR SCORE</span><b>What it means, what to do tomorrow</b><span>One sentence on the score, then "For tomorrow".</span></div>
+    <div class="step"><span class="n">④ DASHBOARD</span><b>Three things to do</b><span>Two already ticked.</span></div>
+  </div>
+
+  <!-- ① -->
+  <h2 class="sec"><span class="n">①</span>Where do you trade?</h2>
+  <p class="sub">The empty dashboard becomes one question. Tapping a platform swaps the tiles for that platform's steps and a drop zone. A file dropped anywhere on the page also works.</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app/dashboard · empty journal</span></div>
+      <div class="mast"><span class="brand">TapeScore</span><span class="nav"><span class="on">Dashboard</span><span>Prep</span><span>Session</span><span>Edge Analysis</span></span></div>
+      <div class="app">
+        <div class="card" style="text-align:center;padding:26px 20px">
+          <span class="m">1</span>
+          <h3 style="font-size:21px">Where do you trade?</h3>
+          <p class="hint">We'll show you how to get your trades out of it. About a minute.</p>
+          <div class="tiles">
+            <div class="tile on">Tradovate</div>
+            <div class="tile">NinjaTrader</div>
+            <div class="tile">Sierra Chart</div>
+            <div class="tile">TopstepX<small>coming soon</small></div>
+            <div class="tile">Rithmic<small>coming soon</small></div>
+            <div class="tile">Somewhere else<small>any trade CSV</small></div>
+            <div class="tile jr">Moving from another journal <small>Tradezella · TraderSync · Tradervue · Edgewonk — your tags and notes come too</small></div>
+          </div>
+          <p class="alt">No file? <a>Type a trade in</a> or <a>paste a chart screenshot</a></p>
+        </div>
+        <div class="card">
+          <span class="m">2</span>
+          <p class="back">‹ Tradovate</p>
+          <div class="how">
+            <ol>
+              <li>In Tradovate, open <b>Reports</b>.</li>
+              <li>Pick <b>Performance</b> and the days you want.</li>
+              <li>Click <b>Download</b>.</li>
+            </ol>
+            <div class="drop"><b>Drop the file here</b>or click to pick it</div>
+          </div>
+          <p class="small" style="margin-top:10px">Steps illustrative; each platform's real menu path confirmed on a live account before shipping.</p>
+        </div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>Why it's simpler</h4>
+        <ul>
+          <li><b>One question a trader can answer without thinking.</b> Everyone knows where they trade; nobody knows what "import a CSV" means for their platform.</li>
+          <li><b>Steps are three lines</b>, the platform's own words, beside the drop zone.</li>
+          <li><b>"Somewhere else"</b> gets the generic CSV path and a template.</li>
+          <li><b>Paste and type are still there</b> as one quiet line, for the trader with no file.</li>
+        </ul>
+      </div>
+      <div class="note now">
+        <h4>Still needed</h4>
+        <ul>
+          <li>A real TopstepX and Rithmic export to build those readers.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ①b -->
+  <h2 class="sec"><span class="n">①b</span>Bringing your tags over</h2>
+  <p class="sub">When the file has tag or note columns (any journal export, or a trade CSV with a "Tags" column), one extra screen appears before grading. Columns whose names match ours are already sorted. Anything else becomes <b>its own category, named after their column</b>, so nothing is lost or forced into our words. Most people press one button.</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app · after the drop · only when the file has tags</span></div>
+      <div class="app">
+        <div class="card">
+          <span class="m">2b</span>
+          <h3>We found your tags</h3>
+          <p class="hint">Each column goes into a group of tags. We've sorted them; change any you like.</p>
+          <div class="mwrap">
+          <table class="map">
+            <thead><tr><th>Your column</th><th>What's in it</th><th>Goes to</th></tr></thead>
+            <tbody>
+              <tr><td>Setups</td><td class="ex"><i>Break &amp; Retest</i><i>VWAP Reclaim</i><i>ORB</i> +9</td><td><span class="sel">Setups</span></td></tr>
+              <tr><td>Mistakes</td><td class="ex"><i>Moved stop</i><i>FOMO entry</i><i>Oversized</i> +4</td><td><span class="sel">Mistakes</span></td></tr>
+              <tr><td>Emotion</td><td class="ex"><i>Calm</i><i>Frustrated</i><i>Revenge</i></td><td><span class="sel">Emotions</span></td></tr>
+              <tr><td>A+ Checklist</td><td class="ex"><i>HTF aligned</i><i>Liquidity sweep</i> +3</td><td><span class="sel new">New group: “A+ Checklist”</span></td></tr>
+              <tr><td>Notes</td><td class="ex">Free text on 168 trades</td><td><span class="sel">Each trade's notes</span></td></tr>
+              <tr><td>Account</td><td class="ex"><i>Apex-50K-01</i><i>Topstep-150K</i></td><td><span class="sel">Leave out</span></td></tr>
+            </tbody>
+          </table>
+          </div>
+          <div class="counts"><span><b>31</b> tags in <b>4</b> groups</span><span><b>6</b> already match tags you have</span><span><b>168</b> notes</span></div>
+          <div class="row" style="margin-top:16px"><span class="btn p">Bring them in</span><span class="ghost">Skip tags, just the trades</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>How it decides</h4>
+        <ul>
+          <li><b>Name match first.</b> Setups / Playbook → Setups, Mistakes → Mistakes, Emotion(s) → Emotions, Notes → notes. Same idea as the Tradezella script you already use.</li>
+          <li><b>Anything else → a new group with their column's name.</b> Custom tag groups already exist in Settings → Tags, so this needs no new data shape.</li>
+          <li><b>Values are split</b> on commas and matched to existing tags ignoring case and "&amp;/and", so "Break &amp; Retest" and "break and retest" become one tag.</li>
+          <li><b>Account, broker IDs and other non-tag columns</b> are offered as "Leave out".</li>
+          <li>The built-in groups are matched by name, not left to the trader, because the coach's read and Edge Analysis look for setups and mistakes there.</li>
+        </ul>
+      </div>
+      <div class="note now">
+        <h4>Not built yet</h4>
+        <ul>
+          <li><b>Today the importer throws tags and notes away.</b> It keeps only the trade fields. Tradezella tags come in only through your local script, into the history table.</li>
+          <li>Needs a real export from TraderSync, Tradervue and Edgewonk to confirm their tag columns. Tradezella's are known.</li>
+        </ul>
+      </div>
+      <div class="note">
+        <h4>No file, but your own tags?</h4>
+        <ul>
+          <li><b>Settings → Tags gets "Paste a list"</b>: one tag per line, into a group of your choosing. It also shows as an optional checklist item.</li>
+          <li>Tags can still be made on the fly while logging, as today.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② -->
+  <h2 class="sec"><span class="n">②</span>While we read it: two quick taps</h2>
+  <p class="sub">Grading takes about 20 seconds. That's when we ask, so the wait isn't empty and the first score already uses their limits. Both questions are optional; when the grade is ready there's one button.</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app · after the drop</span></div>
+      <div class="app">
+        <div class="card">
+          <span class="m">3</span>
+          <div class="prog">
+            <div class="pl"><span class="d ok">✓</span><span><b>214 trades</b> from Jun 2 to Oct 28</span><small></small></div>
+            <div class="pl"><span class="d run"></span><span>Scoring your last day, <b>Tue, Oct 28</b>…</span><small></small></div>
+          </div>
+        </div>
+        <div class="card">
+          <span class="m">4</span>
+          <h3>While you wait: two quick taps</h3>
+          <p class="hint" style="margin-bottom:16px">So we score you against your own limits. Not sure? Skip it.</p>
+          <div class="q2">
+            <div class="oneq"><span class="l">When do you stop for the day?<small>After losing…</small></span><span class="chips"><span class="chip">$150</span><span class="chip on">$300</span><span class="chip">$500</span><span class="chip">Not sure</span></span></div>
+            <div class="oneq"><span class="l">How many trades a day, at most?</span><span class="chips"><span class="chip">3</span><span class="chip on">5</span><span class="chip">8</span><span class="chip">Not sure</span></span></div>
+          </div>
+        </div>
+        <div class="row" style="justify-content:center"><span class="btn p">See how you did →</span></div>
+        <p class="small" style="text-align:center">The button turns on when the score is ready.</p>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>Why it's simpler</h4>
+        <ul>
+          <li><b>Questions in plain words</b>: "When do you stop for the day?" rather than "daily loss limit".</li>
+          <li><b>3 answers + "Not sure"</b>; any other amount is in Settings later.</li>
+          <li><b>One button, one destination.</b> No "Grade 5 more" choice here.</li>
+          <li>The full setup (playbook, setups, entry rules) moves to Settings → Your trading.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ -->
+  <h2 class="sec"><span class="n">③</span>Your score</h2>
+  <p class="sub">The Recap as shipped, with one first-visit sentence on top. The sentence answers what a new trader is actually asking: how did I score well on a red day, or badly on a green one?</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app/session/2026-10-28 · first visit</span></div>
+      <div class="mast"><span class="brand">TapeScore</span><span class="nav"><span>Dashboard</span><span>Prep</span><span class="on">Session</span><span>Edge Analysis</span></span></div>
+      <div class="app">
+        <div class="card">
+          <span class="m">5</span>
+          <div class="hero">
+            <div class="ring">
+              <svg viewBox="0 0 96 96" width="96" height="96" aria-hidden="true">
+                <circle cx="48" cy="48" r="40" fill="none" stroke="var(--track)" stroke-width="8"/>
+                <circle cx="48" cy="48" r="40" fill="none" stroke="var(--pos)" stroke-width="8" stroke-linecap="round" stroke-dasharray="183 251" transform="rotate(-90 48 48)"/>
+              </svg>
+              <div class="v"><span class="s num">73</span><span class="w">Strong</span></div>
+            </div>
+            <div>
+              <p class="headline">Patient entries; the exits gave back more than they kept.</p>
+              <p class="money neg num">−$140</p>
+              <p class="hint num">4 trades · 2 won</p>
+            </div>
+          </div>
+          <div class="first" style="margin-top:14px"><b>This scores how you traded, not what you made.</b> You lost $140 but stayed under your $300 limit and kept every stop, so the score is good. The part that cost you is below.</div>
+        </div>
+        <div class="card" style="border-left:3px solid var(--acc)">
+          <span class="m">6</span>
+          <h3>For tomorrow</h3>
+          <p class="big">1. When a trade is up as much as you risked, move your stop to where you got in.</p>
+        </div>
+        <p class="small" style="text-align:center">…What happened, your trades and the coach's read, as shipped</p>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>Why it's simpler</h4>
+        <ul>
+          <li><b>The first-visit sentence is built from facts</b>, not AI: the P&amp;L, the limit they just picked, stops kept. When the score and P&amp;L agree, it says so plainly ("You made $210 and kept to your plan").</li>
+          <li>"4 trades · 2 won" instead of "50% win rate" on a 4-trade day.</li>
+          <li><b>One sentence only</b>; it doesn't come back after the first Recap.</li>
+        </ul>
+      </div>
+      <div class="note now">
+        <h4>Honest limit</h4>
+        <ul>
+          <li>"For tomorrow" is the coach's own wording. It can still say "2× your stop" or "R". Plainer wording needs a prompt change, and those are paused.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ④ -->
+  <h2 class="sec"><span class="n">④</span>Dashboard: three things</h2>
+  <p class="sub">Two are already ticked when they arrive, so it reads as progress, not homework. The last one is the habit we want.</p>
+  <div class="layout">
+    <div class="frame">
+      <div class="bar"><i></i><i></i><i></i><span>tapescore.app/dashboard · Highlights</span></div>
+      <div class="mast"><span class="brand">TapeScore</span><span class="nav"><span class="on">Dashboard</span><span>Prep</span><span>Session</span><span>Edge Analysis</span></span></div>
+      <div class="app">
+        <div class="card">
+          <span class="m">7</span>
+          <div class="gs">
+            <div>
+              <h3>Getting started</h3>
+              <ul>
+                <li class="done"><span class="d ok">✓</span><span>Bring in your trades</span><span></span></li>
+                <li class="done"><span class="d ok">✓</span><span>See your first score</span><span></span></li>
+                <li><span class="d todo"></span><span>Plan tomorrow before the market opens</span><a>3 minutes →</a></li>
+              </ul>
+            </div>
+            <div class="meter"><small class="num">2 of 3</small><div class="t"><i style="width:67%"></i></div><p class="small" style="margin-top:8px"><span class="ghost">Hide</span></p></div>
+          </div>
+        </div>
+        <div class="window"><span>Showing</span><span class="seg"><span>This Week</span><span>This Month</span><span>Last 30 Days</span><span class="on">All time</span></span><span class="num">Jun 2 – Oct 28 · 41 sessions</span></div>
+        <p class="small" style="text-align:center">…the Highlights dashboard as shipped</p>
+      </div>
+    </div>
+    <div class="side">
+      <div class="note">
+        <h4>Why it's simpler</h4>
+        <ul>
+          <li><b>Three items, plain words</b>; "Prep" is explained by what it does.</li>
+          <li><b>"All time"</b> is picked automatically when the trades are older than 30 days, so the first visit is never "0 sessions".</li>
+          <li>The tour is retired for new users; the checklist does its job.</li>
+          <li>New accounts always start in Highlights.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="q">
+    <h3>Your call</h3>
+    <ol>
+      <li><b>Ask the two questions during the wait</b> (r2), or not at all at first and only in the checklist?</li>
+      <li><b>Move the full setup to Settings</b> for everyone, including experienced traders?</li>
+      <li><b>Retire the tour</b> for new users?</li>
+      <li><b>Tags from other journals (①b):</b> build the "We found your tags" step into the importer? If so, can you get a sample export from TraderSync, Tradervue or Edgewonk (one is enough to start)?</li>
+      <li><b>One more thing worth deciding:</b> the menu says "Prep", "Session" and "Edge Analysis". Rename them for new users, for example "Plan", "Review" and "Patterns"? That's a separate change, but it's the first thing every new user reads.</li>
+    </ol>
+  </div>
+</div>
+<script>
+  (function(){
+    var root=document.documentElement, btns=document.querySelectorAll('.theme button');
+    function set(t){ if(t){root.setAttribute('data-theme',t)} else {root.removeAttribute('data-theme')}
+      btns.forEach(function(b){b.classList.toggle('on',b.getAttribute('data-t')===t)}) }
+    btns.forEach(function(b){b.addEventListener('click',function(){set(b.getAttribute('data-t'))})});
+    set('');
+  })();
+</script>
+</body>
+</html>

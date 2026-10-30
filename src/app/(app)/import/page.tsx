@@ -6,6 +6,8 @@ import { Upload, ArrowLeft, CheckCircle2, AlertTriangle, Loader2, Download } fro
 import { getHandle, setHandle } from '@/lib/file-handle-store'
 import FirstReadCards from '@/components/dashboard/FirstReadCards'
 import SierraAccountPicker from '@/components/import/SierraAccountPicker'
+import TagMappingStep from '@/components/import/TagMappingStep'
+import { tagColumnsInFile, type TagColumn, type TagMapEntry } from '@/lib/import-tag-columns'
 import { isSierraLogText, sierraAccountsInLog, filterSierraLogByAccounts, type SierraAccount } from '@/lib/sc-accounts'
 import { combineSierraLog } from '@/lib/sc-combine'
 import { autoGradeLatestSession } from '@/lib/autograde'
@@ -27,6 +29,8 @@ type ShowOpenFilePicker = (opts?: {
   types?: { description?: string; accept: Record<string, string[]> }[]
 }) => Promise<FileSystemFileHandle[]>
 
+type TagSummary = { trades: number; tags: number; newTags: number; groups: number; notes: number } | null
+
 interface ImportResult {
   imported: number
   parsed: number
@@ -34,6 +38,20 @@ interface ImportResult {
   total: number
   skipped: number
   warnings: string[]
+  /** What came over from the file's own tag and note columns, when chosen. */
+  tags?: TagSummary
+}
+
+/** "Brought over 31 tags (25 new) in 4 new groups · notes on 168 trades." */
+function tagSummaryLine(t: TagSummary): string | null {
+  if (!t || (t.tags === 0 && t.notes === 0)) return null
+  const bits: string[] = []
+  if (t.tags > 0) {
+    bits.push(`Brought over ${t.tags} tag${t.tags === 1 ? '' : 's'}${t.newTags > 0 && t.newTags < t.tags ? ` (${t.newTags} new)` : ''}` +
+      (t.groups > 0 ? ` and ${t.groups} new group${t.groups === 1 ? '' : 's'}` : ''))
+  }
+  if (t.notes > 0) bits.push(`notes on ${t.notes} trade${t.notes === 1 ? '' : 's'}`)
+  return bits.join(' · ') + '.'
 }
 
 // Canonical column set the generic CSV parser understands. Used for the
@@ -61,6 +79,8 @@ export default function ImportPage() {
   const [grading, setGrading] = useState(false)
   // A multi-account Sierra log awaiting the account choice before upload.
   const [pending, setPending] = useState<{ name: string; text: string; accounts: SierraAccount[] } | null>(null)
+  // A trade CSV with tag / note columns, waiting on "We found your tags".
+  const [tagStep, setTagStep] = useState<{ file: File; columns: TagColumn[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // The File System Access API is Chromium-only; only then can we reopen the
@@ -101,12 +121,16 @@ export default function ImportPage() {
   // trader pick which account to import. Everything else uploads directly.
   async function peekAndUpload(file: File) {
     setError(null)
+    setTagStep(null)
     try {
       const text = await file.text()
       if (isSierraLogText(text)) {
         const accounts = sierraAccountsInLog(text)
         if (accounts.length > 1) { setPending({ name: file.name, text, accounts }); return }
       }
+      // Tags and notes in the file's own columns → ask where they go first.
+      const columns = tagColumnsInFile(text)
+      if (columns.length > 0) { setTagStep({ file, columns }); return }
     } catch { /* fall through to a plain upload */ }
     void upload(file)
   }
@@ -167,7 +191,7 @@ export default function ImportPage() {
     }
   }
 
-  async function upload(file: File) {
+  async function upload(file: File, tagMap?: TagMapEntry[]) {
     if (file.size > MAX_UPLOAD_BYTES) {
       setError(`That file is ${(file.size / 1e6).toFixed(1)} MB — over the ~4 MB upload limit. For a Sierra log, import a single account; otherwise export a shorter date range.`)
       return
@@ -187,11 +211,13 @@ export default function ImportPage() {
       fd.append('file', file)
       // Read Sierra's naive timestamps in the uploader's timezone, not the server's.
       fd.append('tz', Intl.DateTimeFormat().resolvedOptions().timeZone)
+      if (tagMap && tagMap.length > 0) fd.append('tagMap', JSON.stringify(tagMap))
       const res = await fetch('/api/import-trades-csv', { method: 'POST', body: fd })
       const json = await res.json()
       if (Array.isArray(json.warnings)) setWarnings(json.warnings)
       if (!res.ok) { setError(json.error || 'Import failed.'); return }
       setResult(json as ImportResult)
+      setTagStep(null)
       // First import that actually landed trades → arm the recap card (write-once
       // server-side) and reveal the inline teaser.
       if (wasEmpty && (json.imported ?? 0) > 0) {
@@ -300,6 +326,17 @@ export default function ImportPage() {
         </div>
       )}
 
+      {tagStep && (
+        <div className="mt-4">
+          <TagMappingStep
+            columns={tagStep.columns}
+            busy={busy}
+            onConfirm={map => void upload(tagStep.file, map)}
+            onSkip={() => void upload(tagStep.file)}
+          />
+        </div>
+      )}
+
       {busy && !grading && (
         <div className="mt-4 flex items-center gap-2 text-sm text-gray-400">
           <Loader2 className="w-4 h-4 animate-spin" /> Parsing and importing…
@@ -336,6 +373,9 @@ export default function ImportPage() {
           <p className="text-xs text-gray-400 mt-1">
             {result.parsed} parsed · {result.skipped} skipped of {result.total} rows.
           </p>
+          {tagSummaryLine(result.tags ?? null) && (
+            <p className="text-xs text-green-300/90 mt-1">{tagSummaryLine(result.tags ?? null)}</p>
+          )}
           {warnings.length > 0 && (
             <ul className="mt-2 text-xs text-amber-300/80 list-disc list-inside space-y-1">
               {warnings.map((w, i) => <li key={i}>{w}</li>)}
