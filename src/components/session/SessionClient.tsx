@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import Link from 'next/link'
-import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2, Flag, Loader2, GitMerge, Trash2, Tag, X, ChevronRight } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2, Flag, Loader2, GitMerge, Trash2, Tag, X, ChevronRight, Plus, RotateCcw, ClipboardCheck } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from '@/components/eod/EodNotesForm'
 import ChartScreenshotPanel from '@/components/eod/ChartScreenshotPanel'
@@ -171,8 +171,23 @@ export default function SessionClient({
   // write of a day that has no trading_days row yet.
   const [endedAt, setEndedAt] = useState<string | null>(initialDay?.session_ended_at ?? null)
   const clock = useSessionClock(date)
+  // Today, before the close — the server's read until the client clock mounts.
   const beforeClose = clock.mounted ? clock.isToday && clock.beforeClose : initialLive
-  const live = beforeClose && !endedAt
+  // Trades logged after "I'm done". The stamp is never cleared: a trade after it
+  // re-opens the session, and the recap flags it (BehavioralProxiesPanel).
+  const endedMs = endedAt ? Date.parse(endedAt) : NaN
+  const afterEnd = Number.isFinite(endedMs)
+    ? trades.filter(t => t.entry_time && Date.parse(t.entry_time) > endedMs)
+    : []
+  // "Reopen" goes back to logging on this page, without touching the stamp.
+  const [reopened, setReopened] = useState(false)
+  const ended = endedAt != null && afterEnd.length === 0 && !reopened
+  // The close passing while the page is open never switches it on its own: a
+  // page that opened live stays in logging until "Run my recap". Opened any time
+  // after the close, it starts in recap.
+  const [recapRun, setRecapRun] = useState(false)
+  const live = !ended && !recapRun && (beforeClose || initialLive)
+  const awaitingRecap = live && !beforeClose
   // Each trade's Score, read once for the table and the trade panel alike.
   const gradeOf = useTradeGrades(trades, {
     capture: live, entryRules, runnerRules, includeFlow: includeFlowScore, atrStopTarget,
@@ -196,6 +211,7 @@ export default function SessionClient({
       const data = await res.json() as { endedAt?: string; day?: TradingDay | null }
       if (data.day) setDay(data.day)
       setEndedAt(data.endedAt ?? new Date().toISOString())
+      setReopened(false)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch {
       showToast('Could not end the session. Please try again.', 'error')
@@ -813,16 +829,26 @@ export default function SessionClient({
     clearSelection()
   }
 
-  // ── Status chip ──
-  // Live / ended by you / closed / a past day's recap. (The full seam set —
-  // "Run my recap", reopened — is the next step of the build.)
-  const status = live
-    ? { text: `Live · market closes ${closeLabel}`, tone: 'live' as const }
-    : endedAtLabel
-      ? { text: `Ended by you at ${endedAtLabel}`, tone: 'ended' as const }
-      : clock.mounted && clock.isToday
-        ? { text: `Market closed ${closeLabel}`, tone: 'plain' as const }
-        : { text: 'Recap', tone: 'plain' as const }
+  // ── Status chip (mockup: SessionSeams) ──
+  // Reopened by a trade after "I'm done" / live / ended by you / closed today
+  // (or the close passed with the page open) / a past day's recap.
+  const status: { text: string; tone: 'live' | 'ended' | 'alert' | 'plain' } = afterEnd.length > 0
+    ? {
+        text: `Reopened — ${afterEnd.length} trade${afterEnd.length === 1 ? ' at' : 's from'} ${ptShort(afterEnd[0].entry_time!)} after you ended at ${endedAtLabel}`,
+        tone: 'alert',
+      }
+    : live && !awaitingRecap
+      ? { text: `Live · market closes ${closeLabel}`, tone: 'live' }
+      : ended
+        ? { text: `Ended by you at ${endedAtLabel}`, tone: 'ended' }
+        : (clock.mounted && clock.isToday) || awaitingRecap
+          ? { text: `Market closed ${closeLabel}`, tone: 'plain' }
+          : { text: 'Recap', tone: 'plain' }
+  // After an early end, a trade closed within the last 15 minutes has no full
+  // after-exit read yet — say so rather than let the column look final.
+  const fillingIn = ended && trades.some(t => postExitByTradeId?.[t.id]?.full_window === false)
+  const pastDay = clock.mounted && !clock.isToday && !live
+  const runRecap = () => { setRecapRun(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }
 
   const tradeForm = formMode.type !== 'none' && (
     <div id="session-trade-form" className="scroll-mt-4">
@@ -871,12 +897,22 @@ export default function SessionClient({
           className={`inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-0.5 border ${
             status.tone === 'live' || status.tone === 'ended'
               ? 'text-emerald-300 bg-emerald-950/40 border-emerald-800/60'
-              : 'text-gray-300 bg-gray-800/60 border-gray-700'
+              : status.tone === 'alert'
+                ? 'text-red-300 bg-red-950/40 border-red-800/60'
+                : 'text-gray-300 bg-gray-800/60 border-gray-700'
           }`}
         >
           {status.tone === 'live' && <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
           {status.text}
         </span>
+        {fillingIn && (
+          <span
+            className="text-[11px] text-amber-300 bg-amber-950/40 border border-amber-800/60 rounded px-1.5 py-0.5"
+            title="An after-exit read covers the 15 minutes after each exit. Trades closed within the last 15 minutes update once that window has passed."
+          >
+            after-exit reads still filling in
+          </span>
+        )}
         {!live && <AchievementBadges items={achievements} />}
         <span className="flex-1" />
         {LOCAL_FEATURES_ENABLED && (
@@ -924,13 +960,61 @@ export default function SessionClient({
             I&rsquo;m done — end session
           </button>
         )}
+        {/* The close passed with the page open: nothing switches on its own. */}
+        {awaitingRecap && (
+          <button
+            type="button"
+            onClick={runRecap}
+            className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 border border-blue-500 text-white text-[13px] font-semibold rounded-md px-4 min-h-[38px] transition-colors"
+          >
+            <ClipboardCheck className="w-4 h-4" /> Run my recap
+          </button>
+        )}
+        {/* Ended early, market still open: back to logging. The stamp stays, so a
+            trade logged now still counts as after you ended. */}
+        {ended && beforeClose && (
+          <button
+            type="button"
+            onClick={() => setReopened(true)}
+            className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2.5 min-h-9 hover:bg-gray-700 transition-colors"
+            title="Go back to logging — a trade you log now still counts as after you ended"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Reopen
+          </button>
+        )}
+        {pastDay && (
+          <button
+            type="button"
+            onClick={startManual}
+            className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md px-2.5 min-h-9 hover:bg-gray-700 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add a missed trade
+          </button>
+        )}
       </div>
 
       {live ? (
         /* Live: paste strip beside the day's plain numbers — no score card. */
         <section className="flex flex-wrap gap-3 items-stretch">
           <div className="flex-[2_1_460px] min-w-0">
-            <PasteStrip roomy onFile={startFromFile} onManual={startManual} />
+            {awaitingRecap ? (
+              /* The close passed with the page open — the recap button takes the paste box's place. */
+              <div className="h-full rounded-xl border border-gray-700 bg-gray-800/20 px-5 py-[18px] flex flex-wrap items-center gap-x-4 gap-y-2.5">
+                <div className="flex-1 min-w-[220px]">
+                  <p className="text-[15px] font-semibold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>The market closed at {closeLabel}</p>
+                  <p className="text-xs text-gray-500">Your scores, verdicts and analysis are ready when you are.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={runRecap}
+                  className="shrink-0 inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-semibold rounded-md px-4 min-h-[38px] transition-colors"
+                >
+                  <ClipboardCheck className="w-4 h-4" /> Run my recap
+                </button>
+              </div>
+            ) : (
+              <PasteStrip roomy onFile={startFromFile} onManual={startManual} />
+            )}
           </div>
           <div className="flex-[1_1_300px] min-w-0 rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3.5 grid grid-cols-3 gap-2 items-center text-center">
             <div>
