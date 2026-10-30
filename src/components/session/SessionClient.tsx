@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import Link from 'next/link'
-import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2, Flag, Loader2, GitMerge, Trash2, Tag, X, ChevronRight, Plus, RotateCcw, ClipboardCheck } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2, Flag, Loader2, GitMerge, Trash2, Tag, ChevronRight, Plus, RotateCcw, ClipboardCheck } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from '@/components/eod/EodNotesForm'
 import ChartScreenshotPanel from '@/components/eod/ChartScreenshotPanel'
@@ -1331,6 +1331,18 @@ export default function SessionClient({
           <span className="text-gray-300 font-medium">
             <strong>{selectedIds.size}</strong> trade{selectedIds.size === 1 ? '' : 's'} selected
           </span>
+          {selectedIds.size < trades.length && (
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set(trades.map(t => t.id)))}
+              className="text-xs font-semibold text-blue-300 hover:text-blue-200 transition-colors"
+            >
+              Select all {trades.length}
+            </button>
+          )}
+          <button type="button" onClick={clearSelection} className="text-xs font-semibold text-gray-400 hover:text-white transition-colors">
+            Clear
+          </button>
           <span className="text-gray-700">·</span>
           <button
             type="button"
@@ -1358,9 +1370,6 @@ export default function SessionClient({
           >
             {bulkDeleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
             Delete
-          </button>
-          <button type="button" onClick={clearSelection} className="text-gray-500 hover:text-white transition-colors" title="Clear selection">
-            <X className="w-4 h-4" />
           </button>
         </div>
       )}

@@ -17,7 +17,7 @@
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, CheckSquare, Square, MinusSquare, Upload } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Minus, Trash2, Loader2, HelpCircle, X, Columns3, Pencil, Upload } from 'lucide-react'
 import { maeHeatRatio, rMultiple, mfeMaePoints, type BarLike } from '@/lib/analytics'
 import { plannedStopPrice } from '@/lib/planned-stop'
 import { tradeFacts, tradeMgmt, mgmtBarGeometry, formatKept, exitKind, type TradeMgmt } from '@/lib/trade-management'
@@ -751,11 +751,7 @@ export default function SessionTradeTable({
             title={selectAllTitle}
             className="shrink-0 px-2.5 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-gray-300 hover:text-white disabled:opacity-40 transition-colors"
           >
-            {allSelected
-              ? <CheckSquare className="w-4 h-4 text-blue-400" />
-              : someSelected
-                ? <MinusSquare className="w-4 h-4 text-blue-400/70" />
-                : <Square className="w-4 h-4" />}
+            <SelectBoxFace state={allSelected ? 'on' : someSelected ? 'mixed' : 'off'} />
           </button>
         </div>
         {sortedTrades.map(t => {
@@ -876,13 +872,9 @@ export default function SessionTradeTable({
                   disabled={sortedTrades.length === 0}
                   aria-label={selectAllTitle}
                   title={selectAllTitle}
-                  className="flex items-center justify-center text-gray-500 hover:text-blue-400 disabled:opacity-40 transition-colors"
+                  className="group flex items-center justify-center disabled:opacity-40"
                 >
-                  {allSelected
-                    ? <CheckSquare className="w-3.5 h-3.5 text-blue-400" />
-                    : someSelected
-                      ? <MinusSquare className="w-3.5 h-3.5 text-blue-400/70" />
-                      : <Square className="w-3.5 h-3.5" />}
+                  <SelectBoxFace state={allSelected ? 'on' : someSelected ? 'mixed' : 'off'} />
                 </button>
               </th>
               <SortableHeader label="Time" sortKey="time" align="left" current={sortKey} dir={sortDir} onSort={onSort} colId="time" onResize={startResize} onResetWidths={resetWidths} />
@@ -1457,6 +1449,28 @@ function SortIcon({ col, current, dir }: { col: SortKey; current: SortKey; dir: 
 }
 
 /** One label/value row inside a mobile trade card. */
+/**
+ * The select-all box, drawn exactly like each row's checkbox (5×5, 2px border,
+ * blue when on) so the header reads as the same control. A part-selection
+ * shows a dash.
+ */
+function SelectBoxFace({ state }: { state: 'on' | 'mixed' | 'off' }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+        state === 'on'
+          ? 'bg-blue-600 border-blue-500 text-white'
+          : state === 'mixed'
+            ? 'bg-blue-600/40 border-blue-500 text-white'
+            : 'border-gray-600 group-hover:border-gray-400 bg-gray-900'
+      }`}
+    >
+      {state === 'on' ? <Check className="w-3 h-3" /> : state === 'mixed' ? <Minus className="w-3 h-3" /> : null}
+    </span>
+  )
+}
+
 function MobileMetric({ label, value, valueClass }: { label: string; value: string | number; valueClass?: string }) {
   return (
     <div className="flex items-center justify-between border-b border-gray-800/50 pb-1">
