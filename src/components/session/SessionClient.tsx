@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import Link from 'next/link'
-import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2, Flag, Loader2, GitMerge, Trash2, Tag, X } from 'lucide-react'
+import { Crosshair, Image as ImageIcon, CandlestickChart, Upload, Share2, Flag, Loader2, GitMerge, Trash2, Tag, X, ChevronRight } from 'lucide-react'
 import { deleteBlob } from '@/lib/storage'
 import EodNotesForm from '@/components/eod/EodNotesForm'
 import ChartScreenshotPanel from '@/components/eod/ChartScreenshotPanel'
@@ -31,6 +31,8 @@ import TradeManagementCard from '@/components/TradeManagementCard'
 import HeatBaseline from '@/components/eod/HeatBaseline'
 import { summarizeTodayHeat, type HeatBaseline as HeatBaselineData } from '@/lib/heat-baseline'
 import BehavioralProxiesPanel from '@/components/eod/BehavioralProxiesPanel'
+import RecapWhatHappened from '@/components/eod/RecapWhatHappened'
+import RecapTomorrow from '@/components/eod/RecapTomorrow'
 import AchievementBadges from '@/components/AchievementBadges'
 import AchievementShowcase from '@/components/eod/AchievementShowcase'
 import { dayAchievements, type AchievementId } from '@/lib/achievements'
@@ -291,7 +293,11 @@ export default function SessionClient({
   )
   const pressingIds = useMemo(() => sizeUpTradeIds(trades, riskYardstick), [trades, riskYardstick])
   const dayPerTrade = useMemo(() => perTrade(trades), [trades])
-  const { mode: uiMode } = useUiMode()
+  const { mode: uiMode, setMode } = useUiMode()
+  // Highlights reorders the recap around three questions — how did I do, what
+  // do I change tomorrow, what happened (docs/tapescore-recap-highlights-mockup-r1.html).
+  // Live sessions are unchanged: no score, no read, while the market is open.
+  const simpleRecap = uiMode === 'beginner' && !live
 
   // On-chart highlight chips (P&L + score) — recap only, since they carry the score.
   const highlights = useMemo(() => buildHighlights(trades, aiAnalysis), [trades, aiAnalysis])
@@ -964,6 +970,7 @@ export default function SessionClient({
             winRate={winRate}
             pnl={computedPnl}
             dailyLossLimit={dailyLossLimit}
+            partsInline={simpleRecap}
             aside={uiMode === 'pro' && trades.length > 0
               ? <TradeManagementCard totals={mgmt} className="min-w-0" perTrade={{ day: dayPerTrade, usual: usualPerTrade }} />
               : undefined}
@@ -974,12 +981,31 @@ export default function SessionClient({
 
       {tradeForm}
 
+      {/* Highlights: the coach's Tomorrow lines second (or, ungraded, the Grade
+          button — the tour's "grade" step points here), then What happened in
+          plain sentences. Detailed keeps the behaviour flags panel. */}
+      {simpleRecap && (
+        <div data-tour="eod-analyze">
+          <RecapTomorrow
+            analysis={scoredAnalysis}
+            loading={analyzing}
+            onAnalyze={runAnalysis}
+            disabled={trades.length === 0 && !day?.eod_notes}
+            hasTrades={trades.length > 0}
+          />
+        </div>
+      )}
+      {simpleRecap && (
+        <RecapWhatHappened trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} today={todayHeat} />
+      )}
+
       {/* Behaviour flags — judgment, so recap only. Self-suppressing when empty. */}
-      {!live && <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} />}
+      {!live && !simpleRecap && <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} />}
 
       {/* Chart: native bars, or the legacy uploaded screenshot + calibration. */}
       <div className="space-y-3">
-        <div className="flex justify-end">
+        {/* Highlights keeps the live chart only; Screenshot + calibration are Detailed. */}
+        {!simpleRecap && <div className="flex justify-end">
           <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
             <button
               type="button"
@@ -1000,9 +1026,9 @@ export default function SessionClient({
               <ImageIcon className="w-3.5 h-3.5" /> Screenshot
             </button>
           </div>
-        </div>
+        </div>}
 
-        {chartView === 'live' ? (
+        {chartView === 'live' || simpleRecap ? (
           <LiveChart
             ref={liveChartRef}
             date={date}
@@ -1076,13 +1102,14 @@ export default function SessionClient({
             )}
           </ChartScreenshotPanel>
         )}
-        {chartView === 'screenshot' && day?.last_sc_import_at && (
+        {chartView === 'screenshot' && !simpleRecap && day?.last_sc_import_at && (
           <p className="text-xs text-gray-500 ml-1">Last import: {format(new Date(day.last_sc_import_at), 'MMM d, HH:mm')}</p>
         )}
       </div>
 
       {/* What the MAE column means for this trader — recap only. */}
-      {!live && <HeatBaseline baseline={heatBaseline} today={todayHeat} />}
+      {/* (Highlights says today's half of it in What happened; the lifetime split is Detailed.) */}
+      {!live && !simpleRecap && <HeatBaseline baseline={heatBaseline} today={todayHeat} />}
 
       {/* ONE trade table: capture columns while live, review columns after. */}
       {trades.length > 0 && (
@@ -1113,6 +1140,8 @@ export default function SessionClient({
             includeFlow={includeFlowScore}
             atrStopTarget={atrStopTarget}
             gradeOf={gradeOf}
+            pressingIds={simpleRecap ? pressingIds : null}
+            giveBackIds={simpleRecap ? roundTripStats?.ids ?? null : null}
           />
           {live && (
             <p className="mt-2 text-xs text-gray-500">No scores, verdicts or AI while the market is open. The same table gains them in the recap.</p>
@@ -1158,7 +1187,7 @@ export default function SessionClient({
 
       {/* Session analysis — the AI read waits for the recap — across the page. */}
       {!live && (
-        <div data-tour="eod-analyze">
+        <div data-tour={simpleRecap ? undefined : 'eod-analyze'}>
           <EodAnalysisCard
             analysis={scoredAnalysis}
             loading={analyzing}
@@ -1176,7 +1205,7 @@ export default function SessionClient({
           (local: ffmpeg; cloud: decoded in the browser); the journal is the same
           trading_days.eod_notes field live or not. */}
       <div className="flex flex-wrap gap-3.5 items-start">
-        {!live && (
+        {!live && !simpleRecap && (
           <div className="flex-[1_1_420px] min-w-0">
             {LOCAL_FEATURES_ENABLED
               ? <RecordingCommentary trades={trades} onTradesChanged={refreshTrades} />
@@ -1194,11 +1223,23 @@ export default function SessionClient({
               if (!auto) showToast('Journal saved', 'success')
             }}
             onError={msg => showToast(msg, 'error')}
+            simple={simpleRecap}
           />
         </div>
       </div>
 
       {!live && <AchievementShowcase earned={achievements} counts={achievementCounts} className="mt-2" />}
+
+      {/* Graduation seam — the same one the Highlights dashboard ends with. */}
+      {simpleRecap && (
+        <button
+          type="button"
+          onClick={() => setMode('pro')}
+          className="w-full flex items-center justify-center gap-1.5 text-sm text-gray-400 hover:text-gray-200 border border-gray-800 hover:border-gray-600 rounded-xl py-2.5 transition-colors"
+        >
+          See the full breakdown in Detailed Tape <ChevronRight className="w-4 h-4" />
+        </button>
+      )}
 
       {/* Floating bulk-action bar — appears when 1+ trades are selected. */}
       {selectedIds.size > 0 && (
