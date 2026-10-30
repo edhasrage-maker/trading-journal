@@ -352,7 +352,10 @@ export function isFreshStats(
 // v18 (2026-10-28): the rollup gained `glance` — the facts behind the Days
 // table's four numbers (src/lib/day-glance.ts). Every cached row must recompute
 // to carry it, or those columns would stay blank on every cached day.
-export const STATS_VERSION = 18
+// v19 (2026-10-29): Playbook counts trades that passed every entry rule, not
+// rule checks (`glance.trades_passed` / `trades_checked` replace
+// `checks_passed` / `checks`), so every cached row must recompute.
+export const STATS_VERSION = 19
 
 /** The rollup fields persisted in `stats_json` — everything `computeDayStats`
  *  returns EXCEPT the fields that already live in dedicated `trading_days`

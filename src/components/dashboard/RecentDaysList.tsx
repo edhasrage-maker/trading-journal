@@ -11,7 +11,7 @@ import AchievementCoin from '@/components/AchievementCoin'
 import { ACHIEVEMENT_CATALOG, type AchievementId } from '@/lib/achievements'
 import { useMfeUnit, type MfeUnit } from '@/lib/mfe-unit'
 import { mgmtView, formatKept, type MgmtTotals } from '@/lib/trade-management'
-import { GLANCE_WINDOW_DAYS, RISK_OFF_MULTIPLE, CHECKS_OFF_POINTS, KEPT_OFF_POINTS, type DayGlanceRead } from '@/lib/day-glance'
+import { GLANCE_WINDOW_DAYS, RISK_OFF_MULTIPLE, PLAYBOOK_OFF_POINTS, KEPT_OFF_POINTS, type DayGlanceRead } from '@/lib/day-glance'
 
 export interface DayRowData {
   id: string
@@ -455,8 +455,8 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
     ),
     risk: kpiTh('risk', 'Risk vs usual', 'biggest risk on one trade',
       `The biggest planned dollar risk on one trade, against your usual risk per trade going into the day (the same average Loss size uses). Lights up at ${RISK_OFF_MULTIPLE}× or more.`),
-    playbook: kpiTh('playbook', 'Playbook', 'entry-rule checks passed',
-      `The share of your entry-rule checks the day's trades passed, against your last ${GLANCE_WINDOW_DAYS} trading days. Lights up ${CHECKS_OFF_POINTS}+ points under usual.`),
+    playbook: kpiTh('playbook', 'Playbook', 'trades that passed every rule',
+      `The share of the day's trades that passed every one of your entry rules, against your last ${GLANCE_WINDOW_DAYS} trading days. Lights up ${PLAYBOOK_OFF_POINTS}+ points under usual.`),
     after_high: kpiTh('after_high', 'After your high', 'once up a good day',
       `Did you keep trading after your realized P&L reached a good day — your average green day over your last ${GLANCE_WINDOW_DAYS} trading days? Lights up when you did.`),
     off: (
@@ -811,10 +811,10 @@ function DayRowItem({
                 ? <span className="text-gray-700" title="No entry-rule checks this day: no rules set, or the trades have no tape snapshot yet.">—</span>
                 : (
                   <GlanceCell
-                    main={`${Math.round(g.playbook.pct * 100)}% (${g.playbook.passed} of ${g.playbook.checks})`}
-                    sub={g.playbook.mostMissed ? `most missed: ${g.playbook.mostMissed}` : 'every check passed'}
+                    main={`${Math.round(g.playbook.pct * 100)}% (${g.playbook.passed} of ${g.playbook.trades})`}
+                    sub={g.playbook.mostMissed ? `most missed: ${g.playbook.mostMissed}` : 'every trade passed'}
                     off={g.playbook.off}
-                    title={`Entry-rule checks passed: ${g.playbook.passed} of ${g.playbook.checks}.${g.playbook.usual != null ? ` Usual: ${Math.round(g.playbook.usual * 100)}% over your last ${GLANCE_WINDOW_DAYS} trading days.` : ''}`}
+                    title={`Trades that passed every entry rule: ${g.playbook.passed} of ${g.playbook.trades}.${g.playbook.usual != null ? ` Usual: ${Math.round(g.playbook.usual * 100)}% over your last ${GLANCE_WINDOW_DAYS} trading days.` : ''}`}
                   />
                 )}
             </td>

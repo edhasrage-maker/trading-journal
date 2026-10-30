@@ -11,8 +11,11 @@ import type { TradeEntryCtx } from '@/lib/supabase/types'
  *   Risk vs usual    the biggest planned dollar risk on one trade, against the
  *                    trader's usual risk per trade (the same yardstick Loss size
  *                    uses, src/lib/exit-rollup.ts)
- *   Playbook         the share of entry-rule checks the day's trades passed
- *                    (src/lib/entry-rules.ts), against the days before it
+ *   Playbook         the share of the day's trades that passed every counted
+ *                    entry rule (src/lib/entry-rules.ts), against the days
+ *                    before it — by trade, not by rule check (founder,
+ *                    2026-10-29: 94 of 105 checks read 90% on a day only 7
+ *                    of 15 trades were clean)
  *   Kept             the existing "kept" (src/lib/trade-management.ts), against
  *                    the days before it
  *   After your high  once the day's realized P&L reached a good day — the
@@ -30,9 +33,9 @@ export const GLANCE_WINDOW_DAYS = 20
 /** Risk lights up at this multiple of the usual risk per trade. */
 export const RISK_OFF_MULTIPLE = 2
 /** Playbook lights up this many points under its usual. */
-export const CHECKS_OFF_POINTS = 10
-/** Fewer rule checks than this in the window → no usual yet. */
-export const CHECKS_MIN = 20
+export const PLAYBOOK_OFF_POINTS = 10
+/** Fewer checked trades than this in the window → no usual yet (the same floor as Kept). */
+export const PLAYBOOK_MIN_TRADES = 5
 /** Kept lights up this many points under its usual. */
 export const KEPT_OFF_POINTS = 15
 /** Fewer trades that went your way than this in the window → no usual yet. */
@@ -44,9 +47,10 @@ export const HIGH_MIN_GREEN_DAYS = 5
 export interface DayGlanceFacts {
   /** Biggest planned dollar risk on one trade. Null = no trade had a stop. */
   risk_max: number | null
-  /** Entry-rule checks passed / checked (counted rules only, unknown left out). */
-  checks_passed: number
-  checks: number
+  /** Trades that passed every counted entry rule / trades with at least one
+   *  known counted rule (unknown results left out). */
+  trades_passed: number
+  trades_checked: number
   /** Failed checks per rule name — the day's most-missed rule. */
   misses: Record<string, number>
   /** The day's best realized P&L (cumulative, by exit time). 0 = never green. */
@@ -78,21 +82,25 @@ function plannedRisk(t: GlanceTrade): number | null {
 
 export function dayGlanceFacts(trades: readonly GlanceTrade[], entryRules?: readonly EntryRuleConfig[] | null): DayGlanceFacts {
   let riskMax: number | null = null
-  let passed = 0, checks = 0
+  let passed = 0, checked = 0
   const misses: Record<string, number> = {}
-  for (const t of trades) {
+  // In entry order, so `misses` lists rules in the order they first failed and
+  // a tie for most missed goes to the earliest miss, whatever order the rows came in.
+  const byEntry = [...trades].sort((a, b) => ((a.entry_time ?? '') < (b.entry_time ?? '') ? -1 : (a.entry_time ?? '') > (b.entry_time ?? '') ? 1 : 0))
+  for (const t of byEntry) {
     if (t.pnl != null) {
       const r = plannedRisk(t)
       if (r != null && (riskMax == null || r > riskMax)) riskMax = r
     }
     if (entryRules?.length) {
       const results = evaluateRules(entryRules, t.entry_ctx ?? null, { direction: t.direction, symbol: t.symbol, entry_time: t.entry_time ?? null })
+      let known = 0, clean = true
       for (const r of results) {
         if (!r.counted || r.status === 'unknown') continue
-        checks++
-        if (r.status === 'pass') passed++
-        else misses[r.name] = (misses[r.name] ?? 0) + 1
+        known++
+        if (r.status !== 'pass') { clean = false; misses[r.name] = (misses[r.name] ?? 0) + 1 }
       }
+      if (known) { checked++; if (clean) passed++ }
     }
   }
 
@@ -115,8 +123,8 @@ export function dayGlanceFacts(trades: readonly GlanceTrade[], entryRules?: read
 
   return {
     risk_max: riskMax,
-    checks_passed: passed,
-    checks,
+    trades_passed: passed,
+    trades_checked: checked,
     misses,
     peak,
     after_peak_trades: afterN,
@@ -128,8 +136,8 @@ export function dayGlanceFacts(trades: readonly GlanceTrade[], entryRules?: read
 export interface DayGlanceRead {
   /** Null = no trade had a planned stop. */
   risk: { max: number; usual: number | null; ratio: number | null; off: boolean } | null
-  /** Null = no entry-rule checks on the day. */
-  playbook: { passed: number; checks: number; pct: number; usual: number | null; off: boolean; mostMissed: string | null } | null
+  /** Null = no trade on the day had an entry rule checked. */
+  playbook: { passed: number; trades: number; pct: number; usual: number | null; off: boolean; mostMissed: string | null } | null
   /** Usual kept (0..1, dollars) going into the day; `off` compares the day's own kept. */
   kept: { pct: number | null; usual: number | null; off: boolean }
   /** Null = no trades with a result. */
@@ -190,20 +198,20 @@ export function readDayGlance(days: readonly GlanceDay[]): Map<string, DayGlance
       off: usualRisk != null && g.risk_max >= RISK_OFF_MULTIPLE * usualRisk,
     }
 
-    // Playbook: rule checks pooled over the window.
-    let pPassed = 0, pChecks = 0
-    for (const p of prior) { pPassed += p.glance?.checks_passed ?? 0; pChecks += p.glance?.checks ?? 0 }
-    const checksUsual = pChecks >= CHECKS_MIN ? pPassed / pChecks : null
+    // Playbook: checked trades pooled over the window.
+    let pPassed = 0, pTrades = 0
+    for (const p of prior) { pPassed += p.glance?.trades_passed ?? 0; pTrades += p.glance?.trades_checked ?? 0 }
+    const playbookUsual = pTrades >= PLAYBOOK_MIN_TRADES ? pPassed / pTrades : null
     let mostMissed: string | null = null
     for (const [name, n] of Object.entries(g.misses)) {
       if (mostMissed == null || n > g.misses[mostMissed]) mostMissed = name
     }
-    const playbook = g.checks === 0 ? null : {
-      passed: g.checks_passed,
-      checks: g.checks,
-      pct: g.checks_passed / g.checks,
-      usual: checksUsual,
-      off: checksUsual != null && (g.checks_passed / g.checks) * 100 <= checksUsual * 100 - CHECKS_OFF_POINTS,
+    const playbook = g.trades_checked === 0 ? null : {
+      passed: g.trades_passed,
+      trades: g.trades_checked,
+      pct: g.trades_passed / g.trades_checked,
+      usual: playbookUsual,
+      off: playbookUsual != null && (g.trades_passed / g.trades_checked) * 100 <= playbookUsual * 100 - PLAYBOOK_OFF_POINTS,
       mostMissed,
     }
 
