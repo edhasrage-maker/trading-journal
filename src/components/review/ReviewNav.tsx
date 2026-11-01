@@ -39,7 +39,7 @@ export default function ReviewNav({
 
   return (
     <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 mb-6">
-      <div className="text-[22px] font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Session</div>
+      <div className="text-[22px] font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Review</div>
       <SessionTabs day={day} active={active} deepDive={deepDive} dot={pending && day === todayDate} />
     </div>
   )

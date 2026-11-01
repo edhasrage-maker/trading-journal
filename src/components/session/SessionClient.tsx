@@ -896,7 +896,7 @@ export default function SessionClient({
 
       {/* Header: title, day, status · then the day's actions. */}
       <div data-tour="eod-header" className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5">
-        <h1 className="text-[22px] font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Session</h1>
+        <h1 className="text-[22px] font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>Review</h1>
         <SessionTabs day={date} active="day" deepDive={deepDive} onPickDay={next => router.push(`/session/${next}`)} />
         <span
           className={`inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-0.5 border ${

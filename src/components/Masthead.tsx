@@ -204,17 +204,18 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   // the dated links (/prep/2026-07-25) still match their section.
   // Dashboard is the home — the all-trades overview, front and centre, the first
   // thing everyone sees (it's also the signed-in landing). Then the daily loop:
-  // Prep → Session (Log and Recap merged into one page, with Week and Month as
-  // its other tabs), then
-  // Edge Analysis across every trade. Names say what each page is FOR — the
-  // founder found Trade / Review / Patterns too vague (2026-10-08).
+  // Prep → Review (the day — Log and Recap merged — with Week, Month and
+  // Replay Review as its other tabs), then Edge Analysis across every trade.
+  // Names say what each page is FOR — the founder found Trade / Review /
+  // Patterns too vague (2026-10-08), then renamed Session to Review
+  // (2026-11-01) once the page reviewed weeks and months too.
   // Calendar is gone as a destination — it's the Dashboard's list/calendar
   // toggle now.
   const navItems = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome', match: '/welcome' }] : []),
     { href: '/dashboard', label: 'Dashboard', match: '/dashboard' },
     { href: urlDate ? `/prep/${urlDate}` : '/prep', label: 'Prep', match: '/prep' },
-    { href: sessionHref, label: 'Session', match: sessionMatch },
+    { href: sessionHref, label: 'Review', match: sessionMatch },
     { href: '/analytics', label: 'Edge Analysis', match: '/analytics' },
   ]
 
@@ -225,7 +226,7 @@ export default function Masthead({ isAdmin = false }: { isAdmin?: boolean }) {
   const mobileTabs = [
     { href: '/dashboard', label: 'Home', match: '/dashboard' },
     { href: urlDate ? `/prep/${urlDate}` : '/prep', label: 'Prep', match: '/prep' },
-    { href: sessionHref, label: 'Session', match: sessionMatch },
+    { href: sessionHref, label: 'Review', match: sessionMatch },
   ]
   const moreNav = [
     ...(showWelcome ? [{ href: '/welcome', label: 'Welcome' }] : []),
