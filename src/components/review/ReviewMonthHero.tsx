@@ -47,7 +47,7 @@ function arc(cx: number, cy: number, r: number, a0: number, a1: number): string 
 /** The composition ring: one complete circle split into three EQUAL segments
  *  (each ⅓ of the circumference), each filled to its own sub-score over a
  *  faint track, with clear gaps. */
-function CompositionRing({ score, subs, size = 132 }: {
+export function CompositionRing({ score, subs, size = 132 }: {
   score: number
   subs: { risk: number; entry: number; exit: number }
   size?: number

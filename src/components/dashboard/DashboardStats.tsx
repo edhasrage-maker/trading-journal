@@ -6,7 +6,7 @@ import { aggregateTapeScore, tapeScoreBand, tapeScorePeriodSentence, type TapeSc
 import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroParts'
 import TradeManagementCard, { ProfitFactorCard } from '@/components/TradeManagementCard'
 import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
-import { ScoreBreakdownInfo, bandOf } from '@/components/review/ReviewMonthHero'
+import { CompositionRing, ScoreBreakdownInfo } from '@/components/review/ReviewMonthHero'
 import type { LiftDragView } from '@/lib/lift-drag'
 import { AXIS_DESC, axisTooltip, type TradeSums } from '@/lib/tapescore-axes'
 
@@ -470,12 +470,27 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
               <Sparkline daily={stats.daily} />
             </KpiCard>
             <KpiCard
-              label="Trade win rate"
+              label="Win rate · R:R"
               title={`Win rate, and how much bigger the average winner is than the average loser (in R, so position sizing doesn't distort it). The break-even figure is worked out from the win rate beside it and moves as the win rate does. Win rate counts ${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}; payoff counts the ${stats.rSample} with a stop logged.`}
-              value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
+              value={stats.tradeWinRate == null ? '—' : (
+                // The R:R reads as loud as the win rate (founder, 2026-11-01):
+                // the two only mean something together.
+                <span className="flex items-baseline gap-2">
+                  <span>{(stats.tradeWinRate * 100).toFixed(0)}%</span>
+                  {stats.payoffR != null && (
+                    <>
+                      <span className="text-[20px] text-gray-600">·</span>
+                      <span className={stats.breakEvenPayoff != null && stats.payoffR <= stats.breakEvenPayoff ? 'text-amber-400' : 'text-green-400'}>
+                        {stats.payoffR.toFixed(1)}R
+                      </span>
+                      <span className="text-[17px] font-semibold text-gray-400">: 1R</span>
+                    </>
+                  )}
+                </span>
+              )}
               sub={stats.payoffR != null && stats.breakEvenPayoff != null ? (
                 <>
-                  Winners pay {stats.payoffR.toFixed(1)}× your losers — you only need {stats.breakEvenPayoff.toFixed(2)}× to break even, so{' '}
+                  Winners pay {stats.payoffR.toFixed(1)}R for every 1R lost — you only need {stats.breakEvenPayoff.toFixed(2)}R to break even, so{' '}
                   {stats.payoffR > stats.breakEvenPayoff
                     ? <span className="text-green-400">you&rsquo;re above</span>
                     : <span className="text-amber-400">you&rsquo;re below</span>}
@@ -665,9 +680,11 @@ function KpiCard({ label, info, value, valueClass = 'text-gray-100', sub, title,
         <span className="ts-eyebrow">{label}</span>
         {info}
       </div>
-      <div className={`mt-2 text-[30px] font-bold leading-none tabular-nums whitespace-nowrap ${valueClass}`} style={{ fontFamily: 'var(--font-display)' }}>
-        {value}
-      </div>
+      {value != null && (
+        <div className={`mt-2 text-[30px] font-bold leading-none tabular-nums whitespace-nowrap ${valueClass}`} style={{ fontFamily: 'var(--font-display)' }}>
+          {value}
+        </div>
+      )}
       {sub && <div className="mt-2 text-[13px] text-gray-400 leading-snug">{sub}</div>}
       {children && <div className="mt-auto pt-4">{children}</div>}
     </div>
@@ -679,46 +696,49 @@ const AXIS_ROWS = [
   { key: 'entry' as const, name: 'Entry', tip: AXIS_DESC.entry },
   { key: 'exit' as const, name: 'Exit', tip: AXIS_DESC.exit },
 ]
-const BAND_TEXT_CLASS = { high: 'text-green-400', mid: 'text-yellow-400', low: 'text-red-400' } as const
 const BAND_BAR_CLASS = { high: 'bg-green-400', mid: 'bg-yellow-400', low: 'bg-red-400' } as const
 
-/** The period's TapeScore with its word, and Risk / Entry / Exit as bars. An
- *  axis with nothing to judge reads "—" with an empty bar, never 0. */
+/** The period's TapeScore inside its composition ring (one segment each for
+ *  Risk / Entry / Exit — founder wanted the ring back, 2026-11-01), the three
+ *  axes as bars beside it. An axis with nothing to judge reads "—" with an
+ *  empty bar, never 0. */
 function TapeScoreCard({ period }: { period: TapeScorePeriod }) {
-  const b = period.score != null ? bandOf(period.score) : null
   return (
     <KpiCard
       label="TapeScore"
       info={<ScoreBreakdownInfo period={period} />}
-      value={period.score == null ? '—' : (
-        <span className="flex items-baseline gap-2">
-          <span className={BAND_TEXT_CLASS[b!.cls]}>{period.score}</span>
-          <span className="text-[15px] font-semibold text-gray-400">{b!.word}</span>
-        </span>
-      )}
-      valueClass={period.score == null ? 'text-gray-500' : undefined}
+      value={period.score == null ? '—' : null}
+      valueClass="text-gray-500"
       sub={period.score == null
         ? 'No graded sessions in this period yet — run Analyze Session on a day to score it.'
-        : 'How well you traded, apart from the money'}
+        : undefined}
     >
       {period.score != null && (
-        <div className="space-y-1.5">
-          {AXIS_ROWS.map(a => {
-            const v = period[a.key]
-            return (
-              <div
-                key={a.key}
-                className="grid grid-cols-[44px_1fr_26px] items-center gap-2 text-[13px]"
-                title={axisTooltip(`${a.name} (0-100), over the period: ${a.tip}.`, period.parts, a.key)}
-              >
-                <span className="text-gray-400">{a.name}</span>
-                <span className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                  {v != null && <span className={`block h-full rounded-full ${BAND_BAR_CLASS[tapeScoreBand(v)]}`} style={{ width: `${Math.max(0, Math.min(100, v))}%` }} />}
-                </span>
-                <b className="text-right tabular-nums text-gray-200">{v ?? '—'}</b>
-              </div>
-            )
-          })}
+        <div className="flex items-center gap-4">
+          <CompositionRing
+            score={period.score}
+            subs={{ risk: period.risk ?? 0, entry: period.entry ?? 0, exit: period.exit ?? 0 }}
+            size={112}
+          />
+          <div className="flex-1 min-w-0 space-y-2">
+            {AXIS_ROWS.map(a => {
+              const v = period[a.key]
+              return (
+                <div
+                  key={a.key}
+                  className="grid grid-cols-[40px_1fr_24px] items-center gap-2 text-[13px]"
+                  title={axisTooltip(`${a.name} (0-100), over the period: ${a.tip}.`, period.parts, a.key)}
+                >
+                  <span className="text-gray-400">{a.name}</span>
+                  <span className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                    {v != null && <span className={`block h-full rounded-full ${BAND_BAR_CLASS[tapeScoreBand(v)]}`} style={{ width: `${Math.max(0, Math.min(100, v))}%` }} />}
+                  </span>
+                  <b className="text-right tabular-nums text-gray-200">{v ?? '—'}</b>
+                </div>
+              )
+            })}
+            <p className="pt-0.5 text-[12px] text-gray-500 leading-snug">How well you traded, apart from the money</p>
+          </div>
         </div>
       )}
     </KpiCard>
