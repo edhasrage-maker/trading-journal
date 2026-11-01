@@ -147,7 +147,7 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
         </div>
       </div>
 
-      <div className={`grid ${cols} gap-1.5`}>
+      <div className={`grid ${cols} gap-1 sm:gap-1.5`}>
         {[...dow, 'Week'].map(d => (
           <div key={d} className="ts-eyebrow px-1 pb-0.5">{d}</div>
         ))}
@@ -168,6 +168,7 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
 
       <p className="text-[11.5px] text-gray-500">
         Darker green = bigger day. The small number on each day is its TapeScore.
+        <span className="sm:hidden"> Amounts are rounded here (1.3k = $1,300) — tap a day for the full session.</span>
       </p>
     </div>
   )
@@ -177,6 +178,23 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
 function fmtUsd(n: number): string {
   const abs = Math.abs(Math.round(n)).toLocaleString('en-US')
   return n > 0.5 ? `+$${abs}` : n < -0.5 ? `-$${abs}` : '$0'
+}
+
+/** Whole dollars on wide screens; on a phone the cell is ~45px, so it reads
+ *  "+852" / "+1.3k" / "-413" instead. */
+function Amount({ n }: { n: number }) {
+  return (
+    <>
+      <span className="sm:hidden">{fmtShort(n)}</span>
+      <span className="hidden sm:inline">{fmtUsd(n)}</span>
+    </>
+  )
+}
+
+function fmtShort(n: number): string {
+  const a = Math.abs(n)
+  const body = a >= 999.5 ? `${(a / 1000).toFixed(a >= 9950 ? 0 : 1)}k` : String(Math.round(a))
+  return n > 0.5 ? `+${body}` : n < -0.5 ? `-${body}` : '0'
 }
 
 /** "11 trades · 36% won", with the small cases said in words. */
@@ -195,7 +213,7 @@ function ScoreBadge({ result }: { result: TapeScoreResult }) {
   const tone = result.band === 'high' ? 'text-green-400' : result.band === 'mid' ? 'text-yellow-400' : 'text-red-400'
   return (
     <span
-      className={`text-[11px] font-bold leading-4 rounded px-1.5 bg-gray-900/80 tabular-nums ${tone}`}
+      className={`text-[10px] sm:text-[11px] font-bold leading-4 rounded px-1 sm:px-1.5 bg-gray-900/80 tabular-nums ${tone}`}
       title={`TapeScore ${result.score} out of 100`}
     >
       {result.score}
@@ -205,19 +223,19 @@ function ScoreBadge({ result }: { result: TapeScoreResult }) {
 
 function WeekCell({ n, pnl, traded }: { n: number; pnl: number; traded: number }) {
   return (
-    <div className="min-h-[84px] rounded-lg p-2 bg-gray-950/70 flex flex-col gap-0.5 text-[12px] text-gray-500 min-w-0">
-      <span>Week {n}</span>
+    <div className="min-h-[64px] sm:min-h-[84px] rounded-lg p-1 sm:p-2 bg-gray-950/70 flex flex-col gap-0.5 text-[11px] sm:text-[12px] text-gray-500 min-w-0">
+      <span><span className="hidden sm:inline">Week </span><span className="sm:hidden">W</span>{n}</span>
       {traded === 0 ? (
-        <span>No trades</span>
+        <span className="hidden sm:inline">No trades</span>
       ) : (
         <>
           <b
-            className={`text-[13px] sm:text-[16px] tabular-nums ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-300'}`}
+            className={`text-[12px] sm:text-[16px] tabular-nums whitespace-nowrap ${pnl > 0 ? 'text-green-400' : pnl < 0 ? 'text-red-400' : 'text-gray-300'}`}
             style={{ fontFamily: 'var(--font-display)' }}
           >
-            {fmtUsd(pnl)}
+            <Amount n={pnl} />
           </b>
-          <span>{traded} day{traded === 1 ? '' : 's'}</span>
+          <span>{traded}<span className="hidden sm:inline"> day{traded === 1 ? '' : 's'}</span><span className="sm:hidden">d</span></span>
         </>
       )}
     </div>
@@ -233,7 +251,7 @@ function DayCell({ date, cursor, data, maxWin, maxLoss }: {
 }) {
   const inMonth = isSameMonth(date, cursor)
   // Days outside the month are blank, not greyed numbers.
-  if (!inMonth) return <div className="min-h-[84px]" aria-hidden="true" />
+  if (!inMonth) return <div className="min-h-[64px] sm:min-h-[84px]" aria-hidden="true" />
 
   const isToday = fnsIsToday(date)
   const dateStr = format(date, 'yyyy-MM-dd')
@@ -258,10 +276,10 @@ function DayCell({ date, cursor, data, maxWin, maxLoss }: {
   return (
     <Link
       href={`/session/${dateStr}`}
-      className={`min-h-[84px] rounded-lg p-2 flex flex-col gap-0.5 min-w-0 transition-[filter] hover:brightness-95 ${shade} ${isToday ? 'ring-2 ring-blue-500/70' : ''}`}
+      className={`min-h-[64px] sm:min-h-[84px] rounded-lg p-1 sm:p-2 flex flex-col gap-0.5 min-w-0 transition-[filter] hover:brightness-95 ${shade} ${isToday ? 'ring-2 ring-blue-500/70' : ''}`}
     >
-      <div className="flex items-center justify-between gap-1">
-        <span className={`text-[12px] ${isToday ? 'text-blue-300 font-semibold' : hasTrades ? 'text-gray-300' : 'text-gray-500'}`}>{dom}</span>
+      <div className="flex items-center justify-between gap-0.5">
+        <span className={`text-[11px] sm:text-[12px] ${isToday ? 'text-blue-300 font-semibold' : hasTrades ? 'text-gray-300' : 'text-gray-500'}`}>{dom}</span>
         {hasTrades && (data.tapescore
           ? <ScoreBadge result={data.tapescore} />
           : <span className="hidden md:inline text-[11px] text-gray-500 whitespace-nowrap">no score yet</span>)}
@@ -269,8 +287,8 @@ function DayCell({ date, cursor, data, maxWin, maxLoss }: {
       {hasTrades && (
         <>
           {pnl != null && (
-            <b className={`text-[13px] sm:text-[16px] tabular-nums whitespace-nowrap ${pnlTone}`} style={{ fontFamily: 'var(--font-display)' }}>
-              {fmtUsd(pnl)}
+            <b className={`text-[12px] sm:text-[16px] tabular-nums whitespace-nowrap ${pnlTone}`} style={{ fontFamily: 'var(--font-display)' }}>
+              <Amount n={pnl} />
             </b>
           )}
           <span className="hidden sm:block text-[12px] text-gray-400 leading-snug">{tradesLine(data.trade_count, data.win_rate)}</span>

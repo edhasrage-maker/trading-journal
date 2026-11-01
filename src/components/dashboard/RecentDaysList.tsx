@@ -565,13 +565,17 @@ export default function RecentDaysList({ initialDays, mode = 'pro' }: Props) {
           the container, but the scrollbar itself is hidden — content can still
           scroll via trackpad / shift-wheel if needed, but doesn't reserve a
           chunky bar at the bottom of the dashboard for no reason. */}
+      <p className="md:hidden text-[11px] text-gray-500 mb-1">Swipe the table sideways for more columns.</p>
       <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {/* Every data column gets the same slice and Date takes a quarter
             more, so the row reads as an even rhythm instead of one wide date
             column and a huddle of numbers. Percentages (not fixed widths) keep
             it right at any window size, and the count adapts to the mode —
             Highlights shows four data columns, Detailed six. */}
-        <table className="w-full text-sm table-fixed">
+        {/* On a phone the percentage columns would be ~40px each and the
+            text piles on top of itself, so the table keeps a readable width
+            and scrolls sideways under the finger instead. */}
+        <table className="w-full min-w-[720px] md:min-w-0 text-sm table-fixed">
           <colgroup>
             {isPro && <col style={{ width: `${PINNED_COL_PCT}%` }} />}
             <col style={{ width: `${columnUnitPct * DATE_COL_RATIO}%` }} />
