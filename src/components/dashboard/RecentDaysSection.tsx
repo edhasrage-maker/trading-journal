@@ -57,6 +57,16 @@ export default function RecentDaysSection({
   )
 
   const filtersActive = startDate !== defaultFilterStart || endDate !== rangeEnd
+
+  // The calendar opens on the period's last traded month, so "Last 30 days"
+  // on the 1st shows last month's days instead of an empty new month.
+  const openMonth = useMemo(() => {
+    let last: string | null = null
+    for (const d of initialDays) {
+      if (d.trade_count > 0 && d.date >= defaultFilterStart && d.date <= rangeEnd && (!last || d.date > last)) last = d.date
+    }
+    return (last ?? rangeEnd).slice(0, 7)
+  }, [initialDays, defaultFilterStart, rangeEnd])
   const clearFilters = () => {
     setStartDate(defaultFilterStart)
     setEndDate(rangeEnd)
@@ -87,7 +97,7 @@ export default function RecentDaysSection({
           days={initialDays}
           windowStart={windowStart}
           windowEnd={windowEnd}
-          initialMonth={rangeEnd.slice(0, 7)}
+          initialMonth={openMonth}
           toggle={toggle}
         />
       ) : (

@@ -57,7 +57,10 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
   const weeks: Date[][] = []
   for (let i = 0; i < allCells.length; i += 7) {
     const week = allCells.slice(i, i + 7)
-    weeks.push(weekendTraded ? week : week.slice(0, 5))
+    const shown = weekendTraded ? week : week.slice(0, 5)
+    // A month that starts on a weekend (or ends on one) would leave a row of
+    // blank weekdays — skip it.
+    if (shown.some(d => isSameMonth(d, cursor))) weeks.push(shown)
   }
   const dow = weekendTraded ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 
