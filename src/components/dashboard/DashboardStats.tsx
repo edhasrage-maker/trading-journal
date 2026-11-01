@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { aggregateTapeScore, tapeScorePeriodSentence, type TapeScoreResult } from '@/lib/tapescore'
+import { aggregateTapeScore, tapeScoreBand, tapeScorePeriodSentence, type TapeScorePeriod, type TapeScoreResult } from '@/lib/tapescore'
 import { TapeScoreRing, HeroChip, TapeScoreFormulaInfo } from './TapeScoreHeroParts'
-import TradeManagementCard from '@/components/TradeManagementCard'
+import TradeManagementCard, { ProfitFactorCard } from '@/components/TradeManagementCard'
 import { mergeMgmtTotals, type MgmtTotals } from '@/lib/trade-management'
-import { ScoreCluster, ScoreBreakdownInfo } from '@/components/review/ReviewMonthHero'
+import { ScoreBreakdownInfo, bandOf } from '@/components/review/ReviewMonthHero'
 import type { LiftDragView } from '@/lib/lift-drag'
 import { AXIS_DESC, axisTooltip, type TradeSums } from '@/lib/tapescore-axes'
 
@@ -79,13 +79,15 @@ export interface DayStat {
   trade_sums?: TradeSums | null
 }
 
-export type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year'
+/** One whole calendar month, "m:2026-09" — the dashboard's month chips. */
+export type MonthPeriod = `m:${string}`
+export type Period = 'all' | 'week' | 'month' | '30d' | 'ytd' | 'last_year' | MonthPeriod
 // The trader's saved period sticks across visits — a preference, respected on
 // load. (An earlier v2 bump force-reset everyone to all-time; reverted, because
 // keeping your chosen period is the point of persisting it.)
-const PERIOD_KEY = 'dashboard-stat-period-v1'
+export const PERIOD_KEY = 'dashboard-stat-period-v1'
 
-export const PERIOD_LABELS: Record<Period, string> = {
+export const PERIOD_LABELS: Record<Exclude<Period, MonthPeriod>, string> = {
   all: 'All time',
   week: 'This Week',
   month: 'This Month',
@@ -94,12 +96,34 @@ export const PERIOD_LABELS: Record<Period, string> = {
   last_year: 'Last Year',
 }
 
+/** "2026-09" → "Sep 2026". */
+export function monthName(ym: string): string {
+  return new Date(`${ym}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })
+}
+
+/** A saved value that is still a period this build understands. */
+export function isPeriod(x: string | null): x is Period {
+  return x != null && (x in PERIOD_LABELS || /^m:\d{4}-\d{2}$/.test(x))
+}
+
+/** "Last 30 Days", or "Sep 2026" for a month. */
+export function periodLabel(p: Period): string {
+  return p.startsWith('m:') ? monthName(p.slice(2)) : PERIOD_LABELS[p as Exclude<Period, MonthPeriod>]
+}
+
 /** Inclusive date bounds (YYYY-MM-DD strings) for each period, computed
  *  relative to "today" on the client (cheap; no need for server input). */
 export function periodBounds(period: Period): { start: string; end: string } {
   const now = new Date()
   const today = ymd(now)
-  switch (period) {
+  if (period.startsWith('m:')) {
+    // A whole month; the current one stops at today.
+    const ym = period.slice(2)
+    const [y, m] = ym.split('-').map(Number)
+    const last = ymd(new Date(y, m, 0))
+    return { start: `${ym}-01`, end: last < today ? last : today }
+  }
+  switch (period as Exclude<Period, MonthPeriod>) {
     case 'all': {
       // Everything the page shipped. The overview widens its server window to
       // all history, so this bound just has to reach past the earliest day.
@@ -197,9 +221,9 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
   useEffect(() => {
     if (controlledPeriod) return
     try {
-      const rawPeriod = localStorage.getItem(PERIOD_KEY) as Period | null
+      const rawPeriod = localStorage.getItem(PERIOD_KEY)
       // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
-      if (rawPeriod && rawPeriod in PERIOD_LABELS) setPeriod(rawPeriod)
+      if (isPeriod(rawPeriod)) setPeriod(rawPeriod)
     } catch { /* ignore */ }
     setHydrated(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only hydration
@@ -219,8 +243,13 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     // Day win rate: % of TRADED days where pnl > 0. Days with no trades and no
     // explicit eod_pnl override are excluded so the denominator reflects
     // actual sessions.
-    const tradedDays = inPeriod.filter(d => d.eod_pnl != null)
+    const tradedDays = inPeriod
+      .filter(d => d.eod_pnl != null)
+      .sort((a, b) => a.date.localeCompare(b.date))
     const winDays = tradedDays.filter(d => (d.eod_pnl ?? 0) > 0).length
+    // Each traded day's result, oldest first — the P&L sparkline and the
+    // green-days bars draw from it.
+    const daily = tradedDays.map(d => d.eod_pnl ?? 0)
     const dayWinRate = tradedDays.length > 0 ? winDays / tradedDays.length : null
 
     // Trade win rate: pooled across the period.
@@ -284,6 +313,8 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       medianProcessV13,
       tapePeriod,
       tradedDaysCount: tradedDays.length,
+      winDays,
+      daily,
       totalTradesWithPnl,
       procCount: prepScores.length,
       v13Count: v13Scores.length,
@@ -297,8 +328,8 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     ? {
         view: liftDragView,
         window: liftDragView.extended
-          ? `last ${liftDragView.sessions} sessions, ${dateSpan(liftDragView.from, liftDragView.to)}`
-          : `${(rangeLabel ?? PERIOD_LABELS[period]).toLowerCase()}, ${liftDragView.sessions} sessions`,
+          ? `last ${liftDragView.sessions} sessions · ${dateSpan(liftDragView.from, liftDragView.to)}`
+          : `${period.startsWith('m:') && !rangeLabel ? periodLabel(period) : (rangeLabel ?? periodLabel(period)).toLowerCase()} · ${liftDragView.sessions} sessions`,
       }
     : null
 
@@ -308,7 +339,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     <StatCard
       className={className}
       bare={bare}
-      label={`${PERIOD_LABELS[period]} P&L`}
+      label={`${periodLabel(period)} P&L`}
       value={(() => {
         // Sign before the dollar: "+$1,395" / "-$1,395" / "$0".
         // Previously was "$+1,395" — the sign-after-currency reads as
@@ -391,7 +422,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
   )
 
   return (
-    <div className="mb-6">
+    <div className={scoreInRow ? undefined : 'mb-6'}>
       {/* Period selector — absent when a parent owns the period. */}
       {!controlledPeriod && (
       <div className="flex items-center gap-2 mb-3">
@@ -405,6 +436,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
             onChange={e => setPeriod(e.target.value as Period)}
             className="appearance-none bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-md pl-2 pr-7 py-1 focus:outline-none focus:border-blue-500 cursor-pointer"
           >
+            {!(period in PERIOD_LABELS) && <option value={period}>{periodLabel(period)}</option>}
             {Object.entries(PERIOD_LABELS).map(([k, v]) => (
               <option key={k} value={k}>{v}</option>
             ))}
@@ -419,41 +451,62 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
           ledger. Score ring + verdict sentence + axis chips; P&L lives in the
           card row below. Suppressed on Review · Month, where the composition
           ring already owns the score. */}
-      {!hideScoreHero && <TapeScoreHero period={stats.tapePeriod} periodLabel={PERIOD_LABELS[period]} />}
+      {!hideScoreHero && <TapeScoreHero period={stats.tapePeriod} periodLabel={periodLabel(period)} />}
 
       {scoreInRow ? (
-        /* Three cards (founder's pick, 2026-10-13), everything on the Period
-           menu above: decision quality (the TapeScore, with the trade win rate
-           and payoff under it), results (P&L, with the day win rate under it),
-           and trade management. Replaces the separate score band, which left
-           most of its width empty once the finding beside it was hidden. The
-           bottom halves share a height so their dividers line up. */
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_minmax(0,2fr)]">
-          <div className="min-w-0 border border-gray-800 rounded-[3px] flex flex-col">
-            <div className="flex-1 p-[18px] flex flex-col justify-center gap-2.5">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[15px] font-bold tracking-tight text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
-                  TapeScore
-                </span>
-                <span className="text-[11px] text-gray-500">· {(rangeLabel ?? PERIOD_LABELS[period]).toLowerCase()}</span>
-                <ScoreBreakdownInfo period={stats.tapePeriod} />
-              </div>
-              <div className="flex justify-center">
-                <ScoreCluster period={stats.tapePeriod} size={128} />
-              </div>
-            </div>
-            {tradeWinCard({ bare: true, className: 'border-t border-gray-800 min-h-[104px]' })}
+        /* Four cards on one template (founder, 2026-10-31 — "Dashboard
+           clean-up" mockup): label, one big number, one plain line, one small
+           picture. Then Trade management and the profit factor side by side.
+           Everything follows the period the page is on. */
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <TapeScoreCard period={stats.tapePeriod} />
+            <KpiCard
+              label="Net P&L"
+              value={fmtSignedUsd(stats.pnl)}
+              valueClass={stats.pnl > 0 ? 'text-green-400' : stats.pnl < 0 ? 'text-red-400' : 'text-gray-300'}
+              sub={`${stats.tradedDaysCount} trading day${stats.tradedDaysCount === 1 ? '' : 's'} · ${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
+            >
+              <Sparkline daily={stats.daily} />
+            </KpiCard>
+            <KpiCard
+              label="Trade win rate"
+              title={`Win rate, and how much bigger the average winner is than the average loser (in R, so position sizing doesn't distort it). The break-even figure is worked out from the win rate beside it and moves as the win rate does. Win rate counts ${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}; payoff counts the ${stats.rSample} with a stop logged.`}
+              value={stats.tradeWinRate == null ? '—' : `${(stats.tradeWinRate * 100).toFixed(0)}%`}
+              sub={stats.payoffR != null && stats.breakEvenPayoff != null ? (
+                <>
+                  Winners pay {stats.payoffR.toFixed(1)}× your losers — you only need {stats.breakEvenPayoff.toFixed(2)}× to break even, so{' '}
+                  {stats.payoffR > stats.breakEvenPayoff
+                    ? <span className="text-green-400">you&rsquo;re above</span>
+                    : <span className="text-amber-400">you&rsquo;re below</span>}
+                  {/* A payoff resting on a minority of the trades says so. */}
+                  {stats.rSample * 2 < stats.totalTradesWithPnl && (
+                    <span className="text-gray-500"> (payoff from {stats.rSample} of {stats.totalTradesWithPnl} trades)</span>
+                  )}
+                </>
+              ) : `${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
+            >
+              {stats.tradeWinRate != null && <WinLossBar winRate={stats.tradeWinRate} />}
+            </KpiCard>
+            <KpiCard
+              label="Green days"
+              value={stats.dayWinRate == null ? '—' : `${(stats.dayWinRate * 100).toFixed(0)}%`}
+              sub={stats.tradedDaysCount === 0 ? 'No trading days yet' : `${stats.winDays} of ${stats.tradedDaysCount} day${stats.tradedDaysCount === 1 ? '' : 's'} finished green`}
+            >
+              <MiniBars daily={stats.daily} />
+            </KpiCard>
           </div>
-          <div className="min-w-0 border border-gray-800 rounded-[3px] flex flex-col">
-            {pnlCard({ bare: true, className: 'flex-1' })}
-            {dayWinCard({ bare: true, className: 'border-t border-gray-800 min-h-[104px]' })}
+          <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TradeManagementCard
+              totals={stats.mgmt}
+              eyebrow
+              className={`ts-card p-5 min-w-0 ${profitFactor ? '' : 'lg:col-span-2'}`}
+            />
+            {profitFactor && (
+              <ProfitFactorCard view={profitFactor.view} windowLabel={profitFactor.window} className="ts-card p-5 min-w-0" />
+            )}
           </div>
-          <TradeManagementCard
-            totals={stats.mgmt}
-            profitFactor={profitFactor}
-            className="min-w-0 sm:col-span-2 xl:col-span-1 border border-gray-800 rounded-[3px] p-[18px]"
-          />
-        </div>
+        </>
       ) : (
       /* Stat cards. Order: P&L → Day Win % → Trade Win % → Trade management
          (double width: it carries two rows of bars).
@@ -588,3 +641,149 @@ function StatCard({
 }
 
 
+
+/** "+$5,997" / "-$413" / "$0" — whole dollars, sign before the dollar. */
+function fmtSignedUsd(n: number): string {
+  const abs = Math.abs(Math.round(n)).toLocaleString('en-US')
+  return n > 0.5 ? `+$${abs}` : n < -0.5 ? `-$${abs}` : '$0'
+}
+
+/** The one card template on the dashboard: label, one big number, one plain
+ *  line, one small picture pinned to the bottom so the four line up. */
+function KpiCard({ label, info, value, valueClass = 'text-gray-100', sub, title, children }: {
+  label: string
+  info?: React.ReactNode
+  value: React.ReactNode
+  valueClass?: string
+  sub?: React.ReactNode
+  title?: string
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="ts-card p-5 flex flex-col min-w-0" title={title}>
+      <div className="flex items-center gap-1.5 min-h-[18px]">
+        <span className="ts-eyebrow">{label}</span>
+        {info}
+      </div>
+      <div className={`mt-2 text-[30px] font-bold leading-none tabular-nums whitespace-nowrap ${valueClass}`} style={{ fontFamily: 'var(--font-display)' }}>
+        {value}
+      </div>
+      {sub && <div className="mt-2 text-[13px] text-gray-400 leading-snug">{sub}</div>}
+      {children && <div className="mt-auto pt-4">{children}</div>}
+    </div>
+  )
+}
+
+const AXIS_ROWS = [
+  { key: 'risk' as const, name: 'Risk', tip: AXIS_DESC.risk },
+  { key: 'entry' as const, name: 'Entry', tip: AXIS_DESC.entry },
+  { key: 'exit' as const, name: 'Exit', tip: AXIS_DESC.exit },
+]
+const BAND_TEXT_CLASS = { high: 'text-green-400', mid: 'text-yellow-400', low: 'text-red-400' } as const
+const BAND_BAR_CLASS = { high: 'bg-green-400', mid: 'bg-yellow-400', low: 'bg-red-400' } as const
+
+/** The period's TapeScore with its word, and Risk / Entry / Exit as bars. An
+ *  axis with nothing to judge reads "—" with an empty bar, never 0. */
+function TapeScoreCard({ period }: { period: TapeScorePeriod }) {
+  const b = period.score != null ? bandOf(period.score) : null
+  return (
+    <KpiCard
+      label="TapeScore"
+      info={<ScoreBreakdownInfo period={period} />}
+      value={period.score == null ? '—' : (
+        <span className="flex items-baseline gap-2">
+          <span className={BAND_TEXT_CLASS[b!.cls]}>{period.score}</span>
+          <span className="text-[15px] font-semibold text-gray-400">{b!.word}</span>
+        </span>
+      )}
+      valueClass={period.score == null ? 'text-gray-500' : undefined}
+      sub={period.score == null
+        ? 'No graded sessions in this period yet — run Analyze Session on a day to score it.'
+        : 'How well you traded, apart from the money'}
+    >
+      {period.score != null && (
+        <div className="space-y-1.5">
+          {AXIS_ROWS.map(a => {
+            const v = period[a.key]
+            return (
+              <div
+                key={a.key}
+                className="grid grid-cols-[44px_1fr_26px] items-center gap-2 text-[13px]"
+                title={axisTooltip(`${a.name} (0-100), over the period: ${a.tip}.`, period.parts, a.key)}
+              >
+                <span className="text-gray-400">{a.name}</span>
+                <span className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                  {v != null && <span className={`block h-full rounded-full ${BAND_BAR_CLASS[tapeScoreBand(v)]}`} style={{ width: `${Math.max(0, Math.min(100, v))}%` }} />}
+                </span>
+                <b className="text-right tabular-nums text-gray-200">{v ?? '—'}</b>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </KpiCard>
+  )
+}
+
+/** The period's running P&L as a small line, dashed zero underneath. */
+function Sparkline({ daily }: { daily: number[] }) {
+  if (daily.length < 2) return null
+  const equity = daily.map((_, i) => daily.slice(0, i + 1).reduce((s, v) => s + v, 0))
+  const lo = Math.min(0, ...equity)
+  const hi = Math.max(0, ...equity)
+  const span = hi - lo || 1
+  const y = (v: number) => 52 - ((v - lo) / span) * 48
+  const pts = equity.map((v, i) => `${((i / (equity.length - 1)) * 240).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
+  const up = equity[equity.length - 1] >= 0
+  return (
+    <svg viewBox="0 0 240 56" preserveAspectRatio="none" className="w-full h-14" aria-hidden="true">
+      <line x1="0" x2="240" y1={y(0)} y2={y(0)} stroke="var(--ts-line)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+      <polyline fill="none" stroke={up ? 'var(--color-pos)' : 'var(--color-neg)'} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" points={pts} />
+    </svg>
+  )
+}
+
+/** Each traded day as a small bar off one zero line — green up, red down. */
+function MiniBars({ daily }: { daily: number[] }) {
+  const n = daily.length
+  if (n === 0) return null
+  const max = Math.max(...daily.map(Math.abs)) || 1
+  const ZERO = 38
+  const slot = 240 / n
+  const w = Math.max(1, slot * 0.75)
+  return (
+    <svg viewBox="0 0 240 56" preserveAspectRatio="none" className="w-full h-14" aria-hidden="true">
+      <line x1="0" x2="240" y1={ZERO} y2={ZERO} stroke="var(--ts-line)" vectorEffect="non-scaling-stroke" />
+      {daily.map((v, i) => {
+        const h = Math.max(1, (Math.abs(v) / max) * (v >= 0 ? 36 : 16))
+        return (
+          <rect
+            key={i}
+            x={i * slot + (slot - w) / 2}
+            y={v >= 0 ? ZERO - h : ZERO}
+            width={w}
+            height={h}
+            fill={v >= 0 ? 'var(--color-pos)' : 'var(--color-neg)'}
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
+/** Wins against losses as one split bar. */
+function WinLossBar({ winRate }: { winRate: number }) {
+  const w = Math.round(winRate * 100)
+  return (
+    <div>
+      <div className="flex h-2 rounded-full overflow-hidden bg-gray-800" aria-hidden="true">
+        <span className="bg-green-400" style={{ width: `${w}%` }} />
+        <span className="bg-red-400/40" style={{ width: `${100 - w}%` }} />
+      </div>
+      <div className="mt-1.5 flex justify-between text-[11px] text-gray-500">
+        <span>Wins {w}%</span>
+        <span>Losses {100 - w}%</span>
+      </div>
+    </div>
+  )
+}

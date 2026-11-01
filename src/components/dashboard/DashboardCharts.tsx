@@ -101,6 +101,20 @@ function niceScale(min: number, max: number, count = 4): { niceMin: number; nice
   return { niceMin, niceMax, ticks }
 }
 
+/** "18 days · best Oct 22 +$1,293 · worst Oct 29 -$413" — the worst only when
+ *  a day finished red. */
+function dailySummary(daily: { date: string; pnl: number }[]): string {
+  const day = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const parts = [`${daily.length} day${daily.length === 1 ? '' : 's'}`]
+  if (daily.length > 1) {
+    const best = daily.reduce((a, b) => (b.pnl > a.pnl ? b : a))
+    const worst = daily.reduce((a, b) => (b.pnl < a.pnl ? b : a))
+    if (best.pnl > 0) parts.push(`best ${day(best.date)} ${fmtMoney(best.pnl, { signed: true })}`)
+    if (worst.pnl < 0) parts.push(`worst ${day(worst.date)} ${fmtMoney(worst.pnl)}`)
+  }
+  return parts.join(' · ')
+}
+
 const GREEN = 'var(--color-pos)'
 const RED = 'var(--color-neg)'
 /** Band fills for the score strip — the SAME green/amber/red the TapeScore ring
@@ -278,14 +292,11 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
   const hasData = points.length > 0
 
   return (
-    <div className="mb-6">
-      {/* Period selector — independent of the stat-card period below. */}
-      {!equityOnly && (
+    <div>
+      {/* Period selector — only when nothing above owns the range. */}
+      {!equityOnly && !rangeLabel && (
       <div className="flex items-center gap-2 mb-3">
         <label className="text-xs text-gray-500">Chart range:</label>
-        {rangeLabel ? (
-          <span className="text-xs text-gray-300">{rangeLabel}</span>
-        ) : (
         <div className="relative">
           <select
             value={period}
@@ -298,35 +309,16 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
           </select>
           <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
         </div>
-        )}
       </div>
       )}
 
       <div className={equityOnly ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 lg:grid-cols-2 gap-4'}>
-        {/* Equity Curve (cumulative). Container matches the stat tiles —
-            no fill, hairline rule, squared corner. */}
-        <div className="border border-gray-800 rounded-[3px] p-5">
+        {/* Equity Curve (cumulative) — a dashboard card like the stats. */}
+        <div className="ts-card p-5 min-w-0">
           <div className="flex items-baseline justify-between mb-3 gap-3">
-            <div className="flex items-baseline gap-2.5 min-w-0">
-              <h2 className="font-semibold text-white text-sm">Equity Curve</h2>
-              {/* Legend for the score strip. Only shown when there is actually a
-                  score series to explain. */}
-              {scores.some(s => s != null) && (
-                <span
-                  className="flex items-center gap-1.5 text-[10px] text-gray-500 whitespace-nowrap"
-                  title="The band beneath the curve is each session's TapeScore — red under 50, amber 50-69, green 70+. A gap means that session was never analysed."
-                >
-                  <span className="inline-flex gap-px" aria-hidden>
-                    <span className="inline-block w-1.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.low }} />
-                    <span className="inline-block w-1.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.mid }} />
-                    <span className="inline-block w-1.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.high }} />
-                  </span>
-                  TapeScore
-                </span>
-              )}
-            </div>
+            <h2 className="ts-eyebrow">Equity curve</h2>
             {hasData && (
-              <span className={`text-xs font-mono ${equity[equity.length - 1] >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              <span className={`text-sm font-bold tabular-nums ${equity[equity.length - 1] >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {fmtMoney(equity[equity.length - 1], { signed: true })}
               </span>
             )}
@@ -336,23 +328,25 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
           ) : (
             <div className="text-center text-xs text-gray-600 italic py-16">No closed sessions in this range</div>
           )}
-          {equityOnly && hasData && scores.some(s => s != null) && (
+          {/* The strip explained in words, on every view that draws it. A gap
+              in it is a session that was never analysed. */}
+          {hasData && scores.some(s => s != null) && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-[11px] text-gray-500">
-              <span className="text-gray-400">The band under the curve is each session&apos;s TapeScore:</span>
-              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.high }} />70+</span>
-              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.mid }} />50–69</span>
-              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.low }} />under 50</span>
+              <span className="text-gray-400">Strip = each day&apos;s TapeScore:</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.high }} />Strong 70+</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.mid }} />Fair 50–69</span>
+              <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-1.5 rounded-[1px]" style={{ background: BAND_FILL.low }} />Weak under 50</span>
             </div>
           )}
         </div>
 
         {/* Daily Results (per-day net P&L bars) */}
         {!equityOnly && (
-        <div className="border border-gray-800 rounded-[3px] p-5">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="font-semibold text-white text-sm">Daily Results</h2>
+        <div className="ts-card p-5 min-w-0">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
+            <h2 className="ts-eyebrow">Daily results</h2>
             {hasData && (
-              <span className="text-xs text-gray-500">{daily.length} day{daily.length === 1 ? '' : 's'}</span>
+              <span className="text-xs text-gray-500">{dailySummary(daily)}</span>
             )}
           </div>
           {hasData ? (

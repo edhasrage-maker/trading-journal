@@ -37,6 +37,8 @@ interface Props {
    *  one dragging it (src/lib/lift-drag.ts), under "Net per trade". `window`
    *  says which sessions it covers — it can be wider than the card's period. */
   profitFactor?: { view: LiftDragView; window: string } | null
+  /** Dashboard: the title in the small caps every dashboard card opens with. */
+  eyebrow?: boolean
 }
 
 const UNIT_OPTIONS: { value: MfeUnit; label: string }[] = [
@@ -47,7 +49,7 @@ const UNIT_OPTIONS: { value: MfeUnit; label: string }[] = [
 
 const plural = (n: number) => (n === 1 ? '' : 's')
 
-export default function TradeManagementCard({ totals, className, profitFactor, perTrade }: Props) {
+export default function TradeManagementCard({ totals, className, profitFactor, perTrade, eyebrow = false }: Props) {
   const [unit, setUnit] = useMfeUnit()
   const v = mgmtView(totals, unit)
   const scale = {
@@ -60,7 +62,7 @@ export default function TradeManagementCard({ totals, className, profitFactor, p
     <div className={className ?? 'border border-gray-800 rounded-[3px] p-[18px]'}>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
         <p
-          className="text-xs text-gray-500 whitespace-nowrap"
+          className={eyebrow ? 'ts-eyebrow whitespace-nowrap' : 'text-xs text-gray-500 whitespace-nowrap'}
           title="Every trade is sorted first: did it go at least 1×ATR your way at some point, or not? MFE is the best point it reached, MAE the worst. Kept is what you banked out of the run, losses included."
         >
           Trade management
@@ -85,7 +87,7 @@ export default function TradeManagementCard({ totals, className, profitFactor, p
       ) : (
         <>
           <Row
-            label={`${v.went.count} went your way`}
+            label={`${v.went.count} trade${plural(v.went.count)} went your way`}
             title={
               v.went.count === 0
                 ? 'No trade got 1×ATR your way.'
@@ -98,7 +100,7 @@ export default function TradeManagementCard({ totals, className, profitFactor, p
           />
           <div className="h-2.5" />
           <Row
-            label={`${v.never.count} never got going`}
+            label={`${v.never.count} trade${plural(v.never.count)} never got going`}
             title="Never got 1×ATR your way — an entry problem, not an exit one."
             group={v.never}
             scale={scale}
@@ -173,12 +175,16 @@ const fmtPct = (x: number | null) => (x == null ? '—' : `${Math.round(x * 100)
 /** "Profit factor 1.22" and, under it, the one thing lifting it and the one
  *  dragging it. Fills the space the card's rows leave under Net per trade
  *  (founder, 2026-10-13). Profit factor is in R whatever the unit menu says. */
+function pfTitle(view: LiftDragView): string {
+  return `Profit factor = R won ÷ R lost, in R so position size doesn't change it. ${view.trades} trades across ${view.sessions} sessions. Each line below is the one thing, out of ${view.candidates} known at entry, that moves it most when its trades are left out.${view.extended ? ' Shorter periods are widened to your last 60 sessions so the pick holds still from week to week.' : ''}`
+}
+
 function ProfitFactorSection({ view, windowLabel }: { view: LiftDragView; windowLabel: string }) {
   return (
     <div className="mt-2.5 pt-2 border-t border-gray-800">
       <div
         className="flex items-baseline justify-between gap-2 text-[13px]"
-        title={`Profit factor = R won ÷ R lost, in R so position size doesn't change it. ${view.trades} trades across ${view.sessions} sessions. Each line below is the one thing, out of ${view.candidates} known at entry, that moves it most when its trades are left out.${view.extended ? ' Shorter periods are widened to your last 60 sessions so the pick holds still from week to week.' : ''}`}
+        title={pfTitle(view)}
       >
         <span className="text-gray-500 min-w-0">
           Profit factor <span className="text-[11px] text-gray-600">· {windowLabel}</span>
@@ -196,18 +202,74 @@ function ProfitFactorSection({ view, windowLabel }: { view: LiftDragView; window
   )
 }
 
-function FactorRow({ kind, f, pf, candidates }: { kind: 'lift' | 'drag'; f: LiftDragFactor; pf: number; candidates: number }) {
-  const lift = kind === 'lift'
-  // The range in the order it is read: nearest zero first.
-  const range = lift
+/** The range a lifter / drag moves the profit factor, nearest zero first. */
+function factorRange(kind: 'lift' | 'drag', f: LiftDragFactor): string {
+  return kind === 'lift'
     ? `${formatPfDelta(f.lo)} to ${formatPfDelta(f.hi)}`
     : `${formatPfDelta(f.hi)} to ${formatPfDelta(f.lo)}`
-  const title = [
+}
+
+function factorTitle(kind: 'lift' | 'drag', f: LiftDragFactor, candidates: number): string {
+  return [
     `${f.label}: ${f.n} trade${plural(f.n)}, ${fmtPct(f.winRate)} won, profit factor ${fmtPf(f.pf)}.`,
     `Every other trade: ${f.restN} trade${plural(f.restN)}, ${fmtPct(f.restWinRate)} won, profit factor ${fmtPf(f.pfWithout)}.`,
     '',
-    `In 8 of 10 reshuffles of these sessions, leaving them out ${lift ? 'lowered' : 'raised'} your profit factor by ${range.replace(/[+−]/g, '')}. Picked as the strongest of ${candidates} things known at entry, so next month it usually reads smaller.`,
+    `In 8 of 10 reshuffles of these sessions, leaving them out ${kind === 'lift' ? 'lowered' : 'raised'} your profit factor by ${factorRange(kind, f).replace(/[+−]/g, '')}. Picked as the strongest of ${candidates} things known at entry, so next month it usually reads smaller.`,
   ].join('\n')
+}
+
+/**
+ * Dashboard: the profit factor as its own card beside Trade management
+ * (founder, 2026-10-31) — the number large, then the one thing lifting it and
+ * the one dragging it in tinted boxes. Same reads and hover text as the
+ * section the recap-style card carries.
+ */
+export function ProfitFactorCard({ view, windowLabel, className }: { view: LiftDragView; windowLabel: string; className?: string }) {
+  return (
+    <div className={className}>
+      <div className="flex items-baseline justify-between gap-3" title={pfTitle(view)}>
+        <span className="ts-eyebrow whitespace-nowrap">Profit factor</span>
+        <span className="text-xs text-gray-500 text-right">{windowLabel}</span>
+      </div>
+      <div className="mt-2 text-[30px] font-bold leading-none tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }} title={pfTitle(view)}>
+        {view.pf.toFixed(2)}
+      </div>
+      <div className="mt-4 space-y-2">
+        {view.lift && <FactorBox kind="lift" f={view.lift} candidates={view.candidates} />}
+        {view.drag && <FactorBox kind="drag" f={view.drag} candidates={view.candidates} />}
+        {!view.lift && !view.drag && (
+          <p className="text-[13px] text-gray-500">Nothing lifts or drags it clearly enough to name yet.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FactorBox({ kind, f, candidates }: { kind: 'lift' | 'drag'; f: LiftDragFactor; candidates: number }) {
+  const lift = kind === 'lift'
+  return (
+    <div
+      className={`flex items-center gap-3 rounded-lg px-3 py-2.5 ${lift ? 'bg-green-950' : 'bg-red-950'}`}
+      title={factorTitle(kind, f, candidates)}
+    >
+      <span className={`flex-none w-[60px] text-xs font-bold ${lift ? 'text-green-400' : 'text-red-400'}`}>
+        {lift ? 'Lifts it' : 'Drags it'}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-gray-200 leading-snug">{f.label}</p>
+        <p className="text-[11px] text-gray-500 leading-snug">
+          {f.n} trade{plural(f.n)} · without them it would be {f.pfWithout.toFixed(2)}
+        </p>
+      </div>
+      <span className={`flex-none font-bold tabular-nums ${lift ? 'text-green-400' : 'text-red-400'}`}>{formatPfDelta(f.delta)}</span>
+    </div>
+  )
+}
+
+function FactorRow({ kind, f, pf, candidates }: { kind: 'lift' | 'drag'; f: LiftDragFactor; pf: number; candidates: number }) {
+  const lift = kind === 'lift'
+  const range = factorRange(kind, f)
+  const title = factorTitle(kind, f, candidates)
   return (
     <div className="mt-2 flex items-center gap-2.5" title={title}>
       <span

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { format, parseISO, subMonths } from 'date-fns'
 import { SlidersHorizontal, X, Loader2, Check } from 'lucide-react'
-import DashboardStats, { type DayStat } from './DashboardStats'
+import DashboardStats, { PERIOD_KEY, monthName, periodBounds, periodLabel, type DayStat, type Period } from './DashboardStats'
 import DashboardCharts from './DashboardCharts'
 import RecentDaysSection from './RecentDaysSection'
 import type { DayRowData } from './RecentDaysList'
@@ -45,9 +45,8 @@ interface Props {
   today: string
   windowStart: string
   windowEnd: string
-  defaultFilterStart: string
-  /** Rendered between the charts and the session list, unfiltered (it's a
-   *  lifetime collection). A slot so the page keeps its section order. */
+  /** Rendered last, unfiltered (it's a lifetime collection). A slot so the
+   *  page keeps its section order. */
   achievements: ReactNode
   /** The score lives in the stat row (no band above this one), so the filter
    *  bar opens the page: no rule or gap above it. */
@@ -76,10 +75,47 @@ interface Props {
  * Not persisted. A dashboard that silently reopened filtered would show numbers
  * the trader didn't ask for, under a banner they'd have to notice to trust.
  */
+/** The months before this one, newest first: "2026-09", "2026-08", … */
+function monthsBefore(today: string, n: number): string[] {
+  const y = Number(today.slice(0, 4))
+  const m = Number(today.slice(5, 7))
+  return Array.from({ length: n }, (_, k) => new Date(Date.UTC(y, m - 2 - k, 1)).toISOString().slice(0, 7))
+}
+
 export default function DashboardFilterScope({
-  statsDays, tableDays, allSetups, today, windowStart, windowEnd, defaultFilterStart, achievements,
+  statsDays, tableDays, allSetups, today, windowStart, windowEnd, achievements,
   scoreInRow = false, liftDrag,
 }: Props) {
+  // ── The one Period (founder, 2026-10-31): a row of chips that every section
+  // follows — the cards, both charts, the calendar and the list. Built from
+  // the server's day so the month names can't disagree with the server render.
+  const [prev1, prev2] = monthsBefore(today, 2)
+  const chips: { p: Period; label: string }[] = [
+    { p: '30d', label: 'Last 30 days' },
+    { p: 'week', label: 'This week' },
+    { p: 'month', label: monthName(today.slice(0, 7)) },
+    { p: `m:${prev1}`, label: monthName(prev1) },
+    { p: `m:${prev2}`, label: monthName(prev2) },
+    { p: 'all', label: 'All time' },
+  ]
+  const [period, setPeriod] = useState<Period>('30d')
+  const [periodLoaded, setPeriodLoaded] = useState(false)
+  useEffect(() => {
+    // The saved choice, when it is still one of the chips (a month drops off
+    // once it is three months back; the longer ranges live in the Filter).
+    try {
+      const raw = localStorage.getItem(PERIOD_KEY)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
+      if (raw && chips.some(c => c.p === raw)) setPeriod(raw as Period)
+    } catch { /* ignore */ }
+    setPeriodLoaded(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only hydration
+  }, [])
+  useEffect(() => {
+    if (!periodLoaded) return
+    try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
+  }, [period, periodLoaded])
+
   const [open, setOpen] = useState(false)
   const [draftSetups, setDraftSetups] = useState<string[]>([])
   const [draftRange, setDraftRange] = useState<RangeKey>('3m')
@@ -166,109 +202,150 @@ export default function DashboardFilterScope({
   const setupsText = applied && applied.setups.length > 0 ? applied.setups.join(', ') : 'All setups'
   const noOp = draftSetups.length === 0 && draftRange === 'all'
 
+  // Unfiltered, everything reads the Period's days.
+  const bounds = periodBounds(period)
+  const periodStats = statsDays.filter(d => d.date >= bounds.start && d.date <= bounds.end)
+  const pickPeriod = (p: Period) => {
+    // A chip replaces an applied filter's time range, so the filter goes.
+    if (applied) clear()
+    setPeriod(p)
+  }
+
+  // The list's dates and the calendar's month: the filter's range when one is
+  // on, otherwise the Period's.
+  const daysFrom = active && start ? start : bounds.start
+  const daysTo = active ? today : bounds.end
+
   return (
-    <>
-      <div className={scoreInRow ? undefined : 'mt-8 pt-5 border-t border-gray-700'}>
-        {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <div className="relative" ref={panelRef}>
-            <button
-              type="button"
-              onClick={() => (open ? setOpen(false) : openPanel())}
-              aria-expanded={open}
-              className={`inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2.5 py-1.5 border transition-colors ${
-                active
-                  ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-500'
-                  : 'bg-gray-800 border-gray-700 text-gray-200 hover:border-gray-500'
-              }`}
-            >
-              {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SlidersHorizontal className="w-3.5 h-3.5" />}
-              Filter
-              {active && applied.setups.length > 0 && (
-                <span className="ml-0.5 rounded bg-white/20 px-1 text-[10px] leading-4">{applied.setups.length}</span>
-              )}
-            </button>
+    <div className="space-y-4">
+      {/* Period bar — the chips, a line saying what they drive, the Filter. */}
+      <div className="ts-card px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="ts-eyebrow">Period</span>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Period">
+          {chips.map(c => {
+            const on = !applied && period === c.p
+            return (
+              <button
+                key={c.p}
+                type="button"
+                onClick={() => pickPeriod(c.p)}
+                aria-pressed={on}
+                className={`text-[13px] rounded-full px-3 py-1 border transition-colors ${
+                  on
+                    ? 'bg-blue-600 border-blue-600 text-white font-semibold'
+                    : 'border-gray-800 text-gray-400 hover:text-gray-100 hover:border-gray-600'
+                }`}
+              >
+                {c.label}
+              </button>
+            )
+          })}
+        </div>
+        <span className="hidden lg:inline ml-auto text-xs text-gray-500">
+          {applied ? 'The filter is on — pick a period to clear it.' : 'Everything on this page follows the period.'}
+        </span>
+        <div className="relative ml-auto lg:ml-0" ref={panelRef}>
+          <button
+            type="button"
+            onClick={() => (open ? setOpen(false) : openPanel())}
+            aria-expanded={open}
+            className={`inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2.5 py-1.5 border transition-colors ${
+              active
+                ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-500'
+                : 'border-gray-700 text-gray-300 hover:border-gray-500'
+            }`}
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SlidersHorizontal className="w-3.5 h-3.5" />}
+            Filter
+            {active && applied.setups.length > 0 && (
+              <span className="ml-0.5 rounded bg-white/20 px-1 text-[10px] leading-4">{applied.setups.length}</span>
+            )}
+          </button>
 
-            {open && (
-              <div className="absolute left-0 top-full mt-2 z-40 w-[min(22rem,calc(100vw-2rem))] bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-4 space-y-4">
-                <div>
-                  <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Setups</div>
-                  {allSetups.length === 0 ? (
-                    <p className="text-xs text-gray-500">No setups tagged on any trade yet.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
-                      {allSetups.map(s => {
-                        const on = draftSetups.includes(s)
-                        return (
-                          <button
-                            key={s}
-                            type="button"
-                            onClick={() => setDraftSetups(prev => (on ? prev.filter(x => x !== s) : [...prev, s]))}
-                            aria-pressed={on}
-                            className={`inline-flex items-center gap-1 text-xs rounded-md px-2 py-1 border transition-colors ${
-                              on
-                                ? 'bg-blue-950 border-blue-600 text-blue-300'
-                                : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
-                            }`}
-                          >
-                            {on && <Check className="w-3 h-3" />}
-                            {s}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                  <p className="text-[11px] text-gray-500 mt-2">
-                    {draftSetups.length === 0 ? 'None picked — every trade counts.' : 'Trades tagged with any of these.'}
-                  </p>
-                </div>
-
-                <div>
-                  <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Time</div>
-                  <div className="grid grid-cols-6 gap-1">
-                    {RANGES.map(r => (
-                      <button
-                        key={r.key}
-                        type="button"
-                        onClick={() => setDraftRange(r.key)}
-                        aria-pressed={draftRange === r.key}
-                        title={r.label}
-                        className={`text-xs rounded-md py-1 border transition-colors ${
-                          draftRange === r.key
-                            ? 'bg-blue-950 border-blue-600 text-blue-300'
-                            : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
-                        }`}
-                      >
-                        {r.short}
-                      </button>
-                    ))}
+          {open && (
+            <div className="absolute right-0 top-full mt-2 z-40 w-[min(22rem,calc(100vw-2rem))] bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-4 space-y-4">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Setups</div>
+                {allSetups.length === 0 ? (
+                  <p className="text-xs text-gray-500">No setups tagged on any trade yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
+                    {allSetups.map(s => {
+                      const on = draftSetups.includes(s)
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setDraftSetups(prev => (on ? prev.filter(x => x !== s) : [...prev, s]))}
+                          aria-pressed={on}
+                          className={`inline-flex items-center gap-1 text-xs rounded-md px-2 py-1 border transition-colors ${
+                            on
+                              ? 'bg-blue-950 border-blue-600 text-blue-300'
+                              : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
+                          }`}
+                        >
+                          {on && <Check className="w-3 h-3" />}
+                          {s}
+                        </button>
+                      )
+                    })}
                   </div>
-                </div>
+                )}
+                <p className="text-[11px] text-gray-500 mt-2">
+                  {draftSetups.length === 0 ? 'None picked — every trade counts.' : 'Trades tagged with any of these.'}
+                </p>
+              </div>
 
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setOpen(false)}
-                    className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={apply}
-                    disabled={noOp}
-                    title={noOp ? 'All setups over all time is the unfiltered dashboard.' : undefined}
-                    className="text-xs font-medium rounded-md px-3 py-1.5 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600"
-                  >
-                    Apply
-                  </button>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Time</div>
+                <div className="grid grid-cols-6 gap-1">
+                  {RANGES.map(r => (
+                    <button
+                      key={r.key}
+                      type="button"
+                      onClick={() => setDraftRange(r.key)}
+                      aria-pressed={draftRange === r.key}
+                      title={r.label}
+                      className={`text-xs rounded-md py-1 border transition-colors ${
+                        draftRange === r.key
+                          ? 'bg-blue-950 border-blue-600 text-blue-300'
+                          : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
+                      }`}
+                    >
+                      {r.short}
+                    </button>
+                  ))}
                 </div>
               </div>
-            )}
-          </div>
 
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={apply}
+                  disabled={noOp}
+                  title={noOp ? 'All setups over all time is the unfiltered dashboard.' : undefined}
+                  className="text-xs font-medium rounded-md px-3 py-1.5 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {(applied || error) && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs -mt-1">
           {applied && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            <>
+              <span className="text-gray-500">Filter:</span>
               <span className="text-gray-200">{setupsText}</span>
               <span className="text-gray-600">·</span>
               <span className="text-gray-400">{label}</span>
@@ -285,55 +362,60 @@ export default function DashboardFilterScope({
               <button
                 type="button"
                 onClick={clear}
-                className="inline-flex items-center gap-1 text-gray-400 hover:text-white px-1.5 py-0.5"
+                className="inline-flex items-center gap-1 text-gray-400 hover:text-gray-100 px-1.5 py-0.5"
               >
                 <X className="w-3 h-3" /> Clear
               </button>
-            </div>
+            </>
           )}
-          {error && <span className="text-xs text-red-400">{error}</span>}
+          {error && <span className="text-red-400">{error}</span>}
         </div>
+      )}
 
-        {active && applied.setups.length > 0 && !empty && (
-          <p className="text-[11px] text-gray-500 -mt-2 mb-4 max-w-[70ch]">
-            P&amp;L, win rate and excursions below count only these trades. A session&apos;s TapeScore still
-            grades the whole session — it can&apos;t be split by setup.
-          </p>
-        )}
+      {active && applied.setups.length > 0 && !empty && (
+        <p className="text-[11px] text-gray-500 -mt-1 max-w-[70ch]">
+          P&amp;L, win rate and excursions below count only these trades. A session&apos;s TapeScore still
+          grades the whole session — it can&apos;t be split by setup.
+        </p>
+      )}
 
-        {empty ? (
-          <p className="text-sm text-gray-400 py-8">
-            No {applied.setups.length > 0 ? `${setupsText} ` : ''}trades in {label!.toLowerCase()}.
-          </p>
-        ) : (
-          <DashboardStats
-            days={active ? scoped.stats : statsDays}
-            hideScoreHero
-            rangeLabel={active ? label : undefined}
-            scoreInRow={scoreInRow}
-            liftDrag={liftDrag}
-            // A time-range filter reads like a Period; a setup filter hides the
-            // lifter and drag — they rank the whole book, not those setups.
-            liftDragScope={active ? (applied.setups.length > 0 ? null : `r:${applied.range}`) : undefined}
-          />
-        )}
-      </div>
-
-      {!empty && <DashboardCharts days={active ? scoped.stats : statsDays} rangeLabel={active ? label : undefined} />}
-
-      <div className="mt-8 pt-5 border-t border-gray-700">{achievements}</div>
-
-      <div className="mt-8 pt-5 border-t border-gray-700">
-        <RecentDaysSection
-          // Remount on a new filter so the list's own date range resets to the
-          // filter's span instead of clipping it to the default 30 days.
-          key={active ? `f:${appliedKey}` : 'unfiltered'}
-          initialDays={active ? scoped.table : tableDays}
-          windowStart={windowStart}
-          windowEnd={windowEnd}
-          defaultFilterStart={active && start ? (start < windowStart ? windowStart : start) : defaultFilterStart}
+      {empty ? (
+        <p className="text-sm text-gray-400 py-8">
+          No {applied.setups.length > 0 ? `${setupsText} ` : ''}trades in {label!.toLowerCase()}.
+        </p>
+      ) : (
+        <DashboardStats
+          days={active ? scoped.stats : statsDays}
+          hideScoreHero
+          period={period}
+          rangeLabel={active ? label : undefined}
+          scoreInRow={scoreInRow}
+          liftDrag={liftDrag}
+          // A time-range filter reads like a Period; a setup filter hides the
+          // lifter and drag — they rank the whole book, not those setups.
+          liftDragScope={active ? (applied.setups.length > 0 ? null : `r:${applied.range}`) : undefined}
         />
-      </div>
-    </>
+      )}
+
+      {!empty && (
+        <DashboardCharts
+          days={active ? scoped.stats : periodStats}
+          rangeLabel={active ? label : periodLabel(period)}
+        />
+      )}
+
+      <RecentDaysSection
+        // Remount on a new period or filter so the list's dates and the
+        // calendar's month start from it.
+        key={active ? `f:${appliedKey}` : `p:${period}`}
+        initialDays={active ? scoped.table : tableDays}
+        windowStart={windowStart}
+        windowEnd={windowEnd}
+        defaultFilterStart={daysFrom < windowStart ? windowStart : daysFrom}
+        defaultFilterEnd={daysTo}
+      />
+
+      <div className="ts-card px-4 py-3">{achievements}</div>
+    </div>
   )
 }

@@ -63,7 +63,6 @@ export default async function DashboardPage() {
   //     did). The day-rollup cache (stats_json) makes each day a tiny row, so a
   //     multi-year account is cheap in steady state; capped at PAGE_SIZE days.
   const todayDateForWindows = new Date()
-  const past30StartParallel = format(subDays(todayDateForWindows, 30), 'yyyy-MM-dd')
   const past180StartParallel = format(subDays(todayDateForWindows, 180), 'yyyy-MM-dd')
   const statsWindowStartParallel = '2000-01-01'
 
@@ -162,7 +161,6 @@ export default async function DashboardPage() {
 
   // Reuse the window constants computed for the parallel fetch above so we
   // don't recompute Date math (and so the labels in the perf log stay correct).
-  const past30Start = past30StartParallel
   const past180Start = past180StartParallel
 
   // We list columns explicitly, so coerce day_types to a typed array (it's a
@@ -328,7 +326,6 @@ export default async function DashboardPage() {
   // first paint isn't a wall of rows.
   const windowStart = statsWindowStartParallel
   const windowEnd = today
-  const defaultFilterStart = past30Start // list view defaults to "last 30 days"; calendar view defaults to current month
 
   // Stats dataset: lightweight projection of recentDays for the
   // period-selectable DashboardStats component. Includes all days fetched
@@ -448,8 +445,7 @@ export default async function DashboardPage() {
           today={today}
           windowStart={windowStart}
           windowEnd={windowEnd}
-          defaultFilterStart={defaultFilterStart}
-          achievements={<AchievementCollection counts={collectionCounts} />}
+          achievements={<AchievementCollection counts={collectionCounts} compact />}
           scoreInRow={!SHOW_FINDING_CALLOUT}
           liftDrag={liftDrag}
         />

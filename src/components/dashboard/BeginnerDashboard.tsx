@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { format } from 'date-fns'
 import { Target, ChevronRight } from 'lucide-react'
 import { useUiMode } from '@/lib/ui-mode'
-import DashboardStats, { periodBounds, PERIOD_LABELS, type DayStat, type Period } from './DashboardStats'
+import DashboardStats, { periodBounds, periodLabel, type DayStat, type Period } from './DashboardStats'
 import DashboardCharts from './DashboardCharts'
 import HighlightsSessions from './HighlightsSessions'
 import type { DayRowData } from './RecentDaysList'
@@ -75,7 +75,7 @@ export default function BeginnerDashboard({ statsDays, days, headlines, liftDrag
   }, [period, hydrated])
 
   const { start, end } = periodBounds(period)
-  const label = PERIOD_LABELS[period]
+  const label = periodLabel(period)
   const inPeriodStats = useMemo(() => statsDays.filter(d => d.date >= start && d.date <= end), [statsDays, start, end])
   const inPeriodDays = useMemo(() => days.filter(d => d.date >= start && d.date <= end), [days, start, end])
   const sessions = inPeriodDays.length
@@ -122,7 +122,7 @@ export default function BeginnerDashboard({ statsDays, days, headlines, liftDrag
                 period === p ? 'bg-blue-950 text-blue-300 font-semibold' : 'bg-gray-900 text-gray-400 hover:text-gray-200'
               }`}
             >
-              {PERIOD_LABELS[p]}
+              {periodLabel(p)}
             </button>
           ))}
         </div>

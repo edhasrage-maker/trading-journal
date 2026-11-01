@@ -485,6 +485,13 @@ export function liftDragByScope(trades: LiftDragTrade[], today: string): Record<
     'r:1y': [monthsBack(12), today],
     'r:all': ['2000-01-01', today],
   }
+  // The dashboard's month chips: the three whole months before this one
+  // ("p:m:2026-09"). This month is "p:month".
+  const mo = Number(today.slice(5, 7))
+  for (let k = 1; k <= 3; k++) {
+    const ym = new Date(Date.UTC(y, mo - 1 - k, 1)).toISOString().slice(0, 7)
+    scopes[`p:m:${ym}`] = [`${ym}-01`, new Date(Date.UTC(y, mo - k, 0)).toISOString().slice(0, 10)]
+  }
   const dims = dimensionsOf(trades.filter(t => t.pnl != null))
   const cache = new Map<string, LiftDragView | null>()
   const out: Record<string, LiftDragView | null> = {}

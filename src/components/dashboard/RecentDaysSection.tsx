@@ -1,100 +1,99 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { LayoutGrid, List as ListIcon, X } from 'lucide-react'
 import RecentDaysList, { type DayRowData } from './RecentDaysList'
 import MonthlyCalendarView from './MonthlyCalendarView'
 
 interface Props {
   initialDays: DayRowData[]
-  windowStart: string // YYYY-MM-DD — earliest fetched day (outer bound, ~180d ago)
+  windowStart: string // YYYY-MM-DD — earliest fetched day (outer bound)
   windowEnd: string   // YYYY-MM-DD — today
-  defaultFilterStart: string // YYYY-MM-DD — list-view date filter default start (~30d ago)
+  defaultFilterStart: string // YYYY-MM-DD — list-view date filter default start
+  /** List-view default end, and the month the calendar opens on. The
+   *  dashboard passes its period's end; defaults to windowEnd. */
+  defaultFilterEnd?: string
 }
 
 type ViewMode = 'list' | 'calendar'
+// The trader's List / Calendar pick sticks across visits.
+const VIEW_KEY = 'dashboard-days-view-v1'
 
 /**
- * Recent Days section wrapper.
+ * The dashboard's days, as a calendar (default) or a list, in one card.
  *
- * Holds view-mode (list vs calendar) and the list's date range.
- *
- * It used to carry a setup dropdown too. That filtered DAYS, not trades: a day
- * with one Supply & Demand trade passed and then showed the whole session's
- * result, so "filter to S&D" answered a different question than it appeared to.
- * Setup filtering now lives in the dashboard Filter (DashboardFilterScope),
- * which recomputes every figure from the matching trades and hands this section
- * already-filtered days.
- * Filters cascade to BOTH views so the list and calendar always agree on
- * what's being shown. Filter state is local — not persisted across page
- * reloads. The 30-day server-fetched window is the outer bound; the date
- * range filter narrows within it.
- *
- * Day-type filtering moved out of the dashboard entirely (Pt 13) — analytics
- * is the home for day-type views. For wider history, the Calendar tab in the
- * sidebar has 1M / 3M / 6M / 1Y / All range options.
+ * Setup filtering lives in the dashboard Filter (DashboardFilterScope), which
+ * recomputes every figure from the matching trades and hands this section
+ * already-filtered days. The list narrows to a date range that starts on the
+ * page's period; the calendar opens on the month that period ends in and
+ * navigates month by month from there.
  */
 export default function RecentDaysSection({
   initialDays,
   windowStart,
   windowEnd,
   defaultFilterStart,
+  defaultFilterEnd,
 }: Props) {
-  const [view, setView] = useState<ViewMode>('list')
+  const rangeEnd = defaultFilterEnd ?? windowEnd
+  const [view, setView] = useState<ViewMode>('calendar')
   const [startDate, setStartDate] = useState(defaultFilterStart)
-  const [endDate, setEndDate] = useState(windowEnd)
-  // Calendar view ignores the date range (it navigates month by month within
-  // the full window); the list narrows to it.
-  const filteredByTags = initialDays
-
-  const filteredDays = useMemo(() => {
-    return filteredByTags.filter(d => {
-      if (d.date < startDate || d.date > endDate) return false
-      return true
-    })
-  }, [filteredByTags, startDate, endDate])
-
-  const filtersActive =
-    startDate !== defaultFilterStart ||
-    endDate !== windowEnd
-
-  const clearFilters = () => {
-    setStartDate(defaultFilterStart)
-    setEndDate(windowEnd)
+  const [endDate, setEndDate] = useState(rangeEnd)
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(VIEW_KEY)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
+      if (v === 'list' || v === 'calendar') setView(v)
+    } catch { /* ignore */ }
+  }, [])
+  const pick = (v: ViewMode) => {
+    setView(v)
+    try { localStorage.setItem(VIEW_KEY, v) } catch { /* ignore */ }
   }
 
-  return (
-    <div className="space-y-3">
-      {/* Header row: title + view toggle */}
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-white">Recent Days</h2>
-        <div className="inline-flex bg-gray-800 border border-gray-700 rounded-lg overflow-hidden text-xs">
-          <button
-            type="button"
-            onClick={() => setView('list')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-              view === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
-            }`}
-          >
-            <ListIcon className="w-3.5 h-3.5" /> List
-          </button>
-          <button
-            type="button"
-            onClick={() => setView('calendar')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-              view === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
-            }`}
-          >
-            <LayoutGrid className="w-3.5 h-3.5" /> Calendar
-          </button>
-        </div>
-      </div>
+  const filteredDays = useMemo(
+    () => initialDays.filter(d => d.date >= startDate && d.date <= endDate),
+    [initialDays, startDate, endDate],
+  )
 
-      {/* Filter bar. Date range is hidden in calendar mode (calendar has its
-          own month navigation) since combining the two would be confusing. */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        {view === 'list' && (
-          <>
+  const filtersActive = startDate !== defaultFilterStart || endDate !== rangeEnd
+  const clearFilters = () => {
+    setStartDate(defaultFilterStart)
+    setEndDate(rangeEnd)
+  }
+
+  const toggle = (
+    <div className="inline-flex border border-gray-700 rounded-lg overflow-hidden text-xs" role="group" aria-label="View">
+      {([['list', ListIcon, 'List'], ['calendar', LayoutGrid, 'Calendar']] as const).map(([v, Icon, label]) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => pick(v)}
+          aria-pressed={view === v}
+          className={`flex items-center gap-1.5 px-2.5 py-1 transition-colors ${
+            view === v ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800'
+          }`}
+        >
+          <Icon className="w-3.5 h-3.5" /> {label}
+        </button>
+      ))}
+    </div>
+  )
+
+  return (
+    <div className="ts-card p-4 sm:p-5">
+      {view === 'calendar' ? (
+        <MonthlyCalendarView
+          days={initialDays}
+          windowStart={windowStart}
+          windowEnd={windowEnd}
+          initialMonth={rangeEnd.slice(0, 7)}
+          toggle={toggle}
+        />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <h2 className="ts-eyebrow mr-2">Your days</h2>
             <input
               type="date"
               value={startDate}
@@ -110,52 +109,30 @@ export default function RecentDaysSection({
               value={endDate}
               min={startDate}
               max={windowEnd}
-              onChange={e => setEndDate(e.target.value || windowEnd)}
+              onChange={e => setEndDate(e.target.value || rangeEnd)}
               className="bg-gray-800 border border-gray-700 text-gray-200 font-mono rounded-md px-2 py-1 focus:outline-none focus:border-blue-500"
               title="Filter end date"
             />
-          </>
-        )}
-
-        {filtersActive && (
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="inline-flex items-center gap-1 text-gray-400 hover:text-white px-2 py-1"
-          >
-            <X className="w-3 h-3" /> Clear filters
-          </button>
-        )}
-
-        <span className="ml-auto text-gray-500">
-          {view === 'list' ? (
-            <>
+            {filtersActive && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="inline-flex items-center gap-1 text-gray-400 hover:text-gray-100 px-2 py-1"
+              >
+                <X className="w-3 h-3" /> Reset dates
+              </button>
+            )}
+            <span className="ml-auto text-gray-500">
               {filteredDays.length} day{filteredDays.length === 1 ? '' : 's'}
-              {filtersActive && initialDays.length !== filteredDays.length && (
-                <span className="text-gray-700"> / {initialDays.length}</span>
-              )}
-            </>
+            </span>
+            {toggle}
+          </div>
+          {filteredDays.length === 0 ? (
+            <p className="text-gray-500 text-sm py-6 text-center">No days in these dates.</p>
           ) : (
-            <>
-              {filteredByTags.length} day{filteredByTags.length === 1 ? '' : 's'} in window
-            </>
+            <RecentDaysList initialDays={filteredDays} />
           )}
-        </span>
-      </div>
-
-      {/* View */}
-      {view === 'list' ? (
-        filteredDays.length === 0 ? (
-          <p className="text-gray-500 text-sm py-6 text-center">No days match the current filters.</p>
-        ) : (
-          <RecentDaysList initialDays={filteredDays} />
-        )
-      ) : (
-        <MonthlyCalendarView
-          days={filteredByTags}
-          windowStart={windowStart}
-          windowEnd={windowEnd}
-        />
+        </div>
       )}
     </div>
   )

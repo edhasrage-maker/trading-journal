@@ -25,7 +25,7 @@ const BAND_TEXT: Record<'high' | 'mid' | 'low', string> = {
   low: 'text-red-400',
 }
 
-function bandOf(score: number): { word: string; hue: string; cls: 'high' | 'mid' | 'low' } {
+export function bandOf(score: number): { word: string; hue: string; cls: 'high' | 'mid' | 'low' } {
   if (score >= 80) return { word: 'Excellent', hue: 'var(--color-pos)', cls: 'high' }
   if (score >= 70) return { word: 'Strong', hue: 'var(--color-pos)', cls: 'high' }
   if (score >= 55) return { word: 'Fair', hue: 'var(--color-warn)', cls: 'mid' }
