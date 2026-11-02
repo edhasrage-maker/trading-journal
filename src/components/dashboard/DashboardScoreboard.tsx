@@ -58,17 +58,25 @@ function Col({ label, info, children, className = '' }: { label: string; info?: 
   )
 }
 
-/** The finding: one sentence, the trade-count table under it, a plain note. */
+/** The finding: one sentence, the trade-count table under it, a plain note.
+ *  With enough days before the period the table gains a "Before" column (the
+ *  same cut's average day back then), so the counter-argument sits in the
+ *  rows it argues with; Green drops on a phone to make room. */
 function FindingBlock({ finding, fallback }: { finding: Finding | null; fallback: string }) {
   const s = finding?.split
+  const h = finding?.history ?? null
+  const greenCol = h ? 'hidden sm:table-cell' : ''
   const th = `pb-1.5 pl-3 sm:pl-5 text-right font-normal text-[13px] ${MUT}`
   const td = `py-1.5 pl-3 sm:pl-5 text-right font-bold tabular-nums whitespace-nowrap text-[16px] sm:text-[20px] border-t border-[var(--b-rule)]`
-  const row = (label: string, g: NonNullable<typeof s>['few']) => (
+  const row = (label: string, short: string, g: NonNullable<typeof s>['few'], before: number | null) => (
     <tr>
-      <th scope="row" className={`py-1.5 text-left font-semibold text-[14px] sm:text-[15px] border-t border-[var(--b-rule)] ${INK}`}>{label}</th>
+      <th scope="row" className={`py-1.5 text-left font-semibold text-[14px] sm:text-[15px] border-t border-[var(--b-rule)] ${INK}`}>
+        <span className="sm:hidden">{short}</span><span className="hidden sm:inline">{label}</span>
+      </th>
       <td className={`${td} ${INK}`} style={display}>{g.days}</td>
-      <td className={`${td} ${INK}`} style={display}>{g.green === g.days ? `all ${g.days}` : `${g.green} of ${g.days}`}</td>
+      <td className={`${td} ${INK} ${greenCol}`} style={display}>{g.green === g.days ? `all ${g.days}` : `${g.green} of ${g.days}`}</td>
       <td className={`${td} ${moneyClass(g.avg)}`} style={display}>{fmtSignedUsd(g.avg)}</td>
+      {before != null && <td className={`${td} ${moneyClass(before)}`} style={display}>{fmtSignedUsd(before)}</td>}
       <td className={`${td} ${INK}`} style={display}>{g.scoreMin == null ? '—' : g.scoreMin === g.scoreMax ? g.scoreMin : `${g.scoreMin}–${g.scoreMax}`}</td>
     </tr>
   )
@@ -85,20 +93,21 @@ function FindingBlock({ finding, fallback }: { finding: Finding | null; fallback
             <tr>
               <th className={`${th} pl-0 text-left`}><span className="sr-only">Days with</span></th>
               <th className={th}>Days</th>
-              <th className={th}>Green</th>
+              <th className={`${th} ${greenCol}`}>Green</th>
               <th className={th}>Avg day</th>
+              {h && <th className={th} title={`Average day over the ${h.few.days + h.many.days} days before this period`}>Before</th>}
               <th className={th}>TapeScore</th>
             </tr>
           </thead>
           <tbody>
-            {row(`${s.k} trade${s.k === 1 ? '' : 's'} or fewer`, s.few)}
-            {row(`${s.k + 1} or more`, s.many)}
+            {row(`${s.k} trade${s.k === 1 ? '' : 's'} or fewer`, `≤${s.k} trades`, s.few, h ? h.few.avg : null)}
+            {row(`${s.k + 1} or more`, `${s.k + 1}+ trades`, s.many, h ? h.many.avg : null)}
           </tbody>
         </table>
       )}
       {finding?.note && <p className={`mt-3 text-[15px] leading-relaxed ${MUT}`}>{finding.note}</p>}
-      {finding?.before && (
-        <p className={`mt-2.5 pl-3 border-l-2 border-[var(--b-pos)] text-[15px] leading-relaxed ${INK}`}>{finding.before}</p>
+      {finding?.verdict && (
+        <p className={`mt-3 pl-3 border-l-2 border-[var(--b-pos)] text-[16px] sm:text-[17px] font-semibold leading-snug ${INK}`}>{finding.verdict}</p>
       )}
     </div>
   )

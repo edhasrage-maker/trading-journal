@@ -124,8 +124,18 @@ check('history split', hist && { many: [hist.many.days, Math.round(hist.many.avg
 check('too little history → null', splitHistory(PRIOR.slice(0, 8), 4), null)
 check('history note, exception', historyNote(split!, hist!),
   'This period was the exception. Before it (since Sep 1, 2026), days with 5 or more trades averaged −$60 a day over 6 days; days with 4 or fewer, +$90 over 6.')
-check('finding says the days before', periodFinding(OCT, PRIOR)?.before?.startsWith('This period was the exception'), true)
-check('no history → no before line', periodFinding(OCT)?.before, null)
+const fh = periodFinding(OCT, PRIOR)
+check('finding carries the history', fh?.history && [fh.history.few.days, fh.history.many.days], [6, 6])
+check('bridge with history ties big days to the counter-argument', fh?.bridge,
+  'All three had 5 or more trades. Those busy days paid more this period, but before it they lost money:')
+check('note with history leaves the money to the table', fh?.note, 'Every red day came from the busier days. None of the busier days scored above 69.')
+check('verdict ties back to the headline', fh?.verdict,
+  'Over the 12 days before this period (since Sep 1, 2026), the quieter days were the ones that paid, so your big busy days look like the exception, not your edge.')
+check('no history → no verdict', periodFinding(OCT)?.verdict, null)
+check('no history → no history', periodFinding(OCT)?.history, null)
+const fsame = periodFinding(OCT, PRIOR.map(d => ({ ...d, eod_pnl: d.trade_count > 4 ? 200 : 50 })))
+check('bridge, busy days paid before too', fsame?.bridge, 'All three had 5 or more trades. Those busy days paid more this period, and before it too:')
+check('verdict, same direction', fsame?.verdict?.endsWith('the busier days paid more too.'), true)
 const withHist = scoutingActions({ split, history: hist, liftDrag: null, mgmt: null })
 check('history says cap → stop at 4', withHist[0]?.title, 'Stop at 4 trades for a week')
 check('stop why names both', withHist[0]?.why,

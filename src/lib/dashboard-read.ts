@@ -100,9 +100,12 @@ export interface Finding {
   split: TradeCountSplit | null
   /** One or two plain sentences under the table. */
   note: string | null
-  /** How the same cut paid before the period (historyNote); null = not
-   *  enough days before it. */
-  before: string | null
+  /** The same cut over the days before the period, shown as its own column
+   *  in the table; null = not enough days before it. */
+  history: SplitHistory | null
+  /** What the days before mean for the headline, set apart under the note;
+   *  null = no history. */
+  verdict: string | null
 }
 
 /** The period's three biggest green days that carry a TapeScore, biggest first. */
@@ -158,22 +161,47 @@ export function periodFinding(days: readonly ReadDay[], history: readonly ReadDa
   }
   if (!headline) return null
   const before = split ? splitHistory(history, split.k) : null
-  const bridge = split && aboutBig ? bigDaysBridge(big, split) : null
-  return { headline, bridge, split, note: split ? splitNote(split) : null, before: split && before ? historyNote(split, before) : null }
+  const side = split && aboutBig ? bigSide(big, split) : null
+  const bridge = split && aboutBig ? bigDaysBridge(big, split, before) : null
+  return {
+    headline, bridge, split,
+    note: split ? splitNote(split, { money: !before }) || null : null,
+    history: before,
+    verdict: split && before ? historyVerdict(split, before, side) : null,
+  }
 }
 
-/** "All three had 5 or more trades, and across the period the busier days
- *  scored lower:" — so a headline about the biggest days leads into the
- *  trade-count table instead of jumping to it. */
-function bigDaysBridge(big: readonly ReadDay[], s: TradeCountSplit): string {
+/** Which side of the cut the biggest days all sit on; null = both sides. */
+function bigSide(big: readonly ReadDay[], s: TradeCountSplit): 'few' | 'many' | null {
+  if (big.every(d => d.trade_count > s.k)) return 'many'
+  if (big.every(d => d.trade_count <= s.k)) return 'few'
+  return null
+}
+
+/** Ties a headline about the biggest days to the trade-count table: "All
+ *  three had 5 or more trades. Those busy days paid more this period, but
+ *  before it they lost money:". Without history it says how they scored. */
+function bigDaysBridge(big: readonly ReadDay[], s: TradeCountSplit, h: SplitHistory | null): string {
   const lead = big.length === 2 ? 'Both' : `All ${COUNT_WORD[big.length]}`
-  const many = big.every(d => d.trade_count > s.k)
-  const few = big.every(d => d.trade_count <= s.k)
-  if (!many && !few) return 'The number of trades tells its own story:'
+  const where = bigSide(big, s)
+  if (!where) return 'The number of trades tells its own story:'
+  const many = where === 'many'
   const side = many ? s.many : s.few
   const other = many ? s.few : s.many
-  const lower = (side.scoreAvg ?? 0) < (other.scoreAvg ?? 0)
-  return `${lead} had ${many ? `${s.k + 1} or more trades` : `${tradesWord(s.k)} or fewer`}, and across the period the ${many ? 'busier' : 'quieter'} days scored ${lower ? 'lower' : 'higher'}:`
+  const had = `${lead} had ${many ? `${s.k + 1} or more trades` : `${tradesWord(s.k)} or fewer`}`
+  const kind = many ? 'busy' : 'quiet'
+  if (!h) {
+    const lower = (side.scoreAvg ?? 0) < (other.scoreAvg ?? 0)
+    return `${had}, and across the period the ${many ? 'busier' : 'quieter'} days scored ${lower ? 'lower' : 'higher'}:`
+  }
+  const hSide = many ? h.many : h.few
+  const hOther = many ? h.few : h.many
+  const paidNow = side.avg > other.avg
+  const paidBefore = hSide.avg > hOther.avg
+  if (paidNow && !paidBefore) return `${had}. Those ${kind} days paid more this period, but before it they ${hSide.avg < 0 ? 'lost money' : 'paid less'}:`
+  if (paidNow) return `${had}. Those ${kind} days paid more this period, and before it too:`
+  if (paidBefore) return `${had}. Those ${kind} days usually pay more, but not this period:`
+  return `${had}, and those ${kind} days paid less this period and before it:`
 }
 
 // ── The same cut, before the period ─────────────────────────────────────────
@@ -214,11 +242,24 @@ export function historyNote(s: TradeCountSplit, h: SplitHistory): string {
 
 const tradesWord = (n: number) => `${n} trade${n === 1 ? '' : 's'}`
 
+/** What the days before the period mean for the headline: "Over the 177
+ *  days before it (since Oct 1, 2025), the quieter days were the ones that
+ *  paid, so your big busy days look like the exception, not your edge." The
+ *  money now and before is in the table; this says what it adds up to. */
+function historyVerdict(s: TradeCountSplit, h: SplitHistory, side: 'few' | 'many' | null): string {
+  const nowMany = s.many.avg > s.few.avg
+  const beforeMany = h.many.avg > h.few.avg
+  const span = `Over the ${h.few.days + h.many.days} days before this period (since ${sinceDate(h.from)})`
+  if (nowMany === beforeMany) return `${span}, the ${beforeMany ? 'busier' : 'quieter'} days paid more too.`
+  const big = side ? `your big ${side === 'many' ? 'busy' : 'quiet'} days look like` : 'this period looks like'
+  return `${span}, the ${beforeMany ? 'busier' : 'quieter'} days were the ones that paid, so ${big} the exception, not your edge.`
+}
+
 /** "More trades made more money. Every red day came from the busier days.
  *  None of the busier days scored above 69." */
-export function splitNote(s: TradeCountSplit): string {
+export function splitNote(s: TradeCountSplit, { money = true }: { money?: boolean } = {}): string {
   const out: string[] = []
-  if (Math.abs(s.many.avg - s.few.avg) >= 1) {
+  if (money && Math.abs(s.many.avg - s.few.avg) >= 1) {
     out.push(s.many.avg > s.few.avg ? 'More trades made more money.' : 'Fewer trades made more money.')
   }
   const reds = s.few.red + s.many.red
