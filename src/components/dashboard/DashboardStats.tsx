@@ -508,7 +508,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
               value={stats.dayWinRate == null ? '—' : `${(stats.dayWinRate * 100).toFixed(0)}%`}
               sub={stats.tradedDaysCount === 0 ? 'No trading days yet' : `${stats.winDays} of ${stats.tradedDaysCount} day${stats.tradedDaysCount === 1 ? '' : 's'} finished green`}
             >
-              <MiniBars daily={stats.daily} />
+              <GreenRedDays daily={stats.daily} />
             </KpiCard>
           </div>
           <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -763,31 +763,43 @@ function Sparkline({ daily }: { daily: number[] }) {
   )
 }
 
-/** Each traded day as a small bar off one zero line — green up, red down. */
-function MiniBars({ daily }: { daily: number[] }) {
-  const n = daily.length
-  if (n === 0) return null
-  const max = Math.max(...daily.map(Math.abs)) || 1
-  const ZERO = 38
-  const slot = 240 / n
-  const w = Math.max(1, slot * 0.75)
+/** The average green day against the average red day — how big the days are,
+ *  which the green-day rate can't say. Replaced a per-day bar strip that
+ *  repeated the Daily results chart (founder, 2026-11-01). */
+function GreenRedDays({ daily }: { daily: number[] }) {
+  const green = daily.filter(v => v > 0)
+  const red = daily.filter(v => v < 0)
+  if (green.length === 0 && red.length === 0) return null
+  const avgGreen = green.length ? green.reduce((s, v) => s + v, 0) / green.length : null
+  const avgRed = red.length ? red.reduce((s, v) => s + v, 0) / red.length : null
+  const max = Math.max(avgGreen ?? 0, Math.abs(avgRed ?? 0)) || 1
+  const rows = [
+    { label: 'Avg green day', v: avgGreen, bar: 'bg-green-400', text: 'text-green-400' },
+    { label: 'Avg red day', v: avgRed, bar: 'bg-red-400', text: 'text-red-400' },
+  ]
+  // How many average green days one average red day undoes.
+  const ratio = avgGreen != null && avgRed != null ? Math.abs(avgRed) / avgGreen : null
   return (
-    <svg viewBox="0 0 240 56" preserveAspectRatio="none" className="w-full h-14" aria-hidden="true">
-      <line x1="0" x2="240" y1={ZERO} y2={ZERO} stroke="var(--ts-line)" vectorEffect="non-scaling-stroke" />
-      {daily.map((v, i) => {
-        const h = Math.max(1, (Math.abs(v) / max) * (v >= 0 ? 36 : 16))
-        return (
-          <rect
-            key={i}
-            x={i * slot + (slot - w) / 2}
-            y={v >= 0 ? ZERO - h : ZERO}
-            width={w}
-            height={h}
-            fill={v >= 0 ? 'var(--color-pos)' : 'var(--color-neg)'}
-          />
-        )
-      })}
-    </svg>
+    <div className="space-y-1.5">
+      {rows.map(r => (
+        <div key={r.label} className="grid grid-cols-[92px_1fr_auto] items-center gap-2 text-[13px]">
+          <span className="text-gray-400">{r.label}</span>
+          <span className="h-2 rounded-full bg-gray-800 overflow-hidden">
+            {r.v != null && <span className={`block h-full rounded-full ${r.bar}`} style={{ width: `${(Math.abs(r.v) / max) * 100}%` }} />}
+          </span>
+          <b className={`text-right tabular-nums ${r.v != null ? r.text : 'text-gray-500'}`}>{r.v != null ? fmtSignedUsd(r.v) : '—'}</b>
+        </div>
+      ))}
+      <p className="text-[11px] text-gray-500">
+        {ratio == null
+          ? (red.length === 0 ? 'No red days in this period.' : 'No green days in this period.')
+          : ratio >= 1.15
+            ? `A red day undoes about ${ratio.toFixed(1)} green days.`
+            : ratio <= 0.85
+              ? 'A red day costs less than a green day earns.'
+              : 'A red day costs about one green day.'}
+      </p>
+    </div>
   )
 }
 
