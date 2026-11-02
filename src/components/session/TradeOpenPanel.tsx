@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, ChevronRight, X, ExternalLink, PlayCircle } from 'lucide-react'
 import TradeForm from '@/components/intraday/TradeForm'
-import PinPlacement, { type Pin, type PinType } from '@/components/intraday/PinPlacement'
+import { type Pin, type PinType } from '@/components/intraday/PinPlacement'
+import TradeShotSlot from './TradeShotSlot'
 import ScreenshotLightbox from '@/components/intraday/ScreenshotLightbox'
 import { rMultiple } from '@/lib/analytics'
 import { plannedStopPrice } from '@/lib/planned-stop'
@@ -245,32 +246,34 @@ export default function TradeOpenPanel({
                 )}
               </section>
 
-              {/* Chart: the trader's screenshot, and Replay */}
-              {(t.screenshot_url || deepDive || verdict) && (
-                <section aria-label="Chart" className="space-y-2">
-                  {t.screenshot_url && (
-                    <PinPlacement imageUrl={t.screenshot_url} pins={pins} onZoom={() => setZoomed(t.screenshot_url)} />
-                  )}
-                  {(deepDive || verdict) && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {deepDive && (
-                        <Link
-                          href={`/review/replay?id=${t.id}`}
-                          className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-md px-3 min-h-9 transition-colors"
-                        >
-                          <PlayCircle className="w-3.5 h-3.5" /> Replay this trade
-                        </Link>
-                      )}
-                      {verdict && (
-                        <span className="text-xs text-gray-500">
-                          Your call on replay: <b className={CALL_CLASS[verdict.call]}>{verdict.call}</b>
-                          {verdict.note ? <> — &ldquo;{verdict.note}&rdquo;</> : null}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </section>
-              )}
+              {/* Chart: the screenshot, or an empty slot that pulls a frame from
+                  the recording / takes a paste — then Replay. */}
+              <TradeShotSlot
+                key={t.id}
+                trade={t}
+                date={date}
+                pins={pins}
+                onZoom={setZoomed}
+                onSaved={onSave}
+                actions={(deepDive || verdict) ? (
+                  <>
+                    {deepDive && (
+                      <Link
+                        href={`/review/replay?id=${t.id}`}
+                        className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-md px-3 min-h-9 transition-colors"
+                      >
+                        <PlayCircle className="w-3.5 h-3.5" /> Replay this trade
+                      </Link>
+                    )}
+                    {verdict && (
+                      <span className="text-xs text-gray-500">
+                        Your call on replay: <b className={CALL_CLASS[verdict.call]}>{verdict.call}</b>
+                        {verdict.note ? <> — &ldquo;{verdict.note}&rdquo;</> : null}
+                      </span>
+                    )}
+                  </>
+                ) : null}
+              />
 
               {grade && grade.score != null && (
                 <TradeGradeWhy grade={grade} neverWent={mgmt?.went === false} hasStop={plannedStopPrice(t) != null} />

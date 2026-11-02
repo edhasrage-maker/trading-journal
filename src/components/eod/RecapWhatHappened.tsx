@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import { computeBehavioralProxies, type ProxyTrade, type BehavioralProxy } from '@/lib/behavioral-proxies'
+import { computeBehavioralProxies, type ProxyTrade, type BehavioralProxy, type StackMarketReading } from '@/lib/behavioral-proxies'
 import type { RoundTripStats } from '@/lib/trade-excursion'
 import type { TodayHeat } from '@/lib/heat-baseline'
 import { todaySentence } from './HeatBaseline'
@@ -23,6 +23,14 @@ const PLAIN: Record<BehavioralProxy['key'], string> = {
   reopened_after_ending: 'You traded again after calling the session done',
 }
 
+/** A losing stack whose market move was read says which way the market went
+ *  (founder-approved wording, 2026-11-02). */
+const PLAIN_STACK: Record<StackMarketReading, string> = {
+  against: 'You took several trades in a row the same direction, and the market went against you',
+  with: 'You took several trades in a row the same direction. The market went your way; the entries cost you',
+  flat: 'You took several trades in a row the same direction while price went nowhere',
+}
+
 type Line = { tone: 'bad' | 'ok' | 'info'; text: string; refs: number[] }
 
 function refsLabel(refs: number[]): string {
@@ -35,17 +43,20 @@ export default function RecapWhatHappened({
   sessionEndedAt,
   roundTrip,
   pressingIds,
+  atrByTradeId,
   today,
 }: {
   trades: ProxyTrade[]
   sessionEndedAt?: string | null
   roundTrip?: RoundTripStats | null
   pressingIds?: readonly string[] | null
+  /** Live ATR at each entry, for the stacking proxy's market read. */
+  atrByTradeId?: Readonly<Record<string, number>> | null
   today: TodayHeat | null
 }) {
   const { tradeCount, proxies } = useMemo(
-    () => computeBehavioralProxies(trades, sessionEndedAt, { pressingIds }),
-    [trades, sessionEndedAt, pressingIds],
+    () => computeBehavioralProxies(trades, sessionEndedAt, { pressingIds, atrByTradeId }),
+    [trades, sessionEndedAt, pressingIds, atrByTradeId],
   )
   if (trades.length === 0) return null
 
@@ -56,7 +67,8 @@ export default function RecapWhatHappened({
   if (tradeCount >= 2) {
     for (const p of proxies) {
       if (p.severity === 'none') continue
-      lines.push({ tone: 'bad', text: `${PLAIN[p.key] ?? p.label}.`, refs: [...p.evidence].sort((a, b) => a - b) })
+      const plain = p.market ? PLAIN_STACK[p.market.reading] : PLAIN[p.key] ?? p.label
+      lines.push({ tone: 'bad', text: `${plain}.`, refs: [...p.evidence].sort((a, b) => a - b) })
     }
   }
 

@@ -36,6 +36,10 @@ interface TeaserTrade extends TradeWithExcursion, ProxyTrade {
   exits_json: any
   mfe_dollars_per_leg: number | null
   entry_atr_1m: number | null
+  // Optional on ProxyTrade, selected here (the stacking flag reads them).
+  entry_price: number | null
+  exit_price: number | null
+  symbol: string | null
 }
 
 export interface FirstReadTeaser {

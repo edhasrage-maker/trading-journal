@@ -569,10 +569,15 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
         pnl: parseFloat(form.pnl) || null,
         notes: form.notes || null,
         tags_json: form.tags,
-        screenshot_url: screenshotUrl,
-        entry_pin_x: form.entry_pin_x, entry_pin_y: form.entry_pin_y,
-        stop_pin_x: form.stop_pin_x,   stop_pin_y: form.stop_pin_y,
-        tp1_pin_x: form.tp1_pin_x,     tp1_pin_y: form.tp1_pin_y,
+        // The drawer's compact log never edits the screenshot or its pins — the
+        // drawer's own picture slot does, straight to the row — so it leaves
+        // them out rather than writing back the value it opened with.
+        ...(compact && trade ? {} : {
+          screenshot_url: screenshotUrl,
+          entry_pin_x: form.entry_pin_x, entry_pin_y: form.entry_pin_y,
+          stop_pin_x: form.stop_pin_x,   stop_pin_y: form.stop_pin_y,
+          tp1_pin_x: form.tp1_pin_x,     tp1_pin_y: form.tp1_pin_y,
+        }),
       }
 
       const url = trade ? `/api/trades/${trade.id}` : '/api/trades'
@@ -581,7 +586,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Save failed'); return }
       // Clean up the previously-saved screenshot blob if it was replaced or removed
-      if (savedScreenshotUrl && savedScreenshotUrl !== screenshotUrl) {
+      if (!(compact && trade) && savedScreenshotUrl && savedScreenshotUrl !== screenshotUrl) {
         void deleteBlob(savedScreenshotUrl)
       }
       setSavedScreenshotUrl(screenshotUrl)

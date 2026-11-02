@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { Activity } from 'lucide-react'
-import { computeBehavioralProxies, type ProxyTrade, type ProxySeverity } from '@/lib/behavioral-proxies'
+import { computeBehavioralProxies, type ProxyTrade, type ProxySeverity, type StackMarketReading } from '@/lib/behavioral-proxies'
 import type { RoundTripStats } from '@/lib/trade-excursion'
 
 /**
@@ -26,11 +26,20 @@ const TONE: Record<Exclude<ProxySeverity, 'none'>, { dot: string; text: string; 
   mild: { dot: 'bg-gray-400', text: 'text-gray-300', bg: 'rgba(107,114,128,0.10)', border: 'rgba(107,114,128,0.30)' },
 }
 
+/** The stacking verdict, bold in its own colour: amber = against you, blue =
+ *  your way, grey = nowhere (founder-approved mockup, 2026-11-02). */
+const MARKET_TAG_CLASS: Record<StackMarketReading, string> = {
+  against: 'font-semibold text-amber-200',
+  with: 'font-semibold text-blue-300',
+  flat: 'font-semibold text-gray-300',
+}
+
 export default function BehavioralProxiesPanel({
   trades,
   sessionEndedAt,
   roundTrip,
   pressingIds,
+  atrByTradeId,
 }: {
   trades: ProxyTrade[]
   sessionEndedAt?: string | null
@@ -40,10 +49,13 @@ export default function BehavioralProxiesPanel({
   /** The trades that sized up while red or after a loss, as TapeScore reads it
    *  (sizeUpTradeIds). Optional: without it the quantity rule decides. */
   pressingIds?: readonly string[] | null
+  /** Live ATR at each entry (the one behind R*), for the stacking proxy's read
+   *  of where the market went. Missing trades fall back to entry_atr_1m. */
+  atrByTradeId?: Readonly<Record<string, number>> | null
 }) {
   const { tradeCount, hasSignal, proxies } = useMemo(
-    () => computeBehavioralProxies(trades, sessionEndedAt, { pressingIds }),
-    [trades, sessionEndedAt, pressingIds],
+    () => computeBehavioralProxies(trades, sessionEndedAt, { pressingIds, atrByTradeId }),
+    [trades, sessionEndedAt, pressingIds, atrByTradeId],
   )
 
   // Round-trip ids → 1-indexed session positions, matching how every other row
@@ -129,7 +141,16 @@ export default function BehavioralProxiesPanel({
                       </span>
                     )}
                   </div>
-                  <div className="text-[12px] text-gray-400 leading-snug">{p.detail}</div>
+                  {p.market ? (
+                    <>
+                      <div className="text-[12px] text-gray-400 leading-snug">
+                        {p.market.lead} — <b className={MARKET_TAG_CLASS[p.market.reading]}>{p.market.tag}</b>.
+                      </div>
+                      <div className="text-[12px] text-gray-400 leading-snug">{p.market.text}</div>
+                    </>
+                  ) : (
+                    <div className="text-[12px] text-gray-400 leading-snug">{p.detail}</div>
+                  )}
                 </div>
               </div>
             )

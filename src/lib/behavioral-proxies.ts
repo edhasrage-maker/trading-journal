@@ -4,14 +4,20 @@
  * can't see: revenge/tilt re-entries, shrinking hold time, stacking the same
  * direction, and pressing size into a drawdown.
  *
+ * (Stacking also reads the run's own fills to say where the market went, so a
+ * losing run in the right direction isn't called a losing bias.)
+ *
  * Extends the per-session TIMELINE idea from the recap route (buildDayTimeline)
- * into first-class DAY-LEVEL signals. Pure + dependency-free so it runs both
+ * into first-class DAY-LEVEL signals. Pure (its one import is the pure symbol
+ * helpers) so it runs both
  * client-side (the EOD panel) and server-side (fed into the EOD AI read).
  *
  * These are OBSERVATIONS, not new scoring criteria — the deterministic Process
  * rails already score cooldown/size-up breaches. They exist to make the AI's
  * narrative (and the trader's own eye) catch behavioral drift across a session.
  */
+
+import { chartSeriesRoot } from './futures-symbols'
 
 export interface ProxyTrade {
   id: string
@@ -20,6 +26,30 @@ export interface ProxyTrade {
   exit_time: string | null
   pnl: number | null
   quantity: number | null
+  /** Fills, instrument and stored ATR at entry: what the stacking proxy needs
+   *  to say where the market went over a losing run. Optional: callers without
+   *  them get the run labelled from P&L alone, as before. */
+  entry_price?: number | null
+  exit_price?: number | null
+  symbol?: string | null
+  entry_atr_1m?: number | null
+}
+
+/** Where the market went over a losing same-direction run, read from the run's
+ *  own fills: first entry → last exit, in the instrument the run starts in.
+ *  1 ATR (1-min, at the first entry) either way decides; in between = nowhere.
+ *  Picked by the founder over "any amount" and "≥1 ATR only" on 2026-11-02,
+ *  shown on their 29 losing runs since June. */
+export type StackMarketReading = 'with' | 'against' | 'flat'
+
+export interface StackMarket {
+  reading: StackMarketReading
+  /** "4 consecutive longs for −$271" */
+  lead: string
+  /** "pressing a losing bias" / "right direction, the entries cost you" / … */
+  tag: string
+  /** "NQ went 82 pts against you from your first entry (28,762) to …" */
+  text: string
 }
 
 export type ProxySeverity = 'none' | 'mild' | 'flag'
@@ -34,6 +64,9 @@ export interface BehavioralProxy {
   detail: string
   /** 1-indexed session positions of the trades that evidence the pattern. */
   evidence: number[]
+  /** Stacking only, on a losing run whose market move could be read. `detail`
+   *  already says it as one sentence; this is the same text in parts. */
+  market?: StackMarket
 }
 
 export interface BehavioralProxies {
@@ -141,11 +174,15 @@ function fmtPtTime(iso: string): string {
  * read it the way TapeScore does (planned dollar risk against the trader's usual
  * spread: sizeUpTradeIds in src/lib/tapescore-day-rules.ts). Omit it and the
  * quantity rule below decides.
+ *
+ * `atrByTradeId` is the page's live ATR at each entry (the one behind R*); a
+ * trade missing from it falls back to its stored `entry_atr_1m`. The stacking
+ * proxy reads the market move over a losing run in those units.
  */
 export function computeBehavioralProxies(
   trades: ProxyTrade[],
   sessionEndedAt?: string | null,
-  opts: { pressingIds?: readonly string[] | null } = {},
+  opts: { pressingIds?: readonly string[] | null; atrByTradeId?: Readonly<Record<string, number>> | null } = {},
 ): BehavioralProxies {
   const rows = buildRows(trades)
   const n = rows.length
@@ -203,11 +240,19 @@ export function computeBehavioralProxies(
     let severity: ProxySeverity = 'none'
     if (bestLen >= STACK_FLAG || (bestLen >= STACK_MILD && runPnl < 0)) severity = 'flag'
     else if (bestLen >= STACK_MILD) severity = 'mild'
+    const lead = `${bestLen} consecutive ${dir}s`
+    // A losing run is only "pressing a losing bias" when the market went
+    // against it. Unread (no fills or no ATR) keeps the P&L-only label.
+    const market = severity !== 'none' && runPnl < 0
+      ? stackMarket(run, `${lead} for ${fmtSignedUsd(runPnl)}`, opts.atrByTradeId ?? null)
+      : null
     proxies.push({
       key: 'stacking', label: 'Stacking one direction', severity, count: bestLen,
       evidence: severity === 'none' ? [] : run.map(r => r.seq),
       detail: severity === 'none' ? ''
-        : `${bestLen} consecutive ${dir}s${runPnl < 0 ? ` for ${fmtSignedUsd(runPnl)} — pressing a losing bias` : ` (${fmtSignedUsd(runPnl)})`}`,
+        : market ? `${market.lead} — ${market.tag}. ${market.text}`
+        : `${lead}${runPnl < 0 ? ` for ${fmtSignedUsd(runPnl)} — pressing a losing bias` : ` (${fmtSignedUsd(runPnl)})`}`,
+      ...(market ? { market } : {}),
     })
   }
 
@@ -304,6 +349,45 @@ function fmtSignedUsd(n: number): string {
   return `${r >= 0 ? '+' : '−'}$${Math.abs(r)}`
 }
 
+const fmtPrice = (n: number): string => n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+/** Points moved: whole points from 10 up (NQ), to the tick below it (ES). */
+const fmtPts = (n: number): string => (n >= 10 ? String(Math.round(n)) : fmtPrice(n))
+
+/**
+ * Where the market went over a losing run, from the run's own fills — not the
+ * bar feed, whose root series sits in the next contract around a roll while
+ * the trader's fills are still in the old one. First entry → last exit among
+ * the trades in the instrument the run starts in (a run can mix NQ and ES).
+ * Null when the prices, the exit or the ATR at the first entry are missing.
+ */
+function stackMarket(
+  run: Row[], lead: string, atrByTradeId: Readonly<Record<string, number>> | null,
+): StackMarket | null {
+  const first = run[0]
+  if (!first?.direction) return null
+  const root = first.symbol ? chartSeriesRoot(first.symbol) : null
+  const same = run.filter(r => (r.symbol ? chartSeriesRoot(r.symbol) : null) === root)
+  const last = same
+    .filter(r => r.exit_time != null && r.exit_price != null && Number.isFinite(Date.parse(r.exit_time)))
+    .reduce<Row | null>((m, r) => (m == null || Date.parse(r.exit_time as string) > Date.parse(m.exit_time as string) ? r : m), null)
+  const atr = atrByTradeId?.[first.id] ?? first.entry_atr_1m ?? null
+  if (first.entry_price == null || last?.exit_price == null || atr == null || !(atr > 0)) return null
+
+  const move = (first.direction === 'long' ? 1 : -1) * (last.exit_price - first.entry_price)
+  const reading: StackMarketReading = move >= atr ? 'with' : move <= -atr ? 'against' : 'flat'
+  const inst = root ?? 'Price'
+  const span = `from your first entry (${fmtPrice(first.entry_price)}) to your last exit (${fmtPrice(last.exit_price)})`
+  const went = move === 0 ? `${inst} ended where you started`
+    : `${inst} went ${fmtPts(Math.abs(move))} pts ${move > 0 ? 'your way' : 'against you'}`
+  if (reading === 'with') {
+    return { reading, lead, tag: 'right direction, the entries cost you', text: `${went} (${(move / atr).toFixed(1)} ATR) ${span}.` }
+  }
+  if (reading === 'against') {
+    return { reading, lead, tag: 'pressing a losing bias', text: `${went} ${span}.` }
+  }
+  return { reading, lead, tag: 'price went nowhere, the entries cost you', text: `${went} (under 1 ATR) ${span}.` }
+}
+
 /**
  * IDs of trades that are quick re-entries after a loss — the same
  * revenge/tilt pattern proxy #1 flags, exposed as a per-trade set so callers
@@ -325,6 +409,7 @@ export function revengeReentryIds(trades: ProxyTrade[]): string[] {
  *  '' when there are too few trades or no signal, so a clean session adds no
  *  prompt weight. Framed as observations, NOT scoring criteria. */
 export function behavioralProxiesPromptBlock(trades: ProxyTrade[], sessionEndedAt?: string | null): string {
+  // Stored entry_atr_1m on each trade stands in for the page's live ATR.
   const { tradeCount, hasSignal, proxies } = computeBehavioralProxies(trades, sessionEndedAt)
   if (tradeCount < 2 || !hasSignal) return ''
   const lines = proxies

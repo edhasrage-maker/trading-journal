@@ -1085,11 +1085,11 @@ export default function SessionClient({
         </div>
       )}
       {simpleRecap && (
-        <RecapWhatHappened trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} today={todayHeat} />
+        <RecapWhatHappened trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} atrByTradeId={liveAtrByTradeId} today={todayHeat} />
       )}
 
       {/* Behaviour flags — judgment, so recap only. Self-suppressing when empty. */}
-      {!live && !simpleRecap && <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} />}
+      {!live && !simpleRecap && <BehavioralProxiesPanel trades={trades} sessionEndedAt={endedAt} roundTrip={roundTripStats} pressingIds={pressingIds} atrByTradeId={liveAtrByTradeId} />}
 
       {/* Chart: native bars, or the legacy uploaded screenshot + calibration. */}
       <div className="space-y-3">
