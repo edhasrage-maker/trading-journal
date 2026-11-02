@@ -95,7 +95,7 @@ function FindingBlock({ finding, fallback }: { finding: Finding | null; fallback
               <th className={th}>Days</th>
               <th className={`${th} ${greenCol}`}>Green</th>
               <th className={th}>Avg day</th>
-              {h && <th className={th} title={`Average day over the ${h.few.days + h.many.days} days before this period`}>Before</th>}
+              {h && <th className={th} title={`Average day over the ${h.few.days + h.many.days} days you traded before this period`}>Before</th>}
               <th className={th}>TapeScore</th>
             </tr>
           </thead>

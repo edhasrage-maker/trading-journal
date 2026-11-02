@@ -130,7 +130,7 @@ check('bridge with history ties big days to the counter-argument', fh?.bridge,
   'All three had 5 or more trades. Those busy days paid more this period, but before it they lost money:')
 check('note with history leaves the money to the table', fh?.note, 'Every red day came from the busier days. None of the busier days scored above 69.')
 check('verdict ties back to the headline', fh?.verdict,
-  'Over the 12 days before this period (since Sep 1, 2026), the quieter days were the ones that paid, so your big busy days look like the exception, not your edge.')
+  'Over the 12 days you traded before this period (since Sep 1, 2026), the quieter days were the ones that paid, so your big busy days look like the exception, not your edge.')
 check('no history → no verdict', periodFinding(OCT)?.verdict, null)
 check('no history → no history', periodFinding(OCT)?.history, null)
 const fsame = periodFinding(OCT, PRIOR.map(d => ({ ...d, eod_pnl: d.trade_count > 4 ? 200 : 50 })))

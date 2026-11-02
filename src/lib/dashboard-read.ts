@@ -243,13 +243,13 @@ export function historyNote(s: TradeCountSplit, h: SplitHistory): string {
 const tradesWord = (n: number) => `${n} trade${n === 1 ? '' : 's'}`
 
 /** What the days before the period mean for the headline: "Over the 177
- *  days before it (since Oct 1, 2025), the quieter days were the ones that
+ *  days you traded before this period (since Oct 1, 2025), the quieter days were the ones that
  *  paid, so your big busy days look like the exception, not your edge." The
  *  money now and before is in the table; this says what it adds up to. */
 function historyVerdict(s: TradeCountSplit, h: SplitHistory, side: 'few' | 'many' | null): string {
   const nowMany = s.many.avg > s.few.avg
   const beforeMany = h.many.avg > h.few.avg
-  const span = `Over the ${h.few.days + h.many.days} days before this period (since ${sinceDate(h.from)})`
+  const span = `Over the ${h.few.days + h.many.days} days you traded before this period (since ${sinceDate(h.from)})`
   if (nowMany === beforeMany) return `${span}, the ${beforeMany ? 'busier' : 'quieter'} days paid more too.`
   const big = side ? `your big ${side === 'many' ? 'busy' : 'quiet'} days look like` : 'this period looks like'
   return `${span}, the ${beforeMany ? 'busier' : 'quieter'} days were the ones that paid, so ${big} the exception, not your edge.`
