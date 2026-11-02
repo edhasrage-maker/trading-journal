@@ -14,27 +14,30 @@ export default function AchievementCollection({
 }: {
   counts: Record<AchievementId, number>
   className?: string
-  /** One quiet line — small coins with ×N, "not yet" for the unearned. The
-   *  Detailed dashboard closes on it (founder, 2026-10-31). */
+  /** One quiet line of chips — earned ones outlined with ×N, the rest dashed.
+   *  The Detailed dashboard closes on it (founder, 2026-10-31; chips
+   *  2026-11-01). */
   compact?: boolean
 }) {
   const cnt = (id: AchievementId) => counts?.[id] ?? 0
 
   if (compact) {
     return (
-      <div className={`flex flex-wrap items-center gap-x-5 gap-y-2 ${className ?? ''}`}>
-        <h3 className="ts-eyebrow">Your collection</h3>
+      <div className={`flex flex-wrap items-center gap-2 ${className ?? ''}`}>
+        <h3 className="mr-2 text-[16px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Your collection</h3>
         {ACHIEVEMENT_ORDER.map(id => {
           const c = ACHIEVEMENT_CATALOG[id]
           const n = cnt(id)
           return (
-            <span key={id} className="inline-flex items-center gap-1.5 text-[13px]" title={c.blurb}>
+            <span
+              key={id}
+              className={`inline-flex items-center gap-1.5 text-[13px] rounded-full pl-1 pr-3 py-0.5 border ${n > 0 ? 'border-gray-500 text-gray-100' : 'border-dashed border-gray-700 text-gray-500'}`}
+              title={n > 0 ? c.blurb : `${c.blurb} Not earned yet.`}
+            >
               <span className={n > 0 ? 'inline-flex' : 'inline-flex opacity-30 grayscale'}>
                 <AchievementCoin id={id} size={20} ring="flat" title={c.label} />
               </span>
-              {n > 0
-                ? <span className="text-gray-300">{c.label} <b className="text-gray-100">×{n}</b></span>
-                : <span className="text-gray-500">{c.label} — not yet</span>}
+              {c.label}{n > 0 && <b> ×{n}</b>}
             </span>
           )
         })}

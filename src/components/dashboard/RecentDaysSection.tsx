@@ -103,7 +103,7 @@ export default function RecentDaysSection({
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <h2 className="ts-eyebrow mr-2">Your days</h2>
+            <h2 className="mr-2 text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Your days</h2>
             <input
               type="date"
               value={startDate}

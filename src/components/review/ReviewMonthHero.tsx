@@ -47,12 +47,16 @@ function arc(cx: number, cy: number, r: number, a0: number, a1: number): string 
 /** The composition ring: one complete circle split into three EQUAL segments
  *  (each ⅓ of the circumference), each filled to its own sub-score over a
  *  faint track, with clear gaps. */
-export function CompositionRing({ score, subs, size = 132 }: {
+export function CompositionRing({ score, subs, size = 132, onBand = false }: {
   score: number
   subs: { risk: number; entry: number; exit: number }
   size?: number
+  /** Drawn on the Detailed dashboard's navy scoreboard: the blue score ramp,
+   *  white number (globals.css .ts-band). */
+  onBand?: boolean
 }) {
   const b = bandOf(score)
+  const hue = onBand ? `var(--b-score-${b.cls})` : b.hue
   const cx = 66, cy = 66, r = 51, W = 9, GAP = 8
   const segs: Array<[number, number]> = [[1 / 3, subs.risk], [1 / 3, subs.entry], [1 / 3, subs.exit]]
   const usable = 360 - GAP * segs.length
@@ -61,8 +65,8 @@ export function CompositionRing({ score, subs, size = 132 }: {
   for (const [wt, sub] of segs) {
     const len = usable * wt
     const start = a + GAP / 2
-    paths.push({ d: arc(cx, cy, r, start, start + len), stroke: 'var(--color-surface-3)', cap: 'butt' })
-    if (sub > 0) paths.push({ d: arc(cx, cy, r, start, start + len * (sub / 100)), stroke: b.hue, cap: 'round' })
+    paths.push({ d: arc(cx, cy, r, start, start + len), stroke: onBand ? 'var(--b-track)' : 'var(--color-surface-3)', cap: 'butt' })
+    if (sub > 0) paths.push({ d: arc(cx, cy, r, start, start + len * (sub / 100)), stroke: hue, cap: 'round' })
     a = start + len + GAP / 2
   }
   return (
@@ -74,10 +78,13 @@ export function CompositionRing({ score, subs, size = 132 }: {
       </svg>
       <div className="absolute inset-0 grid place-items-center">
         <div className="text-center leading-none">
-          <div className={cn('text-[34px] font-bold tabular-nums', BAND_TEXT[b.cls])} style={{ fontFamily: 'var(--font-display)' }}>
+          <div
+            className={cn('font-bold tabular-nums', onBand ? 'text-[var(--b-ink)]' : cn('text-[34px]', BAND_TEXT[b.cls]))}
+            style={{ fontFamily: 'var(--font-display)', ...(onBand ? { fontSize: Math.round(size * 0.32) } : {}) }}
+          >
             {score}
           </div>
-          <div className="text-[11px] text-gray-400 mt-1">{b.word}</div>
+          <div className={cn('mt-1', onBand ? 'text-[13px] text-[var(--b-mut)]' : 'text-[11px] text-gray-400')}>{b.word}</div>
         </div>
       </div>
     </div>

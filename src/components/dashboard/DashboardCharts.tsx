@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChevronDown } from 'lucide-react'
 import { tapeScoreBand } from '@/lib/tapescore'
@@ -126,6 +127,13 @@ const BAND_FILL: Record<'high' | 'mid' | 'low', string> = {
   mid: 'var(--color-warn)',
   low: 'var(--color-neg)',
 }
+/** The Detailed scoreboard's score ramp — blue, so green and red mean money
+ *  only there (founder, 2026-11-01; globals.css --score-*). */
+const BLUE_FILL: Record<'high' | 'mid' | 'low', string> = {
+  high: 'var(--score-high)',
+  mid: 'var(--score-mid)',
+  low: 'var(--score-low)',
+}
 
 /**
  * Session-by-session TapeScore as a slim band beneath the equity curve.
@@ -140,8 +148,9 @@ const BAND_FILL: Record<'high' | 'mid' | 'low', string> = {
  * Unscored sessions render as a GAP, never a neutral fill: "no analysis" must
  * not be mistakable for "an average day".
  */
-function ScoreStrip({ scores, hoverIdx, onHover }: {
+function ScoreStrip({ scores, hoverIdx, onHover, fill = BAND_FILL }: {
   scores: (number | null)[]
+  fill?: Record<'high' | 'mid' | 'low', string>
   hoverIdx: number | null
   onHover: (i: number | null) => void
 }) {
@@ -173,7 +182,7 @@ function ScoreStrip({ scores, hoverIdx, onHover }: {
             <rect
               key={i}
               x={x} y={0} width={barW} height={1}
-              fill={BAND_FILL[tapeScoreBand(s)]}
+              fill={fill[tapeScoreBand(s)]}
               opacity={dimmed ? 0.3 : 1}
             />
           )
@@ -249,9 +258,14 @@ interface Props {
    *  page's one time switch already bounded `days`) and its TapeScore strip
    *  explained in words underneath. Daily Results is left to Detailed. */
   equityOnly?: boolean
+  /** Detailed scoreboard (founder, 2026-11-01): one panel — `top` (the
+   *  Scouting report), then the equity curve beside Score vs money, which
+   *  replaced Daily results (the calendar already shows each day's P&L).
+   *  TapeScore reads on the blue ramp. */
+  scoreboard?: { top?: ReactNode; splitK?: number | null }
 }
 
-export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabel, equityOnly = false }: Props) {
+export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabel, equityOnly = false, scoreboard }: Props) {
   const [period, setPeriod] = useState<Period>(defaultPeriod)
   // Same contract as DashboardStats: an active dashboard filter owns the range.
   const effectivePeriod: Period = rangeLabel || equityOnly ? 'all' : period
@@ -269,7 +283,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
     try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
   }, [period, hydrated])
 
-  const { points, equity, daily, scores } = useMemo(() => {
+  const { points, equity, daily, scores, dots } = useMemo(() => {
     const { start, end } = periodBounds(effectivePeriod)
     const inPeriod = days
       .filter(d => d.eod_pnl != null && d.date >= start && d.date <= end)
@@ -286,10 +300,59 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
     // TapeScore per day, aligned index-for-index with the equity series. Null on
     // days with no EOD analysis — the overlay breaks rather than interpolating.
     const scores = inPeriod.map(d => d.tapescore?.score ?? null)
-    return { points, equity, daily, scores }
+    const dots = inPeriod
+      .filter(d => d.tapescore?.score != null)
+      .map(d => ({ date: d.date, pnl: d.eod_pnl ?? 0, score: d.tapescore!.score, trades: d.trades_with_pnl_count }))
+    return { points, equity, daily, scores, dots }
   }, [days, effectivePeriod])
 
   const hasData = points.length > 0
+
+  if (scoreboard) {
+    const total = hasData ? equity[equity.length - 1] : 0
+    return (
+      <section aria-label="Scouting report and charts" className="ts-card overflow-hidden">
+        {scoreboard.top}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+          <div className="min-w-0 px-5 sm:px-7 py-5 lg:border-r border-gray-800">
+            <div className="flex items-baseline justify-between gap-3 mb-3">
+              <h2 className="text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Equity curve</h2>
+              {hasData && (
+                <b className={`text-[18px] tabular-nums ${total >= 0 ? 'text-green-400' : 'text-red-400'}`} style={{ fontFamily: 'var(--font-display)' }}>
+                  {fmtMoney(total, { signed: true })}
+                </b>
+              )}
+            </div>
+            {hasData ? (
+              <EquityChart dates={points} values={equity} scores={scores} height={230} fill={BLUE_FILL} />
+            ) : (
+              <div className="text-center text-xs text-gray-600 italic py-16">No closed sessions in this range</div>
+            )}
+            {hasData && scores.some(s => s != null) && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-[13px] text-gray-400">
+                <span>Strip = each day&apos;s TapeScore:</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: BLUE_FILL.high }} />Strong 70+</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: BLUE_FILL.mid }} />Fair 50–69</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: BLUE_FILL.low }} />Weak under 50</span>
+              </div>
+            )}
+          </div>
+          <div className="min-w-0 px-5 sm:px-7 py-5 border-t lg:border-t-0 border-gray-800">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <h2 className="text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Score vs money</h2>
+              {hasData && <span className="text-[13px] text-gray-400">{dailySummary(daily)}</span>}
+            </div>
+            <p className="mt-1 mb-3 text-[13px] text-gray-400">Each dot is a day: how well you traded across, what it made up the side.</p>
+            {dots.length > 0 ? (
+              <ScoreVsMoney dots={dots} splitK={scoreboard.splitK ?? null} />
+            ) : (
+              <div className="text-center text-xs text-gray-600 italic py-16">No scored sessions in this range</div>
+            )}
+          </div>
+        </div>
+      </section>
+    )
+  }
 
   return (
     <div>
@@ -356,6 +419,90 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
           )}
         </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Each day as a dot: TapeScore across, P&L up (founder, 2026-11-01). Answers
+ * whether the money came from well-traded days. Filled = a day at or under
+ * the period's trade-count cut (src/lib/dashboard-read.ts), hollow = over it;
+ * green / red is the money. The three biggest days and the worst one are named.
+ * HTML dots on a percentage grid, so text stays crisp at any width; each dot
+ * opens its day.
+ */
+function ScoreVsMoney({ dots, splitK }: {
+  dots: { date: string; pnl: number; score: number; trades: number }[]
+  splitK: number | null
+}) {
+  const x0 = Math.max(0, Math.floor((Math.min(...dots.map(d => d.score)) - 5) / 10) * 10)
+  const x1 = 100
+  const { niceMin, niceMax, ticks } = niceScale(Math.min(0, ...dots.map(d => d.pnl)), Math.max(0, ...dots.map(d => d.pnl)), 4)
+  const xPct = (v: number) => ((v - x0) / (x1 - x0)) * 100
+  const yPct = (v: number) => (1 - (v - niceMin) / (niceMax - niceMin || 1)) * 100
+  const xTicks: number[] = []
+  for (let v = x0; v <= x1; v += 10) xTicks.push(v)
+  // Named days → whether the label shows on a phone too (the biggest and the
+  // worst only; the next two would collide at that width).
+  const named = new Map<string, boolean>([
+    ...[...dots].filter(d => d.pnl > 0).sort((a, b) => b.pnl - a.pnl).slice(0, 3).map((d, i) => [d.date, i === 0] as [string, boolean]),
+    ...[...dots].filter(d => d.pnl < 0).sort((a, b) => a.pnl - b.pnl).slice(0, 1).map(d => [d.date, true] as [string, boolean]),
+  ])
+  const short = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const L = 56, B = 34
+  return (
+    <div>
+      <div className="relative w-full" style={{ height: 240 }}>
+        {ticks.map(v => (
+          <div key={v} className="absolute text-[11px] text-gray-500 text-right pr-2 leading-none" style={{ left: 0, width: L, top: `calc(${yPct(v) / 100} * (100% - ${B}px))`, transform: 'translateY(-50%)' }}>
+            {fmtMoney(v)}
+          </div>
+        ))}
+        <div className="absolute" style={{ left: L, right: 8, top: 0, bottom: B }}>
+          {ticks.map(v => (
+            <div key={v} className={`absolute left-0 right-0 border-t ${v === 0 ? 'border-gray-700' : 'border-gray-800/70'}`} style={{ top: `${yPct(v)}%` }} />
+          ))}
+          {x0 < 70 && (
+            <div className="absolute top-0 bottom-0 right-0" style={{ left: `${xPct(70)}%`, background: 'var(--score-high)', opacity: 0.07 }} />
+          )}
+          {x0 < 70 && <span className="absolute top-1 right-1.5 text-[11px] font-semibold" style={{ color: 'var(--score-high)' }}>Strong 70+</span>}
+          {dots.map(d => {
+            const col = d.pnl >= 0 ? 'var(--color-pos)' : 'var(--color-neg)'
+            const filled = splitK == null || d.trades <= splitK
+            const right = xPct(d.score) > 72
+            return (
+              <Link
+                key={d.date}
+                href={`/session/${d.date}`}
+                title={`${short(d.date)} · ${fmtMoney(d.pnl, { signed: true })} · TapeScore ${d.score} · ${d.trades} trade${d.trades === 1 ? '' : 's'}`}
+                className="absolute -translate-x-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full hover:scale-125 transition-transform"
+                style={{ left: `${xPct(d.score)}%`, top: `${yPct(d.pnl)}%`, background: filled ? col : 'var(--ts-panel)', border: `2px solid ${col}` }}
+              >
+                {named.has(d.date) && (
+                  <span className={`absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-[12px] text-gray-200 ${right ? 'right-5' : 'left-5'} ${named.get(d.date) ? '' : 'hidden sm:inline'}`}>
+                    <b className="tabular-nums">{fmtMoney(d.pnl, { signed: true })}</b> {short(d.date)}
+                  </span>
+                )}
+              </Link>
+            )
+          })}
+        </div>
+        <div className="absolute" style={{ left: L, right: 8, bottom: 14, height: 14 }}>
+          {xTicks.map(v => (
+            <span key={v} className="absolute -translate-x-1/2 text-[11px] text-gray-500" style={{ left: `${xPct(v)}%` }}>{v}</span>
+          ))}
+        </div>
+        <div className="absolute bottom-0 text-[11px] text-gray-500 text-center" style={{ left: L, right: 8 }}>TapeScore →</div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-gray-400">
+        {splitK != null && (
+          <>
+            <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ background: 'var(--color-pos)' }} />{splitK} trade{splitK === 1 ? '' : 's'} or fewer</span>
+            <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-full border-2" style={{ borderColor: 'var(--color-pos)' }} />{splitK + 1} or more</span>
+          </>
+        )}
+        <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-full border-2" style={{ borderColor: 'var(--color-neg)' }} />red day</span>
       </div>
     </div>
   )
@@ -480,7 +627,8 @@ function Gridlines({ yMin, yMax, yTicks }: { yMin: number; yMax: number; yTicks:
 }
 
 /** Cumulative equity line with hover readout. */
-function EquityChart({ dates, values, scores = [], height }: {
+function EquityChart({ dates, values, scores = [], height, fill = BAND_FILL }: {
+  fill?: Record<'high' | 'mid' | 'low', string>
   dates: string[]
   values: number[]
   /** TapeScore per day, index-aligned with `values`; null = unscored day. */
@@ -512,7 +660,7 @@ function EquityChart({ dates, values, scores = [], height }: {
   return (
     <ChartFrame
       height={height} yMin={niceMin} yMax={niceMax} yTicks={ticks} xLabels={dates}
-      strip={hasScores ? <ScoreStrip scores={scores} hoverIdx={hoverIdx} onHover={setHoverIdx} /> : undefined}
+      strip={hasScores ? <ScoreStrip scores={scores} hoverIdx={hoverIdx} onHover={setHoverIdx} fill={fill} /> : undefined}
     >
       <div className="relative w-full h-full">
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full" style={{ pointerEvents: 'none' }}>
@@ -565,7 +713,7 @@ function EquityChart({ dates, values, scores = [], height }: {
             {scores[hoverIdx] != null && (
               // Banded like the strip below and the score ring, so the number
               // and its colour agree wherever the session shows up.
-              <div className="text-[10px] font-mono" style={{ color: BAND_FILL[tapeScoreBand(scores[hoverIdx] as number)] }}>
+              <div className="text-[10px] font-mono" style={{ color: fill[tapeScoreBand(scores[hoverIdx] as number)] }}>
                 TapeScore {scores[hoverIdx]}
               </div>
             )}

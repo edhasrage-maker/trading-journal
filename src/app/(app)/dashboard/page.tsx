@@ -446,7 +446,6 @@ export default async function DashboardPage() {
           windowStart={windowStart}
           windowEnd={windowEnd}
           achievements={<AchievementCollection counts={collectionCounts} compact />}
-          scoreInRow={!SHOW_FINDING_CALLOUT}
           liftDrag={liftDrag}
         />
       </DashboardModeSwitch>

@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { format, parseISO, subMonths } from 'date-fns'
 import { SlidersHorizontal, X, Loader2, Check } from 'lucide-react'
-import DashboardStats, { PERIOD_KEY, monthName, periodBounds, periodLabel, type DayStat, type Period } from './DashboardStats'
+import { PERIOD_KEY, monthName, periodBounds, periodLabel, computePeriodStats, profitFactorFor, dateSpan, type DayStat, type Period } from './DashboardStats'
+import DashboardScoreboard from './DashboardScoreboard'
+import ScoutingReport from './ScoutingReport'
+import TradeManagementCard, { ProfitFactorCard } from '@/components/TradeManagementCard'
+import { useMfeUnit } from '@/lib/mfe-unit'
+import { mgmtView } from '@/lib/trade-management'
+import { periodFinding, tradeCountSplit, bigDaysWhy, scoutingActions, type ReadDay } from '@/lib/dashboard-read'
 import DashboardCharts from './DashboardCharts'
 import RecentDaysSection from './RecentDaysSection'
 import type { DayRowData } from './RecentDaysList'
@@ -48,9 +54,6 @@ interface Props {
   /** Rendered last, unfiltered (it's a lifetime collection). A slot so the
    *  page keeps its section order. */
   achievements: ReactNode
-  /** The score lives in the stat row (no band above this one), so the filter
-   *  bar opens the page: no rule or gap above it. */
-  scoreInRow?: boolean
   /** Profit factor lifter / drag per scope — see DashboardStats. */
   liftDrag?: Record<string, LiftDragView | null>
 }
@@ -84,7 +87,7 @@ function monthsBefore(today: string, n: number): string[] {
 
 export default function DashboardFilterScope({
   statsDays, tableDays, allSetups, today, windowStart, windowEnd, achievements,
-  scoreInRow = false, liftDrag,
+  liftDrag,
 }: Props) {
   // ── The one Period (founder, 2026-10-31): a row of chips that every section
   // follows — the cards, both charts, the calendar and the list. Built from
@@ -216,206 +219,244 @@ export default function DashboardFilterScope({
   const daysFrom = active && start ? start : bounds.start
   const daysTo = active ? today : bounds.end
 
-  return (
-    <div className="space-y-4">
-      {/* Period bar — the chips, a line saying what they drive, the Filter. */}
-      <div className="ts-card px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span className="ts-eyebrow">Period</span>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Period">
-          {chips.map(c => {
-            const on = !applied && period === c.p
-            return (
-              <button
-                key={c.p}
-                type="button"
-                onClick={() => pickPeriod(c.p)}
-                aria-pressed={on}
-                className={`text-[13px] rounded-full px-3 py-1 border transition-colors ${
-                  on
-                    ? 'bg-blue-600 border-blue-600 text-white font-semibold'
-                    : 'border-gray-800 text-gray-400 hover:text-gray-100 hover:border-gray-600'
-                }`}
-              >
-                {c.label}
-              </button>
-            )
-          })}
-        </div>
-        <span className="hidden lg:inline ml-auto text-xs text-gray-500">
-          {applied ? 'The filter is on — pick a period to clear it.' : 'Everything on this page follows the period.'}
-        </span>
-        <div className="relative ml-auto lg:ml-0" ref={panelRef}>
-          <button
-            type="button"
-            onClick={() => (open ? setOpen(false) : openPanel())}
-            aria-expanded={open}
-            className={`inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2.5 py-1.5 border transition-colors ${
-              active
-                ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-500'
-                : 'border-gray-700 text-gray-300 hover:border-gray-500'
-            }`}
-          >
-            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SlidersHorizontal className="w-3.5 h-3.5" />}
-            Filter
-            {active && applied.setups.length > 0 && (
-              <span className="ml-0.5 rounded bg-white/20 px-1 text-[10px] leading-4">{applied.setups.length}</span>
-            )}
-          </button>
-
-          {open && (
-            <div className="absolute right-0 top-full mt-2 z-40 w-[min(22rem,calc(100vw-2rem))] bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-4 space-y-4">
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Setups</div>
-                {allSetups.length === 0 ? (
-                  <p className="text-xs text-gray-500">No setups tagged on any trade yet.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
-                    {allSetups.map(s => {
-                      const on = draftSetups.includes(s)
-                      return (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => setDraftSetups(prev => (on ? prev.filter(x => x !== s) : [...prev, s]))}
-                          aria-pressed={on}
-                          className={`inline-flex items-center gap-1 text-xs rounded-md px-2 py-1 border transition-colors ${
-                            on
-                              ? 'bg-blue-950 border-blue-600 text-blue-300'
-                              : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
-                          }`}
-                        >
-                          {on && <Check className="w-3 h-3" />}
-                          {s}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-                <p className="text-[11px] text-gray-500 mt-2">
-                  {draftSetups.length === 0 ? 'None picked — every trade counts.' : 'Trades tagged with any of these.'}
-                </p>
-              </div>
-
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Time</div>
-                <div className="grid grid-cols-6 gap-1">
-                  {RANGES.map(r => (
+  const filterPanel = (
+        <div className="absolute right-0 top-full mt-2 z-40 w-[min(22rem,calc(100vw-2rem))] bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-4 space-y-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Setups</div>
+            {allSetups.length === 0 ? (
+              <p className="text-xs text-gray-500">No setups tagged on any trade yet.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
+                {allSetups.map(s => {
+                  const on = draftSetups.includes(s)
+                  return (
                     <button
-                      key={r.key}
+                      key={s}
                       type="button"
-                      onClick={() => setDraftRange(r.key)}
-                      aria-pressed={draftRange === r.key}
-                      title={r.label}
-                      className={`text-xs rounded-md py-1 border transition-colors ${
-                        draftRange === r.key
+                      onClick={() => setDraftSetups(prev => (on ? prev.filter(x => x !== s) : [...prev, s]))}
+                      aria-pressed={on}
+                      className={`inline-flex items-center gap-1 text-xs rounded-md px-2 py-1 border transition-colors ${
+                        on
                           ? 'bg-blue-950 border-blue-600 text-blue-300'
                           : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
                       }`}
                     >
-                      {r.short}
+                      {on && <Check className="w-3 h-3" />}
+                      {s}
                     </button>
-                  ))}
-                </div>
+                  )
+                })}
               </div>
+            )}
+            <p className="text-[11px] text-gray-500 mt-2">
+              {draftSetups.length === 0 ? 'None picked — every trade counts.' : 'Trades tagged with any of these.'}
+            </p>
+          </div>
 
-              <div className="flex items-center justify-end gap-2 pt-1">
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Time</div>
+            <div className="grid grid-cols-6 gap-1">
+              {RANGES.map(r => (
                 <button
+                  key={r.key}
                   type="button"
-                  onClick={() => setOpen(false)}
-                  className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1"
+                  onClick={() => setDraftRange(r.key)}
+                  aria-pressed={draftRange === r.key}
+                  title={r.label}
+                  className={`text-xs rounded-md py-1 border transition-colors ${
+                    draftRange === r.key
+                      ? 'bg-blue-950 border-blue-600 text-blue-300'
+                      : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
+                  }`}
                 >
-                  Cancel
+                  {r.short}
                 </button>
-                <button
-                  type="button"
-                  onClick={apply}
-                  disabled={noOp}
-                  title={noOp ? 'All setups over all time is the unfiltered dashboard.' : undefined}
-                  className="text-xs font-medium rounded-md px-3 py-1.5 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600"
-                >
-                  Apply
-                </button>
-              </div>
+              ))}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
 
-      {(applied || error) && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs -mt-1">
-          {applied && (
-            <>
-              <span className="text-gray-500">Filter:</span>
-              <span className="text-gray-200">{setupsText}</span>
-              <span className="text-gray-600">·</span>
-              <span className="text-gray-400">{label}</span>
-              {scoped && (
-                <>
-                  <span className="text-gray-600">·</span>
-                  <span className="text-gray-400">
-                    {scoped.tradeCount} trade{scoped.tradeCount === 1 ? '' : 's'} across{' '}
-                    {scoped.table.length} session{scoped.table.length === 1 ? '' : 's'}
-                  </span>
-                </>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={apply}
+              disabled={noOp}
+              title={noOp ? 'All setups over all time is the unfiltered dashboard.' : undefined}
+              className="text-xs font-medium rounded-md px-3 py-1.5 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+  )
+
+  // ── The scoreboard reads (founder, 2026-11-01): the band, the Scouting
+  // report and the score-vs-money dots all read the same days as the cards.
+  const [mfeUnit] = useMfeUnit()
+  const bandDays = active ? scoped.stats : statsDays
+  const bandPeriod: Period = active ? 'all' : period
+  const bandStats = useMemo(() => computePeriodStats(bandDays, bandPeriod), [bandDays, bandPeriod])
+  const readDays = useMemo(
+    () => (active ? scoped.table : tableDays.filter(d => d.date >= bounds.start && d.date <= bounds.end)) as ReadDay[],
+    [active, scoped, tableDays, bounds.start, bounds.end],
+  )
+  const finding = useMemo(() => periodFinding(readDays), [readDays])
+  const split = useMemo(() => tradeCountSplit(readDays), [readDays])
+  const why = useMemo(() => bigDaysWhy(readDays), [readDays])
+  const liftDragScope = active ? (applied.setups.length > 0 ? null : `r:${applied.range}`) : undefined
+  const profitFactor = profitFactorFor(liftDrag, liftDragScope, period, active ? label : undefined)
+  const actions = useMemo(() => {
+    const v = mgmtView(bandStats.mgmt, mfeUnit)
+    return scoutingActions({
+      split,
+      liftDrag: profitFactor?.view ?? null,
+      mgmt: { unit: mfeUnit, wentCount: v.went.count, neverCount: v.never.count, wentMae: v.went.mae, neverMae: v.never.mae },
+    })
+  }, [bandStats.mgmt, mfeUnit, split, profitFactor?.view])
+
+  const spanText = bandStats.tradedDaysCount > 0
+    ? `${dateSpan(active && start ? start : bounds.start, active ? today : bounds.end)} · ${bandStats.totalTradesWithPnl} trade${bandStats.totalTradesWithPnl === 1 ? '' : 's'}`
+    : null
+
+  return (
+    <div>
+      {/* The scoreboard band: full width, flush under the masthead (it undoes
+          AppMain's p-6). Navy in both themes — .ts-band in globals.css. */}
+      <section aria-label="Scoreboard" className="ts-band -mx-6 -mt-6 px-6 pt-3 pb-24">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]">
+          <div className="flex flex-wrap gap-x-5 gap-y-1" role="group" aria-label="Period">
+            {chips.map(c => {
+              const on = !applied && period === c.p
+              return (
+                <button
+                  key={c.p}
+                  type="button"
+                  onClick={() => pickPeriod(c.p)}
+                  aria-pressed={on}
+                  className={`py-1.5 transition-colors ${
+                    on
+                      ? 'text-[var(--b-ink)] font-semibold shadow-[inset_0_-2px_0_var(--b-ink)]'
+                      : 'text-[var(--b-mut)] hover:text-[var(--b-ink)]'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              )
+            })}
+          </div>
+          <span className="flex-1" />
+          {spanText && <span className="text-[var(--b-mut)]">{spanText}</span>}
+          <div className="relative" ref={panelRef}>
+            <button
+              type="button"
+              onClick={() => (open ? setOpen(false) : openPanel())}
+              aria-expanded={open}
+              className={`inline-flex items-center gap-1.5 text-[13px] font-medium rounded-md px-3 py-1.5 border transition-colors ${
+                active
+                  ? 'bg-[var(--b-ink)] border-[var(--b-ink)] text-[#171C2C]'
+                  : 'border-[#46506A] text-[var(--b-ink)] hover:border-[var(--b-mut)]'
+              }`}
+            >
+              {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SlidersHorizontal className="w-3.5 h-3.5" />}
+              Filter
+              {active && applied.setups.length > 0 && (
+                <span className="ml-0.5 rounded bg-[#171C2C]/15 px-1 text-[10px] leading-4">{applied.setups.length}</span>
               )}
-              {loading && <span className="text-gray-500">Filtering…</span>}
-              <button
-                type="button"
-                onClick={clear}
-                className="inline-flex items-center gap-1 text-gray-400 hover:text-gray-100 px-1.5 py-0.5"
-              >
-                <X className="w-3 h-3" /> Clear
-              </button>
-            </>
-          )}
-          {error && <span className="text-red-400">{error}</span>}
+            </button>
+            {open && filterPanel}
+          </div>
         </div>
-      )}
 
-      {active && applied.setups.length > 0 && !empty && (
-        <p className="text-[11px] text-gray-500 -mt-1 max-w-[70ch]">
-          P&amp;L, win rate and excursions below count only these trades. A session&apos;s TapeScore still
-          grades the whole session — it can&apos;t be split by setup.
-        </p>
-      )}
+        {(applied || error) && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-[var(--b-mut)]">
+            {applied && (
+              <>
+                <span>Filter:</span>
+                <span className="text-[var(--b-ink)]">{setupsText}</span>
+                <span>·</span>
+                <span>{label}</span>
+                {scoped && (
+                  <>
+                    <span>·</span>
+                    <span>
+                      {scoped.tradeCount} trade{scoped.tradeCount === 1 ? '' : 's'} across{' '}
+                      {scoped.table.length} session{scoped.table.length === 1 ? '' : 's'}
+                    </span>
+                  </>
+                )}
+                {loading && <span>Filtering…</span>}
+                <button type="button" onClick={clear} className="inline-flex items-center gap-1 text-[var(--b-ink)] hover:underline px-1.5 py-0.5">
+                  <X className="w-3 h-3" /> Clear
+                </button>
+                <span className="hidden lg:inline">· Pick a period to clear it.</span>
+              </>
+            )}
+            {error && <span className="text-[var(--b-neg)]">{error}</span>}
+          </div>
+        )}
+        {active && applied.setups.length > 0 && !empty && (
+          <p className="mt-1 text-[12px] text-[var(--b-mut)] max-w-[70ch]">
+            P&amp;L, win rate and excursions count only these trades. A session&apos;s TapeScore still
+            grades the whole session — it can&apos;t be split by setup.
+          </p>
+        )}
 
-      {empty ? (
-        <p className="text-sm text-gray-400 py-8">
-          No {applied.setups.length > 0 ? `${setupsText} ` : ''}trades in {label!.toLowerCase()}.
-        </p>
-      ) : (
-        <DashboardStats
-          days={active ? scoped.stats : statsDays}
-          hideScoreHero
-          period={period}
-          rangeLabel={active ? label : undefined}
-          scoreInRow={scoreInRow}
-          liftDrag={liftDrag}
-          // A time-range filter reads like a Period; a setup filter hides the
-          // lifter and drag — they rank the whole book, not those setups.
-          liftDragScope={active ? (applied.setups.length > 0 ? null : `r:${applied.range}`) : undefined}
+        {empty ? (
+          <p className="mt-8 text-[15px] text-[var(--b-mut)]">
+            No {applied.setups.length > 0 ? `${setupsText} ` : ''}trades in {label!.toLowerCase()}.
+          </p>
+        ) : (
+          <DashboardScoreboard stats={bandStats} finding={finding} />
+        )}
+      </section>
+
+      {/* Everything below rises out of the band. */}
+      <div className="relative -mt-16 space-y-9">
+        {!empty && (
+          <DashboardCharts
+            days={active ? scoped.stats : periodStats}
+            rangeLabel={active ? label : periodLabel(period)}
+            scoreboard={{ top: <ScoutingReport why={why} actions={actions} />, splitK: split?.k ?? null }}
+          />
+        )}
+
+        {!empty && (
+          <section aria-label="Trade management and profit factor" className="grid grid-cols-1 lg:grid-cols-2 border-t-2 border-gray-100">
+            <TradeManagementCard
+              totals={bandStats.mgmt}
+              heading
+              className={`min-w-0 pt-5 pb-2 ${profitFactor ? 'lg:pr-8 lg:border-r border-gray-800' : 'lg:col-span-2'}`}
+            />
+            {profitFactor && (
+              <ProfitFactorCard
+                ruled
+                view={profitFactor.view}
+                windowLabel={profitFactor.window}
+                className="min-w-0 pt-5 pb-2 lg:pl-8 border-t lg:border-t-0 border-gray-800 mt-4 lg:mt-0"
+              />
+            )}
+          </section>
+        )}
+
+        <RecentDaysSection
+          // Remount on a new period or filter so the list's dates and the
+          // calendar's month start from it.
+          key={active ? `f:${appliedKey}` : `p:${period}`}
+          initialDays={active ? scoped.table : tableDays}
+          windowStart={windowStart}
+          windowEnd={windowEnd}
+          defaultFilterStart={daysFrom < windowStart ? windowStart : daysFrom}
+          defaultFilterEnd={daysTo}
         />
-      )}
 
-      {!empty && (
-        <DashboardCharts
-          days={active ? scoped.stats : periodStats}
-          rangeLabel={active ? label : periodLabel(period)}
-        />
-      )}
-
-      <RecentDaysSection
-        // Remount on a new period or filter so the list's dates and the
-        // calendar's month start from it.
-        key={active ? `f:${appliedKey}` : `p:${period}`}
-        initialDays={active ? scoped.table : tableDays}
-        windowStart={windowStart}
-        windowEnd={windowEnd}
-        defaultFilterStart={daysFrom < windowStart ? windowStart : daysFrom}
-        defaultFilterEnd={daysTo}
-      />
-
-      <div className="ts-card px-4 py-3">{achievements}</div>
+        <div className="border-t border-gray-800 pt-5">{achievements}</div>
+      </div>
     </div>
   )
 }

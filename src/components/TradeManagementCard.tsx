@@ -39,6 +39,9 @@ interface Props {
   profitFactor?: { view: LiftDragView; window: string } | null
   /** Dashboard: the title in the small caps every dashboard card opens with. */
   eyebrow?: boolean
+  /** Detailed scoreboard (founder, 2026-11-01): a heading instead of the small
+   *  caps, a line saying how to read the bars, "kept N% of the best move". */
+  heading?: boolean
 }
 
 const UNIT_OPTIONS: { value: MfeUnit; label: string }[] = [
@@ -49,7 +52,7 @@ const UNIT_OPTIONS: { value: MfeUnit; label: string }[] = [
 
 const plural = (n: number) => (n === 1 ? '' : 's')
 
-export default function TradeManagementCard({ totals, className, profitFactor, perTrade, eyebrow = false }: Props) {
+export default function TradeManagementCard({ totals, className, profitFactor, perTrade, eyebrow = false, heading = false }: Props) {
   const [unit, setUnit] = useMfeUnit()
   const v = mgmtView(totals, unit)
   const scale = {
@@ -60,9 +63,11 @@ export default function TradeManagementCard({ totals, className, profitFactor, p
 
   return (
     <div className={className ?? 'border border-gray-800 rounded-[3px] p-[18px]'}>
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+      <div className={`flex flex-wrap items-center justify-between gap-2 ${heading ? 'mb-1' : 'mb-2.5'}`}>
         <p
-          className={eyebrow ? 'ts-eyebrow whitespace-nowrap' : 'text-xs text-gray-500 whitespace-nowrap'}
+          className={heading
+            ? 'text-[20px] font-bold text-gray-100 whitespace-nowrap font-[family-name:var(--font-display)]'
+            : eyebrow ? 'ts-eyebrow whitespace-nowrap' : 'text-xs text-gray-500 whitespace-nowrap'}
           title="Every trade is sorted first: did it go at least 1×ATR your way at some point, or not? MFE is the best point it reached, MAE the worst. Kept is what you banked out of the run, losses included."
         >
           Trade management
@@ -71,12 +76,19 @@ export default function TradeManagementCard({ totals, className, profitFactor, p
           aria-label="Unit"
           value={unit}
           onChange={e => setUnit(e.target.value as MfeUnit)}
-          className="bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight"
+          className={heading
+            ? 'bg-transparent border border-gray-700 text-gray-200 text-[13px] rounded-md px-2 py-1 focus:outline-none focus:border-blue-500'
+            : 'bg-gray-800 border border-gray-700 text-gray-400 text-[10px] rounded px-1 py-0 focus:outline-none focus:border-blue-500 leading-tight'}
           title="Display unit (shared across the app)"
         >
           {UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>
+      {heading && v.classified > 0 && (
+        <p className="mb-3.5 text-[13px] leading-snug text-gray-400">
+          Each bar runs from the worst point against you (MAE) to the best point for you (MFE); the tick is your entry.
+        </p>
+      )}
 
       {v.classified === 0 ? (
         <p className="text-sm text-gray-500">
@@ -96,7 +108,7 @@ export default function TradeManagementCard({ totals, className, profitFactor, p
             group={v.went}
             scale={scale}
             fmt={fmt}
-            trailing={v.went.keptPct != null ? `kept ${formatKept(v.went.keptPct)}` : null}
+            trailing={v.went.keptPct != null ? `kept ${formatKept(v.went.keptPct)}${heading ? ' of the best move' : ''}` : null}
           />
           <div className="h-2.5" />
           <Row
@@ -224,7 +236,8 @@ function factorTitle(kind: 'lift' | 'drag', f: LiftDragFactor, candidates: numbe
  * the one dragging it in tinted boxes. Same reads and hover text as the
  * section the recap-style card carries.
  */
-export function ProfitFactorCard({ view, windowLabel, className }: { view: LiftDragView; windowLabel: string; className?: string }) {
+export function ProfitFactorCard({ view, windowLabel, className, ruled = false }: { view: LiftDragView; windowLabel: string; className?: string; ruled?: boolean }) {
+  if (ruled) return <ProfitFactorRuled view={view} windowLabel={windowLabel} className={className} />
   return (
     <div className={className}>
       <div className="flex items-baseline justify-between gap-3" title={pfTitle(view)}>
@@ -239,6 +252,52 @@ export function ProfitFactorCard({ view, windowLabel, className }: { view: LiftD
         {view.drag && <FactorBox kind="drag" f={view.drag} candidates={view.candidates} />}
         {!view.lift && !view.drag && (
           <p className="text-[13px] text-gray-500">Nothing lifts or drags it clearly enough to name yet.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Detailed scoreboard (founder, 2026-11-01): a heading, the window said out
+ *  loud when it reaches past the page's period, lift and drag on coloured
+ *  left rules instead of tinted boxes. */
+function ProfitFactorRuled({ view, windowLabel, className }: { view: LiftDragView; windowLabel: string; className?: string }) {
+  return (
+    <div className={className}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1" title={pfTitle(view)}>
+        <h2 className="text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Profit factor</h2>
+        {view.extended
+          ? <span className="text-[13px] font-semibold text-gray-100 bg-gray-800 rounded-md px-2.5 py-0.5">Last {view.sessions} sessions</span>
+          : <span className="text-[13px] text-gray-400">{windowLabel}</span>}
+      </div>
+      {view.extended && (
+        <p className="mt-1 text-[13px] text-gray-400">
+          {windowLabel.split(' · ').slice(1).join(' · ')}. This one looks further back than the rest of the page, so the pick holds still.
+        </p>
+      )}
+      <div className="mt-2.5 text-[40px] font-bold leading-none tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }} title={pfTitle(view)}>
+        {view.pf.toFixed(2)}
+      </div>
+      <div className="mt-4 space-y-3.5">
+        {([['lift', view.lift], ['drag', view.drag]] as const).map(([kind, f]) => f && (
+          <div
+            key={kind}
+            className={`flex items-center gap-3 border-l-[3px] pl-3.5 py-0.5 ${kind === 'lift' ? 'border-green-400' : 'border-red-400'}`}
+            title={factorTitle(kind, f, view.candidates)}
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-[15px] text-gray-100 leading-snug">
+                <b className={kind === 'lift' ? 'text-green-400' : 'text-red-400'}>{kind === 'lift' ? 'Lifts it' : 'Drags it'}</b>{' '}{f.label}
+              </p>
+              <p className="text-[13px] text-gray-400 leading-snug">{f.n} trade{plural(f.n)} · without them it would be {f.pfWithout.toFixed(2)}</p>
+            </div>
+            <span className={`flex-none text-[20px] font-bold tabular-nums ${kind === 'lift' ? 'text-green-400' : 'text-red-400'}`} style={{ fontFamily: 'var(--font-display)' }}>
+              {formatPfDelta(f.delta)}
+            </span>
+          </div>
+        ))}
+        {!view.lift && !view.drag && (
+          <p className="text-[13px] text-gray-400">Nothing lifts or drags it clearly enough to name yet.</p>
         )}
       </div>
     </div>
@@ -310,10 +369,10 @@ function Row({
     : 'text-gray-300'
   return (
     <div title={title}>
-      <div className="flex items-baseline justify-between gap-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
         <span className="text-sm font-semibold text-gray-200 whitespace-nowrap">{label}</span>
         {group.count > 0 && (
-          <span className="whitespace-nowrap">
+          <span className="ml-auto text-right">
             <span className={`font-bold ${resultClass}`}>{fmt(group.result)}</span>
             {trailing && <span className="text-[13px] text-gray-400"> · {trailing}</span>}
           </span>

@@ -8,7 +8,7 @@ import {
 } from 'date-fns'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { DayRowData } from './RecentDaysList'
-import type { TapeScoreResult } from '@/lib/tapescore'
+import ScoreChip from './ScoreChip'
 
 interface Props {
   days: DayRowData[]
@@ -27,8 +27,9 @@ interface Props {
  * Trading days only: Mon–Fri, then a Week column with each week's result.
  * Saturday and Sunday come back only in a month that has a session on one.
  * Each day shows its result in whole dollars, "N trades · X% won", and its
- * TapeScore as a small coloured number; the green gets darker the bigger the
- * day was against the month's best, red marks a losing day. Cells open
+ * TapeScore on the blue score chip; a bar along the bottom shows the day's
+ * size against the month's biggest day (founder, 2026-11-01 — the scoreboard
+ * look: white cells, green and red for money only). Cells open
  * `/session/{date}`.
  */
 export default function MonthlyCalendarView({ days, windowStart, windowEnd, initialMonth, toggle }: Props) {
@@ -67,9 +68,9 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
   const traded = monthDays.filter(d => d.trade_count > 0)
   const monthPnl = monthDays.reduce((s, d) => s + (d.eod_pnl ?? 0), 0)
   const monthTrades = traded.reduce((s, d) => s + d.trade_count, 0)
-  // Shading is relative to this month's biggest win / loss.
-  const maxWin = Math.max(0, ...traded.map(d => d.eod_pnl ?? 0))
-  const maxLoss = Math.max(0, ...traded.map(d => -(d.eod_pnl ?? 0)))
+  // Each day's bar is relative to this month's biggest day, win or loss.
+  const biggest = traded.reduce<DayRowData | null>((a, d) => (a == null || Math.abs(d.eod_pnl ?? 0) > Math.abs(a.eod_pnl ?? 0) ? d : a), null)
+  const maxAbs = Math.abs(biggest?.eod_pnl ?? 0)
 
   const weekStats = weeks.map(week => {
     const dates = new Set(week.filter(d => isSameMonth(d, cursor)).map(d => format(d, 'yyyy-MM-dd')))
@@ -93,7 +94,7 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
           {/* The month label IS the picker — a native month input, so any
               month is one jump away instead of one click per month. */}
           <label className="relative">
-            <span className="font-semibold text-gray-100 text-[17px] pointer-events-none" style={{ fontFamily: 'var(--font-display)' }}>
+            <span className="font-bold text-gray-100 text-[20px] sm:text-[22px] pointer-events-none" style={{ fontFamily: 'var(--font-display)' }}>
               {format(cursor, 'MMMM yyyy')}
             </span>
             <input
@@ -152,7 +153,7 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
 
       <div className={`grid ${cols} gap-1 sm:gap-1.5`}>
         {[...dow, 'Week'].map(d => (
-          <div key={d} className="ts-eyebrow px-1 pb-0.5">{d}</div>
+          <div key={d} className="text-[12px] sm:text-[13px] text-gray-500 px-1 pb-0.5">{d}</div>
         ))}
         {weeks.map((week, wi) => [
           ...week.map(date => (
@@ -161,16 +162,16 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
               date={date}
               cursor={cursor}
               data={byDate.get(format(date, 'yyyy-MM-dd'))}
-              maxWin={maxWin}
-              maxLoss={maxLoss}
+              maxAbs={maxAbs}
             />
           )),
           <WeekCell key={`w${wi}`} n={wi + 1} pnl={weekStats[wi].pnl} traded={weekStats[wi].traded} />,
         ])}
       </div>
 
-      <p className="text-[11.5px] text-gray-500">
-        Darker green = bigger day. The small number on each day is its TapeScore.
+      <p className="text-[12.5px] text-gray-400">
+        {biggest && maxAbs > 0 && <>The bar under each day is its P&amp;L next to your biggest day, {format(new Date(`${biggest.date}T12:00:00`), 'MMM d')} (a full bar). </>}
+        The blue chip is the day&apos;s TapeScore: the stronger the blue, the better.
         <span className="sm:hidden"> Amounts are rounded here (1.3k = $1,300) — tap a day for the full session.</span>
       </p>
     </div>
@@ -211,22 +212,9 @@ function tradesLine(count: number, winRate: number | null): string {
   return `${t} · ${pct}% won`
 }
 
-/** The day's TapeScore as a small coloured number on a light chip. */
-function ScoreBadge({ result }: { result: TapeScoreResult }) {
-  const tone = result.band === 'high' ? 'text-green-400' : result.band === 'mid' ? 'text-yellow-400' : 'text-red-400'
-  return (
-    <span
-      className={`text-[10px] sm:text-[11px] font-bold leading-4 rounded px-1 sm:px-1.5 bg-gray-900/80 tabular-nums ${tone}`}
-      title={`TapeScore ${result.score} out of 100`}
-    >
-      {result.score}
-    </span>
-  )
-}
-
 function WeekCell({ n, pnl, traded }: { n: number; pnl: number; traded: number }) {
   return (
-    <div className="min-h-[64px] sm:min-h-[84px] rounded-lg p-1 sm:p-2 bg-gray-950/70 flex flex-col gap-0.5 text-[11px] sm:text-[12px] text-gray-500 min-w-0">
+    <div className="min-h-[64px] sm:min-h-[84px] border-l border-gray-800 pl-1.5 sm:pl-3 py-1 sm:py-2 flex flex-col gap-0.5 text-[11px] sm:text-[13px] text-gray-500 min-w-0">
       <span><span className="hidden sm:inline">Week </span><span className="sm:hidden">W</span>{n}</span>
       {traded === 0 ? (
         <span className="hidden sm:inline">No trades</span>
@@ -245,12 +233,11 @@ function WeekCell({ n, pnl, traded }: { n: number; pnl: number; traded: number }
   )
 }
 
-function DayCell({ date, cursor, data, maxWin, maxLoss }: {
+function DayCell({ date, cursor, data, maxAbs }: {
   date: Date
   cursor: Date
   data: DayRowData | undefined
-  maxWin: number
-  maxLoss: number
+  maxAbs: number
 }) {
   const inMonth = isSameMonth(date, cursor)
   // Days outside the month are blank, not greyed numbers.
@@ -262,29 +249,20 @@ function DayCell({ date, cursor, data, maxWin, maxLoss }: {
   const pnl = data?.eod_pnl ?? null
   const hasTrades = !!data && data.trade_count > 0
 
-  // Shade by the day's size against the month's biggest win / loss.
-  let shade = 'border border-gray-800 hover:border-gray-600'
-  let pnlTone = 'text-gray-300'
-  if (hasTrades && pnl != null && pnl > 0) {
-    const r = maxWin > 0 ? pnl / maxWin : 0
-    shade = r >= 0.66 ? 'bg-green-800' : r >= 0.33 ? 'bg-green-900' : 'bg-green-950'
-    pnlTone = r >= 0.66 ? 'text-green-200' : 'text-green-400'
-  } else if (hasTrades && pnl != null && pnl < 0) {
-    shade = maxLoss > 0 && -pnl / maxLoss >= 0.5 ? 'bg-red-900' : 'bg-red-950'
-    pnlTone = 'text-red-400'
-  } else if (hasTrades) {
-    shade = 'bg-gray-800/60'
-  }
+  // Traded days are outlined; days without trades are a quiet fill.
+  const shade = hasTrades ? 'border border-gray-800 hover:border-gray-600' : 'bg-gray-950/60 border border-transparent hover:border-gray-800'
+  const pnlTone = pnl != null && pnl > 0 ? 'text-green-400' : pnl != null && pnl < 0 ? 'text-red-400' : 'text-gray-300'
+  const barPct = hasTrades && pnl != null && maxAbs > 0 ? Math.min(100, (Math.abs(pnl) / maxAbs) * 100) : 0
 
   return (
     <Link
       href={`/session/${dateStr}`}
-      className={`min-h-[64px] sm:min-h-[84px] rounded-lg p-1 sm:p-2 flex flex-col gap-0.5 min-w-0 transition-[filter] hover:brightness-95 ${shade} ${isToday ? 'ring-2 ring-blue-500/70' : ''}`}
+      className={`relative overflow-hidden min-h-[64px] sm:min-h-[84px] rounded-lg p-1 sm:p-2 pb-2 sm:pb-3 flex flex-col gap-0.5 min-w-0 transition-colors ${shade} ${isToday ? 'ring-2 ring-blue-500/70' : ''}`}
     >
       <div className="flex items-center justify-between gap-0.5">
         <span className={`text-[11px] sm:text-[12px] ${isToday ? 'text-blue-300 font-semibold' : hasTrades ? 'text-gray-300' : 'text-gray-500'}`}>{dom}</span>
         {hasTrades && (data.tapescore
-          ? <ScoreBadge result={data.tapescore} />
+          ? <ScoreChip score={data.tapescore.score} className="text-[10px] sm:text-[12px] px-1 sm:px-1.5" />
           : <span className="hidden md:inline text-[11px] text-gray-500 whitespace-nowrap">no score yet</span>)}
       </div>
       {hasTrades && (
@@ -296,6 +274,11 @@ function DayCell({ date, cursor, data, maxWin, maxLoss }: {
           )}
           <span className="hidden sm:block text-[12px] text-gray-400 leading-snug">{tradesLine(data.trade_count, data.win_rate)}</span>
         </>
+      )}
+      {barPct > 0 && (
+        <span className="absolute left-0 right-0 bottom-0 h-1 bg-gray-800/60" aria-hidden="true">
+          <span className={`block h-full ${pnl != null && pnl < 0 ? 'bg-red-400' : 'bg-green-400'}`} style={{ width: `${barPct}%` }} />
+        </span>
       )}
     </Link>
   )

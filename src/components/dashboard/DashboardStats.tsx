@@ -196,7 +196,7 @@ export function priorPeriod(period: Period): { start: string; end: string; label
 }
 
 /** "Jun 22 – Oct 13", with years only when the span crosses one. */
-function dateSpan(from: string, to: string): string {
+export function dateSpan(from: string, to: string): string {
   const fmt = (iso: string, year: boolean) =>
     new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}), timeZone: 'UTC' })
   const cross = from.slice(0, 4) !== to.slice(0, 4)
@@ -215,6 +215,126 @@ function median(nums: number[]): number | null {
   const s = [...nums].sort((a, b) => a - b)
   const m = Math.floor(s.length / 2)
   return s.length % 2 === 0 ? (s[m - 1] + s[m]) / 2 : s[m]
+}
+
+/** Everything the period's cards print, from the period's days — shared by
+ *  the stat cards and the Detailed scoreboard so the two can never disagree. */
+export function computePeriodStats(days: DayStat[], effectivePeriod: Period) {
+  const { start, end } = periodBounds(effectivePeriod)
+  const inPeriod = days.filter(d => d.date >= start && d.date <= end)
+
+  // P&L sum (skip null PnL days = no trades + no override)
+  const pnl = inPeriod.reduce((s, d) => s + (d.eod_pnl ?? 0), 0)
+
+  // Day win rate: % of TRADED days where pnl > 0. Days with no trades and no
+  // explicit eod_pnl override are excluded so the denominator reflects
+  // actual sessions.
+  const tradedDays = inPeriod
+    .filter(d => d.eod_pnl != null)
+    .sort((a, b) => a.date.localeCompare(b.date))
+  const winDays = tradedDays.filter(d => (d.eod_pnl ?? 0) > 0).length
+  // Each traded day's result, oldest first — the P&L sparkline and the
+  // green-days bars draw from it.
+  const daily = tradedDays.map(d => d.eod_pnl ?? 0)
+  const dayWinRate = tradedDays.length > 0 ? winDays / tradedDays.length : null
+
+  // Trade win rate: pooled across the period.
+  const totalTradeWins = inPeriod.reduce((s, d) => s + d.trade_wins, 0)
+  const totalTradesWithPnl = inPeriod.reduce((s, d) => s + d.trades_with_pnl_count, 0)
+  const tradeWinRate = totalTradesWithPnl > 0 ? totalTradeWins / totalTradesWithPnl : null
+
+  // Payoff ratio = average winner / average loser, both in R, pooled over the
+  // period from per-day SUMS so a one-trade day doesn't count as much as a
+  // ten-trade one.
+  //
+  // R rather than dollars, deliberately. Avg win $ / avg loss $ largely
+  // measures how big the position was, not how well it was traded — size one
+  // loser up and the ratio follows the sizing. Measured on this book over 30
+  // days the two disagree by a wide margin (3.18 in R against 2.58 in $), and
+  // the R figure is the one describing the trading.
+  const sumWinR = inPeriod.reduce((s, d) => s + (d.sum_win_r ?? 0), 0)
+  const winRCount = inPeriod.reduce((s, d) => s + (d.win_r_count ?? 0), 0)
+  const sumLossR = inPeriod.reduce((s, d) => s + (d.sum_loss_r ?? 0), 0)
+  const lossRCount = inPeriod.reduce((s, d) => s + (d.loss_r_count ?? 0), 0)
+  const rSample = inPeriod.reduce((s, d) => s + (d.r_sample ?? 0), 0)
+  const avgWinR = winRCount > 0 ? sumWinR / winRCount : null
+  const avgLossR = lossRCount > 0 ? sumLossR / lossRCount : null
+  const payoffR = avgWinR != null && avgLossR != null && avgLossR > 0 ? avgWinR / avgLossR : null
+  // What the payoff has to clear at this win rate just to break even:
+  // (1 - w) / w. Computed from the number printed beside it, so it can never
+  // go stale the way a configured target would — and it answers the only
+  // question a payoff figure raises on its own, which is "is that enough?".
+  const breakEvenPayoff =
+    tradeWinRate != null && tradeWinRate > 0 && tradeWinRate < 1
+      ? (1 - tradeWinRate) / tradeWinRate
+      : null
+
+  // Trade management: pooled over the period's TRADES by adding each day's
+  // sums — never an average of daily averages, which weighted a one-trade
+  // day the same as a seven-trade one.
+  const mgmt = mergeMgmtTotals(inPeriod.map(d => d.mgmt))
+
+  // Median Prep (prep AI 1-10) and Median Process (v1.4 verdict-derived
+  // 0-10). Two separate medians on the same stat card — see render block.
+  // Median preferred over mean to suppress outliers.
+  const prepScores = inPeriod.map(d => d.process_score).filter((v): v is number => v != null)
+  const medianPrep = median(prepScores)
+  const v13Scores = inPeriod.map(d => d.process_v13_score).filter((v): v is number => v != null)
+  const medianProcessV13 = median(v13Scores)
+
+  // One TapeScore hero aggregate (amendment 5): mean day score over scored
+  // days + component means + rules-kept ratio. Replaces the old Execution /
+  // Compliance stat card — those two dimensions now read as hero chips.
+  const tapePeriod = aggregateTapeScore(inPeriod)
+
+  // The same stretch just before, for the Net P&L card. A filter (shown as
+  // All time here) has nothing before it to compare.
+  const priorBounds = priorPeriod(effectivePeriod)
+  const prior = priorBounds && (() => {
+    const pd = days.filter(d => d.date >= priorBounds.start && d.date <= priorBounds.end && d.eod_pnl != null)
+    return { label: priorBounds.label, pnl: pd.reduce((s, d) => s + (d.eod_pnl ?? 0), 0), days: pd.length }
+  })()
+
+  return {
+    pnl,
+    dayWinRate,
+    tradeWinRate,
+    payoffR,
+    breakEvenPayoff,
+    rSample,
+    mgmt,
+    medianProcess: medianPrep,    // legacy field name preserved for callers
+    medianProcessV13,
+    tapePeriod,
+    prior,
+    tradedDaysCount: tradedDays.length,
+    winDays,
+    daily,
+    totalTradesWithPnl,
+    procCount: prepScores.length,
+    v13Count: v13Scores.length,
+  }
+}
+
+export type PeriodStats = ReturnType<typeof computePeriodStats>
+
+/** Profit factor, lifter and drag for the scope on screen. A period shorter
+ *  than 60 sessions is read over the last 60, and the label says so. `scope`
+ *  undefined → the Period's; null → hidden (a setup filter is on). */
+export function profitFactorFor(
+  liftDrag: Record<string, LiftDragView | null> | undefined,
+  scope: string | null | undefined,
+  period: Period,
+  rangeLabel?: string,
+): { view: LiftDragView; window: string } | null {
+  const view = scope === null ? null : liftDrag?.[scope ?? `p:${period}`] ?? null
+  if (!view) return null
+  return {
+    view,
+    window: view.extended
+      ? `last ${view.sessions} sessions · ${dateSpan(view.from, view.to)}`
+      : `${period.startsWith('m:') && !rangeLabel ? periodLabel(period) : (rangeLabel ?? periodLabel(period)).toLowerCase()} · ${view.sessions} sessions`,
+  }
 }
 
 interface Props {
@@ -271,114 +391,9 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
   }, [period, hydrated, controlledPeriod])
 
-  const stats = useMemo(() => {
-    const { start, end } = periodBounds(effectivePeriod)
-    const inPeriod = days.filter(d => d.date >= start && d.date <= end)
+  const stats = useMemo(() => computePeriodStats(days, effectivePeriod), [days, effectivePeriod])
 
-    // P&L sum (skip null PnL days = no trades + no override)
-    const pnl = inPeriod.reduce((s, d) => s + (d.eod_pnl ?? 0), 0)
-
-    // Day win rate: % of TRADED days where pnl > 0. Days with no trades and no
-    // explicit eod_pnl override are excluded so the denominator reflects
-    // actual sessions.
-    const tradedDays = inPeriod
-      .filter(d => d.eod_pnl != null)
-      .sort((a, b) => a.date.localeCompare(b.date))
-    const winDays = tradedDays.filter(d => (d.eod_pnl ?? 0) > 0).length
-    // Each traded day's result, oldest first — the P&L sparkline and the
-    // green-days bars draw from it.
-    const daily = tradedDays.map(d => d.eod_pnl ?? 0)
-    const dayWinRate = tradedDays.length > 0 ? winDays / tradedDays.length : null
-
-    // Trade win rate: pooled across the period.
-    const totalTradeWins = inPeriod.reduce((s, d) => s + d.trade_wins, 0)
-    const totalTradesWithPnl = inPeriod.reduce((s, d) => s + d.trades_with_pnl_count, 0)
-    const tradeWinRate = totalTradesWithPnl > 0 ? totalTradeWins / totalTradesWithPnl : null
-
-    // Payoff ratio = average winner / average loser, both in R, pooled over the
-    // period from per-day SUMS so a one-trade day doesn't count as much as a
-    // ten-trade one.
-    //
-    // R rather than dollars, deliberately. Avg win $ / avg loss $ largely
-    // measures how big the position was, not how well it was traded — size one
-    // loser up and the ratio follows the sizing. Measured on this book over 30
-    // days the two disagree by a wide margin (3.18 in R against 2.58 in $), and
-    // the R figure is the one describing the trading.
-    const sumWinR = inPeriod.reduce((s, d) => s + (d.sum_win_r ?? 0), 0)
-    const winRCount = inPeriod.reduce((s, d) => s + (d.win_r_count ?? 0), 0)
-    const sumLossR = inPeriod.reduce((s, d) => s + (d.sum_loss_r ?? 0), 0)
-    const lossRCount = inPeriod.reduce((s, d) => s + (d.loss_r_count ?? 0), 0)
-    const rSample = inPeriod.reduce((s, d) => s + (d.r_sample ?? 0), 0)
-    const avgWinR = winRCount > 0 ? sumWinR / winRCount : null
-    const avgLossR = lossRCount > 0 ? sumLossR / lossRCount : null
-    const payoffR = avgWinR != null && avgLossR != null && avgLossR > 0 ? avgWinR / avgLossR : null
-    // What the payoff has to clear at this win rate just to break even:
-    // (1 - w) / w. Computed from the number printed beside it, so it can never
-    // go stale the way a configured target would — and it answers the only
-    // question a payoff figure raises on its own, which is "is that enough?".
-    const breakEvenPayoff =
-      tradeWinRate != null && tradeWinRate > 0 && tradeWinRate < 1
-        ? (1 - tradeWinRate) / tradeWinRate
-        : null
-
-    // Trade management: pooled over the period's TRADES by adding each day's
-    // sums — never an average of daily averages, which weighted a one-trade
-    // day the same as a seven-trade one.
-    const mgmt = mergeMgmtTotals(inPeriod.map(d => d.mgmt))
-
-    // Median Prep (prep AI 1-10) and Median Process (v1.4 verdict-derived
-    // 0-10). Two separate medians on the same stat card — see render block.
-    // Median preferred over mean to suppress outliers.
-    const prepScores = inPeriod.map(d => d.process_score).filter((v): v is number => v != null)
-    const medianPrep = median(prepScores)
-    const v13Scores = inPeriod.map(d => d.process_v13_score).filter((v): v is number => v != null)
-    const medianProcessV13 = median(v13Scores)
-
-    // One TapeScore hero aggregate (amendment 5): mean day score over scored
-    // days + component means + rules-kept ratio. Replaces the old Execution /
-    // Compliance stat card — those two dimensions now read as hero chips.
-    const tapePeriod = aggregateTapeScore(inPeriod)
-
-    // The same stretch just before, for the Net P&L card. A filter (shown as
-    // All time here) has nothing before it to compare.
-    const priorBounds = priorPeriod(effectivePeriod)
-    const prior = priorBounds && (() => {
-      const pd = days.filter(d => d.date >= priorBounds.start && d.date <= priorBounds.end && d.eod_pnl != null)
-      return { label: priorBounds.label, pnl: pd.reduce((s, d) => s + (d.eod_pnl ?? 0), 0), days: pd.length }
-    })()
-
-    return {
-      pnl,
-      dayWinRate,
-      tradeWinRate,
-      payoffR,
-      breakEvenPayoff,
-      rSample,
-      mgmt,
-      medianProcess: medianPrep,    // legacy field name preserved for callers
-      medianProcessV13,
-      tapePeriod,
-      prior,
-      tradedDaysCount: tradedDays.length,
-      winDays,
-      daily,
-      totalTradesWithPnl,
-      procCount: prepScores.length,
-      v13Count: v13Scores.length,
-    }
-  }, [days, effectivePeriod])
-
-  // Profit factor, lifter and drag for the scope on screen. A period shorter
-  // than 60 sessions is read over the last 60, and the label says so.
-  const liftDragView = liftDragScope === null ? null : liftDrag?.[liftDragScope ?? `p:${period}`] ?? null
-  const profitFactor = liftDragView
-    ? {
-        view: liftDragView,
-        window: liftDragView.extended
-          ? `last ${liftDragView.sessions} sessions · ${dateSpan(liftDragView.from, liftDragView.to)}`
-          : `${period.startsWith('m:') && !rangeLabel ? periodLabel(period) : (rangeLabel ?? periodLabel(period)).toLowerCase()} · ${liftDragView.sessions} sessions`,
-      }
-    : null
+  const profitFactor = profitFactorFor(liftDrag, liftDragScope, period, rangeLabel)
 
   // The three stat tiles, built once and placed by whichever layout renders
   // below. `bare` drops a tile's own border when it sits inside a shared card.
@@ -705,7 +720,7 @@ function StatCard({
 
 
 /** "+$5,997" / "-$413" / "$0" — whole dollars, sign before the dollar. */
-function fmtSignedUsd(n: number): string {
+export function fmtSignedUsd(n: number): string {
   const abs = Math.abs(Math.round(n)).toLocaleString('en-US')
   return n > 0.5 ? `+$${abs}` : n < -0.5 ? `-$${abs}` : '$0'
 }
