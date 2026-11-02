@@ -157,6 +157,44 @@ export function periodBounds(period: Period): { start: string; end: string } {
   }
 }
 
+/** The stretch just before a period, the same length, for the Net P&L
+ *  comparison: the 30 days before, last week to the same weekday, last month
+ *  to the same day, the month before a past month. Null for All time. */
+export function priorPeriod(period: Period): { start: string; end: string; label: string } | null {
+  const { start, end } = periodBounds(period)
+  const d = (iso: string) => new Date(`${iso}T12:00:00`)
+  const short = (iso: string) => d(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const shift = (iso: string, days: number) => { const x = d(iso); x.setDate(x.getDate() + days); return ymd(x) }
+  if (period === 'all') return null
+  if (period === '30d') return { start: shift(start, -31), end: shift(start, -1), label: 'the 30 days before' }
+  if (period === 'week') {
+    const ps = shift(start, -7), pe = shift(end, -7)
+    const full = d(end).getDay() === 0 || d(end).getDay() >= 5
+    return { start: ps, end: pe, label: full ? 'last week' : `last week, Mon–${d(pe).toLocaleDateString('en-US', { weekday: 'short' })}` }
+  }
+  if (period === 'month' || period.startsWith('m:')) {
+    const s0 = d(start)
+    const prevFirst = new Date(s0.getFullYear(), s0.getMonth() - 1, 1)
+    const prevLast = new Date(s0.getFullYear(), s0.getMonth(), 0)
+    const ym = ymd(prevFirst).slice(0, 7)
+    // A month still running compares against the same days of the last one.
+    const running = end.slice(8) !== String(new Date(s0.getFullYear(), s0.getMonth() + 1, 0).getDate())
+    if (!running) return { start: ymd(prevFirst), end: ymd(prevLast), label: monthName(ym) }
+    const upTo = new Date(prevFirst.getFullYear(), prevFirst.getMonth(), Math.min(d(end).getDate(), prevLast.getDate()))
+    const pe = ymd(upTo)
+    return { start: ymd(prevFirst), end: pe, label: pe === ymd(prevFirst) ? short(pe) : `${short(ymd(prevFirst))}–${upTo.getDate()}` }
+  }
+  if (period === 'ytd') {
+    const y = Number(start.slice(0, 4)) - 1
+    return { start: `${y}-01-01`, end: `${y}${end.slice(4)}`, label: 'the same days last year' }
+  }
+  if (period === 'last_year') {
+    const y = Number(start.slice(0, 4)) - 1
+    return { start: `${y}-01-01`, end: `${y}-12-31`, label: String(y) }
+  }
+  return null
+}
+
 /** "Jun 22 – Oct 13", with years only when the span crosses one. */
 function dateSpan(from: string, to: string): string {
   const fmt = (iso: string, year: boolean) =>
@@ -301,6 +339,14 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
     // Compliance stat card — those two dimensions now read as hero chips.
     const tapePeriod = aggregateTapeScore(inPeriod)
 
+    // The same stretch just before, for the Net P&L card. A filter (shown as
+    // All time here) has nothing before it to compare.
+    const priorBounds = priorPeriod(effectivePeriod)
+    const prior = priorBounds && (() => {
+      const pd = days.filter(d => d.date >= priorBounds.start && d.date <= priorBounds.end && d.eod_pnl != null)
+      return { label: priorBounds.label, pnl: pd.reduce((s, d) => s + (d.eod_pnl ?? 0), 0), days: pd.length }
+    })()
+
     return {
       pnl,
       dayWinRate,
@@ -312,6 +358,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
       medianProcess: medianPrep,    // legacy field name preserved for callers
       medianProcessV13,
       tapePeriod,
+      prior,
       tradedDaysCount: tradedDays.length,
       winDays,
       daily,
@@ -467,7 +514,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
               valueClass={stats.pnl > 0 ? 'text-green-400' : stats.pnl < 0 ? 'text-red-400' : 'text-gray-300'}
               sub={`${stats.tradedDaysCount} trading day${stats.tradedDaysCount === 1 ? '' : 's'} · ${stats.totalTradesWithPnl} trade${stats.totalTradesWithPnl === 1 ? '' : 's'}`}
             >
-              <Sparkline daily={stats.daily} />
+              <PriorCompare pnl={stats.pnl} prior={stats.prior} tradedDays={stats.tradedDaysCount} />
             </KpiCard>
             <KpiCard
               label="Win rate · R:R"
@@ -745,21 +792,53 @@ function TapeScoreCard({ period }: { period: TapeScorePeriod }) {
   )
 }
 
-/** The period's running P&L as a small line, dashed zero underneath. */
-function Sparkline({ daily }: { daily: number[] }) {
-  if (daily.length < 2) return null
-  const equity = daily.map((_, i) => daily.slice(0, i + 1).reduce((s, v) => s + v, 0))
-  const lo = Math.min(0, ...equity)
-  const hi = Math.max(0, ...equity)
-  const span = hi - lo || 1
-  const y = (v: number) => 52 - ((v - lo) / span) * 48
-  const pts = equity.map((v, i) => `${((i / (equity.length - 1)) * 240).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
-  const up = equity[equity.length - 1] >= 0
+/** This period against the same stretch just before it — replaced a P&L
+ *  line that repeated the Equity curve (founder, 2026-11-01). All time has
+ *  nothing before it, so it reads the average trading day instead. */
+function PriorCompare({ pnl, prior, tradedDays }: {
+  pnl: number
+  prior: { label: string; pnl: number; days: number } | null
+  tradedDays: number
+}) {
+  if (!prior) {
+    if (tradedDays === 0) return null
+    const avg = pnl / tradedDays
+    return (
+      <p className="text-[13px] text-gray-400">
+        Average trading day{' '}
+        <b className={`tabular-nums ${avg > 0 ? 'text-green-400' : avg < 0 ? 'text-red-400' : 'text-gray-300'}`}>{fmtSignedUsd(avg)}</b>
+      </p>
+    )
+  }
+  if (prior.days === 0) {
+    return <p className="text-[12px] text-gray-500">No trades in {prior.label} to compare with.</p>
+  }
+  const max = Math.max(Math.abs(pnl), Math.abs(prior.pnl)) || 1
+  const rows = [
+    { label: 'This period', v: pnl },
+    { label: prior.label.replace(/^the /, '').replace(/^./, c => c.toUpperCase()), v: prior.pnl },
+  ]
+  const diff = pnl - prior.pnl
   return (
-    <svg viewBox="0 0 240 56" preserveAspectRatio="none" className="w-full h-14" aria-hidden="true">
-      <line x1="0" x2="240" y1={y(0)} y2={y(0)} stroke="var(--ts-line)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
-      <polyline fill="none" stroke={up ? 'var(--color-pos)' : 'var(--color-neg)'} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" points={pts} />
-    </svg>
+    <div className="space-y-1.5">
+      {rows.map((r, k) => (
+        <div key={k} className="grid grid-cols-[92px_1fr_auto] items-center gap-2 text-[13px]">
+          <span className="text-gray-400 truncate" title={r.label}>{r.label}</span>
+          <span className="h-2 rounded-full bg-gray-800 overflow-hidden">
+            <span
+              className={`block h-full rounded-full ${r.v >= 0 ? 'bg-green-400' : 'bg-red-400'} ${k === 1 ? 'opacity-50' : ''}`}
+              style={{ width: `${(Math.abs(r.v) / max) * 100}%` }}
+            />
+          </span>
+          <b className={`text-right tabular-nums ${r.v > 0 ? 'text-green-400' : r.v < 0 ? 'text-red-400' : 'text-gray-400'}`}>{fmtSignedUsd(r.v)}</b>
+        </div>
+      ))}
+      <p className="text-[11px] text-gray-500">
+        {Math.abs(diff) < 0.5
+          ? `Level with ${prior.label}.`
+          : `${fmtSignedUsd(Math.abs(diff)).replace('+', '')} ${diff > 0 ? 'more' : 'less'} than ${prior.label}.`}
+      </p>
+    </div>
   )
 }
 
