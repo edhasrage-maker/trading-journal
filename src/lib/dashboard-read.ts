@@ -93,6 +93,9 @@ export function tradeCountSplit(days: readonly ReadDay[]): TradeCountSplit | nul
 
 export interface Finding {
   headline: string
+  /** When the headline is about the biggest days: one sentence tying those
+   *  days to the table below it. Null = the table speaks for itself. */
+  bridge: string | null
   /** The comparison table under the headline; null = headline alone. */
   split: TradeCountSplit | null
   /** One or two plain sentences under the table. */
@@ -138,6 +141,7 @@ export function periodFinding(days: readonly ReadDay[], history: readonly ReadDa
   const low = scoreAtFraction(days, 1 / 3)
   const high = scoreAtFraction(days, 2 / 3)
   let headline: string | null = null
+  let aboutBig = true
   const all = (ok: (s: number) => boolean) => big.length >= 2 && big.every(d => ok(scoreOf(d) as number))
   if (low != null && all(s => s <= low)) {
     headline = 'Your biggest days were your worst-traded days.'
@@ -146,6 +150,7 @@ export function periodFinding(days: readonly ReadDay[], history: readonly ReadDa
   } else if (high != null && all(s => s >= high)) {
     headline = 'Your biggest days were your best-traded days.'
   } else if (split) {
+    aboutBig = false
     const fewBetter = (split.few.scoreAvg ?? 0) > (split.many.scoreAvg ?? 0)
     headline = fewBetter
       ? `You trade better on days with ${tradesWord(split.k)} or fewer.`
@@ -153,7 +158,22 @@ export function periodFinding(days: readonly ReadDay[], history: readonly ReadDa
   }
   if (!headline) return null
   const before = split ? splitHistory(history, split.k) : null
-  return { headline, split, note: split ? splitNote(split) : null, before: split && before ? historyNote(split, before) : null }
+  const bridge = split && aboutBig ? bigDaysBridge(big, split) : null
+  return { headline, bridge, split, note: split ? splitNote(split) : null, before: split && before ? historyNote(split, before) : null }
+}
+
+/** "All three had 5 or more trades, and across the period the busier days
+ *  scored lower:" — so a headline about the biggest days leads into the
+ *  trade-count table instead of jumping to it. */
+function bigDaysBridge(big: readonly ReadDay[], s: TradeCountSplit): string {
+  const lead = big.length === 2 ? 'Both' : `All ${COUNT_WORD[big.length]}`
+  const many = big.every(d => d.trade_count > s.k)
+  const few = big.every(d => d.trade_count <= s.k)
+  if (!many && !few) return 'The number of trades tells its own story:'
+  const side = many ? s.many : s.few
+  const other = many ? s.few : s.many
+  const lower = (side.scoreAvg ?? 0) < (other.scoreAvg ?? 0)
+  return `${lead} had ${many ? `${s.k + 1} or more trades` : `${tradesWord(s.k)} or fewer`}, and across the period the ${many ? 'busier' : 'quieter'} days scored ${lower ? 'lower' : 'higher'}:`
 }
 
 // ── The same cut, before the period ─────────────────────────────────────────

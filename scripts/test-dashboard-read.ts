@@ -52,6 +52,7 @@ check('no score gap → null', tradeCountSplit(OCT.map(d => ({ ...d, tapescore: 
 console.log('finding')
 const f = periodFinding(OCT)
 check('headline', f?.headline, 'Your three biggest days all scored under 70.')
+check('bridge ties the big days to the table', f?.bridge, 'All three had 5 or more trades, and across the period the busier days scored lower:')
 check('note', f?.note, 'More trades made more money. Every red day came from the busier days. None of the busier days scored above 69.')
 const BIG = ['2026-10-22', '2026-10-27', '2026-10-19']
 const wellTraded = OCT.map(d => BIG.includes(d.date) ? { ...d, tapescore: ts(91) } : d)
@@ -60,6 +61,7 @@ check('big days all bottom third', periodFinding(worstTraded)?.headline, 'Your b
 check('big days scored top third', periodFinding(wellTraded)?.headline, 'Your biggest days were your best-traded days.')
 check('note with split reds', splitNote({ k: 3, few: { days: 4, green: 3, red: 1, avg: 100, scoreMin: 70, scoreMax: 90, scoreAvg: 80 }, many: { days: 4, green: 3, red: 1, avg: 50, scoreMin: 60, scoreMax: 80, scoreAvg: 70 } }),
   'Fewer trades made more money. 1 of your 2 red days came from the busier days.')
+check('split headline needs no bridge', periodFinding(OCT.map(d => d.date === '2026-10-22' ? { ...d, tapescore: ts(91) } : d))?.bridge ?? 'none', 'none')
 check('under 6 scored days → null', periodFinding(OCT.slice(0, 5)), null)
 
 console.log('day reasons')

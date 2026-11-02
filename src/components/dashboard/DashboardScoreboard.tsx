@@ -78,6 +78,7 @@ function FindingBlock({ finding, fallback }: { finding: Finding | null; fallback
       <h1 className={`mt-2 text-[26px] sm:text-[34px] leading-[1.12] font-bold tracking-[-0.015em] ${INK}`} style={display}>
         {finding?.headline ?? fallback}
       </h1>
+      {finding?.bridge && <p className={`mt-3 text-[16px] sm:text-[17px] leading-snug ${INK}`}>{finding.bridge}</p>}
       {s && (
         <table className="mt-4 w-full max-w-[640px] border-collapse">
           <thead>
