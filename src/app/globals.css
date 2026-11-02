@@ -418,25 +418,25 @@ html[data-theme="light"] .ts-card {
   --b-rule: #2E3548;
   --b-pos: #7FD8C8;
   --b-neg: #F08A98;
-  --b-score-high: #9CC5F2;
-  --b-score-mid: #6688B5;
-  --b-score-low: #56698C;
+  --b-score-high: #5FD39A;
+  --b-score-mid: #F2C14E;
+  --b-score-low: #F07A7A;
 }
 /* The band tucks up under the masthead (-mt-6 undoes AppMain's top padding).
    Under the demo's sticky banner it starts below it instead of sliding under. */
 .demo-banner ~ * .ts-band { margin-top: 0; }
 
-/* TapeScore on the dashboard is one blue ramp (darker = better on a light
-   page, brighter = better on a dark one) so green and red mean money only. */
+/* TapeScore on the dashboard: green / amber / red, so a weak day stands out
+   on the calendar at a glance (founder, 2026-11-02; was a blue ramp). */
 :root {
-  --score-high: #79B4E6; --score-high-ink: #08151F;
-  --score-mid: #3F6C9C;  --score-mid-ink: #FFFFFF;
-  --score-low: #3A4C6B;  --score-low-ink: #DDE3F0;
+  --score-high: #3FB97F; --score-high-ink: #04170D;
+  --score-mid: #E5B23A;  --score-mid-ink: #241800;
+  --score-low: #E0605F;  --score-low-ink: #FFFFFF;
 }
 html[data-theme="light"] {
-  --score-high: #1F4E85; --score-high-ink: #FFFFFF;
-  --score-mid: #5B82B3;  --score-mid-ink: #FFFFFF;
-  --score-low: #A9BFDB;  --score-low-ink: #1F2A44;
+  --score-high: #1F8A5B; --score-high-ink: #FFFFFF;
+  --score-mid: #E0A526;  --score-mid-ink: #2A1A00;
+  --score-low: #C8434E;  --score-low-ink: #FFFFFF;
 }
 
 /* The small caps label every dashboard card opens with. */

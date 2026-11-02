@@ -27,7 +27,7 @@ interface Props {
  * Trading days only: Mon–Fri, then a Week column with each week's result.
  * Saturday and Sunday come back only in a month that has a session on one.
  * Each day shows its result in whole dollars, "N trades · X% won", and its
- * TapeScore on the blue score chip; a bar along the bottom shows the day's
+ * TapeScore on the score chip; a bar along the bottom shows the day's
  * size against the month's biggest day (founder, 2026-11-01 — the scoreboard
  * look: white cells, green and red for money only). Cells open
  * `/session/{date}`.
@@ -171,7 +171,7 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
 
       <p className="text-[12.5px] text-gray-400">
         {biggest && maxAbs > 0 && <>The bar under each day shows its size next to {format(new Date(`${biggest.date}T12:00:00`), 'MMM d')} ({fmtUsd(biggest.eod_pnl ?? 0)}), the month&apos;s biggest win or loss. </>}
-        The blue chip is the day&apos;s TapeScore: the stronger the blue, the better.
+        The chip is the day&apos;s TapeScore: green 70+, amber 50–69, red under 50.
         <span className="sm:hidden"> Amounts are rounded here (1.3k = $1,300) — tap a day for the full session.</span>
       </p>
     </div>

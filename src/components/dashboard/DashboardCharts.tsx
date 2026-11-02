@@ -127,9 +127,8 @@ const BAND_FILL: Record<'high' | 'mid' | 'low', string> = {
   mid: 'var(--color-warn)',
   low: 'var(--color-neg)',
 }
-/** The Detailed scoreboard's score ramp — blue, so green and red mean money
- *  only there (founder, 2026-11-01; globals.css --score-*). */
-const BLUE_FILL: Record<'high' | 'mid' | 'low', string> = {
+/** The Detailed scoreboard's score colours (globals.css --score-*). */
+const SCORE_FILL: Record<'high' | 'mid' | 'low', string> = {
   high: 'var(--score-high)',
   mid: 'var(--score-mid)',
   low: 'var(--score-low)',
@@ -261,7 +260,7 @@ interface Props {
   /** Detailed scoreboard (founder, 2026-11-01): one panel — `top` (the
    *  Scouting report), then the equity curve beside Score vs money, which
    *  replaced Daily results (the calendar already shows each day's P&L).
-   *  TapeScore reads on the blue ramp. */
+   *  TapeScore reads on the green/amber/red score colours. */
   scoreboard?: { top?: ReactNode; splitK?: number | null }
 }
 
@@ -324,16 +323,16 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
               )}
             </div>
             {hasData ? (
-              <EquityChart dates={points} values={equity} scores={scores} height={230} fill={BLUE_FILL} />
+              <EquityChart dates={points} values={equity} scores={scores} height={230} fill={SCORE_FILL} />
             ) : (
               <div className="text-center text-xs text-gray-600 italic py-16">No closed sessions in this range</div>
             )}
             {hasData && scores.some(s => s != null) && (
               <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-[13px] text-gray-400">
                 <span>Strip = each day&apos;s TapeScore:</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: BLUE_FILL.high }} />Strong 70+</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: BLUE_FILL.mid }} />Fair 50–69</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: BLUE_FILL.low }} />Weak under 50</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: SCORE_FILL.high }} />Strong 70+</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: SCORE_FILL.mid }} />Fair 50–69</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-[1px]" style={{ background: SCORE_FILL.low }} />Weak under 50</span>
               </div>
             )}
           </div>

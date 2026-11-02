@@ -290,6 +290,49 @@ export interface BigDaysWhy {
   days: WhyDay[]
   /** A losing day that scored the same, said in one line; null = none. */
   twinNote: string | null
+  /** What the big days have in common, in one line; null = nothing shared. */
+  takeaway: string | null
+}
+
+/** The behaviours a day's reasons point at, in the order a takeaway names them. */
+const THREADS: { id: string; words: string; on: (d: ReadDay) => boolean }[] = [
+  { id: 'sizeAfterLoss', words: 'sized up after a loss', on: d => !!d.tapescore?.capped && (d.process_breach_rules ?? []).includes('P3') },
+  {
+    id: 'afterLoss',
+    words: 'kept trading after a loss',
+    on: d => (!!d.tapescore?.capped && (d.process_breach_rules ?? []).includes('P4')) || (d.tapescore?.chaseTrades ?? 0) > 0,
+  },
+  {
+    id: 'overtrade',
+    words: 'took more trades than your plan',
+    on: d => (!!d.tapescore?.capped && (d.process_breach_rules ?? []).includes('P5')) || (!!d.glance_read?.trades?.off && (d.glance_read.trades.usual ?? Infinity) < d.trade_count),
+  },
+  { id: 'size', words: 'risked more than usual', on: d => (!!d.tapescore?.capped && (d.process_breach_rules ?? []).includes('P2')) || !!d.glance_read?.risk?.off },
+  { id: 'limit', words: 'went past your loss limit', on: d => !!d.tapescore?.capped && (d.process_breach_rules ?? []).includes('P1') },
+  { id: 'gaveBack', words: 'gave back from the high', on: d => !!d.glance_read?.high && d.glance_read.high.afterTrades > 0 && d.glance_read.high.afterPnl < 0 },
+]
+
+/** "The common thread: you sized up after a loss and took more trades than
+ *  your plan, on all three days." Names up to two behaviours shared by every
+ *  day, else by most of them. */
+function commonThread(days: readonly ReadDay[]): string | null {
+  const n = days.length
+  if (n === 0) return null
+  const counts = THREADS.map(t => ({ t, k: days.filter(t.on).length }))
+  const all = counts.filter(c => c.k === n)
+  let pick = all.length ? all : counts.filter(c => c.k > n / 2 && c.k >= 2)
+  // "Sized up after a loss" already says the size and the loss.
+  if (pick.some(c => c.t.id === 'sizeAfterLoss')) pick = pick.filter(c => c.t.id !== 'size')
+  pick = pick.slice(0, 2)
+  if (pick.length === 0) return null
+  const k = Math.min(...pick.map(c => c.k))
+  const ids = pick.map(c => c.t.id)
+  const words = pick
+    .map(c => (c.t.id === 'afterLoss' && ids.includes('sizeAfterLoss') ? 'kept going' : c.t.words))
+    .join(' and ')
+  if (n === 1) return `In short: you ${words}.`
+  const scope = k === n ? (n === 2 ? 'on both days' : `on all ${COUNT_WORD[n] ?? n} days`) : `on ${COUNT_WORD[k] ?? k} of the ${COUNT_WORD[n] ?? n} days`
+  return `The common thread: you ${words}, ${scope}.`
 }
 
 const shortDate = (iso: string) =>
@@ -338,9 +381,11 @@ export function bigDaysWhy(days: readonly ReadDay[]): BigDaysWhy | null {
   if (twin) {
     out.push(whyDay(twin))
     const s = scoreOf(twin) as number
-    twinNote = `${shortDate(twin.date)} scored ${scores.includes(s) ? 'the same ' : ''}${s} and lost ${usd(twin.eod_pnl ?? 0)}. A score like theirs, the opposite result.`
+    twinNote = scores.includes(s)
+      ? `${shortDate(twin.date)} also scored ${s} and lost ${usd(twin.eod_pnl ?? 0)}. Same score, opposite result.`
+      : `${shortDate(twin.date)} scored ${s}, no better than these, and lost ${usd(twin.eod_pnl ?? 0)}. Same kind of trading, opposite result.`
   }
-  return { title, days: out, twinNote }
+  return { title, days: out, twinNote, takeaway: commonThread(lowBig) }
 }
 
 // ── What to do ──────────────────────────────────────────────────────────────

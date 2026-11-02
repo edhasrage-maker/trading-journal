@@ -79,6 +79,9 @@ export default function ScoutingReport({ why, actions }: { why: BigDaysWhy | nul
                   </div>
                 ))}
               </div>
+              {why.takeaway && (
+                <p className="mt-4 pt-3 border-t border-gray-800 text-[15px] sm:text-[16px] font-semibold leading-snug text-gray-100">{why.takeaway}</p>
+              )}
             </div>
           )}
 

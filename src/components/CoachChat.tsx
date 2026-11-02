@@ -81,6 +81,26 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // The closed launcher tucks away while the page scrolls down (it would sit on
+  // whatever passes under it, e.g. a score chip) and comes back on scroll up.
+  // Capture-phase so it hears the app's own scrolling <main> as well as window.
+  const [tucked, setTucked] = useState(false)
+  useEffect(() => {
+    const last = new WeakMap<Element, number>()
+    const onScroll = (e: Event) => {
+      const el = e.target === document ? document.scrollingElement : e.target
+      if (!(el instanceof Element)) return
+      const y = el.scrollTop
+      const prev = last.get(el)
+      if (prev == null) { last.set(el, y); return }
+      if (Math.abs(y - prev) < 8) return
+      last.set(el, y)
+      setTucked(y > prev && y > 80)
+    }
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    return () => document.removeEventListener('scroll', onScroll, { capture: true })
+  }, [])
+
   // ── Resizable / maximizable panel ─────────────────────────────────────────
   const [maximized, setMaximized] = useState(false)
   const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
@@ -464,7 +484,11 @@ export default function CoachChat({ isDemo = false }: { isDemo?: boolean }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40 flex items-center justify-center transition-colors"
+        className={`fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40 flex items-center justify-center transition-[background-color,transform,opacity] duration-200 ${
+          tucked ? 'translate-y-24 opacity-0 pointer-events-none' : ''
+        }`}
+        aria-hidden={tucked || undefined}
+        tabIndex={tucked ? -1 : undefined}
         title="Trade Coach"
         aria-label="Open Trade Coach"
       >
