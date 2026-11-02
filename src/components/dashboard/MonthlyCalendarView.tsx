@@ -170,7 +170,7 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
       </div>
 
       <p className="text-[12.5px] text-gray-400">
-        {biggest && maxAbs > 0 && <>The bar under each day is its P&amp;L next to your biggest day, {format(new Date(`${biggest.date}T12:00:00`), 'MMM d')} (a full bar). </>}
+        {biggest && maxAbs > 0 && <>The bar under each day shows its size next to {format(new Date(`${biggest.date}T12:00:00`), 'MMM d')} ({fmtUsd(biggest.eod_pnl ?? 0)}), the month&apos;s biggest win or loss. </>}
         The blue chip is the day&apos;s TapeScore: the stronger the blue, the better.
         <span className="sm:hidden"> Amounts are rounded here (1.3k = $1,300) — tap a day for the full session.</span>
       </p>

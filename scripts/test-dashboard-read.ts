@@ -28,13 +28,15 @@ const ts = (score: number, extra: Partial<TapeScoreResult> = {}): TapeScoreResul
 const day = (date: string, pnl: number, score: number, trades: number, extra: Partial<ReadDay> = {}): ReadDay =>
   ({ date, eod_pnl: pnl, trade_count: trades, tapescore: ts(score), ...extra })
 
+const BROKE: Partial<ReadDay> = { tapescore: ts(49, { capped: true }), process_breach_rules: ['P3'] }
 const OCT: ReadDay[] = [
   day('2026-10-07', 229, 69, 6), day('2026-10-08', 263, 68, 6), day('2026-10-09', -287, 65, 5),
   day('2026-10-12', 200, 83, 2), day('2026-10-13', 162, 81, 3), day('2026-10-14', 295, 85, 4),
-  day('2026-10-15', 198, 91, 1), day('2026-10-16', 74, 91, 2), day('2026-10-19', 773, 49, 8),
-  day('2026-10-20', 295, 69, 6), day('2026-10-21', 208, 84, 2), day('2026-10-22', 1297, 49, 11),
-  day('2026-10-23', 431, 79, 2), day('2026-10-26', 570, 67, 7), day('2026-10-27', 852, 69, 12),
-  day('2026-10-28', 680, 85, 2), day('2026-10-29', -413, 49, 15), day('2026-10-30', 174, 63, 14),
+  day('2026-10-15', 198, 91, 1), day('2026-10-16', 74, 91, 2), day('2026-10-19', 773, 49, 8, BROKE),
+  day('2026-10-20', 295, 69, 6), day('2026-10-21', 208, 84, 2), day('2026-10-22', 1297, 49, 11, BROKE),
+  day('2026-10-23', 431, 79, 2), day('2026-10-26', 570, 67, 7),
+  day('2026-10-27', 852, 69, 12, { tapescore: ts(69, { chaseTrades: 2, chaseCapped: true }) }),
+  day('2026-10-28', 680, 85, 2), day('2026-10-29', -413, 49, 15, BROKE), day('2026-10-30', 174, 63, 14),
 ]
 
 console.log('trade-count split')
@@ -53,7 +55,7 @@ check('headline', f?.headline, 'Your three biggest days all scored under 70.')
 check('note', f?.note, 'More trades made more money. Every red day came from the busier days. None of the busier days scored above 69.')
 const BIG = ['2026-10-22', '2026-10-27', '2026-10-19']
 const wellTraded = OCT.map(d => BIG.includes(d.date) ? { ...d, tapescore: ts(91) } : d)
-const worstTraded = OCT.map(d => d.date === '2026-10-27' ? { ...d, tapescore: ts(49) } : d)
+const worstTraded = OCT.map(d => d.date === '2026-10-27' ? { ...d, ...BROKE } : d)
 check('big days all bottom third', periodFinding(worstTraded)?.headline, 'Your biggest days were your worst-traded days.')
 check('big days scored top third', periodFinding(wellTraded)?.headline, 'Your biggest days were your best-traded days.')
 check('note with split reds', splitNote({ k: 3, few: { days: 4, green: 3, red: 1, avg: 100, scoreMin: 70, scoreMax: 90, scoreAvg: 80 }, many: { days: 4, green: 3, red: 1, avg: 50, scoreMin: 60, scoreMax: 80, scoreAvg: 70 } }),
@@ -84,6 +86,8 @@ check('title, same score', bigDaysWhy(worstTraded)?.title, 'Why your biggest day
 check('days in order', why?.days.map(d => d.date), ['2026-10-22', '2026-10-27', '2026-10-19', '2026-10-29'])
 check('twin note', why?.twinNote, 'Oct 29 scored the same 49 and lost $413. A score like theirs, the opposite result.')
 check('well-traded big days → null', bigDaysWhy(wellTraded), null)
+check('a big day with nothing flagged is left out', bigDaysWhy(OCT.map(d => d.date === '2026-10-27' ? { ...d, tapescore: ts(69) } : d))?.days.map(d => d.date),
+  ['2026-10-22', '2026-10-19', '2026-10-29'])
 
 console.log('what to do')
 const view = {

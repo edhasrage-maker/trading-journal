@@ -248,7 +248,7 @@ function whyDay(d: ReadDay): WhyDay {
 
 /**
  * The period's biggest days that scored low (under 70 and at or below the
- * median), with what the score caught on each, and the worst losing day whose
+ * median) and where the score caught something, with what it caught, and the worst losing day whose
  * score sat at or below theirs — the same kind of trading with the opposite
  * result. Null when the biggest days scored well, or under 5 scored days.
  */
@@ -259,7 +259,8 @@ export function bigDaysWhy(days: readonly ReadDay[]): BigDaysWhy | null {
   const big = biggestDays(days)
   const lowBig = big.filter(d => {
     const s = scoreOf(d)
-    return s != null && s < 70 && median != null && s <= median
+    // A day with nothing to point at says nothing — it is left out.
+    return s != null && s < 70 && median != null && s <= median && dayReasons(d).length > 0
   })
   if (lowBig.length === 0) return null
   const scores = lowBig.map(d => scoreOf(d) as number)

@@ -23,7 +23,7 @@ export default function DemoBanner() {
   }
 
   return (
-    <div className="sticky top-0 z-40 flex items-center justify-center gap-3 bg-amber-500/95 px-4 py-1.5 text-center text-[13px] font-medium text-gray-950 backdrop-blur">
+    <div className="demo-banner sticky top-0 z-40 flex items-center justify-center gap-3 bg-amber-500/95 px-4 py-1.5 text-center text-[13px] font-medium text-gray-950 backdrop-blur">
       <Eye className="hidden h-4 w-4 shrink-0 sm:block" />
       <span>
         You&apos;re exploring the <strong>demo</strong> — changes won&apos;t be saved.

@@ -422,6 +422,9 @@ html[data-theme="light"] .ts-card {
   --b-score-mid: #6688B5;
   --b-score-low: #56698C;
 }
+/* The band tucks up under the masthead (-mt-6 undoes AppMain's top padding).
+   Under the demo's sticky banner it starts below it instead of sliding under. */
+.demo-banner ~ * .ts-band { margin-top: 0; }
 
 /* TapeScore on the dashboard is one blue ramp (darker = better on a light
    page, brighter = better on a dark one) so green and red mean money only. */
