@@ -27,8 +27,9 @@ interface Props {
  * Trading days only: Mon–Fri, then a Week column with each week's result.
  * Saturday and Sunday come back only in a month that has a session on one.
  * Each day shows its result in whole dollars, "N trades · X% won", and its
- * TapeScore on the score chip; a bar along the bottom shows the day's
- * size against the month's biggest day (founder, 2026-11-01 — the scoreboard
+ * TapeScore on the score chip; a bar along the bottom runs to the day's high
+ * and fills to where it closed (founder, 2026-11-02; was the day's size against
+ * the month's biggest day). (2026-11-01 — the scoreboard
  * look: white cells, green and red for money only). Cells open
  * `/session/{date}`.
  */
@@ -68,9 +69,6 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
   const traded = monthDays.filter(d => d.trade_count > 0)
   const monthPnl = monthDays.reduce((s, d) => s + (d.eod_pnl ?? 0), 0)
   const monthTrades = traded.reduce((s, d) => s + d.trade_count, 0)
-  // Each day's bar is relative to this month's biggest day, win or loss.
-  const biggest = traded.reduce<DayRowData | null>((a, d) => (a == null || Math.abs(d.eod_pnl ?? 0) > Math.abs(a.eod_pnl ?? 0) ? d : a), null)
-  const maxAbs = Math.abs(biggest?.eod_pnl ?? 0)
 
   const weekStats = weeks.map(week => {
     const dates = new Set(week.filter(d => isSameMonth(d, cursor)).map(d => format(d, 'yyyy-MM-dd')))
@@ -162,7 +160,6 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
               date={date}
               cursor={cursor}
               data={byDate.get(format(date, 'yyyy-MM-dd'))}
-              maxAbs={maxAbs}
             />
           )),
           <WeekCell key={`w${wi}`} n={wi + 1} pnl={weekStats[wi].pnl} traded={weekStats[wi].traded} />,
@@ -170,7 +167,7 @@ export default function MonthlyCalendarView({ days, windowStart, windowEnd, init
       </div>
 
       <p className="text-[12.5px] text-gray-400">
-        {biggest && maxAbs > 0 && <>The bar under each day shows its size next to {format(new Date(`${biggest.date}T12:00:00`), 'MMM d')} ({fmtUsd(biggest.eod_pnl ?? 0)}), the month&apos;s biggest win or loss. </>}
+        The bar under each day runs to the day&apos;s high (its best point, counting closed trades) and fills to where it closed, so a short fill means you gave some back. A pale red bar: it was up, then closed red.
         The chip is the day&apos;s TapeScore: green 70+, amber 50–69, red under 50.
         <span className="sm:hidden"> Amounts are rounded here (1.3k = $1,300) — tap a day for the full session.</span>
       </p>
@@ -233,11 +230,20 @@ function WeekCell({ n, pnl, traded }: { n: number; pnl: number; traded: number }
   )
 }
 
-function DayCell({ date, cursor, data, maxAbs }: {
+/** How much of the day's high it kept: full width = the high (realized),
+ *  the fill = the close. Null when the day never got above zero. */
+function keptOfHigh(data: DayRowData | undefined): { fill: number; high: number; pnl: number; gaveBack: number } | null {
+  const high = data?.glance_read?.high?.peak ?? null
+  const pnl = data?.eod_pnl ?? null
+  if (high == null || pnl == null || high <= 0) return null
+  const top = Math.max(high, pnl)
+  return { fill: pnl > 0 ? Math.min(100, (pnl / top) * 100) : 0, high: top, pnl, gaveBack: Math.max(0, top - pnl) }
+}
+
+function DayCell({ date, cursor, data }: {
   date: Date
   cursor: Date
   data: DayRowData | undefined
-  maxAbs: number
 }) {
   const inMonth = isSameMonth(date, cursor)
   // Days outside the month are blank, not greyed numbers.
@@ -252,11 +258,16 @@ function DayCell({ date, cursor, data, maxAbs }: {
   // Traded days are outlined; days without trades are a quiet fill.
   const shade = hasTrades ? 'border border-gray-800 hover:border-gray-600' : 'bg-gray-950/60 border border-transparent hover:border-gray-800'
   const pnlTone = pnl != null && pnl > 0 ? 'text-green-400' : pnl != null && pnl < 0 ? 'text-red-400' : 'text-gray-300'
-  const barPct = hasTrades && pnl != null && maxAbs > 0 ? Math.min(100, (Math.abs(pnl) / maxAbs) * 100) : 0
+  const kept = hasTrades ? keptOfHigh(data) : null
+  // Worth a word when the day gave back a real slice of its high.
+  const gaveBackNote = kept && kept.gaveBack >= 20 && kept.gaveBack >= kept.high * 0.1
+    ? (kept.pnl > 0 ? `kept ${Math.round(kept.fill)}% of ${fmtUsd(kept.high).slice(1)}` : `was up ${fmtUsd(kept.high).slice(1)}`)
+    : null
 
   return (
     <Link
       href={`/session/${dateStr}`}
+      title={kept ? `High ${fmtUsd(kept.high)}, closed ${fmtUsd(kept.pnl)}` : undefined}
       className={`relative overflow-hidden min-h-[64px] sm:min-h-[84px] rounded-lg p-1 sm:p-2 pb-2 sm:pb-3 flex flex-col gap-0.5 min-w-0 transition-colors ${shade} ${isToday ? 'ring-2 ring-blue-500/70' : ''}`}
     >
       <div className="flex items-center justify-between gap-0.5">
@@ -273,11 +284,12 @@ function DayCell({ date, cursor, data, maxAbs }: {
             </b>
           )}
           <span className="hidden sm:block text-[12px] text-gray-400 leading-snug">{tradesLine(data.trade_count, data.win_rate)}</span>
+          {gaveBackNote && <span className="hidden sm:block text-[12px] text-gray-500 leading-snug">{gaveBackNote}</span>}
         </>
       )}
-      {barPct > 0 && (
-        <span className="absolute left-0 right-0 bottom-0 h-1 bg-gray-800/60" aria-hidden="true">
-          <span className={`block h-full ${pnl != null && pnl < 0 ? 'bg-red-400' : 'bg-green-400'}`} style={{ width: `${barPct}%` }} />
+      {kept && (
+        <span className={`absolute left-0 right-0 bottom-0 h-1 ${kept.pnl > 0 ? 'bg-green-400/25' : 'bg-red-400/30'}`} aria-hidden="true">
+          <span className="block h-full bg-green-400" style={{ width: `${kept.fill}%` }} />
         </span>
       )}
     </Link>

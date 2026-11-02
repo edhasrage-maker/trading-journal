@@ -258,7 +258,7 @@ interface Props {
    *  explained in words underneath. Daily Results is left to Detailed. */
   equityOnly?: boolean
   /** Detailed scoreboard (founder, 2026-11-01): one panel — `top` (the
-   *  Scouting report), then the equity curve beside Score vs money, which
+   *  Scouting report), then the equity curve beside TapeScore vs Profit, which
    *  replaced Daily results (the calendar already shows each day's P&L).
    *  TapeScore reads on the green/amber/red score colours. */
   scoreboard?: { top?: ReactNode; splitK?: number | null }
@@ -338,10 +338,10 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
           </div>
           <div className="min-w-0 px-5 sm:px-7 py-5 border-t lg:border-t-0 border-gray-800">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <h2 className="text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Score vs money</h2>
+              <h2 className="text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>TapeScore vs Profit</h2>
               {hasData && <span className="text-[13px] text-gray-400">{dailySummary(daily)}</span>}
             </div>
-            <p className="mt-1 mb-3 text-[13px] text-gray-400">Each dot is a day: how well you traded across, what it made up the side.</p>
+            <p className="mt-1 mb-3 text-[13px] text-gray-400">Each dot is a day: its TapeScore across, its profit up the side.</p>
             {dots.length > 0 ? (
               <ScoreVsMoney dots={dots} splitK={scoreboard.splitK ?? null} />
             ) : (
@@ -425,9 +425,9 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
 
 /**
  * Each day as a dot: TapeScore across, P&L up (founder, 2026-11-01). Answers
- * whether the money came from well-traded days. Filled = a day at or under
- * the period's trade-count cut (src/lib/dashboard-read.ts), hollow = over it;
- * green / red is the money. The three biggest days and the worst one are named.
+ * whether the money came from well-traded days. A winning day is filled at or
+ * under the period's trade-count cut (src/lib/dashboard-read.ts), hollow over
+ * it; a losing day is always a solid red dot. The three biggest days and the worst one are named.
  * HTML dots on a percentage grid, so text stays crisp at any width; each dot
  * opens its day.
  */
@@ -468,7 +468,7 @@ function ScoreVsMoney({ dots, splitK }: {
           {x0 < 70 && <span className="absolute top-1 right-1.5 text-[11px] font-semibold" style={{ color: 'var(--score-high)' }}>Strong 70+</span>}
           {dots.map(d => {
             const col = d.pnl >= 0 ? 'var(--color-pos)' : 'var(--color-neg)'
-            const filled = splitK == null || d.trades <= splitK
+            const filled = d.pnl < 0 || splitK == null || d.trades <= splitK
             const right = xPct(d.score) > 72
             return (
               <Link
@@ -501,7 +501,9 @@ function ScoreVsMoney({ dots, splitK }: {
             <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-full border-2" style={{ borderColor: 'var(--color-pos)' }} />{splitK + 1} or more</span>
           </>
         )}
-        <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-full border-2" style={{ borderColor: 'var(--color-neg)' }} />red day</span>
+        {dots.some(d => d.pnl < 0) && (
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ background: 'var(--color-neg)' }} />Losing day</span>
+        )}
       </div>
     </div>
   )
