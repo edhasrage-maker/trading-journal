@@ -4,12 +4,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { format, parseISO, subMonths } from 'date-fns'
 import { SlidersHorizontal, X, Loader2, Check } from 'lucide-react'
 import { PERIOD_KEY, monthName, periodBounds, periodLabel, computePeriodStats, profitFactorFor, dateSpan, type DayStat, type Period } from './DashboardStats'
-import DashboardScoreboard from './DashboardScoreboard'
+import DashboardScoreboard, { type SinceControl } from './DashboardScoreboard'
 import ScoutingReport from './ScoutingReport'
 import TradeManagementCard, { ProfitFactorCard } from '@/components/TradeManagementCard'
 import { useMfeUnit } from '@/lib/mfe-unit'
 import { mgmtView } from '@/lib/trade-management'
-import { periodFinding, tradeCountSplit, splitHistory, bigDaysWhy, scoutingActions, type ReadDay } from '@/lib/dashboard-read'
+import { periodFinding, tradeCountSplit, splitHistory, tradedSince, bigDaysWhy, scoutingActions, type ReadDay } from '@/lib/dashboard-read'
 import DashboardCharts from './DashboardCharts'
 import RecentDaysSection from './RecentDaysSection'
 import type { DayRowData } from './RecentDaysList'
@@ -27,6 +27,10 @@ const RANGES: { key: RangeKey; label: string; short: string }[] = [
   { key: 'all', label: 'All time', short: 'All' },
 ]
 const rangeLabel = (k: RangeKey) => RANGES.find(r => r.key === k)!.label
+
+/** Where the finding's "Since" header choice is kept. */
+const HISTORY_SINCE_KEY = 'dashboard-history-since-v1'
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
 
 function rangeStart(k: RangeKey, today: string): string {
   const t = parseISO(today)
@@ -118,6 +122,23 @@ export default function DashboardFilterScope({
     if (!periodLoaded) return
     try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
   }, [period, periodLoaded])
+
+  // How far back the finding's history column looks ("Since" header):
+  // 'all' | 'ytd' | a YYYY-MM-DD start. A per-browser preference.
+  const [sinceMode, setSinceMode] = useState('all')
+  const [sinceLoaded, setSinceLoaded] = useState(false)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(HISTORY_SINCE_KEY)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
+      if (raw === 'all' || raw === 'ytd' || (raw && ISO_DAY.test(raw))) setSinceMode(raw)
+    } catch { /* ignore */ }
+    setSinceLoaded(true)
+  }, [])
+  useEffect(() => {
+    if (!sinceLoaded) return
+    try { localStorage.setItem(HISTORY_SINCE_KEY, sinceMode) } catch { /* ignore */ }
+  }, [sinceMode, sinceLoaded])
 
   const [open, setOpen] = useState(false)
   const [draftSetups, setDraftSetups] = useState<string[]>([])
@@ -313,9 +334,29 @@ export default function DashboardFilterScope({
     const from = active && start ? start : bounds.start
     return tableDays.filter(d => d.date < from) as ReadDay[]
   }, [active, applied, start, bounds.start, tableDays])
-  const finding = useMemo(() => periodFinding(readDays, priorDays), [readDays, priorDays])
+  const yearStart = `${today.slice(0, 4)}-01-01`
+  const sinceStart = sinceMode === 'ytd' ? yearStart : ISO_DAY.test(sinceMode) ? sinceMode : null
+  const finding = useMemo(() => periodFinding(readDays, priorDays, sinceStart), [readDays, priorDays, sinceStart])
   const split = useMemo(() => tradeCountSplit(readDays), [readDays])
-  const splitBefore = useMemo(() => (split ? splitHistory(priorDays, split.k) : null), [split, priorDays])
+  const splitBefore = useMemo(() => (split ? splitHistory(priorDays, split.k, sinceStart) : null), [split, priorDays, sinceStart])
+  const since = useMemo<SinceControl>(() => {
+    const all = tradedSince(priorDays, null)
+    const ytd = tradedSince(priorDays, yearStart)
+    const custom = ISO_DAY.test(sinceMode) ? sinceMode : null
+    const long = (iso: string) => format(parseISO(iso), 'MMM d, yyyy')
+    return {
+      mode: sinceMode,
+      label: `Since ${format(parseISO(sinceStart ?? all.first ?? yearStart), "MMM ''yy")}`,
+      choices: [
+        { mode: 'ytd', label: `Since ${long(yearStart)}`, sub: `This year · ${ytd.days} day${ytd.days === 1 ? '' : 's'} traded` },
+        { mode: 'all', label: 'All your history', sub: all.first ? `Since ${long(all.first)} · ${all.days} days traded` : 'No earlier days yet' },
+        custom
+          ? { mode: 'custom', label: `Since ${long(custom)}`, sub: `${tradedSince(priorDays, custom).days} days traded · pick another date` }
+          : { mode: 'custom', label: 'Pick a start date…', sub: '' },
+      ],
+      onPick: setSinceMode,
+    }
+  }, [priorDays, sinceMode, sinceStart, yearStart])
   const why = useMemo(() => bigDaysWhy(readDays), [readDays])
   const liftDragScope = active ? (applied.setups.length > 0 ? null : `r:${applied.range}`) : undefined
   const profitFactor = profitFactorFor(liftDrag, liftDragScope, period, active ? label : undefined)
@@ -421,7 +462,7 @@ export default function DashboardFilterScope({
             No {applied.setups.length > 0 ? `${setupsText} ` : ''}trades in {label!.toLowerCase()}.
           </p>
         ) : (
-          <DashboardScoreboard stats={bandStats} finding={finding} />
+          <DashboardScoreboard stats={bandStats} finding={finding} since={since} />
         )}
       </section>
 

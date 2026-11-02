@@ -6,7 +6,7 @@
  * trade count per day) — the numbers the scoreboard mockup was drawn from.
  */
 import {
-  tradeCountSplit, periodFinding, splitNote, splitHistory, historyNote, dayReasons, bigDaysWhy, scoutingActions, unitAmount,
+  tradeCountSplit, periodFinding, splitNote, splitHistory, historyNote, tradedSince, dayReasons, bigDaysWhy, scoutingActions, unitAmount,
   type ReadDay,
 } from '../src/lib/dashboard-read.ts'
 import type { TapeScoreResult } from '../src/lib/tapescore.ts'
@@ -130,8 +130,15 @@ check('bridge with history ties big days to the counter-argument', fh?.bridge,
   'All three had 5 or more trades. Those busy days paid more this period, but before it they lost money:')
 check('note with history leaves the money to the table', fh?.note, 'Every red day came from the busier days. None of the busier days scored above 69.')
 check('verdict ties back to the headline', fh?.verdict,
-  'Over the 12 days you traded before this period (since Sep 1, 2026), the quieter days were the ones that paid, so your big busy days look like the exception, not your edge.')
+  'Over the 12 days you traded since Sep 1, 2026, the quieter days were the ones that paid, so your big busy days look like the exception, not your edge.')
 check('no history → no verdict', periodFinding(OCT)?.verdict, null)
+// The "Since" header: a start date narrows the days before and names the column.
+const LONG = [...PRIOR.map(d => ({ ...d, date: d.date.replace('2026-09', '2026-08') })), ...PRIOR]
+check('since keeps the later days only', splitHistory(LONG, 4, '2026-09-01') && [splitHistory(LONG, 4, '2026-09-01')!.few.days, splitHistory(LONG, 4, '2026-09-01')!.from], [6, '2026-09-01'])
+check('no since → all of it, from the first day', splitHistory(LONG, 4) && [splitHistory(LONG, 4)!.few.days, splitHistory(LONG, 4)!.from], [12, '2026-08-01'])
+check('since too late → null', splitHistory(LONG, 4, '2026-09-10'), null)
+check('verdict names the start', periodFinding(OCT, LONG, '2026-09-01')?.verdict?.startsWith('Over the 12 days you traded since Sep 1, 2026,'), true)
+check('traded since counts days', tradedSince(LONG, '2026-09-01'), { days: 12, first: '2026-09-01' })
 check('no history → no history', periodFinding(OCT)?.history, null)
 const fsame = periodFinding(OCT, PRIOR.map(d => ({ ...d, eod_pnl: d.trade_count > 4 ? 200 : 50 })))
 check('bridge, busy days paid before too', fsame?.bridge, 'All three had 5 or more trades. Those busy days paid more this period, and before it too:')

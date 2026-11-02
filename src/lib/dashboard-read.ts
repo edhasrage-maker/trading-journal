@@ -136,7 +136,7 @@ function scoreAtFraction(days: readonly ReadDay[], frac: number): number | null 
  * TapeScore's own sentence. Needs at least 6 scored days. `history` (the days
  * before the period) adds one sentence on how the same cut paid before it.
  */
-export function periodFinding(days: readonly ReadDay[], history: readonly ReadDay[] = []): Finding | null {
+export function periodFinding(days: readonly ReadDay[], history: readonly ReadDay[] = [], since: string | null = null): Finding | null {
   const scored = traded(days).filter(d => scoreOf(d) != null)
   if (scored.length < 6) return null
   const split = tradeCountSplit(days)
@@ -160,7 +160,7 @@ export function periodFinding(days: readonly ReadDay[], history: readonly ReadDa
       : `You trade better on days with more than ${tradesWord(split.k)}.`
   }
   if (!headline) return null
-  const before = split ? splitHistory(history, split.k) : null
+  const before = split ? splitHistory(history, split.k, since) : null
   const side = split && aboutBig ? bigSide(big, split) : null
   const bridge = split && aboutBig ? bigDaysBridge(big, split, before) : null
   return {
@@ -209,21 +209,30 @@ function bigDaysBridge(big: readonly ReadDay[], s: TradeCountSplit, h: SplitHist
 export interface SplitHistory {
   few: SplitGroup
   many: SplitGroup
-  /** The earliest day counted. */
+  /** Where the comparison starts: the chosen start date, else the earliest
+   *  day counted. */
   from: string
 }
 
 /** Each side needs this many days before the period for it to be said. */
 const MIN_HISTORY_SIDE = 5
 
-/** The period's trade-count cut applied to the days before the period. Null
- *  when either side has fewer than MIN_HISTORY_SIDE days. */
-export function splitHistory(history: readonly ReadDay[], k: number): SplitHistory | null {
-  const t = traded(history)
+/** The period's trade-count cut applied to the days before the period, from
+ *  `since` on when the trader picked a start (the "Since" header). Null when
+ *  either side has fewer than MIN_HISTORY_SIDE days. */
+export function splitHistory(history: readonly ReadDay[], k: number, since: string | null = null): SplitHistory | null {
+  const t = traded(history).filter(d => since == null || d.date >= since)
   const few = t.filter(d => d.trade_count <= k)
   const many = t.filter(d => d.trade_count > k)
   if (few.length < MIN_HISTORY_SIDE || many.length < MIN_HISTORY_SIDE) return null
-  return { few: group(few), many: group(many), from: t.reduce((a, d) => (d.date < a ? d.date : a), t[0].date) }
+  return { few: group(few), many: group(many), from: since ?? t.reduce((a, d) => (d.date < a ? d.date : a), t[0].date) }
+}
+
+/** Days with trades and a result from `since` on (all of them when null) —
+ *  what the "Since" menu counts beside each choice. */
+export function tradedSince(history: readonly ReadDay[], since: string | null): { days: number; first: string | null } {
+  const t = traded(history).filter(d => since == null || d.date >= since)
+  return { days: t.length, first: t.reduce<string | null>((a, d) => (a == null || d.date < a ? d.date : a), null) }
 }
 
 const signedUsd = (n: number) => `${n > 0.5 ? '+' : n < -0.5 ? '−' : ''}${usd(n)}`
@@ -242,14 +251,14 @@ export function historyNote(s: TradeCountSplit, h: SplitHistory): string {
 
 const tradesWord = (n: number) => `${n} trade${n === 1 ? '' : 's'}`
 
-/** What the days before the period mean for the headline: "Over the 177
- *  days you traded before this period (since Oct 1, 2025), the quieter days were the ones that
+/** What the days before the period mean for the headline: "Over the 142
+ *  days you traded since Jan 1, 2026, the quieter days were the ones that
  *  paid, so your big busy days look like the exception, not your edge." The
  *  money now and before is in the table; this says what it adds up to. */
 function historyVerdict(s: TradeCountSplit, h: SplitHistory, side: 'few' | 'many' | null): string {
   const nowMany = s.many.avg > s.few.avg
   const beforeMany = h.many.avg > h.few.avg
-  const span = `Over the ${h.few.days + h.many.days} days you traded before this period (since ${sinceDate(h.from)})`
+  const span = `Over the ${h.few.days + h.many.days} days you traded since ${sinceDate(h.from)}`
   if (nowMany === beforeMany) return `${span}, the ${beforeMany ? 'busier' : 'quieter'} days paid more too.`
   const big = side ? `your big ${side === 'many' ? 'busy' : 'quiet'} days look like` : 'this period looks like'
   return `${span}, the ${beforeMany ? 'busier' : 'quieter'} days were the ones that paid, so ${big} the exception, not your edge.`

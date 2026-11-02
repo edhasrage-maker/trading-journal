@@ -1,6 +1,7 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Check, ChevronDown } from 'lucide-react'
 import { tapeScoreBand, tapeScorePeriodSentence } from '@/lib/tapescore'
 import { AXIS_DESC, axisTooltip } from '@/lib/tapescore-axes'
 import type { Finding } from '@/lib/dashboard-read'
@@ -58,11 +59,99 @@ function Col({ label, info, children, className = '' }: { label: string; info?: 
   )
 }
 
+/** How far back the finding's history column looks, picked from its header. */
+export interface SinceControl {
+  /** 'all' | 'ytd' | a YYYY-MM-DD start. */
+  mode: string
+  /** The header itself: "Since Jan '26". */
+  label: string
+  choices: { mode: string; label: string; sub: string }[]
+  onPick: (mode: string) => void
+}
+
+/** The "Since Jan '26" header as a menu: this year, all your history, or a
+ *  date of your own. */
+function SinceMenu({ since }: { since: SinceControl }) {
+  const [open, setOpen] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const away = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', away)
+    document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc) }
+  }, [open])
+  const custom = /^\d{4}-\d{2}-\d{2}$/.test(since.mode) ? since.mode : ''
+  return (
+    <span ref={ref} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => { setOpen(o => !o); setPicking(false) }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`inline-flex items-center gap-1 whitespace-nowrap font-semibold ${INK} border-b border-dashed border-[var(--b-mut)] hover:border-[var(--b-ink)]`}
+      >
+        {since.label}
+        <ChevronDown className="w-3 h-3" aria-hidden="true" />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-2 z-40 w-[min(17rem,calc(100vw-2rem))] whitespace-normal text-left bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1.5">
+          <div className="px-3.5 pt-1 pb-1.5 text-[12px] text-gray-500">Compare against your days</div>
+          {since.choices.map(c => {
+            const on = c.mode === since.mode || (c.mode === 'custom' && !!custom)
+            return (
+              <button
+                key={c.mode}
+                type="button"
+                role="menuitemradio"
+                aria-checked={on}
+                onClick={() => {
+                  if (c.mode === 'custom') { setPicking(true); return }
+                  since.onPick(c.mode)
+                  setOpen(false)
+                }}
+                className={`w-full flex gap-2.5 items-start px-3.5 py-2 text-left hover:bg-gray-800 ${on ? 'bg-gray-800/70' : ''}`}
+              >
+                <span className="w-3.5 pt-0.5 text-green-400">{on && <Check className="w-3.5 h-3.5" aria-hidden="true" />}</span>
+                <span>
+                  <span className={`block text-[14px] text-gray-100 ${on ? 'font-semibold' : ''}`}>{c.label}</span>
+                  {c.sub && <span className="block text-[12px] text-gray-400">{c.sub}</span>}
+                </span>
+              </button>
+            )
+          })}
+          {picking && (
+            <div className="px-3.5 pt-1 pb-2">
+              <input
+                type="date"
+                defaultValue={custom}
+                autoFocus
+                aria-label="Start date"
+                onChange={e => {
+                  // A year still being typed reads as "0002-…"; wait for a real one.
+                  const v = e.target.value
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v >= '2000-01-01') { since.onPick(v); setOpen(false) }
+                }}
+                className="w-full bg-gray-800 border border-gray-700 rounded-md px-2 py-1 text-[14px] text-gray-100"
+              />
+            </div>
+          )}
+          <div className="mt-1 px-3.5 pt-2 pb-1 border-t border-gray-800 text-[12px] text-gray-500">
+            Remembered for next time. The Scouting report compares against the same days.
+          </div>
+        </div>
+      )}
+    </span>
+  )
+}
+
 /** The finding: one sentence, the trade-count table under it, a plain note.
  *  With enough days before the period the table gains a "Before" column (the
  *  same cut's average day back then), so the counter-argument sits in the
  *  rows it argues with; Green drops on a phone to make room. */
-function FindingBlock({ finding, fallback }: { finding: Finding | null; fallback: string }) {
+function FindingBlock({ finding, fallback, since }: { finding: Finding | null; fallback: string; since?: SinceControl }) {
   const s = finding?.split
   const h = finding?.history ?? null
   const greenCol = h ? 'hidden sm:table-cell' : ''
@@ -90,12 +179,26 @@ function FindingBlock({ finding, fallback }: { finding: Finding | null; fallback
       {s && (
         <table className="mt-4 w-full max-w-[640px] border-collapse">
           <thead>
+            {h && (
+              <tr>
+                <th colSpan={2} />
+                <th className={greenCol} />
+                <th colSpan={2} className={`pb-1 pl-3 sm:pl-5 text-center font-normal text-[12px] ${MUT}`}>
+                  <span className="block border-b border-[var(--b-rule)] pb-0.5">Avg day</span>
+                </th>
+                <th />
+              </tr>
+            )}
             <tr>
               <th className={`${th} pl-0 text-left`}><span className="sr-only">Days with</span></th>
               <th className={th}>Days</th>
               <th className={`${th} ${greenCol}`}>Green</th>
-              <th className={th}>Avg day</th>
-              {h && <th className={th} title={`Average day over the ${h.few.days + h.many.days} days you traded before this period`}>Before</th>}
+              <th className={th}>{h ? 'This period' : 'Avg day'}</th>
+              {h && (
+                <th className={th} title={`Average day over the ${h.few.days + h.many.days} days you traded before this period`}>
+                  {since ? <SinceMenu since={since} /> : 'Before'}
+                </th>
+              )}
               <th className={th}>TapeScore</th>
             </tr>
           </thead>
@@ -104,6 +207,11 @@ function FindingBlock({ finding, fallback }: { finding: Finding | null; fallback
             {row(`${s.k + 1} or more`, `${s.k + 1}+ trades`, s.many, h ? h.many.avg : null)}
           </tbody>
         </table>
+      )}
+      {s && !h && since && since.mode !== 'all' && (
+        <p className={`mt-3 text-[14px] ${MUT}`}>
+          Too few days to compare from that start: it needs 5 on each side. <SinceMenu since={since} />
+        </p>
       )}
       {finding?.note && <p className={`mt-3 text-[15px] leading-relaxed ${MUT}`}>{finding.note}</p>}
       {finding?.verdict && (
@@ -119,7 +227,7 @@ const AXES = [
   { key: 'exit' as const, name: 'Exit', tip: AXIS_DESC.exit },
 ]
 
-export default function DashboardScoreboard({ stats, finding }: { stats: PeriodStats; finding: Finding | null }) {
+export default function DashboardScoreboard({ stats, finding, since }: { stats: PeriodStats; finding: Finding | null; since?: SinceControl }) {
   const tp = stats.tapePeriod
   const fallback = tapeScorePeriodSentence(tp) ?? 'Not enough scored days to read this period yet.'
 
@@ -140,7 +248,7 @@ export default function DashboardScoreboard({ stats, finding }: { stats: PeriodS
   return (
     <>
       <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
-        <FindingBlock finding={finding} fallback={fallback} />
+        <FindingBlock finding={finding} fallback={fallback} since={since} />
 
         <div className="min-w-0 flex flex-col gap-2.5 lg:pl-8 lg:border-l border-[var(--b-rule)]">
           <div className={`text-[14px] ${MUT}`}>Net P&amp;L</div>
