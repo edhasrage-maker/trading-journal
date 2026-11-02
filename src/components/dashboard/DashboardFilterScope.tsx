@@ -9,7 +9,7 @@ import ScoutingReport from './ScoutingReport'
 import TradeManagementCard, { ProfitFactorCard } from '@/components/TradeManagementCard'
 import { useMfeUnit } from '@/lib/mfe-unit'
 import { mgmtView } from '@/lib/trade-management'
-import { periodFinding, tradeCountSplit, bigDaysWhy, scoutingActions, type ReadDay } from '@/lib/dashboard-read'
+import { periodFinding, tradeCountSplit, splitHistory, bigDaysWhy, scoutingActions, type ReadDay } from '@/lib/dashboard-read'
 import DashboardCharts from './DashboardCharts'
 import RecentDaysSection from './RecentDaysSection'
 import type { DayRowData } from './RecentDaysList'
@@ -306,8 +306,16 @@ export default function DashboardFilterScope({
     () => (active ? scoped.table : tableDays.filter(d => d.date >= bounds.start && d.date <= bounds.end)) as ReadDay[],
     [active, scoped, tableDays, bounds.start, bounds.end],
   )
-  const finding = useMemo(() => periodFinding(readDays), [readDays])
+  // Every day before the period, for "how the same cut paid before". Not under
+  // a setup filter: those days are whole sessions, the period's aren't.
+  const priorDays = useMemo(() => {
+    if (active && applied.setups.length > 0) return [] as ReadDay[]
+    const from = active && start ? start : bounds.start
+    return tableDays.filter(d => d.date < from) as ReadDay[]
+  }, [active, applied, start, bounds.start, tableDays])
+  const finding = useMemo(() => periodFinding(readDays, priorDays), [readDays, priorDays])
   const split = useMemo(() => tradeCountSplit(readDays), [readDays])
+  const splitBefore = useMemo(() => (split ? splitHistory(priorDays, split.k) : null), [split, priorDays])
   const why = useMemo(() => bigDaysWhy(readDays), [readDays])
   const liftDragScope = active ? (applied.setups.length > 0 ? null : `r:${applied.range}`) : undefined
   const profitFactor = profitFactorFor(liftDrag, liftDragScope, period, active ? label : undefined)
@@ -315,10 +323,11 @@ export default function DashboardFilterScope({
     const v = mgmtView(bandStats.mgmt, mfeUnit)
     return scoutingActions({
       split,
+      history: splitBefore,
       liftDrag: profitFactor?.view ?? null,
       mgmt: { unit: mfeUnit, wentCount: v.went.count, neverCount: v.never.count, wentMae: v.went.mae, neverMae: v.never.mae },
     })
-  }, [bandStats.mgmt, mfeUnit, split, profitFactor?.view])
+  }, [bandStats.mgmt, mfeUnit, split, splitBefore, profitFactor?.view])
 
   const spanText = bandStats.tradedDaysCount > 0
     ? `${dateSpan(active && start ? start : bounds.start, active ? today : bounds.end)} · ${bandStats.totalTradesWithPnl} trade${bandStats.totalTradesWithPnl === 1 ? '' : 's'}`

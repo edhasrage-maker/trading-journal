@@ -6,7 +6,7 @@
  * trade count per day) — the numbers the scoreboard mockup was drawn from.
  */
 import {
-  tradeCountSplit, periodFinding, splitNote, dayReasons, bigDaysWhy, scoutingActions, unitAmount,
+  tradeCountSplit, periodFinding, splitNote, splitHistory, historyNote, dayReasons, bigDaysWhy, scoutingActions, unitAmount,
   type ReadDay,
 } from '../src/lib/dashboard-read.ts'
 import type { TapeScoreResult } from '../src/lib/tapescore.ts'
@@ -97,12 +97,35 @@ const view = {
 } as LiftDragView
 const acts = scoutingActions({ split, liftDrag: view, mgmt: { unit: 'dollars', wentCount: 53, neverCount: 55, wentMae: 82, neverMae: 118 } })
 check('titles', acts.map(a => a.title), [
-  'Stop at 4 trades for a week',
+  'Keep the busy days, trade them cleaner',
   'Keep taking Break of Clusters/Bubbles entries',
   'Be pickier with entries 7:30–9:00 PT',
   'Treat a trade past $82 against you as a loser',
 ])
-check('first why', acts[0].why, 'Your days with 4 trades or fewer were all green and scored 79+. See if the money holds up.')
+check('first why, busier days paid and no history', acts[0].why, 'Your 5+ trade days made +$375 a day against +$281, but they score lower and held every red day. Fix how you trade them, not how many.')
+
+console.log('the days before the period')
+// Busier days lost money before the period: -$60 a day over 6 days, quieter +$90 over 6.
+const PRIOR: ReadDay[] = [
+  ...[1, 2, 3, 4, 5, 6].map(i => day(`2026-09-0${i}`, -60, 55, 8)),
+  ...[1, 2, 3, 4, 5, 6].map(i => day(`2026-09-1${i}`, 90, 80, 2)),
+]
+const hist = splitHistory(PRIOR, 4)
+check('history split', hist && { many: [hist.many.days, Math.round(hist.many.avg)], few: [hist.few.days, Math.round(hist.few.avg)], from: hist.from },
+  { many: [6, -60], few: [6, 90], from: '2026-09-01' })
+check('too little history → null', splitHistory(PRIOR.slice(0, 8), 4), null)
+check('history note, exception', historyNote(split!, hist!),
+  'This period was the exception. Before it (since Sep 1, 2026), days with 5 or more trades averaged −$60 a day over 6 days; days with 4 or fewer, +$90 over 6.')
+check('finding says the days before', periodFinding(OCT, PRIOR)?.before?.startsWith('This period was the exception'), true)
+check('no history → no before line', periodFinding(OCT)?.before, null)
+const withHist = scoutingActions({ split, history: hist, liftDrag: null, mgmt: null })
+check('history says cap → stop at 4', withHist[0]?.title, 'Stop at 4 trades for a week')
+check('stop why names both', withHist[0]?.why,
+  'This period your 5+ trade days made more (+$375 a day against +$281). Before it they averaged −$60 a day against +$90 on days with 4 trades or fewer. This period those quieter days were all green and scored 79+.')
+const PRIOR_BUSY = PRIOR.map(d => ({ ...d, eod_pnl: d.trade_count > 4 ? 200 : 50 }))
+const busy = scoutingActions({ split, history: splitHistory(PRIOR_BUSY, 4), liftDrag: null, mgmt: null })
+check('history agrees busier pays → keep busy days', busy[0]?.title, 'Keep the busy days, trade them cleaner')
+check('same-direction note', historyNote(split!, splitHistory(PRIOR_BUSY, 4)!).startsWith('Before this period it was the same'), true)
 check('pf source says the window', acts[1].source, 'Profit factor, last 60 sessions')
 check('unit note', acts[3].note, 'In $ because Trade management is set to $. Switch it there and this follows.')
 check('heat line needs a clear gap', scoutingActions({ split: null, liftDrag: null, mgmt: { unit: 'atr', wentCount: 53, neverCount: 55, wentMae: 0.5, neverMae: 0.55 } }), [])

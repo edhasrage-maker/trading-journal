@@ -97,6 +97,9 @@ export interface Finding {
   split: TradeCountSplit | null
   /** One or two plain sentences under the table. */
   note: string | null
+  /** How the same cut paid before the period (historyNote); null = not
+   *  enough days before it. */
+  before: string | null
 }
 
 /** The period's three biggest green days that carry a TapeScore, biggest first. */
@@ -124,9 +127,10 @@ function scoreAtFraction(days: readonly ReadDay[], frac: number): number | null 
  *   - all in the top third → "…your best-traded days."
  *   - otherwise the trade-count cut, said as which side trades better.
  * Null when there is nothing clear to say; the page then falls back to the
- * TapeScore's own sentence. Needs at least 6 scored days.
+ * TapeScore's own sentence. Needs at least 6 scored days. `history` (the days
+ * before the period) adds one sentence on how the same cut paid before it.
  */
-export function periodFinding(days: readonly ReadDay[]): Finding | null {
+export function periodFinding(days: readonly ReadDay[], history: readonly ReadDay[] = []): Finding | null {
   const scored = traded(days).filter(d => scoreOf(d) != null)
   if (scored.length < 6) return null
   const split = tradeCountSplit(days)
@@ -148,7 +152,44 @@ export function periodFinding(days: readonly ReadDay[]): Finding | null {
       : `You trade better on days with more than ${tradesWord(split.k)}.`
   }
   if (!headline) return null
-  return { headline, split, note: split ? splitNote(split) : null }
+  const before = split ? splitHistory(history, split.k) : null
+  return { headline, split, note: split ? splitNote(split) : null, before: split && before ? historyNote(split, before) : null }
+}
+
+// ── The same cut, before the period ─────────────────────────────────────────
+
+export interface SplitHistory {
+  few: SplitGroup
+  many: SplitGroup
+  /** The earliest day counted. */
+  from: string
+}
+
+/** Each side needs this many days before the period for it to be said. */
+const MIN_HISTORY_SIDE = 5
+
+/** The period's trade-count cut applied to the days before the period. Null
+ *  when either side has fewer than MIN_HISTORY_SIDE days. */
+export function splitHistory(history: readonly ReadDay[], k: number): SplitHistory | null {
+  const t = traded(history)
+  const few = t.filter(d => d.trade_count <= k)
+  const many = t.filter(d => d.trade_count > k)
+  if (few.length < MIN_HISTORY_SIDE || many.length < MIN_HISTORY_SIDE) return null
+  return { few: group(few), many: group(many), from: t.reduce((a, d) => (d.date < a ? d.date : a), t[0].date) }
+}
+
+const signedUsd = (n: number) => `${n > 0.5 ? '+' : n < -0.5 ? '−' : ''}${usd(n)}`
+const sinceDate = (iso: string) =>
+  new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+
+/** "This period was the exception. Before it (since Jan 6, 2026), days with
+ *  5 or more trades averaged −$64 a day over 41 days; days with 4 or fewer,
+ *  +$88 over 37." */
+export function historyNote(s: TradeCountSplit, h: SplitHistory): string {
+  const nowMany = s.many.avg > s.few.avg
+  const beforeMany = h.many.avg > h.few.avg
+  const lead = nowMany === beforeMany ? 'Before this period it was the same' : 'This period was the exception'
+  return `${lead}. Before it (since ${sinceDate(h.from)}), days with ${s.k + 1} or more trades averaged ${signedUsd(h.many.avg)} a day over ${h.many.days} days; days with ${s.k} or fewer, ${signedUsd(h.few.avg)} over ${h.few.days}.`
 }
 
 const tradesWord = (n: number) => `${n} trade${n === 1 ? '' : 's'}`
@@ -327,20 +368,41 @@ export interface MgmtRead {
  *   4. a heat line, when trades that never got going went clearly further
  *      against you (20%+, 10+ trades each side) than the ones that worked.
  */
-export function scoutingActions({ split, liftDrag, mgmt }: {
+export function scoutingActions({ split, history = null, liftDrag, mgmt }: {
   split: TradeCountSplit | null
+  /** The same cut over the days before the period (splitHistory). */
+  history?: SplitHistory | null
   liftDrag: LiftDragView | null
   mgmt: MgmtRead | null
 }): ScoutAction[] {
   const out: ScoutAction[] = []
   if (split && (split.few.scoreAvg ?? 0) > (split.many.scoreAvg ?? 0)) {
-    const f = split.few
-    const allGreen = f.green === f.days
-    if (allGreen || (f.scoreMin ?? 0) >= 70) {
+    // The quieter days trade better. Whether to cap trades depends on the
+    // money: before the period when there is enough of it, else this period.
+    const { k, few: f, many: m } = split
+    const moreWord = `${k + 1}+ trade days`
+    const fewWord = `${tradesWord(k)} or fewer`
+    const nowMany = m.avg > f.avg
+    const capPays = history ? history.few.avg >= history.many.avg : !nowMany
+    if (capPays) {
+      const quality = `${f.green === f.days ? 'all green' : `green ${f.green} of ${f.days}`}${f.scoreMin != null ? ` and scored ${f.scoreMin}+` : ''}`
       out.push({
-        title: `Stop at ${tradesWord(split.k)} for a week`,
-        why: `Your days with ${tradesWord(split.k)} or fewer were ${allGreen ? 'all green' : `green ${f.green} of ${f.days}`}${f.scoreMin != null ? ` and scored ${f.scoreMin}+` : ''}. See if the money holds up.`,
-        source: 'What this period says',
+        title: `Stop at ${tradesWord(k)} for a week`,
+        why: history && nowMany
+          ? `This period your ${moreWord} made more (${signedUsd(m.avg)} a day against ${signedUsd(f.avg)}). Before it they averaged ${signedUsd(history.many.avg)} a day against ${signedUsd(history.few.avg)} on days with ${fewWord}. This period those quieter days were ${quality}.`
+          : history
+            ? `Your days with ${fewWord} were ${quality}, and they paid more before this period too (${signedUsd(history.few.avg)} a day against ${signedUsd(history.many.avg)}).`
+            : `Your days with ${fewWord} were ${quality}. See if the money holds up.`,
+        source: history ? 'What this period says, and the days before it' : 'What this period says',
+      })
+    } else {
+      const reds = f.red + m.red
+      out.push({
+        title: 'Keep the busy days, trade them cleaner',
+        why: history
+          ? `Your ${moreWord} paid more this period (${signedUsd(m.avg)} a day against ${signedUsd(f.avg)}) and before it (${signedUsd(history.many.avg)} against ${signedUsd(history.few.avg)}), but they score lower. Fix how you trade them, not how many.`
+          : `Your ${moreWord} made ${signedUsd(m.avg)} a day against ${signedUsd(f.avg)}, but they score lower${m.red > 0 ? ` and held ${m.red === reds ? (reds === 1 ? 'your red day' : 'every red day') : `${m.red} of your ${reds} red days`}` : ''}. Fix how you trade them, not how many.`,
+        source: history ? 'What this period says, and the days before it' : 'What this period says',
       })
     }
   }

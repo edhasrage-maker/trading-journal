@@ -96,6 +96,9 @@ function FindingBlock({ finding, fallback }: { finding: Finding | null; fallback
         </table>
       )}
       {finding?.note && <p className={`mt-3 text-[15px] leading-relaxed ${MUT}`}>{finding.note}</p>}
+      {finding?.before && (
+        <p className={`mt-2.5 pl-3 border-l-2 border-[var(--b-pos)] text-[15px] leading-relaxed ${INK}`}>{finding.before}</p>
+      )}
     </div>
   )
 }
