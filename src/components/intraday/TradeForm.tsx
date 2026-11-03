@@ -644,6 +644,42 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
     )
   )
 
+  // "Copy tags from..." — list other trades on the same day, ordered by
+  // entry_time, so the user can clone a prior trade's tagging into this one in
+  // a single click. Merges with current tags (deduped), never replaces. In the
+  // full log and the drawer (founder 2026-11-03 looked for it in the drawer).
+  const copyTagsSelect = (() => {
+    const others = (dayTrades ?? [])
+      .filter(t => t.id !== trade?.id && Object.keys(t.tags_json ?? {}).length > 0)
+      .sort((a, b) => (a.entry_time ?? '').localeCompare(b.entry_time ?? ''))
+    if (others.length === 0) return null
+    return (
+      <select
+        value=""
+        onChange={e => {
+          const src = others.find(t => t.id === e.target.value)
+          if (!src) return
+          set('tags', mergeTradeTags(form.tags, src.tags_json as TradeTags))
+          e.target.value = '' // reset so the same option can be re-picked later
+        }}
+        className="bg-gray-800 border border-gray-700 text-gray-300 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500"
+        title="Copy tags from another trade on this day (additive — won't replace existing tags)"
+      >
+        <option value="">Copy tags from…</option>
+        {others.map(t => {
+          const time = t.entry_time ? new Date(t.entry_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
+          const setup = (t.tags_json as TradeTags | null)?.setups?.[0] ?? 'untagged'
+          const dir = t.direction === 'long' ? 'L' : t.direction === 'short' ? 'S' : '—'
+          return (
+            <option key={t.id} value={t.id}>
+              {time} · {dir} · {setup}
+            </option>
+          )
+        })}
+      </select>
+    )
+  })()
+
   // Notes — first in the drawer: typing them fills the tags below (founder
   // 2026-11-03: "put it at the top not bottom"). The full form keeps them
   // after Trade Details, still above its tags.
@@ -839,11 +875,14 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
         {/* Tags (compact) — the same TagSelector the full form uses, so every
             category (setup, order flow, mistakes, emotions…) is fixable during
             review, which is what the recap is actually for. The full form's
-            extras — AI "Suggest from notes" and "Copy tags from…" — stay behind
-            the full log to keep the drawer a quick-correction surface. */}
+            extra AI "Suggest from notes" stays behind the full log to keep the
+            drawer a quick-correction surface; "Copy tags from…" is in both. */}
         {compact && (
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Tags</label>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</label>
+              {copyTagsSelect}
+            </div>
             <TagSelector
               tags={allTags}
               selected={form.tags}
@@ -878,41 +917,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
                 Suggest from notes
               </button>
             </div>
-            {(() => {
-              // "Copy tags from..." — list other trades on the same day,
-              // ordered by entry_time, so the user can clone a prior trade's
-              // tagging into this one in a single click. Merges with current
-              // tags (deduped), never replaces.
-              const others = (dayTrades ?? [])
-                .filter(t => t.id !== trade?.id && Object.keys(t.tags_json ?? {}).length > 0)
-                .sort((a, b) => (a.entry_time ?? '').localeCompare(b.entry_time ?? ''))
-              if (others.length === 0) return null
-              return (
-                <select
-                  value=""
-                  onChange={e => {
-                    const src = others.find(t => t.id === e.target.value)
-                    if (!src) return
-                    set('tags', mergeTradeTags(form.tags, src.tags_json as TradeTags))
-                    e.target.value = '' // reset so the same option can be re-picked later
-                  }}
-                  className="bg-gray-800 border border-gray-700 text-gray-300 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500"
-                  title="Copy tags from another trade on this day (additive — won't replace existing tags)"
-                >
-                  <option value="">Copy tags from…</option>
-                  {others.map(t => {
-                    const time = t.entry_time ? new Date(t.entry_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
-                    const setup = (t.tags_json as TradeTags | null)?.setups?.[0] ?? 'untagged'
-                    const dir = t.direction === 'long' ? 'L' : t.direction === 'short' ? 'S' : '—'
-                    return (
-                      <option key={t.id} value={t.id}>
-                        {time} · {dir} · {setup}
-                      </option>
-                    )
-                  })}
-                </select>
-              )
-            })()}
+            {copyTagsSelect}
           </div>
           <TagSelector
             tags={allTags}

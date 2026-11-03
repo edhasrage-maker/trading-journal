@@ -304,6 +304,7 @@ export default function TradeOpenPanel({
               date={date}
               allTags={allTags}
               trade={t}
+              dayTrades={trades}
               defaultSymbol={defaultSymbol}
               onTagCreated={onTagCreated}
               onSave={saved => { dirtyRef.current = false; onSave(saved) }}
