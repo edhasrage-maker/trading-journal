@@ -15,7 +15,7 @@ export const revalidate = 0
 export default async function ReviewLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
   const scope = await resolveReviewScope(supabase)
-  // Replay Review: every signed-in trader but the demo (deep-dive-access.ts).
+  // Replay Review: every signed-in trader (deep-dive-access.ts).
   const { data: { user } } = await supabase.auth.getUser()
   const deepDive = deepDiveAllowed(user?.email)
 

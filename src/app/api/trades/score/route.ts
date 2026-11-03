@@ -38,9 +38,9 @@ const BUDGET_MS = 40_000
  *     written, ask again in a minute
  * An id that is not one of the caller's trades is simply absent from `results`.
  *
- * ACCESS. Same rule as Deep Dive (deep-dive-access.ts): the demo
- * gets a 404, as for a route that does not exist. The local build is always
- * allowed and reads Sierra .scid files instead of the tape.
+ * ACCESS. Same rule as Deep Dive (deep-dive-access.ts). The demo never gets
+ * here: it writes, and src/proxy.ts turns the demo's writes away. The local
+ * build is always allowed and reads Sierra .scid files instead of the tape.
  *
  * DATA. Market data only is read with the server key (the private tick-tape
  * bucket), never another user's rows. Per-session numbers are cached as small

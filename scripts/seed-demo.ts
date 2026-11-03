@@ -17,6 +17,10 @@ import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { dayAchievementIds, type AchievementTrade } from '../src/lib/achievements'
 import { ptDateSodToUtcMs, todayPT } from '../src/lib/pt-time'
+import { FlowScoreLoader, tapeFlowSource } from '../src/lib/orderflow/server/flow-score-loader'
+import { supabaseTapeStore } from '../src/lib/orderflow/server/tape-store'
+import { readEntryContexts } from '../src/lib/orderflow/server/entry-context-run'
+import { scoreTrades, FLOW_TRADE_COLUMNS, type FlowTradeRecord, type FlowTradeStore } from '../src/lib/orderflow/server/flow-score-run'
 
 for (const l of readFileSync('.env.public-feed', 'utf8').split(/\r?\n/)) {
   const m = l.match(/^([A-Z_]+)=(.*)$/); if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
@@ -700,6 +704,49 @@ async function seed(uid: string, days: Array<DayPlan & { date: string }>) {
   console.log(`seeded ${days.length} days, ${totalTrades} trades, ${weeks} weekly recaps (AI panels pre-baked)`)
 }
 
+/**
+ * Read each demo trade's Score from the tick tape, the way POST /api/trades/score
+ * does when a trader opens one (entry rules' snapshot first, then the order-flow
+ * Score, read-merge into review_json). The demo can't make that POST itself —
+ * src/proxy.ts turns its writes away — so without this every demo trade in
+ * Replay would sit on "couldn't score".
+ */
+async function scoreDemoTrades(uid: string) {
+  const { data: rows, error } = await sb.from('trades').select('id').eq('user_id', uid)
+  if (error) throw new Error(`demo trades: ${error.message}`)
+  const ids = (rows ?? []).map((r: { id: string }) => r.id)
+  // every read and write is pinned to the demo's own rows
+  const store: FlowTradeStore = {
+    async read(want) {
+      const { data, error } = await sb.from('trades').select(FLOW_TRADE_COLUMNS).eq('user_id', uid).in('id', want)
+      if (error) throw new Error(error.message)
+      return (data ?? []) as FlowTradeRecord[]
+    },
+    async readOne(id) {
+      const { data, error } = await sb.from('trades').select(FLOW_TRADE_COLUMNS).eq('user_id', uid).eq('id', id).maybeSingle()
+      if (error) throw new Error(error.message)
+      return (data ?? null) as FlowTradeRecord | null
+    },
+    async writeReview(id, review) {
+      const { error } = await sb.from('trades').update({ review_json: review }).eq('user_id', uid).eq('id', id)
+      if (error) throw new Error(error.message)
+    },
+  }
+  const l = new FlowScoreLoader(tapeFlowSource(supabaseTapeStore(sb), { cache: null }), { cacheWrite: false })
+  const loader = () => l
+  const entry = await readEntryContexts(store, ids, loader)
+  const flow = await scoreTrades(store, ids, loader)
+  const tally = (res: Record<string, { status: string }>) => {
+    const c: Record<string, number> = {}
+    for (const r of Object.values(res)) c[r.status] = (c[r.status] ?? 0) + 1
+    return Object.entries(c).map(([k, n]) => `${n} ${k}`).join(', ')
+  }
+  console.log(`scores: entry snapshots ${tally(entry)}; order-flow Scores ${tally(flow)}`)
+  for (const [id, r] of [...Object.entries(entry), ...Object.entries(flow)]) {
+    if (!['read', 'current', 'scored'].includes(r.status)) console.log(`  ${id}: ${r.status}${'reason' in r && r.reason ? ` — ${r.reason}` : ''}`)
+  }
+}
+
 async function main() {
   console.log(`\n=== seed-demo (${commit ? 'COMMIT' : 'DRY RUN'}${teardown ? ', TEARDOWN' : ''}) → ${PUBLIC_REF} ===`)
   const uid = await getOrCreateUser()
@@ -722,6 +769,7 @@ async function main() {
   }
   await wipe(uid) // idempotent re-seed
   await seed(uid, days)
+  await scoreDemoTrades(uid)
   console.log('\nDONE. Demo user ready:', DEMO_EMAIL)
 }
 

@@ -47,7 +47,8 @@ export default function CallBar({
         body: JSON.stringify({ verdict: { call, note } }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) { setStatus(data.error ?? `Save failed (${res.status})`); return }
+      // 403 is the read-only demo (src/proxy.ts); its full sentence won't fit the bar
+      if (!res.ok) { setStatus(res.status === 403 ? 'Demo · sign up to save calls' : data.error ?? `Save failed (${res.status})`); return }
       onSaved(tradeId, { call, note: note.trim() })
       setStatus('Saved')
     } catch (e) {

@@ -9,7 +9,7 @@ export type SessionScope = 'day' | 'week' | 'month' | 'replay'
 
 /**
  * Session's range switch — `<day> · Week · Month` (mockup: SessionOnePage),
- * plus Replay Review (every signed-in trader but the demo).
+ * plus Replay Review (every signed-in trader).
  *
  * The day segment names the day it opens rather than saying "Today", so the
  * date is always on screen. On the day page itself it IS the date picker: a

@@ -52,8 +52,8 @@ export default function CoachReview({ tradeId, unlocked, full, draft, myCall, on
   draft: { call: Call | null; note: string } | null
   /** Your saved call, shown above the read. */
   myCall: { call: Call; note: string } | null
-  /** Saves the call bar's pick (the call bar's own save); true when it saved. */
-  onSaveCall: () => Promise<boolean>
+  /** Saves the call bar's pick (the call bar's own save): true when it saved, else false or the reason (the demo's read-only answer). */
+  onSaveCall: () => Promise<boolean | string>
   /** Your profile uses order flow (the "What it reads" words). */
   orderFlow: boolean
   /** Phone tab: bigger text and targets. */
@@ -101,13 +101,13 @@ export default function CoachReview({ tradeId, unlocked, full, draft, myCall, on
     if (!draft?.call) return
     setPhase('saving'); setErr(null)
     const ok = await onSaveCall().catch(() => false)
-    if (!ok) { setErr('Your call didn\'t save. Try again.'); setPhase('error'); return }
+    if (ok !== true) { setErr(typeof ok === 'string' ? ok : 'Your call didn\'t save. Try again.'); setPhase('error'); return }
     await ask()
   }
   const saveOnly = async () => {
     if (!draft?.call) return
     const ok = await onSaveCall().catch(() => false)
-    if (!ok) { setErr('Your call didn\'t save. Try again.'); setPhase('error') }
+    if (ok !== true) { setErr(typeof ok === 'string' ? ok : 'Your call didn\'t save. Try again.'); setPhase('error') }
   }
 
   const t = big ? 'text-[13.5px]' : 'text-[12.5px]'

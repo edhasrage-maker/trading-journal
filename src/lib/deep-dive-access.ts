@@ -1,23 +1,20 @@
 import { LOCAL_FEATURES_ENABLED } from './local-features'
-import { isDemoEmail } from './demo'
 
 /**
  * Who may use Deep Dive Review (Replay Review).
  *
  *  Local build   — always (it is the owner's own machine).
- *  Hosted build  — every signed-in trader except the read-only demo account.
- *    The demo's seeded trades sit outside the 90 days of tick tape the site
- *    keeps, so every replay there would only show "no tick data"; the demo also
- *    can't save a call. Until the demo is re-seeded onto recent days, it keeps
- *    the page hidden.
+ *  Hosted build  — every signed-in trader, the read-only demo included. The
+ *    demo can call, reveal and play forward, but saves nothing: src/proxy.ts
+ *    turns away its writes (the call, tag edits, Coach Review, the Score read),
+ *    so its trades are scored when they are seeded (scripts/seed-demo.ts).
  *
  * Opened to everyone 2026-11-02 (was a private beta behind the
- * DEEP_DIVE_BETA_EMAILS env var, which is no longer read). Every surface still
- * checks it on the server — the Review tab, the page and the API routes — so
- * the demo can neither see the tab nor reach the data by typing the URL.
+ * DEEP_DIVE_BETA_EMAILS env var, which is no longer read); the demo joined the
+ * same day, once it was seeded onto days inside the tick tape. Every surface
+ * still checks this on the server — the Review tab, the page and the API routes.
  */
 export function deepDiveAllowed(email: string | null | undefined): boolean {
   if (LOCAL_FEATURES_ENABLED) return true
-  if (!email) return false
-  return !isDemoEmail(email)
+  return !!email
 }

@@ -648,13 +648,14 @@ export default function DeepDiveWorkspace({
   const coachUnlocked = !!selectedId && (hide ? calledHere.has(selectedId) : !!savedCall?.call)
   const coachCall = selectedId ? (hide ? saved[selectedId] ?? null : savedCall?.call ? { call: savedCall.call, note: savedCall.note ?? '' } : null) : null
   /** "Save my call and ask": the call bar's pick, saved exactly as its own Save does. */
-  const saveCall = useCallback(async () => {
+  const saveCall = useCallback(async (): Promise<boolean | string> => {
     if (!selectedId || !myDraft?.call) return false
     const v = { call: myDraft.call, note: myDraft.note.trim() }
     const res = await fetch(`/api/trades/${selectedId}/review`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ verdict: v }),
     })
-    if (!res.ok) return false
+    // 403 is the read-only demo (src/proxy.ts): pass its reason on
+    if (!res.ok) return res.status === 403 ? ((await res.json().catch(() => ({}))).error ?? false) : false
     onSaved(selectedId, v)
     return true
   }, [selectedId, myDraft, onSaved])

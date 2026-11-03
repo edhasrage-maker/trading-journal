@@ -8,7 +8,7 @@
  * the hours it needs, cuts at the fill in memory and sends only the result.
  */
 import { gzipSync, gunzipSync } from 'zlib'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'fs'
 import { join, dirname } from 'path'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { contractFileForRoot } from '@/lib/futures-contracts'
@@ -31,6 +31,8 @@ export interface TapeStore {
   get(key: string): Promise<Uint8Array | null>
   put(key: string, data: Uint8Array, contentType: string): Promise<void>
   remove(keys: string[]): Promise<void>
+  /** Names directly under a folder (e.g. a root's date folders). Throws when it can't tell. */
+  list?(prefix: string): Promise<string[]>
 }
 
 /** The private `tick-tape` bucket. `sb` must be a secret-key (service) client. */
@@ -57,6 +59,11 @@ export function supabaseTapeStore(sb: SupabaseClient<any, any, any>): TapeStore 
         if (error) throw new Error(`tape remove: ${error.message}`)
       }
     },
+    async list(prefix) {
+      const { data, error } = await bucket.list(prefix, { limit: 1000 })
+      if (error || !data) throw new Error(`tape list ${prefix}: ${error?.message ?? 'no data'}`)
+      return data.map(o => o.name)
+    },
   }
 }
 
@@ -66,14 +73,32 @@ export function fsTapeStore(dir: string): TapeStore {
     async get(key) { const p = join(dir, key); return existsSync(p) ? new Uint8Array(readFileSync(p)) : null },
     async put(key, data) { const p = join(dir, key); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, data) },
     async remove(keys) { for (const k of keys) rmSync(join(dir, k), { force: true }) },
+    async list(prefix) { const p = join(dir, prefix); return existsSync(p) ? readdirSync(p) : [] },
   }
 }
 
+/**
+ * The root's index, or an empty one for a root that has never been published.
+ *
+ * `get` can't tell "no such object" from a failed download, so an unreadable
+ * index is only taken as empty when the root has no date folders either.
+ * Otherwise this throws: the feed would publish a few new hours into a blank
+ * index and save it over the real one, hiding every older day from Replay
+ * (happened to NQ 2026-11-02 — 78 days dropped to 3; scripts/rebuild-tape-index.ts
+ * rebuilds an index from its chunks).
+ */
 export async function loadTapeIndex(store: TapeStore, root: OfRoot): Promise<TapeIndex> {
   const raw = await store.get(tapeIndexKey(root))
-  if (!raw) return emptyTapeIndex(root)
-  const idx = JSON.parse(Buffer.from(raw).toString('utf8')) as TapeIndex
-  return idx?.v === 1 && idx.days ? idx : emptyTapeIndex(root)
+  let idx: TapeIndex | null = null
+  if (raw) {
+    try { idx = JSON.parse(Buffer.from(raw).toString('utf8')) as TapeIndex } catch { idx = null }
+  }
+  if (idx?.v === 1 && idx.days) return idx
+  if (store.list) {
+    const dated = (await store.list(root)).filter(n => /^\d{4}-\d{2}-\d{2}$/.test(n))
+    if (dated.length) throw new Error(`${root} tape index could not be read but ${dated.length} days of chunks exist — not starting a blank index`)
+  }
+  return emptyTapeIndex(root)
 }
 
 export async function saveTapeIndex(store: TapeStore, index: TapeIndex): Promise<void> {

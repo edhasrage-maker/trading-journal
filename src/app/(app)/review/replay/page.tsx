@@ -41,7 +41,7 @@ export default async function ReplayPage({
 }) {
   const sp = await searchParams
   const supabase = await createClient()
-  // For the read-only demo this page does not exist (deep-dive-access.ts).
+  // Signed-in traders only (deep-dive-access.ts).
   const { data: { user } } = await supabase.auth.getUser()
   if (!deepDiveAllowed(user?.email)) notFound()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose client, matching the other Review pages
