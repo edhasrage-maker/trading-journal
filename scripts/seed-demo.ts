@@ -192,6 +192,9 @@ async function wipe(uid: string) {
     await sb.from('trades').delete().in('trading_day_id', dayIds)
     await sb.from('market_context').delete().in('trading_day_id', dayIds)
   }
+  // and any demo trade filed under a day that isn't the demo's (an early seed
+  // run left 15 on the founder's June/July days; removed 2026-11-03)
+  await sb.from('trades').delete().eq('user_id', uid)
   await sb.from('trading_days').delete().eq('user_id', uid)
   await sb.from('trade_tags').delete().eq('user_id', uid)
   await sb.from('weekly_recap').delete().eq('user_id', uid)
