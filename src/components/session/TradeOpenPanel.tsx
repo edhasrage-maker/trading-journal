@@ -295,7 +295,10 @@ export default function TradeOpenPanel({
               </button>
             </div>
             <TradeForm
-              key={t.id}
+              // Re-read the row when the coach's read (or "Use this") fills
+              // Stop/TP1 from the picture slot above, so a later save here
+              // doesn't write the old empty values back.
+              key={`${t.id}:${t.stop_price ?? ''}:${t.tp1_price ?? ''}`}
               compact
               hideScreenshot={!live}
               date={date}

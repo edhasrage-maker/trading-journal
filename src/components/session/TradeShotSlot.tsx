@@ -1,13 +1,27 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Film, Loader2, Upload } from 'lucide-react'
+import { Check, Eye, Film, Loader2, Upload } from 'lucide-react'
 import PinPlacement, { type Pin, type PinType } from '@/components/intraday/PinPlacement'
 import FrameNudge from '@/components/FrameNudge'
 import BrowserFrameNudge from '@/components/BrowserFrameNudge'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { deleteBlob } from '@/lib/storage'
-import type { Trade } from '@/lib/supabase/types'
+import { screenshotStoragePath } from '@/lib/storage-url'
+import { aiLimitFor } from '@/lib/ai-usage'
+import type { DetectedLevels, Trade } from '@/lib/supabase/types'
+
+const PT_STAMP = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+})
+/** 7,683.50 / 28,762: ticks keep two decimals, whole points none. */
+const fmtLevel = (n: number): string =>
+  n.toLocaleString('en-US', Number.isInteger(n) ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+type SavedRead = {
+  text?: string; generated_at?: string; detected_levels?: DetectedLevels; auto_applied?: string[]
+  video_file?: string; screenshot_delta_sec?: number; screenshot_source?: string
+}
 
 /**
  * The trade drawer's picture slot (founder-approved mockup 2A, 2026-11-02):
@@ -24,6 +38,13 @@ import type { Trade } from '@/lib/supabase/types'
  * Saves go straight to the row (upload, then PATCH) and hand the saved trade to
  * `onSaved`. The drawer's compact log leaves the screenshot out of its own save,
  * so the two never overwrite each other.
+ *
+ * "Read with the coach" (mockup 2D, 2026-11-02) sends the saved screenshot to the
+ * same call the recap's recording run makes (/api/recap/commentary): one coach
+ * read returns a few sentences on the trade plus the stop/target off the chart.
+ * Only on a press, never on its own, and a trade already read shows its saved
+ * read for free. A "high" level read fills an EMPTY Stop/TP1 by itself (the
+ * route's rule); anything less certain waits for "Use this".
  */
 export default function TradeShotSlot({
   trade: t, date, pins, onZoom, onSaved, actions,
@@ -43,9 +64,9 @@ export default function TradeShotSlot({
 
   // recording_commentary is jsonb, but legacy rows can come back as a JSON
   // string — tolerate both (as TradeForm does).
-  const rec = ((): { video_file?: string; screenshot_delta_sec?: number; screenshot_source?: string } | null => {
+  const rec = ((): SavedRead | null => {
     const raw = t.recording_commentary as unknown
-    if (raw && typeof raw === 'object') return raw as { video_file?: string; screenshot_delta_sec?: number; screenshot_source?: string }
+    if (raw && typeof raw === 'object') return raw as SavedRead
     if (typeof raw === 'string') { try { return JSON.parse(raw) } catch { return null } }
     return null
   })()
@@ -53,6 +74,73 @@ export default function TradeShotSlot({
   const delta = rec?.screenshot_delta_sec ?? 0
   const canNudge = !!t.entry_time && (LOCAL_FEATURES_ENABLED ? !!videoFile : true)
   const fromRecording = !!t.screenshot_url && rec?.screenshot_source === 'obs'
+
+  // The coach read works off the saved screenshot's storage path (the hosted
+  // bucket is private; the route reads it back server-side).
+  const shotPath = !LOCAL_FEATURES_ENABLED ? screenshotStoragePath(t.screenshot_url) : null
+  const [reading, setReading] = useState(false)
+  const [readError, setReadError] = useState<string | null>(null)
+  const [applying, setApplying] = useState<'stop_price' | 'tp1_price' | null>(null)
+
+  const readWithCoach = useCallback(async () => {
+    if (!shotPath) return
+    setReading(true)
+    setReadError(null)
+    try {
+      const res = await fetch('/api/recap/commentary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'screenshot', frames: [{ id: t.id, path: shotPath }] }),
+      })
+      const data = await res.json().catch(() => ({})) as {
+        error?: string
+        commentary?: Record<string, string>
+        detected_levels?: Record<string, DetectedLevels>
+        auto_applied?: Record<string, Partial<{ stop_price: number; tp1_price: number }>>
+        model?: string
+      }
+      if (!res.ok) { setReadError(data.error ?? 'The coach could not read this screenshot.'); return }
+      const text = data.commentary?.[t.id]
+      if (!text) { setReadError('The coach could not read this screenshot.'); return }
+      const applied = data.auto_applied?.[t.id] ?? {}
+      // The route saved all of this to the row; mirror it so the drawer shows it now.
+      onSaved({
+        ...t,
+        ...applied,
+        recording_commentary: {
+          ...(rec ?? {}),
+          text,
+          model: data.model,
+          generated_at: new Date().toISOString(),
+          detected_levels: data.detected_levels?.[t.id],
+          auto_applied: Object.keys(applied).length ? Object.keys(applied) : undefined,
+        } as Trade['recording_commentary'],
+      })
+    } catch {
+      setReadError('Network error reading the screenshot')
+    } finally {
+      setReading(false)
+    }
+  }, [shotPath, t, rec, onSaved])
+
+  const applyLevel = useCallback(async (field: 'stop_price' | 'tp1_price', value: number) => {
+    setApplying(field)
+    setReadError(null)
+    try {
+      const res = await fetch(`/api/trades/${t.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      })
+      const saved = await res.json().catch(() => ({})) as Trade & { error?: string }
+      if (!res.ok) { setReadError(saved.error ?? 'Could not save that level'); return }
+      onSaved(saved)
+    } catch {
+      setReadError('Network error saving the level')
+    } finally {
+      setApplying(null)
+    }
+  }, [t.id, onSaved])
 
   const frameSaved = useCallback((url: string) => {
     if (t.screenshot_url && t.screenshot_url !== url) void deleteBlob(t.screenshot_url)
@@ -172,7 +260,7 @@ export default function TradeShotSlot({
       {nudge}
       {error && <p className="text-xs text-red-400">{error}</p>}
 
-      {(actions || (t.screenshot_url && canNudge)) && (
+      {(actions || (t.screenshot_url && canNudge) || shotPath) && (
         <div className="flex flex-wrap items-center gap-2">
           {actions}
           {t.screenshot_url && canNudge && !picking && (
@@ -185,13 +273,116 @@ export default function TradeShotSlot({
               <Film className="w-3.5 h-3.5" /> Recording
             </button>
           )}
-          {fromRecording && !picking && (
+          {shotPath && !picking && (
+            <button
+              type="button"
+              onClick={() => void readWithCoach()}
+              disabled={reading}
+              className={`${btn} disabled:opacity-60 ${rec?.text
+                ? 'bg-gray-900 border border-gray-700 text-gray-200 hover:bg-gray-800'
+                : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+            >
+              {reading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+              {reading ? 'Reading…' : rec?.text ? 'Read again' : 'Read with the coach'}
+            </button>
+          )}
+          {fromRecording && !picking && !shotPath && (
             <span className="text-xs text-gray-500">
               Frame from your recording, {delta === 0 ? 'at entry' : `${delta > 0 ? '+' : '−'}${Math.abs(delta)}s from entry`}
             </span>
           )}
         </div>
       )}
+
+      {shotPath && !rec?.text && !picking && (
+        <p className="text-xs text-gray-400">
+          The coach reads your stop and target off the chart and says what it sees about the trade.
+          Uses 1 of your {aiLimitFor('recap_commentary')} coach reads a day.
+        </p>
+      )}
+      {readError && <p className="text-xs text-red-400">{readError}</p>}
+
+      {rec?.text && (
+        <CoachRead trade={t} read={rec} applying={applying} onUse={applyLevel} />
+      )}
     </section>
+  )
+}
+
+/** "The coach's read" box (mockup 2D): the saved comment, then the levels the
+ *  coach read off the chart against what the log holds. */
+function CoachRead({
+  trade: t, read, applying, onUse,
+}: {
+  trade: Trade
+  read: SavedRead
+  applying: 'stop_price' | 'tp1_price' | null
+  onUse: (field: 'stop_price' | 'tp1_price', value: number) => void
+}) {
+  const when = read.generated_at && Number.isFinite(Date.parse(read.generated_at))
+    ? PT_STAMP.format(new Date(read.generated_at)) : null
+  // A frame cut from the recording (older reads lost screenshot_source, but kept
+  // the recording's file name).
+  const from = read.screenshot_source === 'obs' || read.video_file ? 'from your entry frame' : 'from your screenshot'
+  const lv = read.detected_levels
+  const rows: Array<{ label: string; field: 'stop_price' | 'tp1_price'; read: number | null; saved: number | null; order: string; sign: string }> = lv ? [
+    { label: 'Stop', field: 'stop_price', read: lv.stop_price, saved: t.stop_price ?? null, order: 'stop', sign: '−' },
+    { label: 'Target', field: 'tp1_price', read: lv.tp1_price, saved: t.tp1_price ?? null, order: 'target', sign: '+' },
+  ] : []
+  const away = (price: number, sign: string) =>
+    t.entry_price == null ? '' : ` (${sign}${fmtLevel(Math.abs(price - t.entry_price))} pts)`
+
+  return (
+    <div className="border border-gray-800 rounded-[10px] bg-gray-900/60 px-3.5 py-3 space-y-2.5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-[15px] font-semibold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>The coach&apos;s read</h3>
+        {when && <span className="text-[11.5px] text-gray-500">{when} · {from}</span>}
+      </div>
+      <p className="text-[13.5px] leading-relaxed text-gray-200">{read.text}</p>
+      {rows.length > 0 && (
+        <div className="border-t border-gray-800 pt-2.5 space-y-1.5">
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">Levels on your chart</div>
+          <div className="grid grid-cols-[70px_100px_minmax(0,1fr)] gap-x-2.5 gap-y-1.5 items-center text-[13px]">
+            {rows.map(r => {
+              const matches = r.read != null && r.saved != null && Math.abs(r.read - r.saved) < 1e-6
+              const filled = matches && !!read.auto_applied?.includes(r.field)
+              const status = r.read == null ? (
+                <span className="text-gray-400">
+                  not readable on this frame · {r.saved != null ? `your log has ${fmtLevel(r.saved)}` : 'nothing in your log'}
+                </span>
+              ) : matches ? (
+                <span className="text-green-400 inline-flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5 shrink-0" />
+                  {filled ? 'filled into your log' : 'in your log'} · read from your {r.order} order{away(r.read, r.sign)}
+                </span>
+              ) : r.saved != null ? (
+                <span className="text-amber-300">your log has {fmtLevel(r.saved)} · did you move the bracket?</span>
+              ) : lv?.confidence === 'low' ? (
+                <span className="text-gray-400">too blurry to trust</span>
+              ) : (
+                <span className="inline-flex flex-wrap items-center gap-2 text-gray-400">
+                  <button
+                    type="button"
+                    disabled={applying != null}
+                    onClick={() => onUse(r.field, r.read as number)}
+                    className="px-2.5 min-h-8 rounded-md border border-blue-700 text-blue-300 hover:bg-blue-900/40 text-xs font-semibold disabled:opacity-50"
+                  >
+                    {applying === r.field ? 'Saving…' : 'Use this'}
+                  </button>
+                  read from your {r.order} order{away(r.read, r.sign)}
+                </span>
+              )
+              return (
+                <div key={r.field} className="contents">
+                  <span className="text-gray-400">{r.label}</span>
+                  <span className={`font-mono ${r.read == null ? 'text-gray-500' : 'text-gray-100'}`}>{r.read == null ? '—' : fmtLevel(r.read)}</span>
+                  {status}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

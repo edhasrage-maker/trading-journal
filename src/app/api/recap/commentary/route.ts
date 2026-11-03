@@ -176,15 +176,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' }, { status: 503 })
   }
 
-  let body: { videoFile?: string; frames?: FrameRef[] }
+  let body: { videoFile?: string; frames?: FrameRef[]; source?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'invalid body' }, { status: 400 }) }
+  // The trade drawer's "Read with the coach" sends one trade's SAVED screenshot
+  // (source 'screenshot') rather than frames cut from a loaded recording, so it
+  // has no recording file to name; the trade keeps whatever file it had.
+  const fromScreenshot = body.source === 'screenshot'
   const videoFile = typeof body.videoFile === 'string' ? body.videoFile : ''
   const frames = Array.isArray(body.frames)
     ? body.frames
         .filter(f => f && typeof f.id === 'string' && typeof f.path === 'string')
         .map(f => ({ id: f.id, path: f.path, exitPath: typeof f.exitPath === 'string' ? f.exitPath : undefined }))
     : []
-  if (!videoFile || frames.length === 0) {
+  if ((!videoFile && !fromScreenshot) || frames.length === 0) {
     return NextResponse.json({ error: 'videoFile and non-empty frames[] required' }, { status: 400 })
   }
 
@@ -212,7 +216,7 @@ export async function POST(req: Request) {
   const ids = frames.map(f => f.id)
   const { data: tradeRows } = await supabase
     .from('trades')
-    .select('id, trading_day_id, direction, entry_price, exit_price, stop_price, tp1_price, quantity, pnl, symbol, entry_time, exit_time, tags_json, notes, screenshot_url, high_during_position, low_during_position, mfe_dollars_per_leg, exits_json, stops:review_json->stops')
+    .select('id, trading_day_id, direction, entry_price, exit_price, stop_price, tp1_price, quantity, pnl, symbol, entry_time, exit_time, tags_json, notes, screenshot_url, recording_commentary, high_during_position, low_during_position, mfe_dollars_per_leg, exits_json, stops:review_json->stops')
     .in('id', ids)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tradesById = new Map<string, any>((tradeRows ?? []).map((t: any) => [t.id, t]))
@@ -461,15 +465,24 @@ Return ONE entry in the trades array per unique trade id (use the id strings exa
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const writes: Array<Promise<any>> = Object.entries(commentary).map(([id, textOut]) => {
         const applied = autoApplied[id]
+        // Merge into what the row already holds: a frame picked by hand keeps
+        // its screenshot_source / screenshot_delta_sec (legacy rows may hold a
+        // JSON string — tolerate it).
+        const prevRaw = tradesById.get(id)?.recording_commentary as unknown
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const prev: Record<string, any> = prevRaw && typeof prevRaw === 'object'
+          ? prevRaw as Record<string, unknown>
+          : typeof prevRaw === 'string' ? (() => { try { return JSON.parse(prevRaw) } catch { return {} } })() : {}
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const update: Record<string, any> = {
           recording_commentary: {
+            ...prev,
             text: textOut,
-            video_file: videoFile,
+            video_file: fromScreenshot ? (prev.video_file ?? null) : videoFile,
             model,
             generated_at: generatedAt,
             detected_levels: detectedLevels[id],
-            ...(applied ? { auto_applied: Object.keys(applied) } : {}),
+            auto_applied: applied ? Object.keys(applied) : undefined,
             ...(backfillScreenshot[id] ? { screenshot_source: 'obs' } : {}),
           },
         }
