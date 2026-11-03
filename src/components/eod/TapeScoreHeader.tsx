@@ -8,7 +8,7 @@ import type { EntryRuleConfig } from '@/lib/entry-rules'
 import type { RunnerRuleConfig } from '@/lib/runner-rules'
 import type { RiskYardstick } from '@/lib/exit-score'
 import { chaseTrades, type ReentryTrade } from '@/lib/tapescore-day-rules'
-import { dayR, fmtR, type RTrade } from '@/lib/trade-r'
+import { dayR, fmtR, rCoverage, type RTrade } from '@/lib/trade-r'
 import type { Axis, PartKey, PartView, TapeScoreParts } from '@/lib/tapescore-axes'
 import { TapeScoreFormulaInfo } from '@/components/dashboard/TapeScoreHeroParts'
 
@@ -105,11 +105,16 @@ export default function TapeScoreHeader({
   // The day in R beside the P&L, and its average win vs average loss
   // (src/lib/trade-r.ts; founder 2026-10-22, mockup https://claude.ai/artifact/5QWKdATNpTntCQ6Ar9neZn).
   const r = dayR(trades as RTrade[])
-  const rCls = r.totalR == null ? '' : r.totalR > 0 ? 'text-green-400' : r.totalR < 0 ? 'text-red-400' : 'text-gray-400'
+  // A trade without a stop drops out of the R, so the R says how many trades it
+  // covers whenever that isn't all of them (it read +0.4R on a −$272 day while
+  // the stops were still being typed in, 2026-11-02), stays grey rather than
+  // green or red, and steps aside for "Log stops" when under half have one.
+  const coverage = rCoverage(r)
+  const rCls = coverage !== 'all' || r.totalR == null ? 'text-gray-400' : r.totalR > 0 ? 'text-green-400' : r.totalR < 0 ? 'text-red-400' : 'text-gray-400'
   const rTitle = r.totalR == null ? undefined
-    : `Each trade's P&L divided by what it risked to its planned stop, added up${r.withStop < r.trades ? ` (${r.withStop} of ${r.trades} trades had a stop)` : ''}.`
+    : `Each trade's P&L divided by what it risked to its planned stop, added up.${coverage === 'all' ? '' : ` Only the ${r.withStop} of ${r.trades} trades with a stop count: log the rest for the whole day's R.`}`
   // Founder 2026-10-23: no "(x : 1)" on this card.
-  const winLoss = r.avgWinR != null && r.avgLossR != null
+  const winLoss = coverage !== 'few' && r.avgWinR != null && r.avgLossR != null
     ? `avg win ${r.avgWinR.toFixed(1)}R vs loss ${r.avgLossR.toFixed(1)}R`
     : null
   const takeaway = takeawayLine({ pnl, dailyLossLimit, chase: chase.length, live, chaseCapped: scored && result.chaseCapped })
@@ -143,11 +148,20 @@ export default function TapeScoreHeader({
                   <span className={`text-[28px] leading-tight font-bold tabular-nums ${pnlCls}`} style={{ fontFamily: 'var(--font-display)' }}>
                     {pnlText}
                   </span>
-                  {r.totalR != null && (
-                    <span className={`text-[19px] leading-tight font-bold tabular-nums ${rCls}`} style={{ fontFamily: 'var(--font-display)' }} title={rTitle}>
-                      {fmtR(r.totalR, 1)}
+                  {r.totalR != null && (coverage === 'few' ? (
+                    <span className="text-[13px] text-gray-500 tabular-nums" title={rTitle}>
+                      R needs stops · {r.withStop} of {r.trades} logged
                     </span>
-                  )}
+                  ) : (
+                    <span className="flex items-baseline gap-1.5" title={rTitle}>
+                      <span className={`text-[19px] leading-tight font-bold tabular-nums ${rCls}`} style={{ fontFamily: 'var(--font-display)' }}>
+                        {fmtR(r.totalR, 1)}
+                      </span>
+                      {coverage === 'most' && (
+                        <span className="text-[13px] text-gray-500 tabular-nums">{r.withStop} of {r.trades} trades</span>
+                      )}
+                    </span>
+                  ))}
                 </span>
                 {/* Beside the ring there's room for it; on a phone it runs full width below. */}
                 {takeawayEl && <div className="hidden sm:block">{takeawayEl}</div>}

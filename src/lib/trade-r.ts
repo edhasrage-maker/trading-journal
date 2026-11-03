@@ -95,6 +95,16 @@ export function dayR(trades: readonly RTrade[]): DayR {
   }
 }
 
+/** How much of the day its R covers: every trade, most of them (a stop on at
+ *  least half), a few, or none. A trade without a stop drops out of the total,
+ *  so a partial R can disagree with the day's dollars (founder, 2026-11-02:
+ *  "how can a red day be +0.4R?" while the stops were still being typed in). */
+export function rCoverage(r: Pick<DayR, 'trades' | 'withStop'>): 'all' | 'most' | 'few' | 'none' {
+  if (r.withStop === 0) return 'none'
+  if (r.withStop >= r.trades) return 'all'
+  return r.withStop * 2 >= r.trades ? 'most' : 'few'
+}
+
 /** The trades of the last `sessions` dates in `byDate` (newest first by date), pooled. */
 export function lastSessions<T extends RTrade>(byDate: ReadonlyMap<string, readonly T[]>, sessions = USUAL_SESSIONS): T[] {
   return [...byDate.entries()]

@@ -5,7 +5,7 @@
  *
  *   npx tsx scripts/test-trade-r.ts   (also wired into `npm test`)
  */
-import { dayR, fmtR, fmtUsd, lastSessions, perTrade, tradeR, USUAL_SESSIONS, type RTrade } from '../src/lib/trade-r.ts'
+import { dayR, fmtR, fmtUsd, lastSessions, perTrade, rCoverage, tradeR, USUAL_SESSIONS, type RTrade } from '../src/lib/trade-r.ts'
 
 let failures = 0
 const check = (name: string, ok: boolean, got?: unknown) => {
@@ -48,6 +48,18 @@ console.log('the day in R (Oct 22 as it happened)')
   check('card: +$118 · +0.31R · $240', near(p.netPerTrade, 117.9, 0.1) && near(p.rPerTrade, 0.31, 0.01) && near(p.riskPerTrade, 240, 1), p)
   check('no losses → no ratio', dayR([mnq(100, 5, 10)]).ratio === null)
   check('no stops at all → no day R', dayR([mnq(100, 5, null)]).totalR === null)
+}
+
+console.log('how much of the day the R covers (Nov 2: +0.4R on a −$272 day)')
+{
+  // the big win had its stop logged, most losers didn't yet
+  const partial = [mnq(753.5, 10, 12), mnq(-99, 10, null), mnq(-70, 10, 7.2), mnq(-114, 10, null), mnq(-235, 10, null), mnq(-185, 10, null), mnq(-99.5, 10, null), mnq(-235, 10, 10.5), mnq(12, 1, null)]
+  const r = dayR(partial)
+  check('the dollars are red but the partial R is green', (r.totalR ?? 0) > 0 && partial.reduce((s, t) => s + (t.pnl ?? 0), 0) < 0, r.totalR)
+  check('3 of 9 with a stop → few (the header shows "R needs stops")', rCoverage(r) === 'few', rCoverage(r))
+  check('8 of 9 → most (the header shows "8 of 9 trades")', rCoverage({ trades: 9, withStop: 8 }) === 'most')
+  check('half exactly → most', rCoverage({ trades: 8, withStop: 4 }) === 'most')
+  check('all → all, none → none', rCoverage({ trades: 9, withStop: 9 }) === 'all' && rCoverage({ trades: 9, withStop: 0 }) === 'none')
 }
 
 console.log('the usual: last 10 sessions')
