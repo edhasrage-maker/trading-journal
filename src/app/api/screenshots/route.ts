@@ -3,6 +3,7 @@ import { clientError } from '@/lib/api-error'
 import { LOCAL_FEATURES_ENABLED } from '@/lib/local-features'
 import { SIGNED_URL_TTL_SEC, screenshotStoragePath } from '@/lib/storage-url'
 import { NextResponse } from 'next/server'
+import { sniffImageType } from '@/lib/anthropic-image'
 
 /**
  * Sanitize a client-supplied sub-path into safe path segments. Drops empty,
@@ -23,18 +24,6 @@ function safeSubPath(input: string): string {
  *  platform's ~4.5 MB request cap, into the one screenshots bucket. */
 const HOSTED_UPLOAD_BUCKET = 'screenshots'
 const HOSTED_UPLOAD_MAX_BYTES = 4_500_000
-
-/** The image type the bytes actually are (PNG / JPEG / GIF / WebP), or null.
- *  The stored Content-Type comes from this check, never from the client's
- *  claim — a file labelled image/png must really start like one. */
-function sniffImageType(bytes: Uint8Array): string | null {
-  const at = (i: number, ...sig: number[]) => sig.every((b, k) => bytes[i + k] === b)
-  if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png'
-  if (at(0, 0xff, 0xd8, 0xff)) return 'image/jpeg'
-  if (at(0, 0x47, 0x49, 0x46, 0x38)) return 'image/gif'
-  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'image/webp'
-  return null
-}
 
 export async function POST(req: Request) {
   const supabase = await createClient()

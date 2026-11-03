@@ -32,3 +32,15 @@ export function normalizeAnthropicMediaType(input: string | null | undefined): A
   if (ALIASES[lower]) return ALIASES[lower]
   return null
 }
+
+/** The image type the bytes actually are (PNG / JPEG / GIF / WebP), or null.
+ *  Trust this over a stored label or a guess: the API rejects a PNG sent as
+ *  image/jpeg with a 400 (founder hit it on "Read my chart", 2026-11-03). */
+export function sniffImageType(bytes: Uint8Array): AnthropicMediaType | null {
+  const at = (i: number, ...sig: number[]) => sig.every((b, k) => bytes[i + k] === b)
+  if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png'
+  if (at(0, 0xff, 0xd8, 0xff)) return 'image/jpeg'
+  if (at(0, 0x47, 0x49, 0x46, 0x38)) return 'image/gif'
+  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'image/webp'
+  return null
+}

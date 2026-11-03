@@ -644,6 +644,29 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
     )
   )
 
+  // Notes — first in the drawer: typing them fills the tags below (founder
+  // 2026-11-03: "put it at the top not bottom"). The full form keeps them
+  // after Trade Details, still above its tags.
+  const notesField = (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="block text-xs text-gray-400">Notes</label>
+        {/* Written mid-session with a position on, when talking beats
+            typing. Appends finished phrases, so the field stays editable
+            between them. */}
+        <MicButton
+          onText={text => set('notes', form.notes.trim() ? `${form.notes.trimEnd()} ${text}` : text)}
+          title="Dictate notes"
+        />
+      </div>
+      <textarea rows={2} spellCheck autoCorrect="on" placeholder="Execution notes, observations..."
+        value={form.notes} onChange={e => set('notes', e.target.value)}
+        onBlur={compact ? undefined : suggestTagsFromNotes}
+        className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
+      />
+    </div>
+  )
+
   return (
     <div className={compact ? '' : 'bg-gray-900 border border-gray-800 rounded-xl'}>
       {/* Form header — the drawer supplies its own header + close in compact mode. */}
@@ -781,6 +804,8 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           </div>
         )}
 
+        {compact && notesField}
+
         {/* Trade details. Compact (drawer) shows only the numeric levels + qty;
             the full form also carries instrument, entry time, and P&L. */}
         <div>
@@ -831,24 +856,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           </div>
         )}
 
-        {/* Notes */}
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className="block text-xs text-gray-400">Notes</label>
-            {/* Written mid-session with a position on, when talking beats
-                typing. Appends finished phrases, so the field stays editable
-                between them. */}
-            <MicButton
-              onText={text => set('notes', form.notes.trim() ? `${form.notes.trimEnd()} ${text}` : text)}
-              title="Dictate notes"
-            />
-          </div>
-          <textarea rows={2} spellCheck autoCorrect="on" placeholder="Execution notes, observations..."
-            value={form.notes} onChange={e => set('notes', e.target.value)}
-            onBlur={compact ? undefined : suggestTagsFromNotes}
-            className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
-          />
-        </div>
+        {!compact && notesField}
 
         {/* Tags — render even when allTags is empty so the user can add the
             first one inline. TagSelector itself handles the empty-category

@@ -45,7 +45,7 @@ import { createClient } from '@/lib/supabase/server'
 import { consumeAiUsage } from '@/lib/ai-usage'
 import { resolveAiModel } from '@/lib/ai-model'
 import { interpretExcursion } from '@/lib/trade-excursion'
-import { normalizeAnthropicMediaType } from '@/lib/anthropic-image'
+import { sniffImageType, type AnthropicMediaType } from '@/lib/anthropic-image'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import {
   FRAME_LEVELS_PROMPT_BLOCK, FRAME_LEVELS_SCHEMA, guardFrameLevels, autoApplicableFields,
@@ -265,7 +265,6 @@ export async function POST(req: Request) {
     .from('trade_tags').select('label').eq('category', 'mistakes').order('sort_order') as { data: { label: string }[] | null }
   const mistakeLibrary = (mistakeRows ?? []).map(r => r.label)
 
-  const mediaType = normalizeAnthropicMediaType('image/jpeg')!
   const blocks: Anthropic.MessageParam['content'] = []
   const labels: string[] = []
   const descriptions: string[] = []
@@ -275,13 +274,17 @@ export async function POST(req: Request) {
   // RLS, so the read boundary signs it). Best-effort back-fill.
   const backfillScreenshot: Record<string, string> = {}
 
-  // Pull a stored object back as base64 (RLS-scoped to the user's folder). Null
-  // on any failure so callers can skip just that frame.
-  const downloadB64 = async (path: string): Promise<string | null> => {
+  // Pull a stored object back as base64 (RLS-scoped to the user's folder), with
+  // the type its bytes really are: video frames are JPEG, but a pasted or
+  // uploaded screenshot is usually PNG. Null on any failure (or bytes that
+  // aren't an image) so callers can skip just that frame.
+  const downloadB64 = async (path: string): Promise<{ data: string; mediaType: AnthropicMediaType } | null> => {
     try {
       const { data: blob, error } = await supabase.storage.from('screenshots').download(path)
       if (error || !blob) return null
-      return Buffer.from(await blob.arrayBuffer()).toString('base64')
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      const mediaType = sniffImageType(bytes)
+      return mediaType ? { data: Buffer.from(bytes).toString('base64'), mediaType } : null
     } catch {
       return null
     }
@@ -293,20 +296,20 @@ export async function POST(req: Request) {
     if (!t) { skipped.push({ id: f.id, reason: 'trade not found' }); continue }
 
     // Pull the ENTRY frame bytes back from storage.
-    const dataB64 = await downloadB64(f.path)
-    if (dataB64 == null) { skipped.push({ id: f.id, reason: 'frame download failed' }); continue }
+    const entryImg = await downloadB64(f.path)
+    if (entryImg == null) { skipped.push({ id: f.id, reason: 'frame download failed' }); continue }
 
     idx++
-    blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: dataB64 } })
+    blocks.push({ type: 'image', source: { type: 'base64', media_type: entryImg.mediaType, data: entryImg.data } })
     labels.push(`Trade ${idx} (id=${f.id}) ENTRY @ ${fmtPT(t.entry_time)}`)
 
     // EXIT frame, when the client uploaded one (exit meaningfully after entry &
     // in range — the client already gated that). Same trade number in the label
     // so the model pairs them. A failed exit download drops only the exit frame.
     if (f.exitPath) {
-      const exitB64 = await downloadB64(f.exitPath)
-      if (exitB64 != null) {
-        blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: exitB64 } })
+      const exitImg = await downloadB64(f.exitPath)
+      if (exitImg != null) {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: exitImg.mediaType, data: exitImg.data } })
         labels.push(`Trade ${idx} (id=${f.id}) EXIT @ ${fmtPT(t.exit_time)}`)
       }
     }

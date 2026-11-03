@@ -298,10 +298,15 @@ export function TradeGradeWhy({ grade: g, neverWent, hasStop }: {
   const section = 'border-l-2 border-gray-700 pl-2.5 space-y-1.5'
   const head = 'font-semibold text-gray-400'
   return (
-    <section aria-label={`Why it scored ${g.score ?? '—'}`} className="space-y-3 text-[12.5px] leading-snug">
-      <h3 className="text-sm font-semibold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
-        Why it scored {g.score ?? '—'}
-      </h3>
+    // Starts closed, one line under the chart: the founder asked for the Score
+    // minimized first (2026-11-03) — the reasons are there on a click.
+    <details aria-label={`Why it scored ${g.score ?? '—'}`} className="group space-y-3 text-[12.5px] leading-snug">
+      <summary className="flex items-center gap-1.5 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
+        <h3 className="text-sm font-semibold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>
+          Why it scored {g.score ?? '—'}
+        </h3>
+        <ChevronDown className="w-4 h-4 text-gray-500 transition-transform group-open:rotate-180" aria-hidden />
+      </summary>
       {waitedLines.length > 0 && (
         <div className={`${section} border-blue-500/60`}>
           <p className={head}>Waited after a loss · {r(g.parts.waited)} of 100</p>
@@ -348,6 +353,6 @@ export function TradeGradeWhy({ grade: g, neverWent, hasStop }: {
           {greyed && <>{readAt ? ' ' : ''}Greyed rules started after this trade, so they don&apos;t count toward its Score.</>}
         </p>
       )}
-    </section>
+    </details>
   )
 }
