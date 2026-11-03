@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, Eye, Film, Loader2, Upload } from 'lucide-react'
+import { Check, Eye, Film, Loader2, Trash2, Upload } from 'lucide-react'
 import PinPlacement, { type Pin, type PinType } from '@/components/intraday/PinPlacement'
 import FrameNudge from '@/components/FrameNudge'
 import BrowserFrameNudge from '@/components/BrowserFrameNudge'
@@ -142,6 +142,38 @@ export default function TradeShotSlot({
     }
   }, [t.id, onSaved])
 
+  // Take the picture off the trade (founder, 2026-11-02: a pasted screenshot of
+  // the trades table landed in a slot, with no way to undo it from the drawer).
+  // The pins sat on that image and the coach's read was of it, so both go; the
+  // recording's file name and frame offset stay, so "Pull frame" still works.
+  const [removing, setRemoving] = useState(false)
+  const removeShot = useCallback(async () => {
+    if (!t.screenshot_url) return
+    if (!window.confirm(`Remove this screenshot from the trade?${rec?.text ? "\n\nThe coach's read of it goes too." : ''}`)) return
+    setRemoving(true)
+    setError(null)
+    try {
+      const keep = rec ? { video_file: rec.video_file, screenshot_delta_sec: rec.screenshot_delta_sec } : null
+      const res = await fetch(`/api/trades/${t.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          screenshot_url: null,
+          entry_pin_x: null, entry_pin_y: null, stop_pin_x: null, stop_pin_y: null, tp1_pin_x: null, tp1_pin_y: null,
+          ...(rec ? { recording_commentary: keep?.video_file ? keep : null } : {}),
+        }),
+      })
+      const saved = await res.json().catch(() => ({})) as Trade & { error?: string }
+      if (!res.ok) { setError(saved.error ?? 'Could not remove the screenshot'); return }
+      void deleteBlob(t.screenshot_url)
+      onSaved(saved)
+    } catch {
+      setError('Network error removing the screenshot')
+    } finally {
+      setRemoving(false)
+    }
+  }, [t.id, t.screenshot_url, rec, onSaved])
+
   const frameSaved = useCallback((url: string) => {
     if (t.screenshot_url && t.screenshot_url !== url) void deleteBlob(t.screenshot_url)
     setPicking(false)
@@ -260,7 +292,7 @@ export default function TradeShotSlot({
       {nudge}
       {error && <p className="text-xs text-red-400">{error}</p>}
 
-      {(actions || (t.screenshot_url && canNudge) || shotPath) && (
+      {(actions || t.screenshot_url || shotPath) && (
         <div className="flex flex-wrap items-center gap-2">
           {actions}
           {t.screenshot_url && canNudge && !picking && (
@@ -273,17 +305,15 @@ export default function TradeShotSlot({
               <Film className="w-3.5 h-3.5" /> Recording
             </button>
           )}
-          {shotPath && !picking && (
+          {shotPath && rec?.text && !picking && (
             <button
               type="button"
               onClick={() => void readWithCoach()}
               disabled={reading}
-              className={`${btn} disabled:opacity-60 ${rec?.text
-                ? 'bg-gray-900 border border-gray-700 text-gray-200 hover:bg-gray-800'
-                : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+              className={`${btn} disabled:opacity-60 bg-gray-900 border border-gray-700 text-gray-200 hover:bg-gray-800`}
             >
               {reading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
-              {reading ? 'Reading…' : rec?.text ? 'Read again' : 'Read with the coach'}
+              {reading ? 'Reading…' : 'Read again'}
             </button>
           )}
           {fromRecording && !picking && !shotPath && (
@@ -291,14 +321,43 @@ export default function TradeShotSlot({
               Frame from your recording, {delta === 0 ? 'at entry' : `${delta > 0 ? '+' : '−'}${Math.abs(delta)}s from entry`}
             </span>
           )}
+          {t.screenshot_url && !picking && (
+            <button
+              type="button"
+              onClick={() => void removeShot()}
+              disabled={removing}
+              className="ml-auto inline-flex items-center gap-1 text-xs text-gray-500 hover:text-red-400 rounded-md px-2 min-h-9 transition-colors disabled:opacity-60"
+              title="Take this screenshot off the trade"
+            >
+              {removing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              {removing ? 'Removing…' : 'Remove'}
+            </button>
+          )}
         </div>
       )}
 
+      {/* Before a first read the coach gets its own labelled card rather than a
+          bare button: "Read with the coach" alone didn't say what it does or
+          what it costs (founder, 2026-11-02). */}
       {shotPath && !rec?.text && !picking && (
-        <p className="text-xs text-gray-400">
-          The coach reads your stop and target off the chart and says what it sees about the trade.
-          Uses 1 of your {aiLimitFor('recap_commentary')} coach reads a day.
-        </p>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 border border-gray-800 rounded-[10px] bg-gray-900/60 px-3.5 py-3">
+          <div className="flex-1 min-w-[220px]">
+            <div className="text-[13.5px] font-semibold text-gray-100">Have the coach read this chart</div>
+            <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
+              It reads your stop and target off the screenshot, checks them against your log, and says what it sees in the trade.
+              Uses 1 of your {aiLimitFor('recap_commentary')} coach reads a day.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void readWithCoach()}
+            disabled={reading}
+            className={`${btn} disabled:opacity-60 bg-blue-600 hover:bg-blue-500 text-white`}
+          >
+            {reading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+            {reading ? 'Reading…' : 'Read my chart'}
+          </button>
+        </div>
       )}
       {readError && <p className="text-xs text-red-400">{readError}</p>}
 

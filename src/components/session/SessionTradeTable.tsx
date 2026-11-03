@@ -76,6 +76,13 @@ const TOGGLEABLE_COLS = [
   { key: 'postExit', label: 'After exit' },
 ] as const
 type ColKey = (typeof TOGGLEABLE_COLS)[number]['key']
+
+// The edit/delete column stays on the table's right edge. At normal widths the
+// table scrolls sideways, and the actions used to scroll off with the last
+// column, the trash also hidden until hover (founder, 2026-11-02: "why don't I
+// have an easy button to delete this trade?"). Solid card colour so the cells
+// scrolling under it don't show through; a soft shadow marks the seam.
+const PINNED_RIGHT = 'sticky right-0 bg-gray-900 shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.35)]'
 const COLS_STORAGE_KEY = 'eod-trade-cols-v1'
 // v2: the MAE column became the wide MAE · MFE bar column and swapped places
 // with Kept; a width dragged for the old narrow MAE would crush the bar.
@@ -994,7 +1001,7 @@ export default function SessionTradeTable({
                 )}
               <ResizeHandle id="mfe" onStart={startResize} onReset={resetWidths} /></th>}
               {showPostExit && <th data-col="postExit" className="relative text-left font-normal pb-2 pr-3 whitespace-nowrap" title="What the market did in the 15 min after your last fill. 'stopped' and 'target hit' are the plan running its course, so they say what price did without a verdict. A verdict appears only when you closed the trade by hand.">After exit<ResizeHandle id="postExit" onStart={startResize} onReset={resetWidths} /></th>}
-              <th data-col="actions" className="w-8" />
+              <th data-col="actions" className={`w-8 z-30 ${PINNED_RIGHT}`} />
             </tr>
           </thead>
           <tbody>
@@ -1303,7 +1310,20 @@ export default function SessionTradeTable({
                       </td>
                     )
                   })()}
-                  <td className={`py-1.5 pl-2 text-right${onEdit ? ' whitespace-nowrap' : ''}`}>
+                  {/* Spans the score-detail and AI sub-rows too (neither has a
+                      cell in this column), so the pinned strip runs the height
+                      of the whole trade. The overlay repeats the row's tint
+                      over the solid background. */}
+                  <td
+                    rowSpan={1 + (grade && openScoreId === t.id ? 1 : 0) + (hasOverviewRow ? 1 : 0)}
+                    className={`z-10 py-1.5 px-2 text-right align-top border-b border-gray-800${onEdit ? ' whitespace-nowrap' : ''} ${PINNED_RIGHT}`}
+                  >
+                    <span
+                      aria-hidden
+                      className={`absolute inset-0 pointer-events-none transition-colors ${
+                        isFlashing ? 'bg-blue-700/40' : rowBg || (isNearDup ? '' : 'group-hover:bg-gray-800/50')
+                      }`}
+                    />
                     {/* Per-row edit affordance. Capture opens the inline TradeForm;
                         review opens the recap edit drawer (step 2). Reads
                         "editing…" while this row's editor is open. */}
@@ -1311,7 +1331,7 @@ export default function SessionTradeTable({
                       <button
                         type="button"
                         onClick={e => { e.stopPropagation(); onEdit(t.id) }}
-                        className={`inline-flex items-center gap-1 align-middle text-[10px] border rounded px-1.5 py-0.5 mr-1 transition-colors ${
+                        className={`relative inline-flex items-center gap-1 align-middle text-[10px] border rounded px-1.5 py-0.5 mr-1 transition-colors ${
                           isEditing
                             ? 'text-amber-300 border-amber-600/60 bg-amber-950/40'
                             : 'text-gray-500 hover:text-blue-400 border-gray-700 hover:border-blue-500/60'
@@ -1325,7 +1345,7 @@ export default function SessionTradeTable({
                       type="button"
                       onClick={e => { e.stopPropagation(); onDelete(t.id) }}
                       disabled={deletingId === t.id}
-                      className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30 disabled:cursor-wait"
+                      className="relative align-middle p-0.5 rounded text-gray-500 hover:text-red-400 hover:bg-red-950/40 transition-colors disabled:opacity-30 disabled:cursor-wait"
                       title="Delete this trade"
                     >
                       {deletingId === t.id
