@@ -62,7 +62,7 @@ export default function TradeOpenPanel({
   liveAtrByTradeId?: Record<string, number>
   giveBackAtr?: number
   postExitByTradeId?: Record<string, PostExitData>
-  /** Show "Replay this trade" (Replay Review is a private beta). */
+  /** Show "Replay this trade" (every signed-in trader but the demo — deep-dive-access.ts). */
   deepDive?: boolean
   onStep: (tradeId: string) => void
   onSave: (trade: Trade) => void

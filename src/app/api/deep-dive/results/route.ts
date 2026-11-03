@@ -26,7 +26,7 @@ const UUID = /^[0-9a-f-]{36}$/i
  * trader leaves Blind, so a Blind session never has any of it in the browser.
  *
  * R is the same figure the week's Game film shows (rMultiple, off the planned
- * stop). Same private beta as the page; rows come through the caller's own
+ * stop). Same access rule as the page; rows come through the caller's own
  * session, so RLS scopes them.
  */
 export async function GET(req: Request) {

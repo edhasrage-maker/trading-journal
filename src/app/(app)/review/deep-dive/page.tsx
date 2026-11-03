@@ -6,8 +6,8 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Deep Dive is now Replay Review (/review/replay). Old links and bookmarks
- * forward there with the same trade, day or week. Same private beta: anyone
- * not on the list still gets a page that does not exist.
+ * forward there with the same trade, day or week. Same access rule: the
+ * demo still gets a page that does not exist.
  */
 export default async function DeepDiveRedirect({
   searchParams,

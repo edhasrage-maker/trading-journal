@@ -26,10 +26,9 @@ export const maxDuration = 30
  * from 2 hours before the fill (sub-minute charts). Both are asked for only
  * when the trader picks one of those timeframes.
  *
- * ACCESS. A private beta on the hosted site: only the emails in
- * DEEP_DIVE_BETA_EMAILS (deep-dive-access.ts). Everyone else gets a 404, the
- * same as a route that doesn't exist. The trade itself is read through the
- * caller's own session, so RLS scopes it to them.
+ * ACCESS. Every signed-in trader but the read-only demo (deep-dive-access.ts).
+ * The demo gets a 404, the same as a route that doesn't exist. The trade
+ * itself is read through the caller's own session, so RLS scopes it to them.
  *
  * DATA. Local build: Sierra .scid files on this machine. Hosted build: the
  * tick tape the feed publishes to a private bucket, read here with the server

@@ -38,7 +38,7 @@ const BUDGET_MS = 40_000
  *     written, ask again in a minute
  * An id that is not one of the caller's trades is simply absent from `results`.
  *
- * ACCESS. Same private beta as Deep Dive (deep-dive-access.ts): everyone else
+ * ACCESS. Same rule as Deep Dive (deep-dive-access.ts): the demo
  * gets a 404, as for a route that does not exist. The local build is always
  * allowed and reads Sierra .scid files instead of the tape.
  *

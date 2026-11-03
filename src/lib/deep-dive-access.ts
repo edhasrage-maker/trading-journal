@@ -1,22 +1,23 @@
 import { LOCAL_FEATURES_ENABLED } from './local-features'
+import { isDemoEmail } from './demo'
 
 /**
- * Who may use Deep Dive Review.
+ * Who may use Deep Dive Review (Replay Review).
  *
  *  Local build   — always (it is the owner's own machine).
- *  Hosted build  — a private beta: only the sign-in emails listed in the
- *    server-side env var DEEP_DIVE_BETA_EMAILS (comma-separated). Unset or
- *    empty means nobody, so deploying the code changes nothing for anyone until
- *    the list is set.
+ *  Hosted build  — every signed-in trader except the read-only demo account.
+ *    The demo's seeded trades sit outside the 90 days of tick tape the site
+ *    keeps, so every replay there would only show "no tick data"; the demo also
+ *    can't save a call. Until the demo is re-seeded onto recent days, it keeps
+ *    the page hidden.
  *
- * Server-only: the list is not a NEXT_PUBLIC_ variable and must never be sent
- * to the browser. Every surface checks it on the server — the Review tab, the
- * page and the API route — so a user outside the list can neither see the tab
- * nor reach the data by typing the URL.
+ * Opened to everyone 2026-11-02 (was a private beta behind the
+ * DEEP_DIVE_BETA_EMAILS env var, which is no longer read). Every surface still
+ * checks it on the server — the Review tab, the page and the API routes — so
+ * the demo can neither see the tab nor reach the data by typing the URL.
  */
 export function deepDiveAllowed(email: string | null | undefined): boolean {
   if (LOCAL_FEATURES_ENABLED) return true
   if (!email) return false
-  const list = (process.env.DEEP_DIVE_BETA_EMAILS ?? '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-  return list.includes(email.trim().toLowerCase())
+  return !isDemoEmail(email)
 }

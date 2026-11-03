@@ -15,7 +15,7 @@ export const revalidate = 0
 export default async function ReviewLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
   const scope = await resolveReviewScope(supabase)
-  // Deep Dive is a private beta on the hosted site; the tab only exists for the people on the list.
+  // Replay Review: every signed-in trader but the demo (deep-dive-access.ts).
   const { data: { user } } = await supabase.auth.getUser()
   const deepDive = deepDiveAllowed(user?.email)
 

@@ -53,7 +53,7 @@ const UUID = /^[0-9a-f-]{36}$/i
  * The Score is the Recap's (tradeGrade with the trader's own rules and
  * settings). When its Entry inputs were never read, `needsScore` tells the
  * panel to run POST /api/trades/score for this one trade and ask again.
- * Same private beta as the page; RLS scopes the row.
+ * Same access rule as the page; RLS scopes the row.
  */
 export async function GET(req: Request) {
   const supabase = await createClient()
