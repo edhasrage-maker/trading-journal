@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TapeScore Landing Draft</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;400;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ground: #0C0D10;
+    --panel: #121318;
+    --line: #23252C;
+    --hair: #1A1C22;
+    --ink: #E8EAEE;
+    --mut: #9A9FAA;
+    --faint: #62666F;
+    --blue: #4F97CE;   /* brand / UI only */
+    --pos: #4FC58E;    /* trading meaning only */
+    --neg: #E0685F;
+    --gold: #D6B24E;
+    --display: 'Archivo', system-ui, sans-serif;
+    --body: 'Hanken Grotesk', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--body); -webkit-font-smoothing: antialiased; }
+  body { overflow-x: hidden; }
+  a { color: inherit; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* Draft notes for the founder — not part of the page */
+  .notes { background: #17150E; border-bottom: 1px solid #3A3320; color: #D9CFAE; font-size: 14px; line-height: 1.55; }
+  .notes .wrap { padding-top: 20px; padding-bottom: 20px; }
+  .notes h2 { font-family: var(--display); font-size: 16px; margin: 0 0 8px; color: var(--gold); font-weight: 600; }
+  .notes ul { margin: 6px 0 0; padding-left: 18px; }
+  .notes li { margin: 4px 0; }
+  .notes b { color: #F0E6C4; }
+  .notes details { margin-top: 10px; }
+  .notes summary { cursor: pointer; color: var(--gold); }
+
+  /* Masthead */
+  .mast { border-bottom: 1px solid var(--hair); }
+  .mast .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+  .brand { font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
+  .mast nav { display: flex; gap: 24px; font-size: 14px; color: var(--mut); }
+  .mast nav a { text-decoration: none; }
+  .mast nav a.cta-link { color: var(--ink); border-bottom: 2px solid var(--blue); padding-bottom: 2px; }
+
+  /* Hero */
+  .hero .wrap { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; padding-top: 72px; padding-bottom: 80px; align-items: center; }
+  .eyebrow { color: var(--blue); font-size: 14px; font-weight: 500; margin: 0; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: 54px; line-height: 1.04; letter-spacing: -0.025em; margin: 14px 0 0; }
+  .lede { color: var(--mut); font-size: 18px; line-height: 1.6; margin: 22px 0 0; max-width: 470px; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+  .ctas { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 32px; align-items: center; }
+  .btn { font-family: var(--body); font-weight: 600; font-size: 15px; padding: 13px 20px; border-radius: 4px; text-decoration: none; display: inline-block; border: 1px solid transparent; }
+  .btn.primary { background: var(--blue); color: #08131D; }
+  .btn.ghost { border-color: var(--line); color: var(--ink); }
+  .fine { color: var(--faint); font-size: 13px; margin-top: 14px; }
+
+  /* Replay illustration */
+  .replay { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .replay-head { display: flex; justify-content: space-between; align-items: baseline; padding: 14px 18px; border-bottom: 1px solid var(--hair); font-size: 13px; color: var(--mut); gap: 12px; flex-wrap: wrap; }
+  .replay-head b { color: var(--ink); font-weight: 600; }
+  .replay svg { display: block; width: 100%; height: auto; }
+  .callbar { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--hair); flex-wrap: wrap; }
+  .callbar .label { font-family: var(--display); font-weight: 600; font-size: 15px; margin-right: 6px; }
+  .callbtn { font-size: 14px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); background: transparent; font-family: var(--body); }
+  .callbar .hint { color: var(--faint); font-size: 12.5px; margin-left: auto; }
+
+  /* Sections */
+  section.band { border-top: 1px solid var(--hair); }
+  section.band .wrap { padding-top: 72px; padding-bottom: 72px; }
+  h2.sec { font-family: var(--display); font-weight: 700; font-size: 34px; line-height: 1.12; letter-spacing: -0.02em; margin: 0; max-width: 700px; }
+  .sec-sub { color: var(--mut); font-size: 17px; line-height: 1.6; margin: 14px 0 0; max-width: 620px; }
+
+  .problem .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: start; }
+  .problem p.big { font-family: var(--display); font-weight: 300; font-size: 26px; line-height: 1.35; margin: 0; color: var(--ink); }
+  .problem p.big em { font-style: normal; color: var(--mut); }
+
+  .steps { margin-top: 40px; border-top: 1px solid var(--line); }
+  .step { display: grid; grid-template-columns: 56px 220px 1fr; gap: 24px; padding: 24px 0; border-bottom: 1px solid var(--hair); align-items: baseline; }
+  .step .n { font-family: var(--display); font-weight: 300; font-size: 30px; color: var(--faint); }
+  .step h3 { font-family: var(--display); font-weight: 600; font-size: 19px; margin: 0; }
+  .step p { margin: 0; color: var(--mut); line-height: 1.6; font-size: 15.5px; }
+
+  /* Reveal */
+  .reveal-grid { display: grid; grid-template-columns: 1fr 1.1fr; gap: 56px; margin-top: 8px; align-items: start; }
+  .verdicts { border-top: 1px solid var(--line); margin-top: 32px; }
+  .vrow { display: flex; justify-content: space-between; align-items: baseline; padding: 16px 0; border-bottom: 1px solid var(--hair); gap: 16px; }
+  .vrow .k { color: var(--mut); font-size: 15px; }
+  .vrow .v { font-family: var(--display); font-weight: 600; font-size: 22px; }
+  .v.pos { color: var(--pos); } .v.neg { color: var(--neg); } .v.ink { color: var(--ink); }
+  .coachread { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 22px 24px; }
+  .coachread h3 { font-family: var(--display); font-weight: 600; font-size: 17px; margin: 0; }
+  .coachread .src { color: var(--faint); font-size: 13px; margin-top: 4px; }
+  .rules { list-style: none; padding: 0; margin: 18px 0 0; }
+  .rules li { display: grid; grid-template-columns: 22px 1fr; padding: 10px 0; border-top: 1px solid var(--hair); font-size: 15px; color: var(--ink); line-height: 1.45; }
+  .rules li .m { font-weight: 700; }
+  .rules li .m.ok { color: var(--pos); } .rules li .m.no { color: var(--neg); }
+  .rules li span.note { color: var(--mut); }
+  .coachread .said { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--mut); line-height: 1.6; font-size: 15px; }
+  .coachread .said b { color: var(--ink); font-weight: 600; }
+  .pull { margin-top: 28px; font-family: var(--display); font-size: 20px; line-height: 1.4; font-weight: 300; color: var(--ink); max-width: 460px; }
+
+  /* Own rules */
+  .score-line { margin-top: 36px; border-top: 1px solid var(--line); max-width: 640px; }
+  .sl { display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid var(--hair); font-size: 15.5px; }
+  .sl .k { color: var(--mut); }
+  .sl .v { font-variant-numeric: tabular-nums; }
+  .sl.total { border-bottom: none; border-top: 1px solid var(--line); font-family: var(--display); font-weight: 600; font-size: 19px; padding-top: 16px; }
+  .sl.total .k { color: var(--ink); }
+
+  /* Also in TapeScore */
+  .also { margin-top: 36px; border-top: 1px solid var(--line); }
+  .also-row { display: grid; grid-template-columns: 280px 1fr; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--hair); }
+  .also-row h3 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 17px; }
+  .also-row p { margin: 0; color: var(--mut); line-height: 1.55; font-size: 15.5px; }
+
+  .fit { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; }
+  .fit h3 { font-family: var(--display); font-weight: 600; font-size: 18px; margin: 0 0 10px; }
+  .fit p { color: var(--mut); line-height: 1.6; margin: 0; font-size: 15.5px; }
+
+  .final .wrap { text-align: left; }
+  .final h2.sec { font-size: 40px; }
+  footer { border-top: 1px solid var(--hair); color: var(--faint); font-size: 13px; }
+  footer .wrap { padding-top: 24px; padding-bottom: 32px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  @media (max-width: 860px) {
+    .wrap { padding: 0 16px; }
+    .hero .wrap, .problem .wrap, .reveal-grid, .fit { grid-template-columns: 1fr; gap: 36px; }
+    .hero .wrap { padding-top: 44px; padding-bottom: 56px; }
+    h1 { font-size: 40px; }
+    h2.sec { font-size: 28px; }
+    .final h2.sec { font-size: 30px; }
+    .problem p.big { font-size: 22px; }
+    .step { grid-template-columns: 40px 1fr; gap: 6px 14px; }
+    .step p { grid-column: 2; }
+    .also-row { grid-template-columns: 1fr; gap: 6px; }
+    .mast nav a:not(.cta-link) { display: none; }
+    section.band .wrap { padding-top: 52px; padding-bottom: 52px; }
+    .callbar .hint { margin-left: 0; width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ DRAFT NOTES (for the founder, not the page) ============ -->
+<div class="notes">
+  <div class="wrap">
+    <h2>Draft landing page: lead with the blind call. Notes for you.</h2>
+    Same palette, text nav and hairline rows as the locked design. Copy only, so no app code changed. Everything below the yellow box is the page.
+    <ul>
+      <li><b>Blocker before this goes live:</b> Replay Review is invite-only on tapescore.app. Only emails in <code>DEEP_DIVE_BETA_EMAILS</code> can open it, so a new signup clicking "Review your first trade blind" would find nothing. Open it to everyone (or to all signups during beta) first.</li>
+      <li><b>Limits the copy stays inside:</b> blind replay needs tick data, which covers NQ / ES (and the micros) for the last 90 days. Coach Review is capped at 10 a day. The page says "NQ and ES" and never says "every trade you've ever taken".</li>
+      <li><b>What I cut from the current page:</b> the six-icon feature grid (the stock AI-landing pattern), "Paste your chart, we read the trade" as the main moment, and the sign-in steps. Screenshot reading moves to the secondary list.</li>
+      <li><b>Not claimed, because I couldn't confirm it's built:</b> "how much hindsight changes your read" (blind calls vs after-the-fact calls over time). If you build it, it's the strongest second section this page could have.</li>
+    </ul>
+    <details>
+      <summary>Other headlines I considered</summary>
+      <ul>
+        <li>"Every journal shows you the ending. We hide it." (sharper, but it's about competitors rather than the trader)</li>
+        <li>"Grade the decision, not the result." (true and on brand, but it's what every "process score" journal says)</li>
+        <li>"Would you take this trade again, without knowing how it ended?" (good as an ad hook, too long for an H1)</li>
+      </ul>
+    </details>
+  </div>
+</div>
+
+<!-- ============ PAGE ============ -->
+<header class="mast">
+  <div class="wrap">
+    <div class="brand">TapeScore</div>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#rules">Your rules</a>
+      <a href="#" class="cta-link">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <p class="eyebrow">For NQ and ES futures day traders</p>
+      <h1>Make the call before you see how it ended.</h1>
+      <p class="lede">
+        Reviewing a trade you already know the result of is easy, and it teaches you very little.
+        TapeScore cuts the chart at your fill and hides the outcome.
+        <strong>You call it good trade or mistake, then see what happened</strong> and
+        what the coach read from the exact same moment.
+      </p>
+      <div class="ctas">
+        <a class="btn primary" href="#">Review your first trade blind</a>
+        <a class="btn ghost" href="#">Explore the demo</a>
+      </div>
+      <p class="fine">Import a Sierra Chart trade log or a CSV. Free during beta.</p>
+    </div>
+
+    <div class="replay" aria-label="Illustration: a trade replay cut at the fill">
+      <div class="replay-head">
+        <span><b>NQ · Long</b> &nbsp;Tue 09:04 PT</span>
+        <span>Chart ends 09:04:10 · result hidden</span>
+      </div>
+      <svg id="chart" viewBox="0 0 520 290" role="img" aria-label="Candles up to the fill, then a hidden region"></svg>
+      <div class="callbar">
+        <span class="label">Your call</span>
+        <button class="callbtn" type="button">Good trade</button>
+        <button class="callbtn" type="button">Mistake</button>
+        <span class="hint">Coach Review opens after you call</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band problem">
+  <div class="wrap">
+    <p class="big">
+      You took the long. It worked. Looking back, the entry looks obvious.
+      <em>But that's the result talking, not the read you had at 09:04.</em>
+    </p>
+    <div>
+      <h2 class="sec" style="font-size:26px">Hindsight grades every winner as a good trade.</h2>
+      <p class="sec-sub">
+        Most journals open a trade with the exit, the P&amp;L and your notes on screen. By then you already know
+        the answer. TapeScore puts you back at the fill with only what you could see then, so you're reviewing
+        the decision and not the outcome.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="how">
+  <div class="wrap">
+    <h2 class="sec">How a blind review works</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="n">1</div>
+        <h3>Import your day</h3>
+        <p>Drop in your Sierra Chart trade log or a CSV from your platform. Your fills, stops and targets come in to the second.</p>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <h3>Call it blind</h3>
+        <p>The chart, levels and your bracket show exactly as they were at the fill second, plus the footprint and order-flow bubbles if you trade order flow. The exit, P&amp;L, notes and tags stay hidden. Call it good trade or mistake.</p>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <h3>Reveal and compare</h3>
+        <p>See the result, play the tape forward from your fill, and get the coach's read. The coach is only shown the same data you were. It never sees the result.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="reveal-grid">
+      <div>
+        <h2 class="sec">A losing trade can be the right call.</h2>
+        <p class="sec-sub">The reveal keeps three answers apart: what you called, what the coach called, and how it ended.</p>
+        <div class="verdicts">
+          <div class="vrow"><span class="k">You called it</span><span class="v ink">Good trade</span></div>
+          <div class="vrow"><span class="k">Coach at the fill</span><span class="v ink">Mistake</span></div>
+          <div class="vrow"><span class="k">How it ended</span><span class="v pos">+1.4R</span></div>
+        </div>
+        <p class="pull">It made money, but it broke your own rules. You'd never have caught that looking back at a winner.</p>
+      </div>
+
+      <div class="coachread">
+        <h3>Coach Review · read at 09:04:10</h3>
+        <div class="src">Checked against your entry rules. Given only what was on your chart at the fill.</div>
+        <ul class="rules">
+          <li><span class="m ok">✓</span><span>Setup is in your playbook <span class="note">· opening pullback</span></span></li>
+          <li><span class="m ok">✓</span><span>Stop inside your range <span class="note">· 0.9× ATR</span></span></li>
+          <li><span class="m no">✗</span><span>Waited for your trigger <span class="note">· entered before the pullback bar closed</span></span></li>
+          <li><span class="m no">✗</span><span>Target at least 2R <span class="note">· 1.6R to the first target</span></span></li>
+        </ul>
+        <p class="said"><b>Mistake.</b> The setup was right and the stop was sized well, but you entered before your own trigger printed and the first target was short of your 2R rule. Do this again and you're paying for the good outcomes with the bad ones.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="rules">
+  <div class="wrap">
+    <h2 class="sec">Scored on your rules, not ours.</h2>
+    <p class="sec-sub">
+      You write your entry and exit rules once. Every trade is checked against them, and every broken rule becomes a
+      mistake tag you didn't have to type. Every point on the score traces back to a rule. There's no secret formula.
+    </p>
+    <div class="score-line" aria-label="Example trade score breakdown">
+      <div class="sl"><span class="k">Entry: 3 of your 5 entry rules passed</span><span class="v">60</span></div>
+      <div class="sl"><span class="k">Exit: stop respected, kept 74% of the move on the contracts you held</span><span class="v">74</span></div>
+      <div class="sl total"><span class="k">Trade Score (average of the two)</span><span class="v">67</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <h2 class="sec">Also in TapeScore</h2>
+    <div class="also">
+      <div class="also-row"><h3>A TapeScore for every session</h3><p>One number for how well you traded, separate from whether you made money. A green day can score low, and a disciplined red day can score high.</p></div>
+      <div class="also-row"><h3>Profit kept, honestly counted</h3><p>Scale-outs are graded on the contracts you still held, not your best price times your full size.</p></div>
+      <div class="also-row"><h3>Chase trades flagged from your fills</h3><p>Quick re-entries after a loss with no new trigger get caught automatically. No tagging needed.</p></div>
+      <div class="also-row"><h3>A plan that gets checked</h3><p>Prep turns last month's biggest leak into one thing to do today, and your review tells you whether you did it.</p></div>
+      <div class="also-row"><h3>Paste a chart, get the trade read</h3><p>A Sierra screenshot gets your entry, stop and target read off the bracket orders.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap fit">
+    <div>
+      <h3>Built for</h3>
+      <p>NQ and ES futures day traders, including the micros, who want to know whether they're trading well and not just whether they're up. If you trade order flow, the footprint and bubble panels are there. If you don't, you get a clean price chart and they stay off.</p>
+    </div>
+    <div>
+      <h3>Not built for (yet)</h3>
+      <p>Stocks, options, crypto or forex. Swing and position trading. If that's you, there are good journals that cover hundreds of brokers. TapeScore goes deep on one market instead.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band final">
+  <div class="wrap">
+    <h2 class="sec">Pick yesterday's trade. Call it before you look.</h2>
+    <p class="sec-sub">Import one session and run one blind review. It takes about five minutes, and you'll see your own hindsight for the first time.</p>
+    <div class="ctas"><a class="btn primary" href="#">Review your first trade blind</a><a class="btn ghost" href="#">Explore the demo</a></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>TapeScore · early build, free during beta</span>
+    <span>Privacy · Terms · support@tapescore.app</span>
+  </div>
+</footer>
+
+<script>
+// Illustration only: candles up to the fill, a hidden region after it.
+(function () {
+  const svg = document.getElementById('chart');
+  const NS = 'http://www.w3.org/2000/svg';
+  const W = 520, H = 290, FILL_X = 352, LEFT = 18;
+  const el = (tag, attrs, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text) n.textContent = text;
+    svg.appendChild(n);
+    return n;
+  };
+  // Price path: a drift down into a pullback, then a turn just before the fill.
+  const closes = [240,228,234,215,205,210,190,178,184,160,148,154,130,118,124,100,92,104,118,130,142,150,146,140,136];
+  const step = (FILL_X - LEFT - 8) / closes.length;
+  const y = p => p; // closes are already in px space
+  const defs = el('defs', {});
+  defs.innerHTML = '<pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="#23252C" stroke-width="2"/></pattern>';
+  // Hidden region after the fill
+  el('rect', { x: FILL_X, y: 0, width: W - FILL_X, height: H, fill: 'url(#hatch)' });
+  el('text', { x: (FILL_X + W) / 2, y: H / 2 - 4, 'text-anchor': 'middle', fill: '#9A9FAA', 'font-size': 14, 'font-family': 'Archivo, sans-serif', 'font-weight': 600 }, 'Result hidden');
+  el('text', { x: (FILL_X + W) / 2, y: H / 2 + 16, 'text-anchor': 'middle', fill: '#62666F', 'font-size': 11.5, 'font-family': 'Hanken Grotesk, sans-serif' }, 'until you make your call');
+  // Bracket lines (entry-time information, visible in blind)
+  const entry = 137, stop = 176, target = 62;
+  const line = (yy, label, dash) => {
+    el('line', { x1: LEFT, x2: FILL_X, y1: yy, y2: yy, stroke: '#3A3D46', 'stroke-width': 1, 'stroke-dasharray': dash });
+    el('text', { x: LEFT + 2, y: yy - 5, fill: '#62666F', 'font-size': 11, 'font-family': 'Hanken Grotesk, sans-serif' }, label);
+  };
+  line(target, 'Target', '5 4');
+  line(stop, 'Stop', '5 4');
+  // Candles (muted: colour here would read as a result)
+  let prev = 246;
+  closes.forEach((c, i) => {
+    const o = prev, x = LEFT + 8 + i * step + step / 2;
+    const hi = Math.min(o, c) - 4 - ((i * 7) % 6), lo = Math.max(o, c) + 4 + ((i * 5) % 5);
+    const up = c < o;
+    el('line', { x1: x, x2: x, y1: y(hi), y2: y(lo), stroke: '#7D828D', 'stroke-width': 1 });
+    el('rect', { x: x - step * 0.3, y: y(Math.min(o, c)), width: step * 0.6, height: Math.max(2, Math.abs(c - o)), fill: up ? '#0C0D10' : '#7D828D', stroke: '#7D828D', 'stroke-width': 1 });
+    prev = c;
+  });
+  // The fill
+  el('line', { x1: FILL_X, x2: FILL_X, y1: 0, y2: H, stroke: '#4F97CE', 'stroke-width': 1.5 });
+  el('circle', { cx: FILL_X, cy: entry, r: 4.5, fill: '#4F97CE' });
+  el('text', { x: FILL_X - 8, y: 18, 'text-anchor': 'end', fill: '#4F97CE', 'font-size': 11.5, 'font-family': 'Hanken Grotesk, sans-serif', 'font-weight': 600 }, 'Your fill · 09:04:10');
+})();
+</script>
+</body>
+</html>
