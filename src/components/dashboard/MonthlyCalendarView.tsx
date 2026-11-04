@@ -29,8 +29,8 @@ interface Props {
  * Each day shows its result in whole dollars, "N trades · X% won", and its
  * TapeScore on the score chip; a bar along the bottom runs to the day's high
  * and fills to where it closed (founder, 2026-11-02; was the day's size against
- * the month's biggest day). (2026-11-01 — the scoreboard
- * look: white cells, green and red for money only). Cells open
+ * the month's biggest day). Green and red days carry a soft tint (founder,
+ * 2026-11-03; the 11-01 scoreboard look had white cells). Cells open
  * `/session/{date}`.
  */
 export default function MonthlyCalendarView({ days, windowStart, windowEnd, initialMonth, toggle }: Props) {
@@ -255,8 +255,14 @@ function DayCell({ date, cursor, data }: {
   const pnl = data?.eod_pnl ?? null
   const hasTrades = !!data && data.trade_count > 0
 
-  // Traded days are outlined; days without trades are a quiet fill.
-  const shade = hasTrades ? 'border border-gray-800 hover:border-gray-600' : 'bg-gray-950/60 border border-transparent hover:border-gray-800'
+  // A soft wash of the P&L colour (--color-pos/--color-neg, so teal and wine in
+  // light mode) by the day's result — founder 2026-11-03 asked for it back after
+  // the 11-01 white cells. Light enough that the kept bar and the score chip
+  // still read; flat days are outlined, no-trade days a quiet fill.
+  const shade = !hasTrades ? 'bg-gray-950/60 border border-transparent hover:border-gray-800'
+    : pnl != null && pnl > 0 ? 'border bg-[color-mix(in_srgb,var(--color-pos)_9%,transparent)] border-[color-mix(in_srgb,var(--color-pos)_35%,transparent)] hover:border-[var(--color-pos)]'
+    : pnl != null && pnl < 0 ? 'border bg-[color-mix(in_srgb,var(--color-neg)_9%,transparent)] border-[color-mix(in_srgb,var(--color-neg)_35%,transparent)] hover:border-[var(--color-neg)]'
+    : 'border border-gray-800 hover:border-gray-600'
   const pnlTone = pnl != null && pnl > 0 ? 'text-green-400' : pnl != null && pnl < 0 ? 'text-red-400' : 'text-gray-300'
   const kept = hasTrades ? keptOfHigh(data) : null
   // Worth a word when the day gave back a real slice of its high.
