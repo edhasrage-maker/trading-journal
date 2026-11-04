@@ -1268,7 +1268,7 @@ export default function SessionTradeTable({
                       const partialPlanned = ext != null && ext.full_window === false
                       return (
                         <td className="py-1.5 pr-3 text-left text-gray-400" title={read.title}>
-                          <span className={`block truncate ${colWidths ? '' : 'max-w-[15rem]'}`}>
+                          <span className={`block whitespace-normal break-words leading-snug ${colWidths ? '' : 'min-w-[10rem] max-w-[13rem]'}`}>
                             {read.label}
                             {partialPlanned && (
                               <span
@@ -1292,11 +1292,12 @@ export default function SessionTradeTable({
                     // ("stop right — kept rising 181pts") and were nowrap, so the
                     // column grew to fit the longest one, pushed the table past
                     // the viewport, and stranded the header far to the right of
-                    // everything else. Truncated, with the full text still in the
-                    // cell's tooltip.
+                    // everything else. They wrap inside the capped box instead of
+                    // truncating, so the whole read shows beside the pinned edit
+                    // column (founder, 2026-11-04).
                     return (
                       <td className={`py-1.5 pr-3 text-left ${VERDICT_TONE_CLASS[v.tone]}`} title={v.title}>
-                        <span className={`block truncate ${colWidths ? '' : 'max-w-[15rem]'}`}>
+                        <span className={`block whitespace-normal break-words leading-snug ${colWidths ? '' : 'min-w-[10rem] max-w-[13rem]'}`}>
                           <span className="mr-0.5">{v.glyph}</span>{v.label}
                           {partial && (
                             <span
