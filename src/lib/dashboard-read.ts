@@ -502,7 +502,7 @@ export function scoutingActions({ split, history = null, liftDrag, mgmt }: {
     if (capPays) {
       const quality = `${f.green === f.days ? 'all green' : `green ${f.green} of ${f.days}`}${f.scoreMin != null ? ` and scored ${f.scoreMin}+` : ''}`
       out.push({
-        title: `Stop at ${tradesWord(k)} for a week`,
+        title: `Stop at ${tradesWord(k)} each day for a week`,
         why: history && nowMany
           ? `This period your ${moreWord} made more (${signedUsd(m.avg)} a day against ${signedUsd(f.avg)}). Before it they averaged ${signedUsd(history.many.avg)} a day against ${signedUsd(history.few.avg)} on days with ${fewWord}. This period those quieter days were ${quality}.`
           : history

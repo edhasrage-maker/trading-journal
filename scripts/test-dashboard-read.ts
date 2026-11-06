@@ -144,7 +144,7 @@ const fsame = periodFinding(OCT, PRIOR.map(d => ({ ...d, eod_pnl: d.trade_count 
 check('bridge, busy days paid before too', fsame?.bridge, 'All three had 5 or more trades. Those busy days paid more this period, and before it too:')
 check('verdict, same direction', fsame?.verdict?.endsWith('the busier days paid more too.'), true)
 const withHist = scoutingActions({ split, history: hist, liftDrag: null, mgmt: null })
-check('history says cap → stop at 4', withHist[0]?.title, 'Stop at 4 trades for a week')
+check('history says cap → stop at 4', withHist[0]?.title, 'Stop at 4 trades each day for a week')
 check('stop why names both', withHist[0]?.why,
   'This period your 5+ trade days made more (+$375 a day against +$281). Before it they averaged −$60 a day against +$90 on days with 4 trades or fewer. This period those quieter days were all green and scored 79+.')
 const PRIOR_BUSY = PRIOR.map(d => ({ ...d, eod_pnl: d.trade_count > 4 ? 200 : 50 }))
