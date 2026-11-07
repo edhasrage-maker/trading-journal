@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChevronDown } from 'lucide-react'
 import { tapeScoreBand } from '@/lib/tapescore'
+import { placeLabels, labelStyle, type LabelSpot, type Rect } from '@/lib/scatter-labels'
 import type { DayStat } from './DashboardStats'
 
 /**
@@ -29,6 +30,8 @@ type Period = 'month' | '30d' | 'ytd' | 'last_year' | 'all'
 // The trader's saved chart range sticks across visits (reverted a v2 bump that
 // force-reset it — persisting a preference means keeping it).
 const PERIOD_KEY = 'dashboard-charts-period-v1'
+/** Detailed scoreboard: whether the chart pair is folded (founder, 2026-11-06). */
+const CHARTS_OPEN_KEY = 'dashboard-charts-open-v1'
 const PERIOD_LABELS: Record<Period, string> = {
   month: 'This Month',
   '30d': 'Last 30 Days',
@@ -282,6 +285,23 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
     try { localStorage.setItem(PERIOD_KEY, period) } catch { /* ignore */ }
   }, [period, hydrated])
 
+  // Hide / Show for the chart pair, so the top stats and the calendar can sit
+  // together (founder, 2026-11-06). Same pattern as the Scouting report: open
+  // by default, remembered on this device.
+  const [chartsOpen, setChartsOpen] = useState(true)
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load-from-localStorage hydration shim
+      if (localStorage.getItem(CHARTS_OPEN_KEY) === '0') setChartsOpen(false)
+    } catch { /* ignore */ }
+  }, [])
+  const toggleCharts = () => {
+    setChartsOpen(o => {
+      try { localStorage.setItem(CHARTS_OPEN_KEY, o ? '0' : '1') } catch { /* ignore */ }
+      return !o
+    })
+  }
+
   const { points, equity, daily, scores, dots } = useMemo(() => {
     const { start, end } = periodBounds(effectivePeriod)
     const inPeriod = days
@@ -312,7 +332,26 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
     return (
       <section aria-label="Scouting report and charts" className="ts-card overflow-hidden">
         {scoreboard.top}
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 sm:px-7 py-4">
+          <h2 className="text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Charts</h2>
+          <span className="text-[14px] text-gray-400">
+            Equity curve and TapeScore vs Profit
+            {!chartsOpen && hasData && (
+              <> · <b className={`tabular-nums ${total >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtMoney(total, { signed: true })}</b></>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={toggleCharts}
+            aria-expanded={chartsOpen}
+            className="ml-auto inline-flex items-center gap-1 text-[13px] text-gray-200 border border-gray-700 hover:border-gray-500 rounded-md px-3 py-1"
+          >
+            {chartsOpen ? 'Hide' : 'Show'}
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${chartsOpen ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+        {chartsOpen && (
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] border-t border-gray-800">
           <div className="min-w-0 px-5 sm:px-7 py-5 lg:border-r border-gray-800">
             <div className="flex items-baseline justify-between gap-3 mb-3">
               <h2 className="text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Equity curve</h2>
@@ -349,6 +388,7 @@ export default function DashboardCharts({ days, defaultPeriod = 'ytd', rangeLabe
             )}
           </div>
         </div>
+        )}
       </section>
     )
   }
@@ -450,6 +490,45 @@ function ScoreVsMoney({ dots, splitK }: {
   ])
   const short = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
   const L = 56, B = 34
+
+  // Keep each name label off the other dots (founder, 2026-11-06: "-$413
+  // Oct 29" was printed under its neighbour). Placement needs pixels, so the
+  // plot is measured; until then (and on the server) labels use the old
+  // right/left rule. src/lib/scatter-labels.ts picks the spot.
+  const plotRef = useRef<HTMLDivElement>(null)
+  const [plot, setPlot] = useState<{ w: number; h: number; wide: boolean } | null>(null)
+  useEffect(() => {
+    const el = plotRef.current
+    if (!el) return
+    const measure = () => setPlot({
+      w: el.clientWidth, h: el.clientHeight,
+      wide: window.matchMedia('(min-width: 640px)').matches,   // Tailwind sm
+    })
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const labelText = (d: { pnl: number; date: string }) => `${fmtMoney(d.pnl, { signed: true })} ${short(d.date)}`
+  const spots = useMemo<Record<string, LabelSpot>>(() => {
+    if (!plot || plot.w === 0) return {}
+    const { w, h, wide } = plot
+    const pts = dots.map(d => ({ id: d.date, x: (xPct(d.score) / 100) * w, y: (yPct(d.pnl) / 100) * h }))
+    const labels = dots
+      .filter(d => named.has(d.date) && (wide || named.get(d.date)))
+      .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
+      .map(d => ({ id: d.date, width: labelText(d).length * 6.8 + 4, prefer: (xPct(d.score) > 72 ? 'left' : 'right') as 'left' | 'right' }))
+    // Axis text the labels must not cover: $ ticks in the left gutter, score
+    // ticks under the plot, and the "Strong 70+" tag.
+    const obstacles: Rect[] = [
+      ...ticks.map(v => { const y = (yPct(v) / 100) * h; return { x0: -L, x1: -6, y0: y - 7, y1: y + 7 } }),
+      ...xTicks.map(v => { const x = (xPct(v) / 100) * w; return { x0: x - 10, x1: x + 10, y0: h + 6, y1: h + 20 } }),
+      ...(x0 < 70 ? [{ x0: w - 72, x1: w, y0: 0, y1: 20 }] : []),
+    ]
+    return placeLabels(pts, labels, { bounds: { x0: -L + 4, y0: -4, x1: w + 6, y1: h + 20 }, obstacles })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- xPct/yPct/named/labelText derive from dots + ticks, already listed
+  }, [plot, dots, ticks, x0])
+
   return (
     <div>
       <div className="relative w-full" style={{ height: 240 }}>
@@ -458,7 +537,7 @@ function ScoreVsMoney({ dots, splitK }: {
             {fmtMoney(v)}
           </div>
         ))}
-        <div className="absolute" style={{ left: L, right: 8, top: 0, bottom: B }}>
+        <div ref={plotRef} className="absolute" style={{ left: L, right: 8, top: 0, bottom: B }}>
           {ticks.map(v => (
             <div key={v} className={`absolute left-0 right-0 border-t ${v === 0 ? 'border-gray-700' : 'border-gray-800/70'}`} style={{ top: `${yPct(v)}%` }} />
           ))}
@@ -479,7 +558,10 @@ function ScoreVsMoney({ dots, splitK }: {
                 style={{ left: `${xPct(d.score)}%`, top: `${yPct(d.pnl)}%`, background: filled ? col : 'var(--ts-panel)', border: `2px solid ${col}` }}
               >
                 {named.has(d.date) && (
-                  <span className={`absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-[12px] text-gray-200 ${right ? 'right-5' : 'left-5'} ${named.get(d.date) ? '' : 'hidden sm:inline'}`}>
+                  <span
+                    className={`absolute whitespace-nowrap text-[12px] leading-4 text-gray-200 ${named.get(d.date) ? '' : 'hidden sm:inline'}`}
+                    style={labelStyle(spots[d.date] ?? (right ? 'left' : 'right'))}
+                  >
                     <b className="tabular-nums">{fmtMoney(d.pnl, { signed: true })}</b> {short(d.date)}
                   </span>
                 )}
