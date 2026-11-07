@@ -488,6 +488,7 @@ export default function DashboardFilterScope({
                 ruled
                 view={profitFactor.view}
                 windowLabel={profitFactor.window}
+                periodLabel={profitFactor.periodWindow}
                 className="min-w-0 pt-5 pb-2 lg:pl-8 border-t lg:border-t-0 border-gray-800 mt-4 lg:mt-0"
               />
             )}

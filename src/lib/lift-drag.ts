@@ -450,10 +450,42 @@ export function windowFor(
   return { start: last[0], end: last[last.length - 1], extended: true }
 }
 
+/** The selected period's own profit factor, before any widening. */
+export interface PeriodPf {
+  /** R won ÷ R lost. Null when nothing was lost in R (or nothing traded). */
+  pf: number | null
+  trades: number
+  sessions: number
+}
+
 /** One lift/drag read as the card needs it: the result plus whether the
- *  period had to be widened to reach MIN_SESSIONS. */
+ *  period had to be widened to reach MIN_SESSIONS. When it was, `period`
+ *  holds the period's own profit factor, so the card's headline can match
+ *  the tab the trader picked while the lift / drag keep the 60-session read
+ *  (founder, 2026-11-06: "why doesn't it match the duration at the top"). */
 export interface LiftDragView extends LiftDragResult {
   extended: boolean
+  period?: PeriodPf
+}
+
+/**
+ * Profit factor of a set of trades in R, the same way `liftDrag` computes the
+ * window's: every closed trade counts toward `trades`, the ones with an R
+ * toward the ratio.
+ */
+export function periodProfitFactor(trades: LiftDragTrade[]): PeriodPf {
+  let won = 0, lost = 0, n = 0
+  const days = new Set<string>()
+  for (const t of trades) {
+    if (t.pnl == null) continue
+    n++
+    days.add(t.date)
+    const r = rMultiple(t as never)
+    if (r == null || !Number.isFinite(r)) continue
+    if (r > 0) won += r
+    else lost -= r
+  }
+  return { pf: profitFactor(won, lost), trades: n, sessions: days.size }
 }
 
 /**
@@ -503,7 +535,12 @@ export function liftDragByScope(trades: LiftDragTrade[], today: string): Record<
       const r = liftDrag(trades.filter(t => t.date >= w.start && t.date <= w.end), dims)
       cache.set(id, r && { ...r, extended: w.extended })
     }
-    out[key] = cache.get(id) ?? null
+    const view = cache.get(id) ?? null
+    // Widened: several scopes share the 60-session read, but each keeps its
+    // own headline number.
+    out[key] = view && w.extended
+      ? { ...view, period: periodProfitFactor(trades.filter(t => t.date >= start && t.date <= end)) }
+      : view
   }
   return out
 }

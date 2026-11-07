@@ -188,7 +188,23 @@ const fmtPct = (x: number | null) => (x == null ? '—' : `${Math.round(x * 100)
  *  dragging it. Fills the space the card's rows leave under Net per trade
  *  (founder, 2026-10-13). Profit factor is in R whatever the unit menu says. */
 function pfTitle(view: LiftDragView): string {
-  return `Profit factor = R won ÷ R lost, in R so position size doesn't change it. ${view.trades} trades across ${view.sessions} sessions. Each line below is the one thing, out of ${view.candidates} known at entry, that moves it most when its trades are left out.${view.extended ? ' Shorter periods are widened to your last 60 sessions so the pick holds still from week to week.' : ''}`
+  const base = 'Profit factor = R won ÷ R lost, in R so position size doesn\'t change it.'
+  if (view.extended && view.period) {
+    return `${base} The big number is the range you picked: ${view.period.trades} trades across ${view.period.sessions} sessions. What moves it is read over your last ${view.sessions} sessions (${view.trades} trades, profit factor ${view.pf.toFixed(2)}), because a short range changes its pick almost every week. Each line is the one thing, out of ${view.candidates} known at entry, that moves it most when its trades are left out.`
+  }
+  return `${base} ${view.trades} trades across ${view.sessions} sessions. Each line below is the one thing, out of ${view.candidates} known at entry, that moves it most when its trades are left out.${view.extended ? ' Shorter periods are widened to your last 60 sessions so the pick holds still from week to week.' : ''}`
+}
+
+/** The big number: the picked range's own profit factor when the read was
+ *  widened past it, otherwise the read's. */
+function headlinePf(view: LiftDragView): { value: string; note: string | null } {
+  const p = view.extended ? view.period : undefined
+  if (!p) return { value: view.pf.toFixed(2), note: null }
+  if (p.pf != null) return { value: p.pf.toFixed(2), note: null }
+  return {
+    value: '—',
+    note: p.trades === 0 ? 'No trades in this range yet.' : 'No losing trades in this range, so there is nothing to divide by.',
+  }
 }
 
 function ProfitFactorSection({ view, windowLabel }: { view: LiftDragView; windowLabel: string }) {
@@ -236,18 +252,34 @@ function factorTitle(kind: 'lift' | 'drag', f: LiftDragFactor, candidates: numbe
  * the one dragging it in tinted boxes. Same reads and hover text as the
  * section the recap-style card carries.
  */
-export function ProfitFactorCard({ view, windowLabel, className, ruled = false }: { view: LiftDragView; windowLabel: string; className?: string; ruled?: boolean }) {
-  if (ruled) return <ProfitFactorRuled view={view} windowLabel={windowLabel} className={className} />
+export function ProfitFactorCard({ view, windowLabel, periodLabel, className, ruled = false }: {
+  view: LiftDragView
+  windowLabel: string
+  /** The picked range, e.g. "last 30 days · 14 sessions" — the headline's
+   *  label when the read was widened past it. */
+  periodLabel?: string
+  className?: string
+  ruled?: boolean
+}) {
+  if (ruled) return <ProfitFactorRuled view={view} windowLabel={windowLabel} periodLabel={periodLabel} className={className} />
+  const split = view.extended && view.period != null && periodLabel != null
+  const head = split ? headlinePf(view) : { value: view.pf.toFixed(2), note: null }
   return (
     <div className={className}>
       <div className="flex items-baseline justify-between gap-3" title={pfTitle(view)}>
         <span className="ts-eyebrow whitespace-nowrap">Profit factor</span>
-        <span className="text-xs text-gray-500 text-right">{windowLabel}</span>
+        <span className="text-xs text-gray-500 text-right">{split ? periodLabel : windowLabel}</span>
       </div>
       <div className="mt-2 text-[30px] font-bold leading-none tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }} title={pfTitle(view)}>
-        {view.pf.toFixed(2)}
+        {head.value}
       </div>
-      <div className="mt-4 space-y-2">
+      {head.note && <p className="mt-1 text-xs text-gray-500">{head.note}</p>}
+      {split && (
+        <p className="mt-3 text-xs text-gray-500" title={pfTitle(view)}>
+          <span className="font-semibold text-gray-300">What moves it</span> · last {view.sessions} sessions, where it&apos;s {view.pf.toFixed(2)}
+        </p>
+      )}
+      <div className={`${split ? 'mt-2' : 'mt-4'} space-y-2`}>
         {view.lift && <FactorBox kind="lift" f={view.lift} candidates={view.candidates} />}
         {view.drag && <FactorBox kind="drag" f={view.drag} candidates={view.candidates} />}
         {!view.lift && !view.drag && (
@@ -260,8 +292,68 @@ export function ProfitFactorCard({ view, windowLabel, className, ruled = false }
 
 /** Detailed scoreboard (founder, 2026-11-01): a heading, the window said out
  *  loud when it reaches past the page's period, lift and drag on coloured
- *  left rules instead of tinted boxes. */
-function ProfitFactorRuled({ view, windowLabel, className }: { view: LiftDragView; windowLabel: string; className?: string }) {
+ *  left rules instead of tinted boxes.
+ *
+ *  Split when the read was widened (founder, 2026-11-06): the big number is
+ *  the range picked at the top of the page, and "What moves it" below says
+ *  it reads the last 60 sessions — with that window's own profit factor,
+ *  which every "without them it would be" compares against. */
+function ProfitFactorRuled({ view, windowLabel, periodLabel, className }: { view: LiftDragView; windowLabel: string; periodLabel?: string; className?: string }) {
+  const span = windowLabel.split(' · ').slice(1).join(' · ')
+  const rows = (
+    <div className="mt-3.5 space-y-3.5">
+      {([['lift', view.lift], ['drag', view.drag]] as const).map(([kind, f]) => f && (
+        <div
+          key={kind}
+          className={`flex items-center gap-3 border-l-[3px] pl-3.5 py-0.5 ${kind === 'lift' ? 'border-green-400' : 'border-red-400'}`}
+          title={factorTitle(kind, f, view.candidates)}
+        >
+          <div className="flex-1 min-w-0">
+            <p className="text-[15px] text-gray-100 leading-snug">
+              <b className={kind === 'lift' ? 'text-green-400' : 'text-red-400'}>{kind === 'lift' ? 'Lifts it' : 'Drags it'}</b>{' '}{f.label}
+            </p>
+            <p className="text-[13px] text-gray-400 leading-snug">{f.n} trade{plural(f.n)} · without them it would be {f.pfWithout.toFixed(2)}</p>
+          </div>
+          <span className={`flex-none text-[20px] font-bold tabular-nums ${kind === 'lift' ? 'text-green-400' : 'text-red-400'}`} style={{ fontFamily: 'var(--font-display)' }}>
+            {formatPfDelta(f.delta)}
+          </span>
+        </div>
+      ))}
+      {!view.lift && !view.drag && (
+        <p className="text-[13px] text-gray-400">Nothing lifts or drags it clearly enough to name yet.</p>
+      )}
+    </div>
+  )
+  const bigNumber = (value: string) => (
+    <div className="mt-2.5 text-[40px] font-bold leading-none tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }} title={pfTitle(view)}>
+      {value}
+    </div>
+  )
+
+  if (view.extended && view.period && periodLabel) {
+    const head = headlinePf(view)
+    return (
+      <div className={className}>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1" title={pfTitle(view)}>
+          <h2 className="text-[20px] font-bold text-gray-100" style={{ fontFamily: 'var(--font-display)' }}>Profit factor</h2>
+          <span className="text-[13px] text-gray-400">{periodLabel}</span>
+        </div>
+        {bigNumber(head.value)}
+        {head.note && <p className="mt-1.5 text-[13px] text-gray-400">{head.note}</p>}
+        <div className="mt-5 pt-4 border-t border-gray-800">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1" title={pfTitle(view)}>
+            <h3 className="text-[16px] font-bold text-gray-100">What moves it</h3>
+            <span className="text-[13px] font-semibold text-gray-100 bg-gray-800 rounded-md px-2.5 py-0.5">Last {view.sessions} sessions</span>
+          </div>
+          <p className="mt-1 text-[13px] text-gray-400">
+            {span}, where it&apos;s {view.pf.toFixed(2)}. Read over more sessions than your range so the pick holds still.
+          </p>
+          {rows}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={className}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1" title={pfTitle(view)}>
@@ -272,34 +364,11 @@ function ProfitFactorRuled({ view, windowLabel, className }: { view: LiftDragVie
       </div>
       {view.extended && (
         <p className="mt-1 text-[13px] text-gray-400">
-          {windowLabel.split(' · ').slice(1).join(' · ')}. This one looks further back than the rest of the page, so the pick holds still.
+          {span}. This one looks further back than the rest of the page, so the pick holds still.
         </p>
       )}
-      <div className="mt-2.5 text-[40px] font-bold leading-none tabular-nums text-gray-100" style={{ fontFamily: 'var(--font-display)' }} title={pfTitle(view)}>
-        {view.pf.toFixed(2)}
-      </div>
-      <div className="mt-4 space-y-3.5">
-        {([['lift', view.lift], ['drag', view.drag]] as const).map(([kind, f]) => f && (
-          <div
-            key={kind}
-            className={`flex items-center gap-3 border-l-[3px] pl-3.5 py-0.5 ${kind === 'lift' ? 'border-green-400' : 'border-red-400'}`}
-            title={factorTitle(kind, f, view.candidates)}
-          >
-            <div className="flex-1 min-w-0">
-              <p className="text-[15px] text-gray-100 leading-snug">
-                <b className={kind === 'lift' ? 'text-green-400' : 'text-red-400'}>{kind === 'lift' ? 'Lifts it' : 'Drags it'}</b>{' '}{f.label}
-              </p>
-              <p className="text-[13px] text-gray-400 leading-snug">{f.n} trade{plural(f.n)} · without them it would be {f.pfWithout.toFixed(2)}</p>
-            </div>
-            <span className={`flex-none text-[20px] font-bold tabular-nums ${kind === 'lift' ? 'text-green-400' : 'text-red-400'}`} style={{ fontFamily: 'var(--font-display)' }}>
-              {formatPfDelta(f.delta)}
-            </span>
-          </div>
-        ))}
-        {!view.lift && !view.drag && (
-          <p className="text-[13px] text-gray-400">Nothing lifts or drags it clearly enough to name yet.</p>
-        )}
-      </div>
+      {bigNumber(view.pf.toFixed(2))}
+      {rows}
     </div>
   )
 }

@@ -2,7 +2,7 @@
  * Unit tests for the profit-factor lifter / drag (src/lib/lift-drag.ts).
  *   npx tsx scripts/test-lift-drag.ts
  */
-import { liftDrag, liftDragByScope, windowFor, formatPfDelta, MIN_SESSIONS, type LiftDragTrade } from '../src/lib/lift-drag.ts'
+import { liftDrag, liftDragByScope, windowFor, formatPfDelta, periodProfitFactor, MIN_SESSIONS, type LiftDragTrade } from '../src/lib/lift-drag.ts'
 import { symbolToMultiplier } from '../src/lib/futures-symbols.ts'
 
 let failures = 0
@@ -174,10 +174,29 @@ console.log('liftDragByScope')
   const scopes = liftDragByScope(book, today)
   check('every Period option and Filter range has a key',
     ['p:all', 'p:week', 'p:month', 'p:30d', 'p:ytd', 'p:last_year', 'r:1m', 'r:3m', 'r:6m', 'r:ytd', 'r:1y', 'r:all'].every(k => k in scopes))
+  const sansPeriod = (v: typeof scopes[string]) => v && JSON.stringify({ ...v, period: undefined })
   check('short periods widen to the same 60 sessions',
     scopes['p:week']?.sessions === MIN_SESSIONS && scopes['p:week']?.extended === true
-      && JSON.stringify(scopes['p:week']) === JSON.stringify(scopes['p:30d']))
+      && sansPeriod(scopes['p:week']) === sansPeriod(scopes['p:30d']))
   check('all time reads the whole book', scopes['p:all']?.sessions === 100 && scopes['p:all']?.extended === false)
+
+  // The headline follows the tab (founder, 2026-11-06): a widened scope keeps
+  // its own period's profit factor next to the 60-session read.
+  const inRange = (from: string) => book.filter(t => t.date >= from && t.date <= today)
+  const weekFrom = (() => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7); return d.toISOString().slice(0, 10) })()
+  const d30 = (() => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 30); return d.toISOString().slice(0, 10) })()
+  check('a widened scope carries its own period', scopes['p:30d']?.period != null && scopes['p:week']?.period != null)
+  check('30-day headline counts only the last 30 days',
+    scopes['p:30d']?.period?.trades === inRange(d30).filter(t => t.pnl != null).length,
+    `${scopes['p:30d']?.period?.trades} vs ${inRange(d30).length}`)
+  check('this-week headline counts only this week',
+    scopes['p:week']?.period?.sessions === new Set(inRange(weekFrom).map(t => t.date)).size)
+  check('the 30-day profit factor is its own number, not the 60-session one',
+    scopes['p:30d']?.period?.pf !== scopes['p:30d']?.pf, `${scopes['p:30d']?.period?.pf} vs ${scopes['p:30d']?.pf}`)
+  check('a scope that is not widened has no separate period', scopes['p:all']?.period === undefined)
+
+  const p = periodProfitFactor([])
+  check('no trades → no profit factor', p.pf === null && p.trades === 0 && p.sessions === 0)
 }
 
 console.log('formatPfDelta')

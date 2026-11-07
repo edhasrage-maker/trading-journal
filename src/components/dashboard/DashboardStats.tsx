@@ -326,14 +326,18 @@ export function profitFactorFor(
   scope: string | null | undefined,
   period: Period,
   rangeLabel?: string,
-): { view: LiftDragView; window: string } | null {
+): { view: LiftDragView; window: string; periodWindow?: string } | null {
   const view = scope === null ? null : liftDrag?.[scope ?? `p:${period}`] ?? null
   if (!view) return null
+  const name = period.startsWith('m:') && !rangeLabel ? periodLabel(period) : (rangeLabel ?? periodLabel(period)).toLowerCase()
+  const plural = (n: number) => `${n} session${n === 1 ? '' : 's'}`
   return {
     view,
     window: view.extended
       ? `last ${view.sessions} sessions · ${dateSpan(view.from, view.to)}`
-      : `${period.startsWith('m:') && !rangeLabel ? periodLabel(period) : (rangeLabel ?? periodLabel(period)).toLowerCase()} · ${view.sessions} sessions`,
+      : `${name} · ${plural(view.sessions)}`,
+    // The picked range, for the headline when the read was widened past it.
+    periodWindow: view.extended && view.period ? `${name} · ${plural(view.period.sessions)}` : undefined,
   }
 }
 
@@ -580,7 +584,7 @@ export default function DashboardStats({ days, hideScoreHero = false, defaultPer
               className={`ts-card p-5 min-w-0 ${profitFactor ? '' : 'lg:col-span-2'}`}
             />
             {profitFactor && (
-              <ProfitFactorCard view={profitFactor.view} windowLabel={profitFactor.window} className="ts-card p-5 min-w-0" />
+              <ProfitFactorCard view={profitFactor.view} windowLabel={profitFactor.window} periodLabel={profitFactor.periodWindow} className="ts-card p-5 min-w-0" />
             )}
           </div>
         </>
