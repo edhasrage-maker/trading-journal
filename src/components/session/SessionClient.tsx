@@ -167,8 +167,12 @@ export default function SessionClient({
   const [day, setDay] = useState<TradingDay | null>(initialDay)
   const [trades, setTrades] = useState<Trade[]>(initialTrades)
   const [allTags, setAllTags] = useState<TradeTag[]>(initialAllTags)
+  // Upsert: a new inline tag is appended; a tag that just learned an alias in
+  // a trade form replaces its old copy, so the next trade's notes use it.
   const addTag = (tag: TradeTag) =>
-    setAllTags(prev => (prev.some(t => t.id === tag.id) ? prev : [...prev, tag]))
+    setAllTags(prev => (prev.some(t => t.id === tag.id)
+      ? prev.map(t => (t.id === tag.id ? tag : t))
+      : [...prev, tag]))
 
   // ── Live vs recap ──
   // `endedAt` is kept apart from `day` because "I'm done" can be the first

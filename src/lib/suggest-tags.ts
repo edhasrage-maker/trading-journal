@@ -319,6 +319,48 @@ export function addAlias(tag: TradeTag, phrase: string): string[] {
 }
 
 /**
+ * A first guess at the words in `text` that mean `tag`, for the trader to
+ * confirm as a new alias ("Next time, tag ONH/ONL Hold when notes say ONH?").
+ * Used when the trader adds a tag the notes didn't catch and no AI phrase is on
+ * hand.
+ *
+ * It returns the first note word that is one of the tag's own label words AND
+ * appears in no other tag's label. "ONH" in "ONH/ONL Hold" qualifies; "break"
+ * does not, because Break And Retest, Trendline Break and IB Reclaim (Break &
+ * Fail) all share it, so an alias of "break" would tag the wrong one. Bare
+ * numbers are skipped for the same reason ("2nd" is any second thing).
+ *
+ * Returns null when nothing distinctive overlaps, and the line isn't shown.
+ * A wrong guess costs the trader a "No", never a silent tag.
+ */
+export function learnablePhrase(tag: TradeTag, text: string, allTags: TradeTag[]): string | null {
+  if (!text || text.trim().length < 3) return null
+  const own = new Set(tagKeywords(tag.label).flat())
+  if (own.size === 0) return null
+  const shared = new Set<string>()
+  for (const t of allTags) {
+    if (t.id === tag.id || (t.category === tag.category && t.label === tag.label)) continue
+    for (const k of tagKeywords(t.label).flat()) shared.add(k)
+  }
+  for (const word of text.replace(/&/g, ' and ').split(/[^A-Za-z0-9]+/)) {
+    if (word.length < 2 || /^\d/.test(word)) continue
+    const n = normalizePart(word)
+    if (!isSignificant(n)) continue
+    if (own.has(n) && !shared.has(n)) return word
+  }
+  return null
+}
+
+/**
+ * True when `phrase` appears in `text` as a run of words, by the same rule an
+ * alias is matched — so a phrase the trader confirms is one that would actually
+ * have tagged this note.
+ */
+export function phraseInText(phrase: string, text: string): boolean {
+  return containsPhrase(phraseTokens(text), phraseTokens(phrase))
+}
+
+/**
  * Union two TradeTags objects (per-category, deduped). Used to merge OCR
  * suggestions with notes auto-add results.
  */

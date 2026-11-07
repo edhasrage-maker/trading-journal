@@ -18,7 +18,7 @@ import type { Trade, TradeTag, TradeTags, TagCategory } from '@/lib/supabase/typ
 import { offScalePrices } from '@/lib/trade-price-scale'
 import { entryTimeField, entryTimeForSave } from '@/lib/trade-entry-time'
 import { normalizeTagArray } from '@/lib/supabase/types'
-import { suggestTagsFromText, mergeTradeTags } from '@/lib/suggest-tags'
+import { suggestTagsFromText, mergeTradeTags, matchReason, learnablePhrase, phraseInText, addAlias } from '@/lib/suggest-tags'
 import { downscaleForVision } from '@/lib/downscale-image'
 import type { CoachSource } from '@/lib/coach-tag-audit'
 import {
@@ -35,8 +35,9 @@ interface Props {
    *  day_type tag on NEW trades. Ignored when editing an existing trade
    *  (the trade's own tags_json wins). Multi-select supported. */
   prepDayTypes?: string[]
-  /** Bubble up custom tags created inline so the parent can append to the
-   *  shared `allTags` list (TradeForms across the page all share one list). */
+  /** Bubble up custom tags created inline, or a tag that just learned an
+   *  alias, so the parent can upsert it into the shared `allTags` list
+   *  (TradeForms across the page all share one list). */
   onTagCreated?: (tag: TradeTag) => void
   /** Symbol to use for the live R-multiple preview when adding a NEW trade
    *  (no trade.symbol yet). Typically the most-common symbol on the day from
@@ -132,6 +133,9 @@ function rMultiple(s: FormState, symbol: string | null | undefined): string | nu
 /** The 5m follow/fade labels /api/trades/suggest-tags adds from the trade's stored regime. */
 const STRUCTURE_LABELS = new Set(['Follow LTF structure', 'Fade LTF structure'])
 
+/** localStorage: "category|label|words" the trader said No to learning. */
+const LEARN_DECLINED_KEY = 'tapescore.tagLearn.declined'
+
 export default function TradeForm({ date, allTags, trade, initialFile, prepDayTypes, onTagCreated, defaultSymbol, dayTrades, compact = false, hideScreenshot = false, onSave, onCancel, onDirtyChange }: Props) {
   const [form, setForm] = useState<FormState>(() => {
     if (trade) return fromTrade(trade)
@@ -189,9 +193,16 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   // manually won't re-add it on the next keystroke (user has final say).
   // Screenshot-OCR suggestions still flow via form.suggestedTags → the yellow
   // highlight treatment, separately from notes auto-add.
+  // Tags that learned an alias in this form, laid over `allTags` so the new
+  // alias works here at once even before the parent's list catches up.
+  const [learnedTags, setLearnedTags] = useState<Record<string, TradeTag>>({})
+  const tagLib = useMemo(
+    () => allTags.map(t => learnedTags[t.id] ?? t),
+    [allTags, learnedTags],
+  )
   const notesSuggestions = useMemo(
-    () => suggestTagsFromText(form.notes, allTags),
-    [form.notes, allTags],
+    () => suggestTagsFromText(form.notes, tagLib),
+    [form.notes, tagLib],
   )
   const autoAddedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
@@ -314,6 +325,9 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   }, [coachTradeId])
 
   const [suggestingTags, setSuggestingTags] = useState(false)
+  // The words in the notes each AI suggestion came from ("category|label" →
+  // phrase), for the "learn this?" line below the tags.
+  const [aiPhrases, setAiPhrases] = useState<Record<string, string>>({})
   const lastSuggestedNotesRef = useRef<string>('')
   // Lets the server add the DETERMINISTIC 5m follow/fade confluence from the
   // trade's stored structure_5m_regime (imported trades only). Hoisted out of
@@ -338,7 +352,11 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
         body: JSON.stringify({ notes, existing: form.tags, tradeId }),
       })
       if (!res.ok) return
-      const data = await res.json() as { suggestions?: TradeTags }
+      const data = await res.json() as { suggestions?: TradeTags; phrases?: Record<string, string> }
+      if (data.phrases && Object.keys(data.phrases).length > 0) {
+        const got = data.phrases
+        setAiPhrases(p => ({ ...p, ...got }))
+      }
       if (data.suggestions && Object.keys(data.suggestions).length > 0) {
         noteCoachPicks(data.suggestions, l => (STRUCTURE_LABELS.has(l) ? 'structure' : 'notes'), form.tags)
         setForm(f => ({ ...f, suggestedTags: mergeTradeTags(f.suggestedTags, data.suggestions) }))
@@ -366,12 +384,14 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
   const AUTO_SUGGEST_MIN_CHARS = 15
   const suggestRef = useRef(suggestTagsFromNotes)
   useEffect(() => { suggestRef.current = suggestTagsFromNotes }, [suggestTagsFromNotes])
+  // The drawer used to skip this: it had only a Setup dropdown, so there was
+  // nowhere to show a suggestion. It has the full tag picker now, and skipping
+  // it meant notes typed in the drawer were never read for meaning at all.
   useEffect(() => {
-    if (compact) return
     if (form.notes.trim().length < AUTO_SUGGEST_MIN_CHARS) return
     const id = setTimeout(() => { void suggestRef.current() }, AUTO_SUGGEST_MS)
     return () => clearTimeout(id)
-  }, [form.notes, compact])
+  }, [form.notes])
 
   const handleFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
@@ -680,6 +700,147 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
     )
   })()
 
+  // ── Learning the trader's words ───────────────────────────────────────────
+  // A tag the trader adds by hand (or accepts from the AI) that the notes
+  // didn't catch gets one line under the tags: "Next time, tag ONH/ONL Hold
+  // when notes say [ONH]? Learn / No". Learn saves the words as an alias, so
+  // plain matching catches them from then on. Nothing is learned silently:
+  // the trader sees the words and can edit them first.
+  //
+  // Only tags added since the form opened are asked about, so opening an old
+  // trade never fires a row of questions. A "No" is remembered on this device
+  // for that tag + those words.
+  const [openedTagKeys] = useState(() => {
+    const keys = new Set<string>()
+    for (const [cat, v] of Object.entries(savedFields.tags ?? {})) {
+      for (const label of normalizeTagArray(v)) keys.add(`${cat}|${label}`)
+    }
+    return keys
+  })
+  const [declined, setDeclined] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const raw = window.localStorage.getItem(LEARN_DECLINED_KEY)
+      const arr: unknown = raw ? JSON.parse(raw) : []
+      return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : []
+    } catch { return [] }
+  })
+  const [phraseEdits, setPhraseEdits] = useState<Record<string, string>>({})
+  const [learning, setLearning] = useState<string | null>(null)
+  const [learnError, setLearnError] = useState<{ key: string; msg: string } | null>(null)
+  const [learnedNote, setLearnedNote] = useState<string | null>(null)
+
+  const learnables = useMemo(() => {
+    const notes = form.notes
+    if (notes.trim().length < 3) return []
+    const out: { key: string; tag: TradeTag; guess: string }[] = []
+    for (const [cat, v] of Object.entries(form.tags)) {
+      if (cat === 'day_type') continue
+      for (const label of normalizeTagArray(v)) {
+        const key = `${cat}|${label}`
+        if (openedTagKeys.has(key) || STRUCTURE_LABELS.has(label)) continue
+        const tag = tagLib.find(t => t.category === cat && t.label === label)
+        if (!tag || matchReason(tag, notes)) continue
+        const guess = aiPhrases[key] ?? learnablePhrase(tag, notes, tagLib)
+        if (!guess || declined.includes(`${key}|${guess.toLowerCase()}`)) continue
+        out.push({ key, tag, guess })
+      }
+    }
+    return out.slice(0, 2)
+  }, [form.notes, form.tags, openedTagKeys, tagLib, aiPhrases, declined])
+
+  const decline = (key: string, guess: string) => {
+    const next = [...declined, `${key}|${guess.toLowerCase()}`].slice(-200)
+    setDeclined(next)
+    try { window.localStorage.setItem(LEARN_DECLINED_KEY, JSON.stringify(next)) } catch { /* this device only; fine to lose */ }
+  }
+
+  const learn = async (key: string, tag: TradeTag, guess: string, phrase: string) => {
+    const p = phrase.trim()
+    if (!p || learning) return
+    if (!phraseInText(p, form.notes)) {
+      setLearnError({ key, msg: 'Those words aren\u2019t in your notes, so they wouldn\u2019t have caught this one.' })
+      return
+    }
+    setLearning(key)
+    setLearnError(null)
+    try {
+      const res = await fetch('/api/trade-tags/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: tag.id, aliases: addAlias(tag, p) }),
+      })
+      const json = await res.json().catch(() => ({})) as { tag?: TradeTag; error?: string }
+      if (!res.ok || !json.tag) {
+        setLearnError({ key, msg: json.error ?? `Couldn\u2019t save (${res.status})` })
+        return
+      }
+      const saved = json.tag
+      setLearnedTags(m => ({ ...m, [saved.id]: saved }))
+      onTagCreated?.(saved)
+      // An exclusion on the tag can still block these notes; don't ask again.
+      if (!matchReason(saved, form.notes)) decline(key, guess)
+      setLearnedNote(`Learned: notes that say \u201c${p}\u201d now tag ${tag.label}.`)
+    } catch (e) {
+      setLearnError({ key, msg: e instanceof Error ? e.message : 'Network error' })
+    } finally {
+      setLearning(null)
+    }
+  }
+
+  const learnLine = (learnables.length > 0 || learnedNote) && (
+    <div className="mt-2 space-y-1.5">
+      {learnables.map(({ key, tag, guess }) => {
+        const value = phraseEdits[key] ?? guess
+        return (
+          <div key={key} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-purple-800/50 bg-purple-950/20 px-2.5 py-1.5 text-xs text-gray-300">
+            <Sparkles className="w-3 h-3 shrink-0 text-purple-300/80" />
+            <span>Next time, tag <span className="font-semibold text-white">{tag.label}</span> when notes say</span>
+            <input
+              value={value}
+              onChange={e => setPhraseEdits(m => ({ ...m, [key]: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void learn(key, tag, guess, value) } }}
+              aria-label={`Words that should tag ${tag.label}`}
+              className="w-28 rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+            />
+            <span className="ml-auto flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => void learn(key, tag, guess, value)}
+                disabled={learning === key || !value.trim()}
+                className="rounded border border-purple-700 px-2 py-0.5 text-purple-200 transition-colors hover:border-purple-500 disabled:opacity-40"
+              >
+                {learning === key ? 'Saving\u2026' : 'Learn'}
+              </button>
+              <button
+                type="button"
+                onClick={() => decline(key, guess)}
+                className="px-1.5 py-0.5 text-gray-500 transition-colors hover:text-gray-300"
+              >
+                No
+              </button>
+            </span>
+            {learnError?.key === key && <span className="basis-full text-red-400">{learnError.msg}</span>}
+          </div>
+        )
+      })}
+      {learnedNote && <p className="text-xs text-[var(--color-pos)]">{learnedNote}</p>}
+    </div>
+  )
+
+  const suggestButton = (
+    <button
+      type="button"
+      onClick={suggestTagsFromNotes}
+      disabled={suggestingTags || form.notes.trim().length < 3}
+      title="Suggest tags from your notes (AI reads the meaning, not just keywords)"
+      className="flex items-center gap-1 text-[10px] text-purple-300/80 hover:text-purple-200 disabled:opacity-40 disabled:cursor-default border border-purple-800/60 hover:border-purple-600 rounded px-1.5 py-0.5 transition-colors"
+    >
+      {suggestingTags ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+      Suggest from notes
+    </button>
+  )
+
   // Notes — first in the drawer: typing them fills the tags below (founder
   // 2026-11-03: "put it at the top not bottom"). The full form keeps them
   // after Trade Details, still above its tags.
@@ -697,7 +858,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
       </div>
       <textarea rows={2} spellCheck autoCorrect="on" placeholder="Execution notes, observations..."
         value={form.notes} onChange={e => set('notes', e.target.value)}
-        onBlur={compact ? undefined : suggestTagsFromNotes}
+        onBlur={suggestTagsFromNotes}
         className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
       />
     </div>
@@ -880,7 +1041,10 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
         {compact && (
           <div>
             <div className="flex items-center justify-between gap-3 mb-2">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</label>
+              <div className="flex items-center gap-2">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</label>
+                {suggestButton}
+              </div>
               {copyTagsSelect}
             </div>
             <TagSelector
@@ -892,6 +1056,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
               onChange={t => set('tags', t)}
               onTagCreated={onTagCreated}
             />
+            {learnLine}
           </div>
         )}
 
@@ -906,16 +1071,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
           <div className="flex items-center justify-between mb-3 gap-3">
             <div className="flex items-center gap-2">
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</label>
-              <button
-                type="button"
-                onClick={suggestTagsFromNotes}
-                disabled={suggestingTags || form.notes.trim().length < 3}
-                title="Suggest tags from your notes (AI reads the meaning, not just keywords)"
-                className="flex items-center gap-1 text-[10px] text-purple-300/80 hover:text-purple-200 disabled:opacity-40 disabled:cursor-default border border-purple-800/60 hover:border-purple-600 rounded px-1.5 py-0.5 transition-colors"
-              >
-                {suggestingTags ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                Suggest from notes
-              </button>
+              {suggestButton}
             </div>
             {copyTagsSelect}
           </div>
@@ -928,6 +1084,7 @@ export default function TradeForm({ date, allTags, trade, initialFile, prepDayTy
             onChange={t => set('tags', t)}
             onTagCreated={onTagCreated}
           />
+          {learnLine}
         </div>}
 
         {error && <p className="text-sm text-red-400">{error}</p>}

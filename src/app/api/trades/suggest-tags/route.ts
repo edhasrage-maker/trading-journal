@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { TradeTags, TagCategory } from '@/lib/supabase/types'
 import { getTraderProfile, profileContextBlock } from '@/lib/trader-profile'
 import { followFade, type Regime } from '@/lib/market-structure'
+import { phraseInText } from '@/lib/suggest-tags'
 
 const client = new Anthropic()
 
@@ -148,7 +149,7 @@ Trader's notes:
 ${notes}
 """
 
-Return the tags you're confident the notes describe.`
+Return the tags you're confident the notes describe. For each tag, also give "phrase": the shortest run of words copied EXACTLY from the notes that shows that tag (e.g. "ONH" or "waited for it"), or "" if no words in the notes point to it. The trader may save that phrase so the same words tag it automatically next time, so pick words that mean this tag, not words that just happen to be nearby.`
 
   try {
     const message = await client.messages.create({
@@ -168,8 +169,9 @@ Return the tags you're confident the notes describe.`
                   properties: {
                     category: { type: 'string' },
                     label: { type: 'string' },
+                    phrase: { type: 'string' },
                   },
-                  required: ['category', 'label'],
+                  required: ['category', 'label', 'phrase'],
                   additionalProperties: false,
                 },
               },
@@ -183,11 +185,15 @@ Return the tags you're confident the notes describe.`
     } as any)
 
     const text = message.content[0]?.type === 'text' ? message.content[0].text : ''
-    let parsed: { tags?: Array<{ category?: string; label?: string }> } = {}
+    let parsed: { tags?: Array<{ category?: string; label?: string; phrase?: string }> } = {}
     try { parsed = JSON.parse(text) } catch { parsed = {} }
 
     // Merge the model's picks INTO the deterministic suggestion (which already
-    // holds the structure confluence, if any).
+    // holds the structure confluence, if any). `phrases` carries the words each
+    // pick came from, keyed "category|label", for the form's "learn this?" line
+    // — kept only when they really are in the notes, so a paraphrase the model
+    // made up never becomes an alias.
+    const phrases: Record<string, string> = {}
     for (const t of parsed.tags ?? []) {
       if (typeof t?.category !== 'string' || typeof t?.label !== 'string') continue
       const cat = t.category as TagCategory
@@ -197,9 +203,11 @@ Return the tags you're confident the notes describe.`
       const arr = suggestions[cat] ?? []
       if (!arr.includes(t.label)) arr.push(t.label)
       suggestions[cat] = arr
+      const phrase = typeof t.phrase === 'string' ? t.phrase.trim() : ''
+      if (phrase && phrase.length <= 40 && phraseInText(phrase, notes)) phrases[key] = phrase
     }
 
-    return NextResponse.json({ suggestions: suggestions as TradeTags })
+    return NextResponse.json({ suggestions: suggestions as TradeTags, phrases })
   } catch (e) {
     const err = e as { message?: string; error?: { message?: string }; status?: number }
     console.error('[trades/suggest-tags] failed:', err)

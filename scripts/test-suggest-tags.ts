@@ -8,7 +8,7 @@
  * Each was auto-tagging nothing before aliases existed.
  */
 import {
-  suggestTagsFromText, matchReason, addAlias, mergeTradeTags,
+  suggestTagsFromText, matchReason, addAlias, mergeTradeTags, learnablePhrase, phraseInText,
 } from '../src/lib/suggest-tags.ts'
 import type { TradeTag } from '../src/lib/supabase/types.ts'
 
@@ -219,6 +219,37 @@ console.log('verb tense (notes are past tense, labels are infinitives)')
   check('does NOT over-stem "fed" into "feed"', hits('I fed the position more size').length === 0)
   check('does NOT over-stem "used"', hits('used a wider stop').length === 0)
   check('unrelated prose still matches nothing', hits('nothing relevant here at all').length === 0)
+}
+
+console.log('learnablePhrase (the "learn this?" guess)')
+
+{
+  const lib = [
+    tag('confluences', 'ONH/ONL Hold'),
+    tag('setups', 'Break And Retest'),
+    tag('confluences', 'Trendline Break'),
+    tag('confluences', 'IB Reclaim (Break & Fail)'),
+    tag('confluences', '2nd Attempt'),
+    tag('confluences', 'VWAP Hold/Bounce'),
+  ]
+  const [onh, , trend, , second] = lib
+  // The real note that prompted this.
+  const note = 'ONH break retest entered based on price'
+  check('the real note: ONH/ONL Hold is not matched by its label',
+    !flat(suggestTagsFromText(note, lib)).includes('ONH/ONL Hold'))
+  check('guess for ONH/ONL Hold is "ONH", in the note\'s own casing',
+    learnablePhrase(onh, note, lib) === 'ONH', String(learnablePhrase(onh, note, lib)))
+  check('a word other tags share is never guessed ("break")',
+    learnablePhrase(trend, note, lib) === null, String(learnablePhrase(trend, note, lib)))
+  check('bare numbers are never guessed',
+    learnablePhrase(second, '2nd trade of the day', lib) === null)
+  check('nothing overlapping → no guess', learnablePhrase(onh, 'took it at the lows', lib) === null)
+  check('the guess is in the note by the alias rule', phraseInText('ONH', note))
+  check('a phrase not in the note is refused', !phraseInText('onh hold', note))
+  // Confirming the guess makes the note match next time.
+  const learned = { ...onh, aliases: addAlias(onh, 'ONH') } as TradeTag
+  check('after learning "ONH", the same note tags ONH/ONL Hold',
+    matchReason(learned, note) === 'ONH')
 }
 
 console.log('mergeTradeTags')
